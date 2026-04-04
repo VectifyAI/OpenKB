@@ -1,4 +1,4 @@
-# OpenKnowledgeBase Design Spec
+# OpenKB Design Spec
 
 ## Positioning
 
@@ -6,13 +6,13 @@
 
 Andrej Karpathy described a workflow where LLMs compile raw documents into a structured markdown wiki with summaries, backlinks, and cross-linked concepts. His approach works well for short articles but breaks down for long documents (books, annual reports, legal filings) that exceed LLM context windows.
 
-OpenKnowledgeBase implements this workflow with two key enhancements:
+OpenKB implements this workflow with two key enhancements:
 1. **PageIndex** for long document understanding — books and reports that would blow up LLM context are handled via hierarchical tree indexing with summaries.
 2. **markitdown** for broad format support — PDF, Word, PowerPoint, Excel, HTML, images, audio, and more are all converted to readable Markdown automatically.
 
 ### Comparison with Karpathy's Original Approach
 
-| | Karpathy's Approach | OpenKnowledgeBase |
+| | Karpathy's Approach | OpenKB |
 |---|---|---|
 | Short documents | LLM reads directly | markitdown → LLM reads |
 | Long documents (books, reports) | Doesn't fit in context | PageIndex tree index |
@@ -501,7 +501,7 @@ Once PageIndex SDK is published to PyPI, switch to `pageindex>=x.x.x`.
 
 Distributed as a pip package:
 ```bash
-pip install open-knowledge-base
+pip install openkb
 ```
 
 CLI entry point `okb` registered via pyproject.toml `[project.scripts]`.
