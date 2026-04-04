@@ -1,0 +1,62 @@
+import json
+import pytest
+from click.testing import CliRunner
+
+from openkb.cli import cli
+from openkb.schema import SCHEMA_MD
+
+
+def test_init_creates_structure(tmp_path):
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+
+        from pathlib import Path
+        cwd = Path(".")
+
+        # Directories
+        assert (cwd / "raw").is_dir()
+        assert (cwd / "wiki" / "sources" / "images").is_dir()
+        assert (cwd / "wiki" / "summaries").is_dir()
+        assert (cwd / "wiki" / "concepts").is_dir()
+        assert (cwd / "wiki" / "reports").is_dir()
+        assert (cwd / ".okb").is_dir()
+
+        # Files
+        assert (cwd / "wiki" / "SCHEMA.md").is_file()
+        assert (cwd / "wiki" / "index.md").is_file()
+        assert (cwd / ".okb" / "config.yaml").is_file()
+        assert (cwd / ".okb" / "hashes.json").is_file()
+
+        # hashes.json is empty object
+        hashes = json.loads((cwd / ".okb" / "hashes.json").read_text())
+        assert hashes == {}
+
+        # index.md header
+        index_content = (cwd / "wiki" / "index.md").read_text()
+        assert index_content == "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n"
+
+
+def test_init_schema_content(tmp_path):
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+
+        from pathlib import Path
+        schema_content = Path("wiki/SCHEMA.md").read_text()
+        assert schema_content == SCHEMA_MD
+
+
+def test_init_already_exists(tmp_path):
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        # First run should succeed
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+
+        # Second run should print already initialized message
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+        assert "already initialized" in result.output
