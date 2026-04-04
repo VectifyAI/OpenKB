@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openkb"
+version = "0.1.0"
+description = "Karpathy's LLM Knowledge Base workflow — powered by PageIndex"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "pageindex @ git+https://github.com/KylinMountain/PageIndex.git@feat/sdk",
+    "markitdown",
+    "click>=8.0",
+    "watchdog>=3.0",
+    "litellm",
+    "openai-agents",
+    "pyyaml",
+]
+
+[project.scripts]
+okb = "openkb.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
