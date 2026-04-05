@@ -209,7 +209,10 @@ def add(path):
         if not files:
             click.echo(f"No supported files found in {path}.")
             return
-        for f in files:
+        total = len(files)
+        click.echo(f"Found {total} supported file(s) in {path}.")
+        for i, f in enumerate(files, 1):
+            click.echo(f"\n[{i}/{total}] ", nl=False)
             _add_single_file(f, kb_dir)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
