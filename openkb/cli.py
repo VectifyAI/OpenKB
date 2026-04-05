@@ -1,11 +1,100 @@
+"""OpenKB CLI — command-line interface for the knowledge base workflow."""
+from __future__ import annotations
+
+import asyncio
 import json
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 
-from openkb.config import DEFAULT_CONFIG, save_config
+from openkb.config import DEFAULT_CONFIG, load_config, save_config
+from openkb.converter import convert_document
 from openkb.schema import SCHEMA_MD
 
+load_dotenv()
+
+# Supported document extensions for the `add` command
+SUPPORTED_EXTENSIONS = {
+    ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx",
+    ".html", ".htm", ".txt", ".csv", ".doc",
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_kb_dir() -> Path | None:
+    """Return the knowledge-base root if .okb/ exists in cwd, else None."""
+    candidate = Path(".okb")
+    if candidate.exists() and candidate.is_dir():
+        return Path(".")
+    return None
+
+
+def _add_single_file(file_path: Path, kb_dir: Path) -> None:
+    """Convert, index, and compile a single document into the knowledge base.
+
+    Steps:
+    1. Load config to get the model name.
+    2. Convert the document (hash-check; skip if already known).
+    3. If long doc: run PageIndex then compile_long_doc.
+    4. Else: compile_short_doc.
+    """
+    from openkb.agent.compiler import compile_long_doc, compile_short_doc
+
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    # 2. Convert document
+    click.echo(f"Adding: {file_path.name}")
+    try:
+        result = convert_document(file_path, kb_dir)
+    except Exception as exc:
+        click.echo(f"  [ERROR] Conversion failed: {exc}")
+        return
+
+    if result.skipped:
+        click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
+        return
+
+    doc_name = file_path.stem
+
+    # 3/4. Index and compile
+    if result.is_long_doc:
+        click.echo(f"  Long document detected — indexing with PageIndex…")
+        try:
+            from openkb.indexer import index_long_document
+            index_result = index_long_document(result.raw_path, kb_dir)
+        except Exception as exc:
+            click.echo(f"  [ERROR] Indexing failed: {exc}")
+            return
+
+        summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})…")
+        try:
+            asyncio.run(
+                compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model)
+            )
+        except Exception as exc:
+            click.echo(f"  [ERROR] Compilation failed: {exc}")
+            return
+    else:
+        click.echo(f"  Compiling short doc…")
+        try:
+            asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+        except Exception as exc:
+            click.echo(f"  [ERROR] Compilation failed: {exc}")
+            return
+
+    click.echo(f"  [OK] {file_path.name} added to knowledge base.")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 @click.group()
 def cli():
@@ -45,37 +134,190 @@ def init():
 @cli.command()
 @click.argument("path")
 def add(path):
-    """Add a document at PATH to the knowledge base."""
-    click.echo("Not implemented yet.")
+    """Add a document or directory of documents at PATH to the knowledge base."""
+    kb_dir = _find_kb_dir()
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `okb init` first.")
+        return
+
+    target = Path(path)
+    if not target.exists():
+        click.echo(f"Path does not exist: {path}")
+        return
+
+    if target.is_dir():
+        files = [
+            f for f in sorted(target.rglob("*"))
+            if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        ]
+        if not files:
+            click.echo(f"No supported files found in {path}.")
+            return
+        for f in files:
+            _add_single_file(f, kb_dir)
+    else:
+        if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            click.echo(
+                f"Unsupported file type: {target.suffix}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
+            return
+        _add_single_file(target, kb_dir)
 
 
 @cli.command()
 @click.argument("question")
 def query(question):
     """Query the knowledge base with QUESTION."""
-    click.echo("Not implemented yet.")
+    kb_dir = _find_kb_dir()
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `okb init` first.")
+        return
+
+    from openkb.agent.query import run_query
+
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    try:
+        answer = asyncio.run(run_query(question, kb_dir, model))
+        click.echo(answer)
+    except Exception as exc:
+        click.echo(f"[ERROR] Query failed: {exc}")
 
 
 @cli.command()
 def watch():
     """Watch the raw/ directory for new documents and process them automatically."""
-    click.echo("Not implemented yet.")
+    kb_dir = _find_kb_dir()
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `okb init` first.")
+        return
+
+    from openkb.watcher import watch_directory
+
+    raw_dir = kb_dir / "raw"
+    raw_dir.mkdir(exist_ok=True)
+
+    def on_new_files(paths):
+        for p in paths:
+            _add_single_file(Path(p), kb_dir)
+
+    click.echo(f"Watching {raw_dir} for new documents. Press Ctrl+C to stop.")
+    watch_directory(raw_dir, on_new_files)
 
 
 @cli.command()
 @click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues.")
 def lint(fix):
-    """Lint the knowledge base for inconsistencies."""
-    click.echo("Not implemented yet.")
+    """Lint the knowledge base for structural and semantic inconsistencies."""
+    kb_dir = _find_kb_dir()
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `okb init` first.")
+        return
+
+    from openkb.lint import run_structural_lint
+    from openkb.agent.linter import run_knowledge_lint
+
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Structural lint
+    click.echo("Running structural lint…")
+    structural_report = run_structural_lint(kb_dir)
+    click.echo(structural_report)
+
+    # Knowledge lint (semantic)
+    click.echo("Running knowledge lint…")
+    try:
+        knowledge_report = asyncio.run(run_knowledge_lint(kb_dir, model))
+    except Exception as exc:
+        knowledge_report = f"Knowledge lint failed: {exc}"
+    click.echo(knowledge_report)
+
+    # Write combined report
+    reports_dir = kb_dir / "wiki" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = reports_dir / f"lint_{timestamp}.md"
+    report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
+    report_path.write_text(report_content, encoding="utf-8")
+    click.echo(f"\nReport written to {report_path}")
 
 
 @cli.command(name="list")
 def list_cmd():
     """List all documents in the knowledge base."""
-    click.echo("Not implemented yet.")
+    kb_dir = _find_kb_dir()
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `okb init` first.")
+        return
+
+    okb_dir = kb_dir / ".okb"
+    hashes_file = okb_dir / "hashes.json"
+    if not hashes_file.exists():
+        click.echo("No documents indexed yet.")
+        return
+
+    hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
+    if not hashes:
+        click.echo("No documents indexed yet.")
+        return
+
+    # Display documents table
+    click.echo("Documents:")
+    click.echo(f"  {'Name':<40} {'Type':<12}")
+    click.echo(f"  {'-'*40} {'-'*12}")
+    for file_hash, meta in hashes.items():
+        name = meta.get("name", "unknown")
+        doc_type = meta.get("type", "unknown")
+        click.echo(f"  {name:<40} {doc_type:<12}")
+
+    # Display concepts
+    concepts_dir = kb_dir / "wiki" / "concepts"
+    if concepts_dir.exists():
+        concepts = sorted(p.stem for p in concepts_dir.glob("*.md"))
+        if concepts:
+            click.echo("\nConcepts:")
+            for c in concepts:
+                click.echo(f"  - {c}")
 
 
 @cli.command()
 def status():
     """Show the current status of the knowledge base."""
-    click.echo("Not implemented yet.")
+    kb_dir = _find_kb_dir()
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `okb init` first.")
+        return
+
+    wiki_dir = kb_dir / "wiki"
+    subdirs = ["sources", "summaries", "concepts", "reports"]
+
+    click.echo("Knowledge Base Status:")
+    click.echo(f"  {'Directory':<20} {'Files':<10}")
+    click.echo(f"  {'-'*20} {'-'*10}")
+
+    for subdir in subdirs:
+        path = wiki_dir / subdir
+        if path.exists():
+            count = len(list(path.glob("*.md")))
+        else:
+            count = 0
+        click.echo(f"  {subdir:<20} {count:<10}")
+
+    # Raw files
+    raw_dir = kb_dir / "raw"
+    if raw_dir.exists():
+        raw_count = len([f for f in raw_dir.iterdir() if f.is_file()])
+        click.echo(f"  {'raw':<20} {raw_count:<10}")
+
+    # Hash registry summary
+    okb_dir = kb_dir / ".okb"
+    hashes_file = okb_dir / "hashes.json"
+    if hashes_file.exists():
+        hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
+        click.echo(f"\n  Total indexed: {len(hashes)} document(s)")

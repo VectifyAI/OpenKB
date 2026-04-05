@@ -17,6 +17,7 @@ dependencies = [
     "litellm",
     "openai-agents",
     "pyyaml",
+    "python-dotenv",
 ]
 
 [project.scripts]
