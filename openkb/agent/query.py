@@ -30,7 +30,7 @@ information, say so clearly.
 """
 
 
-def pageindex_retrieve(doc_id: str, question: str, okb_dir: str, model: str) -> str:
+def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: str) -> str:
     """Retrieve relevant content from a long document via PageIndex.
 
     Args:
@@ -148,7 +148,7 @@ def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = 
         return read_wiki_file(path, wiki_root)
 
     @function_tool
-    def retrieve(doc_id: str, question: str) -> str:
+    def pageindex_retrieve(doc_id: str, question: str) -> str:
         """Retrieve relevant content from a long document via PageIndex.
 
         Use this when you need detailed content from a document that was
@@ -158,12 +158,12 @@ def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = 
             doc_id: PageIndex document identifier (found in index.md).
             question: The question you are trying to answer.
         """
-        return pageindex_retrieve(doc_id, question, okb_dir, model)
+        return _pageindex_retrieve_impl(doc_id, question, okb_dir, model)
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[list_files, read_file, retrieve],
+        tools=[list_files, read_file, pageindex_retrieve],
         model=model,
     )
 

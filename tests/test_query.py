@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openkb.agent.query import build_query_agent, pageindex_retrieve, run_query
+from openkb.agent.query import _pageindex_retrieve_impl, build_query_agent, run_query
 from openkb.schema import SCHEMA_MD
 
 
@@ -24,7 +24,13 @@ class TestBuildQueryAgent:
         names = {t.name for t in agent.tools}
         assert "list_files" in names
         assert "read_file" in names
-        assert "retrieve" in names
+        assert "pageindex_retrieve" in names
+
+    def test_instructions_reference_registered_pageindex_tool(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        tool_names = {t.name for t in agent.tools}
+        assert "pageindex_retrieve" in agent.instructions
+        assert "pageindex_retrieve" in tool_names
 
     def test_schema_in_instructions(self, tmp_path):
         agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
@@ -63,7 +69,7 @@ class TestPageindexRetrieve:
             mock_llm.return_value = MagicMock(
                 choices=[MagicMock(message=MagicMock(content="1-2"))]
             )
-            result = pageindex_retrieve("doc123", "What is the intro?", "/db", "gpt-4o-mini")
+            result = _pageindex_retrieve_impl("doc123", "What is the intro?", "/db", "gpt-4o-mini")
 
         assert "Introduction text here." in result
         assert "More intro content." in result
@@ -76,7 +82,7 @@ class TestPageindexRetrieve:
         mock_client.collection.return_value = mock_col
 
         with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
-            result = pageindex_retrieve("doc456", "What?", "/db", "gpt-4o-mini")
+            result = _pageindex_retrieve_impl("doc456", "What?", "/db", "gpt-4o-mini")
 
         assert "No structure found" in result
 
@@ -88,7 +94,7 @@ class TestPageindexRetrieve:
         mock_client.collection.return_value = mock_col
 
         with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
-            result = pageindex_retrieve("doc789", "What?", "/db", "gpt-4o-mini")
+            result = _pageindex_retrieve_impl("doc789", "What?", "/db", "gpt-4o-mini")
 
         assert "Error" in result
 
