@@ -12,6 +12,7 @@ def kb_dir(tmp_path):
     (tmp_path / "wiki" / "sources" / "images").mkdir(parents=True)
     (tmp_path / "wiki" / "summaries").mkdir(parents=True)
     (tmp_path / "wiki" / "concepts").mkdir(parents=True)
+    (tmp_path / "wiki" / "explorations").mkdir(parents=True)
     (tmp_path / "wiki" / "reports").mkdir(parents=True)
 
     # .okb state directory
