@@ -6,13 +6,13 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.schema import SCHEMA_MD
+from openkb.schema import SCHEMA_MD, get_agents_md
 
-_LINTER_INSTRUCTIONS = f"""\
+_LINTER_INSTRUCTIONS_TEMPLATE = """\
 You are a knowledge-base semantic lint agent. Your job is to audit the wiki
 for quality issues that structural tools cannot detect.
 
-{SCHEMA_MD}
+{schema_md}
 
 ## Checks to perform
 1. **Contradictions** — Do any pages make conflicting claims about the same fact?
@@ -35,16 +35,20 @@ If no issues are found in a category, say "None found."
 """
 
 
-def build_lint_agent(wiki_root: str, model: str) -> Agent:
+def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
     """Build the semantic knowledge-lint agent.
 
     Args:
         wiki_root: Absolute path to the wiki directory.
         model: LLM model name.
+        language: Language code for wiki content (e.g. 'en', 'fr').
 
     Returns:
         Configured :class:`~agents.Agent` instance.
     """
+    schema_md = get_agents_md(Path(wiki_root))
+    instructions = _LINTER_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
 
     @function_tool
     def list_files(directory: str) -> str:
@@ -66,7 +70,7 @@ def build_lint_agent(wiki_root: str, model: str) -> Agent:
 
     return Agent(
         name="wiki-linter",
-        instructions=_LINTER_INSTRUCTIONS,
+        instructions=instructions,
         tools=[list_files, read_file],
         model=model,
     )
@@ -82,8 +86,14 @@ async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
     Returns:
         The agent's lint report as a Markdown string.
     """
+    from openkb.config import load_config
+
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    language: str = config.get("language", "en")
+
     wiki_root = str(kb_dir / "wiki")
-    agent = build_lint_agent(wiki_root, model)
+    agent = build_lint_agent(wiki_root, model, language=language)
 
     prompt = (
         "Please audit this knowledge base wiki for semantic quality issues: "

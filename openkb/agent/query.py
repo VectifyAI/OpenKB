@@ -8,12 +8,12 @@ from agents import Agent, Runner, function_tool
 from pageindex import LocalClient
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.schema import SCHEMA_MD
+from openkb.schema import SCHEMA_MD, get_agents_md
 
-_QUERY_INSTRUCTIONS = f"""\
+_QUERY_INSTRUCTIONS_TEMPLATE = """\
 You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
 
-{SCHEMA_MD}
+{schema_md}
 
 ## Search strategy
 1. Start by reading index.md to understand what documents and concepts are available.
@@ -38,7 +38,7 @@ def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> 
     Args:
         doc_id: PageIndex document identifier.
         question: The user's question.
-        db_path: Path to the PageIndex storage directory (.okb/pageindex).
+        db_path: Path to the PageIndex storage directory (.okb/pageindex.db).
         model: LLM model to use for relevance selection.
 
     Returns:
@@ -108,17 +108,21 @@ def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> 
     return "\n\n".join(parts)
 
 
-def build_query_agent(wiki_root: str, db_path: str, model: str) -> Agent:
+def build_query_agent(wiki_root: str, db_path: str, model: str, language: str = "en") -> Agent:
     """Build and return the Q&A agent.
 
     Args:
         wiki_root: Absolute path to the wiki directory.
-        db_path: Path to the PageIndex storage directory (.okb/pageindex).
+        db_path: Path to the PageIndex storage directory (.okb/pageindex.db).
         model: LLM model name.
+        language: Language code for wiki content (e.g. 'en', 'fr').
 
     Returns:
         Configured :class:`~agents.Agent` instance.
     """
+    schema_md = get_agents_md(Path(wiki_root))
+    instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
 
     @function_tool
     def list_files(directory: str) -> str:
@@ -153,7 +157,7 @@ def build_query_agent(wiki_root: str, db_path: str, model: str) -> Agent:
 
     return Agent(
         name="wiki-query",
-        instructions=_QUERY_INSTRUCTIONS,
+        instructions=instructions,
         tools=[list_files, read_file, retrieve],
         model=model,
     )
@@ -170,9 +174,15 @@ async def run_query(question: str, kb_dir: Path, model: str) -> str:
     Returns:
         The agent's final answer as a string.
     """
-    wiki_root = str(kb_dir / "wiki")
-    db_path = str(kb_dir / ".okb" / "pageindex")
+    from openkb.config import load_config
 
-    agent = build_query_agent(wiki_root, db_path, model)
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    language: str = config.get("language", "en")
+
+    wiki_root = str(kb_dir / "wiki")
+    db_path = str(kb_dir / ".okb" / "pageindex.db")
+
+    agent = build_query_agent(wiki_root, db_path, model, language=language)
     result = await Runner.run(agent, question)
     return result.final_output or ""
