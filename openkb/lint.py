@@ -14,6 +14,9 @@ from pathlib import Path
 # Matches [[wikilink]] or [[subdir/link]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
+# Files to exclude from lint scanning (schema, logs, etc.)
+_EXCLUDED_FILES = {"AGENTS.md", "SCHEMA.md", "log.md"}
+
 
 def _read_md(path: Path) -> str:
     """Read a Markdown file safely, returning empty string on error."""
@@ -57,6 +60,12 @@ def find_broken_links(wiki: Path) -> list[str]:
     errors: list[str] = []
 
     for md in wiki.rglob("*.md"):
+        if md.name in _EXCLUDED_FILES:
+            continue
+        # Skip reports/ and sources/ — auto-generated, not wiki content
+        rel_parts = md.relative_to(wiki).parts
+        if rel_parts and rel_parts[0] in ("reports", "sources"):
+            continue
         text = _read_md(md)
         for target in _extract_wikilinks(text):
             # Normalise target: strip leading/trailing whitespace and slashes
@@ -84,7 +93,12 @@ def find_orphans(wiki: Path) -> list[str]:
     Returns:
         List of relative page paths that are orphaned.
     """
-    all_mds = [p for p in wiki.rglob("*.md") if p.name != "index.md"]
+    # Exclude index, schema, log, and sources/ (sources are auto-generated, not expected to be linked)
+    all_mds = [
+        p for p in wiki.rglob("*.md")
+        if p.name not in {"index.md", *_EXCLUDED_FILES}
+        and "sources" not in p.relative_to(wiki).parts
+    ]
     if not all_mds:
         return []
 
