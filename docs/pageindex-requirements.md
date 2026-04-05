@@ -74,6 +74,72 @@ When `IndexConfig(if_add_node_text=True)` was used during indexing, `get_documen
 
 ---
 
-**Status**: Pending PageIndex implementation
-**Priority**: High — blocks OpenKB long-document sources/ generation
-**Affects**: `openkb/indexer.py`, `openkb/tree_renderer.py`
+**Status**: Done
+**Priority**: High
+**Resolution**: `get_document(doc_id, include_text=True)` implemented
+
+---
+
+## feat: support custom `images_dir` for image output
+
+### Background
+
+When PageIndex indexes a PDF, its PdfParser extracts images to an internal path: `.okb/files/{collection}/{doc_id}/images/`. The `text` field in the tree structure contains image references like:
+
+```
+![image](.okb/files/default/abc123/images/p1_img0.png)
+```
+
+OpenKB needs to render the tree into a wiki markdown file at `wiki/sources/{name}.md`. The images need to be accessible from Obsidian which opens `wiki/` as a vault. But the images are inside `.okb/` which is outside `wiki/`.
+
+### Current Behavior
+
+`local.py` hardcodes the images directory:
+```python
+images_dir = str(col_dir / doc_id / "images")
+parsed = parser.parse(file_path, model=self._model, images_dir=images_dir)
+```
+
+There's no way for the caller to specify where images should go.
+
+### Expected Behavior
+
+Support a custom `images_dir` — either via `col.add()` parameter or `IndexConfig`:
+
+```python
+# Option A: parameter on col.add()
+doc_id = col.add("textbook.pdf", images_dir="wiki/sources/images/textbook")
+
+# Option B: IndexConfig field
+config = IndexConfig(
+    if_add_node_text=True,
+    images_dir="wiki/sources/images/textbook",
+)
+```
+
+When `images_dir` is set:
+1. PdfParser saves images to the specified directory
+2. Image paths in `text` fields use the specified directory (relative)
+3. `get_document(doc_id, include_text=True)` returns text with correct paths
+
+When `images_dir` is not set, behavior is unchanged (images go to internal `.okb/files/...`).
+
+### Why
+
+- OpenKB renders PageIndex trees into `wiki/sources/*.md` with image references
+- Obsidian opens `wiki/` as a vault and needs images inside `wiki/`
+- Currently images are trapped in `.okb/files/.../images/` — invisible to Obsidian
+- Without this, OpenKB has to post-process: parse all `![image](.okb/...)` paths, copy files, rewrite paths — fragile and wasteful
+
+### Workaround
+
+Until this is implemented, OpenKB will post-process the text:
+1. Regex-find all `![image](.okb/files/.../images/...)` paths
+2. Copy image files to `wiki/sources/images/{doc_name}/`
+3. Rewrite paths in the rendered markdown
+
+---
+
+**Status**: Pending
+**Priority**: Medium — has workaround but adds complexity
+**Affects**: `openkb/indexer.py`

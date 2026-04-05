@@ -10,7 +10,7 @@ import pymupdf
 from markitdown import MarkItDown
 
 from openkb.config import load_config
-from openkb.images import copy_relative_images, extract_base64_images, extract_pdf_images
+from openkb.images import copy_relative_images, extract_base64_images, convert_pdf_with_images
 from openkb.state import HashRegistry
 
 logger = logging.getLogger(__name__)
@@ -96,22 +96,15 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     if src.suffix.lower() == ".md":
         markdown = src.read_text(encoding="utf-8")
         markdown = copy_relative_images(markdown, src.parent, doc_name, images_dir)
+    elif src.suffix.lower() == ".pdf":
+        # Use pymupdf dict-mode for PDFs: text + images inline at correct positions
+        markdown = convert_pdf_with_images(src, doc_name, images_dir)
     else:
+        # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
         mid = MarkItDown()
         result = mid.convert(str(src))
         markdown = result.text_content
         markdown = extract_base64_images(markdown, doc_name, images_dir)
-
-        # For PDFs, also extract embedded images via pymupdf
-        # (markitdown often doesn't extract images from PDFs)
-        if src.suffix.lower() == ".pdf":
-            page_images = extract_pdf_images(src, doc_name, images_dir)
-            if page_images:
-                img_section = "\n\n---\n\n## Figures\n\n"
-                for page_num in sorted(page_images):
-                    for img_path in page_images[page_num]:
-                        img_section += f"![Page {page_num}]({img_path})\n\n"
-                markdown += img_section
 
     dest_md = sources_dir / f"{doc_name}.md"
     dest_md.write_text(markdown, encoding="utf-8")
