@@ -24,6 +24,7 @@ class ConvertResult:
     source_path: Path | None = None
     is_long_doc: bool = False
     skipped: bool = False
+    file_hash: str | None = None  # For deferred hash registration
 
 
 def get_pdf_page_count(path: Path) -> int:
@@ -80,8 +81,7 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
                 threshold,
                 src.name,
             )
-            registry.add(file_hash, {"name": src.name, "type": "long_pdf"})
-            return ConvertResult(raw_path=raw_dest, is_long_doc=True)
+            return ConvertResult(raw_path=raw_dest, is_long_doc=True, file_hash=file_hash)
 
     # ------------------------------------------------------------------
     # 4/5. Convert to Markdown
@@ -105,9 +105,4 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     dest_md = sources_dir / f"{doc_name}.md"
     dest_md.write_text(markdown, encoding="utf-8")
 
-    # ------------------------------------------------------------------
-    # 6. Register hash
-    # ------------------------------------------------------------------
-    registry.add(file_hash, {"name": src.name, "type": src.suffix.lstrip(".")})
-
-    return ConvertResult(raw_path=raw_dest, source_path=dest_md)
+    return ConvertResult(raw_path=raw_dest, source_path=dest_md, file_hash=file_hash)

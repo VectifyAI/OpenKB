@@ -43,10 +43,12 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
     4. Else: compile_short_doc.
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
+    from openkb.state import HashRegistry
 
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
     model: str = config.get("model", DEFAULT_CONFIG["model"])
+    registry = HashRegistry(okb_dir / "hashes.json")
 
     # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
@@ -88,6 +90,11 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
         except Exception as exc:
             click.echo(f"  [ERROR] Compilation failed: {exc}")
             return
+
+    # Register hash only after successful compilation
+    if result.file_hash:
+        doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
+        registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
 
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
 
