@@ -18,44 +18,57 @@ _BASE64_RE = re.compile(r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)')
 _RELATIVE_RE = re.compile(r'!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)')
 
 
-def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[int, list[str]]:
-    """Extract images from a PDF using pymupdf and save to disk.
+# Minimum pixel dimension — skip icons, bullets, and tiny artifacts
+_MIN_IMAGE_DIM = 32
 
-    Returns a mapping of page_number (1-based) → list of relative image paths,
-    so the caller can insert image references into the converted markdown.
+
+def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[int, list[str]]:
+    """Extract images from a PDF using pymupdf's dict-mode block iteration.
+
+    Uses ``page.get_text("dict")`` to find image blocks (type 1) in reading
+    order. Each image block is rendered via :class:`pymupdf.Pixmap` and saved
+    as PNG. This captures both embedded bitmaps *and* vector-rendered figures
+    that ``get_images()`` would miss.
+
+    Returns a mapping of page_number (1-based) → list of relative image paths.
     """
     images_dir.mkdir(parents=True, exist_ok=True)
     page_images: dict[int, list[str]] = {}
-    counter = 0
+    img_counter = 0
 
     doc = pymupdf.open(str(pdf_path))
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        image_list = page.get_images(full=True)
-        for img_info in image_list:
-            xref = img_info[0]
+    for page_idx in range(len(doc)):
+        page = doc[page_idx]
+        page_num = page_idx + 1
+
+        for block in page.get_text("dict")["blocks"]:
+            if block["type"] != 1:  # not an image block
+                continue
+
+            width = block.get("width", 0)
+            height = block.get("height", 0)
+            if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
+                continue
+
+            image_bytes = block.get("image")
+            if not image_bytes:
+                continue
+
             try:
-                base_image = doc.extract_image(xref)
+                pix = pymupdf.Pixmap(image_bytes)
+                if pix.n > 4:
+                    pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+                img_counter += 1
+                filename = f"p{page_num}_img{img_counter}.png"
+                save_path = images_dir / filename
+                pix.save(str(save_path))
+                pix = None
             except Exception:
-                logger.warning("Failed to extract image xref=%d from page %d", xref, page_num + 1)
+                logger.warning("Failed to save image block on page %d", page_num)
                 continue
-
-            if not base_image or not base_image.get("image"):
-                continue
-
-            ext = base_image.get("ext", "png")
-            image_bytes = base_image["image"]
-
-            # Skip tiny images (likely icons/bullets, < 2KB)
-            if len(image_bytes) < 2048:
-                continue
-
-            counter += 1
-            filename = f"img_{counter:03d}.{ext}"
-            (images_dir / filename).write_bytes(image_bytes)
 
             rel_path = f"images/{doc_name}/{filename}"
-            page_images.setdefault(page_num + 1, []).append(rel_path)
+            page_images.setdefault(page_num, []).append(rel_path)
 
     doc.close()
     return page_images

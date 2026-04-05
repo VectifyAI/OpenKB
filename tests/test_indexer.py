@@ -15,15 +15,14 @@ class TestIndexLongDocument:
         col = MagicMock()
         col.add.return_value = doc_id
 
-        # get_document returns doc metadata dict
+        # get_document(doc_id, include_text=True) returns full document
         col.get_document.return_value = {
             "doc_id": doc_id,
             "doc_name": sample_tree["doc_name"],
             "doc_description": sample_tree["doc_description"],
             "doc_type": "pdf",
+            "structure": sample_tree["structure"],
         }
-        # get_document_structure returns the tree structure list
-        col.get_document_structure.return_value = sample_tree["structure"]
         return col
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):

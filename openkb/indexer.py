@@ -69,12 +69,11 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
             if attempt == max_retries:
                 raise RuntimeError(f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}") from exc
 
-    # 3. Fetch metadata and structure
-    meta = col.get_document(doc_id)
-    doc_name: str = meta.get("doc_name", pdf_path.stem)
-    description: str = meta.get("doc_description", "")
-
-    structure: list = col.get_document_structure(doc_id)
+    # 3. Fetch complete document (metadata + structure + text)
+    doc = col.get_document(doc_id, include_text=True)
+    doc_name: str = doc.get("doc_name", pdf_path.stem)
+    description: str = doc.get("doc_description", "")
+    structure: list = doc.get("structure", [])
 
     tree = {
         "doc_name": doc_name,
