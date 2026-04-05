@@ -8,3 +8,8 @@ venv/
 *.db
 .DS_Store
 .env
+
+# Knowledge base test artifacts
+raw/
+wiki/
+.okb/
