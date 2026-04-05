@@ -11,7 +11,7 @@ def test_default_config_keys():
 
 
 def test_default_config_values():
-    assert DEFAULT_CONFIG["model"] == "gpt-4o"
+    assert DEFAULT_CONFIG["model"] == "gpt-5.4"
     assert DEFAULT_CONFIG["api_key_env"] == "OPENAI_API_KEY"
     assert DEFAULT_CONFIG["language"] == "en"
     assert DEFAULT_CONFIG["pageindex_threshold"] == 50
