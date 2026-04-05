@@ -3,7 +3,7 @@ import pytest
 from click.testing import CliRunner
 
 from openkb.cli import cli
-from openkb.schema import SCHEMA_MD
+from openkb.schema import AGENTS_MD
 
 
 def test_init_creates_structure(tmp_path):
@@ -24,7 +24,9 @@ def test_init_creates_structure(tmp_path):
         assert (cwd / ".okb").is_dir()
 
         # Files
-        assert (cwd / "wiki" / "SCHEMA.md").is_file()
+        assert (cwd / "wiki" / "AGENTS.md").is_file()
+        assert (cwd / "wiki" / "log.md").is_file()
+        assert (cwd / "wiki" / "explorations").is_dir()
         assert (cwd / "wiki" / "index.md").is_file()
         assert (cwd / ".okb" / "config.yaml").is_file()
         assert (cwd / ".okb" / "hashes.json").is_file()
@@ -35,7 +37,7 @@ def test_init_creates_structure(tmp_path):
 
         # index.md header
         index_content = (cwd / "wiki" / "index.md").read_text()
-        assert index_content == "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n"
+        assert index_content == "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n"
 
 
 def test_init_schema_content(tmp_path):
@@ -45,8 +47,8 @@ def test_init_schema_content(tmp_path):
         assert result.exit_code == 0
 
         from pathlib import Path
-        schema_content = Path("wiki/SCHEMA.md").read_text()
-        assert schema_content == SCHEMA_MD
+        agents_content = Path("wiki/AGENTS.md").read_text()
+        assert agents_content == AGENTS_MD
 
 
 def test_init_already_exists(tmp_path):

@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 
 from openkb.config import DEFAULT_CONFIG, load_config, save_config
 from openkb.converter import convert_document
-from openkb.schema import SCHEMA_MD
+from openkb.log import append_log
+from openkb.schema import AGENTS_MD
 
 load_dotenv()
 
@@ -96,6 +97,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
         doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
         registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
 
+    append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
 
 
@@ -121,14 +123,16 @@ def init():
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
+    Path("wiki/explorations").mkdir(parents=True, exist_ok=True)
     Path("wiki/reports").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
-    Path("wiki/SCHEMA.md").write_text(SCHEMA_MD, encoding="utf-8")
+    Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
     Path("wiki/index.md").write_text(
-        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n",
+        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
         encoding="utf-8",
     )
+    Path("wiki/log.md").write_text("# Operations Log\n\n", encoding="utf-8")
 
     # Create .okb/ state directory
     okb_dir.mkdir()
@@ -174,7 +178,8 @@ def add(path):
 
 @cli.command()
 @click.argument("question")
-def query(question):
+@click.option("--save", is_flag=True, default=False, help="Save the answer to wiki/explorations/.")
+def query(question, save):
     """Query the knowledge base with QUESTION."""
     kb_dir = _find_kb_dir()
     if kb_dir is None:
@@ -192,6 +197,20 @@ def query(question):
         click.echo(answer)
     except Exception as exc:
         click.echo(f"[ERROR] Query failed: {exc}")
+        return
+
+    append_log(kb_dir / "wiki", "query", question)
+
+    if save and answer:
+        import re
+        slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
+        explore_dir = kb_dir / "wiki" / "explorations"
+        explore_dir.mkdir(parents=True, exist_ok=True)
+        explore_path = explore_dir / f"{slug}.md"
+        explore_path.write_text(
+            f"---\nquery: \"{question}\"\n---\n\n{answer}\n", encoding="utf-8"
+        )
+        click.echo(f"\nSaved to {explore_path}")
 
 
 @cli.command()
@@ -252,6 +271,7 @@ def lint(fix):
     report_path = reports_dir / f"lint_{timestamp}.md"
     report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
     report_path.write_text(report_content, encoding="utf-8")
+    append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
     click.echo(f"\nReport written to {report_path}")
 
 
