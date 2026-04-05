@@ -45,16 +45,21 @@ class TestConvertDocumentMarkdown:
         assert result.source_path.read_text(encoding="utf-8").startswith("# Notes")
 
     def test_md_duplicate_skipped(self, kb_dir):
-        """Second call with same file returns skipped=True."""
+        """Second call with same file returns skipped=True when hash is registered."""
+        from openkb.state import HashRegistry
+
         src = kb_dir / "raw" / "notes.md"
         src.write_text("# Notes\n\nSome content here.", encoding="utf-8")
 
-        convert_document(src, kb_dir)  # first call
-        result = convert_document(src, kb_dir)  # second call
+        result1 = convert_document(src, kb_dir)  # first call
+        # Simulate CLI registering the hash after successful compilation
+        registry = HashRegistry(kb_dir / ".okb" / "hashes.json")
+        registry.add(result1.file_hash, {"name": src.name, "type": "md"})
 
-        assert result.skipped is True
-        assert result.source_path is None
-        assert result.raw_path is None
+        result2 = convert_document(src, kb_dir)  # second call
+        assert result2.skipped is True
+        assert result2.source_path is None
+        assert result2.raw_path is None
 
     def test_md_raw_file_copied(self, kb_dir):
         """The original file should also be copied to raw/."""
