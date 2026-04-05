@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
-    "pageindex @ git+https://github.com/KylinMountain/PageIndex.git@feat/sdk",
+    "pageindex @ git+https://github.com/KylinMountain/PageIndex.git@feat/sdk#egg=pageindex",
     "markitdown",
     "click>=8.0",
     "watchdog>=3.0",

@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "gpt-4o",
+    "model": "gpt-5.4",
     "api_key_env": "OPENAI_API_KEY",
     "language": "en",
     "pageindex_threshold": 50,
