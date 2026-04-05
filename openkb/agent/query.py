@@ -92,7 +92,7 @@ def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> 
 
     # 3. Fetch those pages
     try:
-        pages = col._backend.get_page_content("default", doc_id, page_spec)
+        pages = col.get_page_content(doc_id, page_spec)
     except Exception as exc:
         return f"Error fetching page content: {exc}"
 

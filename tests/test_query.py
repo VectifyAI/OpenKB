@@ -53,7 +53,7 @@ class TestPageindexRetrieve:
 
         mock_col = MagicMock()
         mock_col.get_document_structure.return_value = mock_structure
-        mock_col._backend.get_page_content.return_value = mock_pages
+        mock_col.get_page_content.return_value = mock_pages
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
