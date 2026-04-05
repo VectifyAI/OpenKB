@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 AGENTS_MD = """\
 # Wiki Schema
 
@@ -39,3 +43,19 @@ Operations: ingest, query, lint
 
 # Backward compat alias
 SCHEMA_MD = AGENTS_MD
+
+
+def get_agents_md(wiki_dir: Path) -> str:
+    """Return the AGENTS.md content, reading from disk if available.
+
+    Args:
+        wiki_dir: Path to the wiki directory (containing AGENTS.md).
+
+    Returns:
+        Content of wiki_dir/AGENTS.md if it exists, otherwise the hardcoded
+        AGENTS_MD default.
+    """
+    agents_file = wiki_dir / "AGENTS.md"
+    if agents_file.exists():
+        return agents_file.read_text(encoding="utf-8")
+    return AGENTS_MD
