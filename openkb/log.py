@@ -8,10 +8,10 @@ from pathlib import Path
 def append_log(wiki_dir: Path, operation: str, description: str) -> None:
     """Append an entry to wiki/log.md.
 
-    Format: ``## [YYYY-MM-DD] operation | description``
+    Format: ``## [YYYY-MM-DD HH:MM:SS] operation | description``
     """
     log_path = wiki_dir / "log.md"
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = f"## [{date_str}] {operation} | {description}\n\n"
 
     if not log_path.exists():
