@@ -43,8 +43,12 @@ def _all_wiki_pages(wiki: Path) -> dict[str, Path]:
 
 
 def _extract_wikilinks(text: str) -> list[str]:
-    """Return all wikilink targets found in *text*."""
-    return _WIKILINK_RE.findall(text)
+    """Return all wikilink targets found in *text*.
+
+    Handles ``[[target|display text]]`` alias syntax — only the target is returned.
+    """
+    raw = _WIKILINK_RE.findall(text)
+    return [link.split("|")[0].strip() for link in raw]
 
 
 def find_broken_links(wiki: Path) -> list[str]:

@@ -42,10 +42,14 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     model: str = config.get("model", "gpt-5.4")
     pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
 
+    # Images go directly to wiki/sources/images/{stem}/ via PageIndex
+    images_dir = str(kb_dir / "wiki" / "sources" / "images" / pdf_path.stem)
+
     index_config = IndexConfig(
         if_add_node_text=True,
         if_add_node_summary=True,
         if_add_doc_description=True,
+        images_dir=images_dir,
     )
 
     client = PageIndexClient(
