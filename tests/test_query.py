@@ -58,7 +58,7 @@ class TestPageindexRetrieve:
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.LocalClient", return_value=mock_client), \
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client), \
              patch("openkb.agent.query.litellm.completion") as mock_llm:
             mock_llm.return_value = MagicMock(
                 choices=[MagicMock(message=MagicMock(content="1-2"))]
@@ -75,7 +75,7 @@ class TestPageindexRetrieve:
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.LocalClient", return_value=mock_client):
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
             result = pageindex_retrieve("doc456", "What?", "/db", "gpt-4o-mini")
 
         assert "No structure found" in result
@@ -87,7 +87,7 @@ class TestPageindexRetrieve:
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.LocalClient", return_value=mock_client):
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
             result = pageindex_retrieve("doc789", "What?", "/db", "gpt-4o-mini")
 
         assert "Error" in result

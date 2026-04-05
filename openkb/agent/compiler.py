@@ -8,7 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from agents import Agent, Runner, function_tool
-from pageindex import LocalClient
+import os
+
+from pageindex import PageIndexClient
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file, write_wiki_file
 from openkb.schema import SCHEMA_MD, get_agents_md
@@ -125,11 +127,13 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
     okb_dir = Path(kb_dir) / ".okb"
     config = load_config(okb_dir / "config.yaml")
     _model = config.get("model", model)
-    client = LocalClient(
+    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
+    client = PageIndexClient(
+        api_key=pi_api_key or None,
         model=_model,
-        storage_path=str(okb_dir / "pageindex.db"),
+        storage_path=str(okb_dir),
     )
-    _collection_name = "default"
+    col = client.collection()
 
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _LONG_DOC_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
@@ -171,8 +175,7 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
             doc_id: Document identifier from PageIndex.
             pages: Page range string, e.g. '1-5' or '3,7,12'.
         """
-        col = client.collection(_collection_name)
-        results = col._backend.get_page_content(_collection_name, doc_id, pages)
+        results = col.get_page_content(doc_id, pages)
         if not results:
             return "No content found for the given pages."
         parts = []
