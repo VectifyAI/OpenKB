@@ -1,0 +1,65 @@
+"""Plain wiki tool functions for the OpenKB agent.
+
+These functions are intentionally NOT decorated with ``@function_tool`` here.
+Decoration happens when building the agent so that the same functions can be
+tested in isolation without requiring the openai-agents runtime.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def list_wiki_files(directory: str, wiki_root: str) -> str:
+    """List all Markdown files in a wiki subdirectory.
+
+    Args:
+        directory: Subdirectory path relative to *wiki_root* (e.g. ``"sources"``).
+        wiki_root: Absolute path to the wiki root directory.
+
+    Returns:
+        Newline-separated list of ``.md`` filenames found in *directory*,
+        or ``"No files found."`` if the directory is empty or does not exist.
+    """
+    target = Path(wiki_root) / directory
+    if not target.exists() or not target.is_dir():
+        return "No files found."
+
+    md_files = sorted(p.name for p in target.iterdir() if p.suffix == ".md")
+    if not md_files:
+        return "No files found."
+    return "\n".join(md_files)
+
+
+def read_wiki_file(path: str, wiki_root: str) -> str:
+    """Read a Markdown file from the wiki.
+
+    Args:
+        path: File path relative to *wiki_root* (e.g. ``"sources/notes.md"``).
+        wiki_root: Absolute path to the wiki root directory.
+
+    Returns:
+        File contents as a string, or ``"File not found: {path}"`` if missing.
+    """
+    full_path = Path(wiki_root) / path
+    if not full_path.exists():
+        return f"File not found: {path}"
+    return full_path.read_text(encoding="utf-8")
+
+
+def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
+    """Write or overwrite a Markdown file in the wiki.
+
+    Parent directories are created automatically if they do not exist.
+
+    Args:
+        path: File path relative to *wiki_root* (e.g. ``"concepts/attention.md"``).
+        content: Markdown content to write.
+        wiki_root: Absolute path to the wiki root directory.
+
+    Returns:
+        ``"Written: {path}"`` on success.
+    """
+    full_path = Path(wiki_root) / path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(content, encoding="utf-8")
+    return f"Written: {path}"
