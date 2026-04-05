@@ -49,7 +49,7 @@ def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> 
 
     # 1. Get document structure
     try:
-        structure = col._backend.get_document_structure("default", doc_id)
+        structure = col.get_document_structure(doc_id)
     except Exception as exc:
         return f"Error retrieving document structure: {exc}"
 

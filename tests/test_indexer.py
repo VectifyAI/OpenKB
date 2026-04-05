@@ -22,10 +22,8 @@ class TestIndexLongDocument:
             "doc_description": sample_tree["doc_description"],
             "doc_type": "pdf",
         }
-        # Expose structure via _backend mock (used when backend is accessed directly)
-        col._backend = MagicMock()
-        col._backend.get_document_structure.return_value = sample_tree["structure"]
-        col._name = "default"
+        # get_document_structure returns the tree structure list
+        col.get_document_structure.return_value = sample_tree["structure"]
         return col
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):

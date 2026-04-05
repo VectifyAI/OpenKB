@@ -17,7 +17,7 @@ load_dotenv()
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
     ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx",
-    ".html", ".htm", ".txt", ".csv", ".doc",
+    ".html", ".htm", ".txt", ".csv",
 }
 
 
