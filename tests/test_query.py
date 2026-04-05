@@ -1,0 +1,125 @@
+"""Tests for openkb.agent.query (Task 11)."""
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from openkb.agent.query import build_query_agent, pageindex_retrieve, run_query
+from openkb.schema import SCHEMA_MD
+
+
+class TestBuildQueryAgent:
+    def test_agent_name(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        assert agent.name == "wiki-query"
+
+    def test_agent_has_three_tools(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        assert len(agent.tools) == 3
+
+    def test_agent_tool_names(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        names = {t.name for t in agent.tools}
+        assert "list_files" in names
+        assert "read_file" in names
+        assert "retrieve" in names
+
+    def test_schema_in_instructions(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        assert SCHEMA_MD in agent.instructions
+
+    def test_agent_model(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "my-model")
+        assert agent.model == "my-model"
+
+
+class TestPageindexRetrieve:
+    def test_returns_page_content(self, tmp_path):
+        mock_structure = [
+            {
+                "node_id": "n1",
+                "title": "Introduction",
+                "start_index": 1,
+                "end_index": 5,
+                "summary": "Overview section",
+            }
+        ]
+        mock_pages = [
+            {"page_index": 1, "text": "Introduction text here."},
+            {"page_index": 2, "text": "More intro content."},
+        ]
+
+        mock_col = MagicMock()
+        mock_col._backend.get_document_structure.return_value = mock_structure
+        mock_col._backend.get_page_content.return_value = mock_pages
+
+        mock_client = MagicMock()
+        mock_client.collection.return_value = mock_col
+
+        with patch("openkb.agent.query.LocalClient", return_value=mock_client), \
+             patch("openkb.agent.query.litellm.completion") as mock_llm:
+            mock_llm.return_value = MagicMock(
+                choices=[MagicMock(message=MagicMock(content="1-2"))]
+            )
+            result = pageindex_retrieve("doc123", "What is the intro?", "/db", "gpt-4o-mini")
+
+        assert "Introduction text here." in result
+        assert "More intro content." in result
+
+    def test_handles_empty_structure(self, tmp_path):
+        mock_col = MagicMock()
+        mock_col._backend.get_document_structure.return_value = []
+
+        mock_client = MagicMock()
+        mock_client.collection.return_value = mock_col
+
+        with patch("openkb.agent.query.LocalClient", return_value=mock_client):
+            result = pageindex_retrieve("doc456", "What?", "/db", "gpt-4o-mini")
+
+        assert "No structure found" in result
+
+    def test_handles_structure_error(self, tmp_path):
+        mock_col = MagicMock()
+        mock_col._backend.get_document_structure.side_effect = RuntimeError("DB error")
+
+        mock_client = MagicMock()
+        mock_client.collection.return_value = mock_col
+
+        with patch("openkb.agent.query.LocalClient", return_value=mock_client):
+            result = pageindex_retrieve("doc789", "What?", "/db", "gpt-4o-mini")
+
+        assert "Error" in result
+
+
+class TestRunQuery:
+    @pytest.mark.asyncio
+    async def test_run_query_returns_final_output(self, tmp_path):
+        (tmp_path / "wiki").mkdir()
+        (tmp_path / ".okb").mkdir()
+
+        mock_result = MagicMock()
+        mock_result.final_output = "The answer is 42."
+
+        with patch("openkb.agent.query.Runner.run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = mock_result
+            answer = await run_query("What is the answer?", tmp_path, "gpt-4o-mini")
+
+        assert answer == "The answer is 42."
+
+    @pytest.mark.asyncio
+    async def test_run_query_passes_question_to_agent(self, tmp_path):
+        (tmp_path / "wiki").mkdir()
+        (tmp_path / ".okb").mkdir()
+
+        captured = {}
+
+        async def fake_run(agent, message, **kwargs):
+            captured["message"] = message
+            return MagicMock(final_output="answer")
+
+        with patch("openkb.agent.query.Runner.run", side_effect=fake_run):
+            await run_query("How does attention work?", tmp_path, "gpt-4o-mini")
+
+        assert "How does attention work?" in captured["message"]
