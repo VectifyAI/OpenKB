@@ -5,7 +5,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from pageindex import IndexConfig, LocalClient
+import os
+
+from pageindex import IndexConfig, PageIndexClient
 
 from openkb.config import load_config
 from openkb.tree_renderer import render_source_md, render_summary_md
@@ -37,7 +39,8 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
 
-    model: str = config.get("llm_model") or config.get("model", "gpt-4o-mini")
+    model: str = config.get("model", "gpt-5.4")
+    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
 
     index_config = IndexConfig(
         if_add_node_text=True,
@@ -45,12 +48,13 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         if_add_doc_description=True,
     )
 
-    client = LocalClient(
+    client = PageIndexClient(
+        api_key=pi_api_key or None,
         model=model,
+        storage_path=str(okb_dir),
         index_config=index_config,
-        storage_path=str(okb_dir / "pageindex.db"),
     )
-    col = client.collection("default")
+    col = client.collection()
 
     # 2. Add PDF → doc_id (retry up to 3 times — PageIndex TOC accuracy is stochastic)
     max_retries = 3
