@@ -52,7 +52,7 @@ class TestPageindexRetrieve:
         ]
 
         mock_col = MagicMock()
-        mock_col._backend.get_document_structure.return_value = mock_structure
+        mock_col.get_document_structure.return_value = mock_structure
         mock_col._backend.get_page_content.return_value = mock_pages
 
         mock_client = MagicMock()
@@ -70,7 +70,7 @@ class TestPageindexRetrieve:
 
     def test_handles_empty_structure(self, tmp_path):
         mock_col = MagicMock()
-        mock_col._backend.get_document_structure.return_value = []
+        mock_col.get_document_structure.return_value = []
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
@@ -82,7 +82,7 @@ class TestPageindexRetrieve:
 
     def test_handles_structure_error(self, tmp_path):
         mock_col = MagicMock()
-        mock_col._backend.get_document_structure.side_effect = RuntimeError("DB error")
+        mock_col.get_document_structure.side_effect = RuntimeError("DB error")
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col

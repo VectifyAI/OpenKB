@@ -48,20 +48,29 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     client = LocalClient(
         model=model,
         index_config=index_config,
-        storage_path=str(okb_dir / "pageindex"),
+        storage_path=str(okb_dir / "pageindex.db"),
     )
     col = client.collection("default")
 
-    # 2. Add PDF → doc_id
-    doc_id = col.add(str(pdf_path))
-    logger.info("PageIndex added %s → doc_id=%s", pdf_path.name, doc_id)
+    # 2. Add PDF → doc_id (retry up to 3 times — PageIndex TOC accuracy is stochastic)
+    max_retries = 3
+    doc_id = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            doc_id = col.add(str(pdf_path))
+            logger.info("PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt)
+            break
+        except Exception as exc:
+            logger.warning("PageIndex attempt %d/%d failed for %s: %s", attempt, max_retries, pdf_path.name, exc)
+            if attempt == max_retries:
+                raise RuntimeError(f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}") from exc
 
     # 3. Fetch metadata and structure
     meta = col.get_document(doc_id)
     doc_name: str = meta.get("doc_name", pdf_path.stem)
     description: str = meta.get("doc_description", "")
 
-    structure: list = col._backend.get_document_structure(col._name, doc_id)
+    structure: list = col.get_document_structure(doc_id)
 
     tree = {
         "doc_name": doc_name,
