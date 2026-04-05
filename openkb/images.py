@@ -7,6 +7,8 @@ import re
 import shutil
 from pathlib import Path
 
+import pymupdf
+
 logger = logging.getLogger(__name__)
 
 # Matches: ![alt](data:image/ext;base64,DATA)
@@ -14,6 +16,49 @@ _BASE64_RE = re.compile(r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)')
 
 # Matches: ![alt](relative/path) — excludes http(s):// and data: URIs
 _RELATIVE_RE = re.compile(r'!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)')
+
+
+def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[int, list[str]]:
+    """Extract images from a PDF using pymupdf and save to disk.
+
+    Returns a mapping of page_number (1-based) → list of relative image paths,
+    so the caller can insert image references into the converted markdown.
+    """
+    images_dir.mkdir(parents=True, exist_ok=True)
+    page_images: dict[int, list[str]] = {}
+    counter = 0
+
+    doc = pymupdf.open(str(pdf_path))
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        image_list = page.get_images(full=True)
+        for img_info in image_list:
+            xref = img_info[0]
+            try:
+                base_image = doc.extract_image(xref)
+            except Exception:
+                logger.warning("Failed to extract image xref=%d from page %d", xref, page_num + 1)
+                continue
+
+            if not base_image or not base_image.get("image"):
+                continue
+
+            ext = base_image.get("ext", "png")
+            image_bytes = base_image["image"]
+
+            # Skip tiny images (likely icons/bullets, < 2KB)
+            if len(image_bytes) < 2048:
+                continue
+
+            counter += 1
+            filename = f"img_{counter:03d}.{ext}"
+            (images_dir / filename).write_bytes(image_bytes)
+
+            rel_path = f"images/{doc_name}/{filename}"
+            page_images.setdefault(page_num + 1, []).append(rel_path)
+
+    doc.close()
+    return page_images
 
 
 def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str:
