@@ -59,7 +59,8 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     config = load_config(okb_dir / "config.yaml")
 
     model: str = config.get("model", "gpt-5.4")
-    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
+    pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
+    pi_api_key = os.environ.get(pi_key_env, "")
 
     index_config = IndexConfig(
         if_add_node_text=True,

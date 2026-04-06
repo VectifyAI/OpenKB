@@ -127,7 +127,8 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
     okb_dir = Path(kb_dir) / ".okb"
     config = load_config(okb_dir / "config.yaml")
     _model = config.get("model", model)
-    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
+    pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
+    pi_api_key = os.environ.get(pi_key_env, "")
     client = PageIndexClient(
         api_key=pi_api_key or None,
         model=_model,
