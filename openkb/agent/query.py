@@ -33,14 +33,8 @@ information, say so clearly.
 def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: str) -> str:
     """Retrieve relevant content from a long document via PageIndex.
 
-    Args:
-        doc_id: PageIndex document identifier.
-        question: The user's question.
-        okb_dir: Path to the .okb/ state directory.
-        model: LLM model to use for relevance selection.
-
-    Returns:
-        Formatted string with retrieved page content.
+    For cloud-indexed docs: delegates to col.query() directly.
+    For local docs: uses structure-based page selection + get_page_content.
     """
     from openkb.config import load_config
     config = load_config(Path(okb_dir) / "config.yaml")
@@ -53,16 +47,20 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     )
     col = client.collection()
 
-    # 1. Get document structure
+    # Try structure-based retrieval first (works for local docs)
     try:
         structure = col.get_document_structure(doc_id)
-    except Exception as exc:
-        return f"Error retrieving document structure: {exc}"
+    except Exception:
+        structure = None
 
     if not structure:
-        return "No structure found for document."
+        # Fallback: delegate to PageIndex query (works for cloud docs)
+        try:
+            return col.query(question, doc_ids=[doc_id])
+        except Exception as exc:
+            return f"Error querying document: {exc}"
 
-    # Build a text summary of sections for the LLM
+    # Local path: select relevant pages via LLM, then fetch content
     sections = []
     for idx, node in enumerate(structure):
         title = node.get("title", f"Section {idx + 1}")
@@ -161,11 +159,14 @@ def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = 
         """
         return _pageindex_retrieve_impl(doc_id, question, okb_dir, model)
 
+    from agents.model_settings import ModelSettings
+
     return Agent(
         name="wiki-query",
         instructions=instructions,
         tools=[list_files, read_file, pageindex_retrieve],
         model=model,
+        model_settings=ModelSettings(parallel_tool_calls=False),
     )
 
 
