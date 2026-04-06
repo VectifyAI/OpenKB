@@ -74,9 +74,10 @@ class TestPageindexRetrieve:
         assert "Introduction text here." in result
         assert "More intro content." in result
 
-    def test_handles_empty_structure(self, tmp_path):
+    def test_empty_structure_falls_back_to_query(self, tmp_path):
         mock_col = MagicMock()
         mock_col.get_document_structure.return_value = []
+        mock_col.query.return_value = "Fallback answer from PageIndex query."
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
@@ -84,11 +85,13 @@ class TestPageindexRetrieve:
         with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
             result = _pageindex_retrieve_impl("doc456", "What?", "/db", "gpt-4o-mini")
 
-        assert "No structure found" in result
+        assert "Fallback answer" in result
+        mock_col.query.assert_called_once()
 
-    def test_handles_structure_error(self, tmp_path):
+    def test_structure_error_falls_back_to_query(self, tmp_path):
         mock_col = MagicMock()
         mock_col.get_document_structure.side_effect = RuntimeError("DB error")
+        mock_col.query.return_value = "Fallback answer."
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
@@ -96,7 +99,7 @@ class TestPageindexRetrieve:
         with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
             result = _pageindex_retrieve_impl("doc789", "What?", "/db", "gpt-4o-mini")
 
-        assert "Error" in result
+        assert "Fallback answer" in result
 
 
 class TestRunQuery:
