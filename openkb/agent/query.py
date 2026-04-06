@@ -60,12 +60,16 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
                 try:
                     async for event in stream:
                         if event.type == "answer_delta":
+                            sys.stdout.write(event.data)
+                            sys.stdout.flush()
                             collected.append(event.data)
                         elif event.type == "tool_call":
                             name = event.data.get("name", "")
                             args = event.data.get("args", "")
-                            sys.stderr.write(f"  [PageIndex] {name}({args})\n")
-                            sys.stderr.flush()
+                            sys.stdout.write(f"\n  [PageIndex] {name}({args})\n")
+                            sys.stdout.flush()
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
                 finally:
                     done.set()
 
