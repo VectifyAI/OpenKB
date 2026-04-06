@@ -7,7 +7,7 @@ name = "openkb"
 version = "0.1.0"
 description = "Karpathy's LLM Knowledge Base workflow — powered by PageIndex"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
     "pageindex @ git+https://github.com/KylinMountain/PageIndex.git@feat/sdk#egg=pageindex",
