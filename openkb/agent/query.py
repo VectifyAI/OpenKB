@@ -44,7 +44,8 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     """
     from openkb.config import load_config
     config = load_config(Path(okb_dir) / "config.yaml")
-    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
+    pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
+    pi_api_key = os.environ.get(pi_key_env, "")
     client = PageIndexClient(
         api_key=pi_api_key or None,
         model=model,
