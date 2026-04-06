@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +16,8 @@ from openkb.tree_renderer import render_source_md, render_summary_md
 
 logger = logging.getLogger(__name__)
 
+_IMG_REF_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
 
 @dataclass
 class IndexResult:
@@ -24,32 +28,43 @@ class IndexResult:
     tree: dict
 
 
-def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
-    """Index a long PDF document using PageIndex and write wiki pages.
+def _relocate_images(markdown: str, doc_stem: str, dest_images_dir: Path) -> str:
+    """Copy images from PageIndex internal paths to wiki/sources/images/ and rewrite refs.
 
-    Steps:
-    1. Create a :class:`~pageindex.LocalClient` with full node text, summary,
-       and doc description generation enabled.
-    2. Add the PDF to the default collection → receive ``doc_id``.
-    3. Fetch document metadata and structure from PageIndex storage.
-    4. Render and write ``wiki/sources/{stem}.md`` (source/pageindex view).
-    5. Render and write ``wiki/summaries/{stem}.md`` (summary view).
-    6. Return an :class:`IndexResult` with doc_id, description, and tree.
+    PageIndex stores images internally (e.g. .okb/files/{collection}/{doc_id}/images/).
+    We copy them to dest_images_dir and rewrite paths to be relative to the .md file
+    (i.e. images/{doc_stem}/filename).
     """
+    dest_images_dir.mkdir(parents=True, exist_ok=True)
+
+    def _replace(match: re.Match) -> str:
+        alt = match.group(1)
+        src_path_str = match.group(2)
+        src_path = Path(src_path_str)
+        if not src_path.exists():
+            logger.warning("Image not found: %s", src_path)
+            return match.group(0)
+        filename = src_path.name
+        dest = dest_images_dir / filename
+        if not dest.exists():
+            shutil.copy2(src_path, dest)
+        return f"![{alt}](images/{doc_stem}/{filename})"
+
+    return _IMG_REF_RE.sub(_replace, markdown)
+
+
+def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
+    """Index a long PDF document using PageIndex and write wiki pages."""
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
 
     model: str = config.get("model", "gpt-5.4")
     pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
 
-    # Images go directly to wiki/sources/images/{stem}/ via PageIndex
-    images_dir = str(kb_dir / "wiki" / "sources" / "images" / pdf_path.stem)
-
     index_config = IndexConfig(
         if_add_node_text=True,
         if_add_node_summary=True,
         if_add_doc_description=True,
-        images_dir=images_dir,
     )
 
     client = PageIndexClient(
@@ -60,7 +75,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     )
     col = client.collection()
 
-    # 2. Add PDF → doc_id (retry up to 3 times — PageIndex TOC accuracy is stochastic)
+    # Add PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
     max_retries = 3
     doc_id = None
     for attempt in range(1, max_retries + 1):
@@ -73,7 +88,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
             if attempt == max_retries:
                 raise RuntimeError(f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}") from exc
 
-    # 3. Fetch complete document (metadata + structure + text)
+    # Fetch complete document (metadata + structure + text)
     doc = col.get_document(doc_id, include_text=True)
     doc_name: str = doc.get("doc_name", pdf_path.stem)
     description: str = doc.get("doc_description", "")
@@ -85,13 +100,16 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         "structure": structure,
     }
 
-    # 4. Write wiki/sources/
+    # Write wiki/sources/ — copy images from PageIndex internal location
+    # and rewrite paths to be relative to the .md file (images/{stem}/filename)
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
+    dest_images_dir = sources_dir / "images" / pdf_path.stem
     source_md = render_source_md(tree, doc_name, doc_id)
+    source_md = _relocate_images(source_md, pdf_path.stem, dest_images_dir)
     (sources_dir / f"{pdf_path.stem}.md").write_text(source_md, encoding="utf-8")
 
-    # 5. Write wiki/summaries/
+    # Write wiki/summaries/ (no images, just summaries)
     summaries_dir = kb_dir / "wiki" / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     summary_md = render_summary_md(tree, doc_name, doc_id)
