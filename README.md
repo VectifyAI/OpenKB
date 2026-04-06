@@ -103,6 +103,8 @@ wiki/
 
 Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries — the LLM reads the tree instead of the full text, avoiding context window limits while retaining structural understanding.
 
+> **⚡ Speed up with PageIndex Cloud API** — By default, PageIndex runs locally. For faster indexing of long documents, set `pageindex_api_key_env` in your config to use the [PageIndex Cloud API](https://pageindex.dev). Apply for an API key at [pageindex.dev](https://pageindex.dev).
+
 ### The wiki compiles knowledge
 
 When you add a document, the LLM:
@@ -137,6 +139,7 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 api_key_env: OPENAI_API_KEY      # Environment variable for API key
 language: en                      # Wiki output language
 pageindex_threshold: 50           # PDF pages threshold for PageIndex
+pageindex_api_key_env: PAGEINDEX_API_KEY  # (Optional) Use PageIndex Cloud API for faster indexing
 ```
 
 ### AGENTS.md
