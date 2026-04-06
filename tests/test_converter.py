@@ -20,6 +20,8 @@ class TestGetPdfPageCount:
         """Mock pymupdf to return a doc with 5 pages."""
         fake_doc = MagicMock()
         fake_doc.page_count = 5
+        fake_doc.__enter__ = MagicMock(return_value=fake_doc)
+        fake_doc.__exit__ = MagicMock(return_value=False)
         with patch("openkb.converter.pymupdf.open", return_value=fake_doc):
             count = get_pdf_page_count(tmp_path / "fake.pdf")
         assert count == 5
@@ -93,6 +95,8 @@ class TestConvertDocumentPdfShort:
         ):
             fake_doc = MagicMock()
             fake_doc.page_count = 5  # below default threshold of 50
+            fake_doc.__enter__ = MagicMock(return_value=fake_doc)
+            fake_doc.__exit__ = MagicMock(return_value=False)
             mock_mu.return_value = fake_doc
             mock_mid_cls.return_value.convert.return_value = fake_result
 
@@ -120,6 +124,8 @@ class TestConvertDocumentPdfLong:
         ):
             fake_doc = MagicMock()
             fake_doc.page_count = 200  # above threshold
+            fake_doc.__enter__ = MagicMock(return_value=fake_doc)
+            fake_doc.__exit__ = MagicMock(return_value=False)
             mock_mu.return_value = fake_doc
 
             result = convert_document(src, kb_dir)
