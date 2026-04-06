@@ -103,7 +103,7 @@ wiki/
 
 Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries — the LLM reads the tree instead of the full text, avoiding context window limits while retaining structural understanding.
 
-> **⚡ PageIndex Cloud API** — By default, PageIndex runs locally. Set `PAGEINDEX_API_KEY` in your `.env` to use [PageIndex Cloud](https://pageindex.ai/) for faster indexing. Get an API key at [pageindex.ai](https://pageindex.ai/).
+> **⚡ PageIndex Cloud API** — By default, PageIndex runs locally. Set `PAGEINDEX_API_KEY` in your `.env` to use [PageIndex Cloud](https://pageindex.ai/) for faster indexing. Get an API key at [pageindex.ai/developer](https://pageindex.ai/developer).
 
 ### The wiki compiles knowledge
 
