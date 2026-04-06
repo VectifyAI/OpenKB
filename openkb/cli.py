@@ -152,9 +152,13 @@ def init():
     api_key_env = click.prompt("API key env var", default=DEFAULT_CONFIG["api_key_env"])
     language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
     pageindex_threshold = click.prompt(
-        "PageIndex threshold",
+        "PageIndex threshold (pages)",
         default=DEFAULT_CONFIG["pageindex_threshold"],
         type=int,
+    )
+    pageindex_api_key_env = click.prompt(
+        "PageIndex cloud API key env var (leave empty for local)",
+        default=DEFAULT_CONFIG["pageindex_api_key_env"],
     )
 
     # Create directory structure
@@ -180,6 +184,7 @@ def init():
         "api_key_env": api_key_env,
         "language": language,
         "pageindex_threshold": pageindex_threshold,
+        "pageindex_api_key_env": pageindex_api_key_env,
     }
     save_config(okb_dir / "config.yaml", config)
     (okb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")

@@ -8,6 +8,7 @@ def test_default_config_keys():
     assert "api_key_env" in DEFAULT_CONFIG
     assert "language" in DEFAULT_CONFIG
     assert "pageindex_threshold" in DEFAULT_CONFIG
+    assert "pageindex_api_key_env" in DEFAULT_CONFIG
 
 
 def test_default_config_values():

@@ -10,6 +10,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "api_key_env": "OPENAI_API_KEY",
     "language": "en",
     "pageindex_threshold": 50,
+    "pageindex_api_key_env": "",  # Set to env var name (e.g. PAGEINDEX_API_KEY) to use cloud PageIndex
 }
 
 
