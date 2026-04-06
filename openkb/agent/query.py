@@ -40,6 +40,7 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     config = load_config(Path(okb_dir) / "config.yaml")
     pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
     pi_api_key = os.environ.get(pi_key_env, "")
+    is_cloud = bool(pi_api_key)
     client = PageIndexClient(
         api_key=pi_api_key or None,
         model=model,
@@ -47,20 +48,14 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     )
     col = client.collection()
 
-    # Try structure-based retrieval first (works for local docs)
-    try:
-        structure = col.get_document_structure(doc_id)
-    except Exception:
-        structure = None
-
-    if not structure:
-        # Fallback: delegate to PageIndex query (works for cloud docs)
+    # Cloud: delegate to PageIndex's own query (it handles retrieval internally)
+    if is_cloud:
         try:
             return col.query(question, doc_ids=[doc_id])
         except Exception as exc:
-            return f"Error querying document: {exc}"
+            return f"Error querying cloud PageIndex: {exc}"
 
-    # Local path: select relevant pages via LLM, then fetch content
+    # Local: structure-based page selection + get_page_content
     sections = []
     for idx, node in enumerate(structure):
         title = node.get("title", f"Section {idx + 1}")
