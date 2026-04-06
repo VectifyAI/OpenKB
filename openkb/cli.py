@@ -359,14 +359,32 @@ def list_cmd():
         pages_str = str(pages) if pages else ""
         click.echo(f"  {name:<40} {display:<12} {pages_str:<8}")
 
+    # Display summaries
+    summaries_dir = kb_dir / "wiki" / "summaries"
+    if summaries_dir.exists():
+        summaries = sorted(p.stem for p in summaries_dir.glob("*.md"))
+        if summaries:
+            click.echo(f"\nSummaries ({len(summaries)}):")
+            for s in summaries:
+                click.echo(f"  - {s}")
+
     # Display concepts
     concepts_dir = kb_dir / "wiki" / "concepts"
     if concepts_dir.exists():
         concepts = sorted(p.stem for p in concepts_dir.glob("*.md"))
         if concepts:
-            click.echo("\nConcepts:")
+            click.echo(f"\nConcepts ({len(concepts)}):")
             for c in concepts:
                 click.echo(f"  - {c}")
+
+    # Display reports
+    reports_dir = kb_dir / "wiki" / "reports"
+    if reports_dir.exists():
+        reports = sorted(p.name for p in reports_dir.glob("*.md"))
+        if reports:
+            click.echo(f"\nReports ({len(reports)}):")
+            for r in reports:
+                click.echo(f"  - {r}")
 
 
 @cli.command()
