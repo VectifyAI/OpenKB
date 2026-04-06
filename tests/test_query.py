@@ -65,7 +65,8 @@ class TestPageindexRetrieve:
         mock_client.collection.return_value = mock_col
 
         with patch("openkb.agent.query.PageIndexClient", return_value=mock_client), \
-             patch("openkb.agent.query.litellm.completion") as mock_llm:
+             patch("openkb.agent.query.litellm.completion") as mock_llm, \
+             patch.dict("os.environ", {"PAGEINDEX_API_KEY": ""}, clear=False):
             mock_llm.return_value = MagicMock(
                 choices=[MagicMock(message=MagicMock(content="1-2"))]
             )
