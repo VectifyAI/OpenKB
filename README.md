@@ -97,7 +97,7 @@ wiki/
 | | Short documents | Long documents (PDF ≥ 50 pages) |
 |---|---|---|
 | **Convert** | markitdown → Markdown | PageIndex → tree index + summaries |
-| **Images** | Extracted from base64 | Pending PageIndex support |
+| **Images** | Extracted inline (pymupdf) | Extracted by PageIndex |
 | **LLM reads** | Full text | Tree summaries only |
 | **Result** | summary + concepts | summary + concepts |
 
@@ -179,8 +179,8 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]` — Obsidian
 
 ## License
 
-MIT
+Apache 2.0 — see [LICENSE](LICENSE)
 
 ## Acknowledgments
 
-Inspired by [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Powered by [PageIndex](https://github.com/VectifyAI/PageIndex).
+Inspired by [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Powered by [PageIndex](https://pageindex.ai/).
