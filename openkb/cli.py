@@ -246,8 +246,7 @@ def query(question, save):
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     try:
-        answer = asyncio.run(run_query(question, kb_dir, model))
-        click.echo(answer)
+        answer = asyncio.run(run_query(question, kb_dir, model, stream=True))
     except Exception as exc:
         click.echo(f"[ERROR] Query failed: {exc}")
         return

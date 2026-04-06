@@ -168,17 +168,20 @@ def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = 
     )
 
 
-async def run_query(question: str, kb_dir: Path, model: str) -> str:
+async def run_query(question: str, kb_dir: Path, model: str, stream: bool = False) -> str:
     """Run a Q&A query against the knowledge base.
 
     Args:
         question: The user's question.
         kb_dir: Root of the knowledge base.
         model: LLM model name.
+        stream: If True, print response tokens to stdout as they arrive.
 
     Returns:
         The agent's final answer as a string.
     """
+    import sys
+    from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openkb.config import load_config
 
     okb_dir = kb_dir / ".okb"
@@ -189,5 +192,22 @@ async def run_query(question: str, kb_dir: Path, model: str) -> str:
     okb_path = str(okb_dir)
 
     agent = build_query_agent(wiki_root, okb_path, model, language=language)
-    result = await Runner.run(agent, question)
-    return result.final_output or ""
+
+    if not stream:
+        result = await Runner.run(agent, question)
+        return result.final_output or ""
+
+    result = Runner.run_streamed(agent, question)
+    collected = []
+    async for event in result.stream_events():
+        if isinstance(event, RawResponsesStreamEvent):
+            data = event.data
+            if hasattr(data, "delta") and data.delta:
+                text = getattr(data.delta, "text", None) or ""
+                if text:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                    collected.append(text)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return "".join(collected) if collected else result.final_output or ""
