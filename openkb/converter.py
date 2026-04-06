@@ -29,8 +29,8 @@ class ConvertResult:
 
 def get_pdf_page_count(path: Path) -> int:
     """Return the number of pages in the PDF at *path* using pymupdf."""
-    doc = pymupdf.open(str(path))
-    return doc.page_count
+    with pymupdf.open(str(path)) as doc:
+        return doc.page_count
 
 
 def convert_document(src: Path, kb_dir: Path) -> ConvertResult:

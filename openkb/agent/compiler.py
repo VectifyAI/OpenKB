@@ -195,7 +195,7 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
         name="wiki-compiler",
         instructions=instructions,
         tools=[list_files, read_file, write_file, get_page_content],
-        model=model,
+        model=_model,
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
 
