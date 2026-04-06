@@ -102,11 +102,14 @@ def build_compiler_agent(wiki_root: str, model: str, language: str = "en") -> Ag
         """
         return write_wiki_file(path, content, wiki_root)
 
+    from agents.model_settings import ModelSettings
+
     return Agent(
         name="wiki-compiler",
         instructions=instructions,
         tools=[list_files, read_file, write_file],
         model=model,
+        model_settings=ModelSettings(parallel_tool_calls=False),
     )
 
 
@@ -186,11 +189,14 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
             parts.append(f"[Page {page_num}]\n{text}")
         return "\n\n".join(parts)
 
+    from agents.model_settings import ModelSettings
+
     return Agent(
         name="wiki-compiler",
         instructions=instructions,
         tools=[list_files, read_file, write_file, get_page_content],
         model=model,
+        model_settings=ModelSettings(parallel_tool_calls=False),
     )
 
 
