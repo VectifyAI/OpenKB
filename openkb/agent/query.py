@@ -202,8 +202,8 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
     async for event in result.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
             data = event.data
-            if hasattr(data, "delta") and data.delta:
-                text = getattr(data.delta, "text", None) or ""
+            if getattr(data, "type", "") == "response.output_text.delta":
+                text = getattr(data, "delta", "")
                 if text:
                     sys.stdout.write(text)
                     sys.stdout.flush()
