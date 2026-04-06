@@ -13,3 +13,7 @@ venv/
 raw/
 wiki/
 .okb/
+
+# Local only
+docs/
+.claude/
