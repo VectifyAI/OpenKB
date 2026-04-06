@@ -44,11 +44,45 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     is_cloud_doc = doc_id.startswith("pi-")
 
     if is_cloud_doc:
-        # Cloud doc: use cloud PageIndex query directly
+        # Cloud doc: use PageIndex streaming query (avoids timeout, shows progress)
+        import sys
+        import asyncio
+        import threading
+
         client = PageIndexClient(api_key=pi_api_key or None, model=model)
         col = client.collection()
         try:
-            return col.query(question, doc_ids=[doc_id])
+            stream = col.query(question, doc_ids=[doc_id], stream=True)
+            collected: list[str] = []
+            done = threading.Event()
+
+            async def _consume():
+                try:
+                    async for event in stream:
+                        if event.type == "answer_delta":
+                            sys.stdout.write(event.data)
+                            sys.stdout.flush()
+                            collected.append(event.data)
+                        elif event.type == "tool_call":
+                            name = event.data.get("name", "")
+                            args = event.data.get("args", "")
+                            sys.stdout.write(f"\n  [PageIndex] {name}({args})\n")
+                            sys.stdout.flush()
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                finally:
+                    done.set()
+
+            # Run streaming in a separate thread with its own event loop
+            def _run():
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(_consume())
+                loop.close()
+
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+            t.join(timeout=120)
+            return "".join(collected) if collected else "No answer from PageIndex."
         except Exception as exc:
             return f"Error querying cloud PageIndex: {exc}"
 
