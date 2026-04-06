@@ -75,32 +75,33 @@ class TestPageindexRetrieve:
         assert "Introduction text here." in result
         assert "More intro content." in result
 
-    def test_empty_structure_falls_back_to_query(self, tmp_path):
+    def test_cloud_doc_uses_col_query(self, tmp_path):
+        """Cloud doc (pi- prefix) delegates to col.query() directly."""
+        mock_col = MagicMock()
+        mock_col.query.return_value = "Cloud answer about MCP."
+
+        mock_client = MagicMock()
+        mock_client.collection.return_value = mock_col
+
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
+            result = _pageindex_retrieve_impl("pi-abc123", "What is MCP?", "/db", "gpt-4o-mini")
+
+        assert "Cloud answer" in result
+        mock_col.query.assert_called_once_with("What is MCP?", doc_ids=["pi-abc123"])
+
+    def test_local_empty_structure_returns_error(self, tmp_path):
+        """Local doc with empty structure returns error."""
         mock_col = MagicMock()
         mock_col.get_document_structure.return_value = []
-        mock_col.query.return_value = "Fallback answer from PageIndex query."
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
-            result = _pageindex_retrieve_impl("doc456", "What?", "/db", "gpt-4o-mini")
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client), \
+             patch.dict("os.environ", {"PAGEINDEX_API_KEY": ""}, clear=False):
+            result = _pageindex_retrieve_impl("local-uuid-123", "What?", "/db", "gpt-4o-mini")
 
-        assert "Fallback answer" in result
-        mock_col.query.assert_called_once()
-
-    def test_structure_error_falls_back_to_query(self, tmp_path):
-        mock_col = MagicMock()
-        mock_col.get_document_structure.side_effect = RuntimeError("DB error")
-        mock_col.query.return_value = "Fallback answer."
-
-        mock_client = MagicMock()
-        mock_client.collection.return_value = mock_col
-
-        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
-            result = _pageindex_retrieve_impl("doc789", "What?", "/db", "gpt-4o-mini")
-
-        assert "Fallback answer" in result
+        assert "No structure found" in result
 
 
 class TestRunQuery:

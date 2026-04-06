@@ -40,22 +40,29 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     config = load_config(Path(okb_dir) / "config.yaml")
     pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
     pi_api_key = os.environ.get(pi_key_env, "")
-    is_cloud = bool(pi_api_key)
-    client = PageIndexClient(
-        api_key=pi_api_key or None,
-        model=model,
-        storage_path=okb_dir,
-    )
-    col = client.collection()
+    # Determine if this doc was cloud-indexed (cloud doc_ids have "pi-" prefix)
+    is_cloud_doc = doc_id.startswith("pi-")
 
-    # Cloud: delegate to PageIndex's own query (it handles retrieval internally)
-    if is_cloud:
+    if is_cloud_doc:
+        # Cloud doc: use cloud PageIndex query directly
+        client = PageIndexClient(api_key=pi_api_key or None, model=model)
+        col = client.collection()
         try:
             return col.query(question, doc_ids=[doc_id])
         except Exception as exc:
             return f"Error querying cloud PageIndex: {exc}"
 
-    # Local: structure-based page selection + get_page_content
+    # Local doc: use local PageIndex with structure-based retrieval
+    client = PageIndexClient(model=model, storage_path=okb_dir)
+    col = client.collection()
+
+    try:
+        structure = col.get_document_structure(doc_id)
+    except Exception as exc:
+        return f"Error retrieving document structure: {exc}"
+
+    if not structure:
+        return "No structure found for document."
     sections = []
     for idx, node in enumerate(structure):
         title = node.get("title", f"Section {idx + 1}")
