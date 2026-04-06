@@ -181,7 +181,8 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
         The agent's final answer as a string.
     """
     import sys
-    from agents import RawResponsesStreamEvent, RunItemStreamEvent
+    from agents import RawResponsesStreamEvent, RunItemStreamEvent, ItemHelpers
+    from openai.types.responses import ResponseTextDeltaEvent
     from openkb.config import load_config
 
     okb_dir = kb_dir / ".okb"
@@ -201,13 +202,24 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
     collected = []
     async for event in result.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
-            data = event.data
-            if getattr(data, "type", "") == "response.output_text.delta":
-                text = getattr(data, "delta", "")
+            if isinstance(event.data, ResponseTextDeltaEvent):
+                text = event.data.delta
                 if text:
                     sys.stdout.write(text)
                     sys.stdout.flush()
                     collected.append(text)
+        elif isinstance(event, RunItemStreamEvent):
+            item = event.item
+            if item.type == "tool_call_item":
+                raw = item.raw_item
+                args = getattr(raw, "arguments", "{}")
+                sys.stdout.write(f"\n[tool] {raw.name}({args})\n")
+                sys.stdout.flush()
+            elif item.type == "tool_call_output_item":
+                output = str(item.output)
+                preview = output[:200] + "..." if len(output) > 200 else output
+                sys.stdout.write(f"[result] {preview}\n\n")
+                sys.stdout.flush()
     sys.stdout.write("\n")
     sys.stdout.flush()
     return "".join(collected) if collected else result.final_output or ""
