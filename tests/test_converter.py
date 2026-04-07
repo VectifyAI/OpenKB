@@ -94,7 +94,7 @@ class TestConvertDocumentPdfShort:
             patch("openkb.converter.MarkItDown") as mock_mid_cls,
         ):
             fake_doc = MagicMock()
-            fake_doc.page_count = 5  # below default threshold of 50
+            fake_doc.page_count = 5  # below default threshold of 20
             fake_doc.__enter__ = MagicMock(return_value=fake_doc)
             fake_doc.__exit__ = MagicMock(return_value=False)
             mock_mu.return_value = fake_doc

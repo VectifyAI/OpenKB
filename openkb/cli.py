@@ -6,7 +6,10 @@ import json
 import time
 from pathlib import Path
 
+import os
+
 import click
+import litellm
 from dotenv import load_dotenv
 
 from openkb.config import DEFAULT_CONFIG, load_config, save_config
@@ -15,6 +18,14 @@ from openkb.log import append_log
 from openkb.schema import AGENTS_MD
 
 load_dotenv()
+
+
+def _setup_llm_key(config: dict) -> None:
+    """Set LiteLLM API key from the configured env var (default: LLM_API_KEY)."""
+    env_var = config.get("api_key_env", DEFAULT_CONFIG["api_key_env"])
+    api_key = os.environ.get(env_var, "")
+    if api_key:
+        litellm.api_key = api_key
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
@@ -65,6 +76,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
+    _setup_llm_key(config)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     registry = HashRegistry(okb_dir / "hashes.json")
 
@@ -243,6 +255,7 @@ def query(question, save):
 
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
+    _setup_llm_key(config)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     try:
@@ -307,6 +320,7 @@ def lint(fix):
 
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
+    _setup_llm_key(config)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint

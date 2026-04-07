@@ -4,11 +4,11 @@
   <img src="https://docs.pageindex.ai/images/general/openkb.png" alt="OpenKB (by PageIndex)" />
 </a>
 
-# OpenKB (Open Knowledge Base)
+# OpenKB (by <a href="https://pageindex.ai/">PageIndex</a>)
 
-<h3 align="center">LLM-Powered Wiki Knowledge Base</h3>
+<h3 align="center">Open LLM Knowledge Base</h3>
 
-<p align="center"><i>Scale to long documents&nbsp; ◦ &nbsp;Reasoning-based retrieval&nbsp; ◦ &nbsp;Native multimodality support&nbsp; ◦ &nbsp;No Vector DB</i></p>
+<p align="center"><i>Scale to long documents&nbsp; • &nbsp;Reasoning-based retrieval&nbsp; • &nbsp;Native multimodality&nbsp; • &nbsp;No Vector DB</i></p>
 
 </div>
 
@@ -16,9 +16,9 @@
 
 # 📑 Introduction to OpenKB
 
-Andrej Karpathy [described](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) a workflow where LLMs compile raw documents into a structured, interlinked markdown wiki — summaries, concept pages, cross-references — all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
+Andrej Karpathy [described](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) a workflow where LLMs compile raw documents into a structured, interlinked markdown wiki; summaries, concept pages, cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
 
-**OpenKB** (Open Knowledge Base) is an open-source CLI that implements this workflow, powered by [PageIndex](https://github.com/VectifyAI/PageIndex) for long document understanding and [markitdown](https://github.com/microsoft/markitdown) for broad format support.
+**OpenKB** (Open Knowledge Base) is an open-source CLI that implements this workflow, powered by [**PageIndex**](https://github.com/VectifyAI/PageIndex) for long document understanding.
 
 ### Why not just RAG?
 
@@ -63,13 +63,13 @@ okb lint
 
 ### Set up your LLM
 
-Create a `.env` file with your API key:
+OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)). 
+
+Create a `.env` file with your LLM API key. Choose your LLM during `okb init` or edit [`.okb/config.yaml`](#configuration).
 
 ```bash
-OPENAI_API_KEY=sk-...
+LLM_API_KEY=your-llm-api-key-here
 ```
-
-OpenKB uses [LiteLLM](https://docs.litellm.ai/docs/providers) — any provider works. Set the model during `okb init` or edit `.okb/config.yaml`.
 
 # 🧩 How It Works
 
@@ -78,7 +78,7 @@ raw/                              You drop files here
  │
  ├─ Short docs ──→ markitdown ──→ LLM reads full text
  │                                     │
- ├─ Long PDFs ──→ PageIndex ────→ LLM reads tree summaries
+ ├─ Long PDFs ──→ PageIndex ────→ LLM reads document trees
  │                                     │
  │                                     ▼
  │                              Wiki Compilation
@@ -98,19 +98,19 @@ wiki/
 
 ### Two paths, one wiki
 
-| | Short documents | Long documents (PDF ≥ 50 pages) |
+| | Short documents | Long documents (PDF ≥ 20 pages) |
 |---|---|---|
 | **Convert** | markitdown → Markdown | PageIndex → tree index + summaries |
 | **Images** | Extracted inline (pymupdf) | Extracted by PageIndex |
 | **LLM reads** | Full text | Tree summaries only |
 | **Result** | summary + concepts | summary + concepts |
 
-Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries — the LLM reads the tree instead of the full text, avoiding context window limits while retaining structural understanding.
+Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries. The LLM reads the tree instead of the full text, avoiding context window limits while retaining structural understanding.
 
 
 # PageIndex integration
 For long documents, relying solely on summaries often leads to information loss.
-We integrate [PageIndex](https://github.com/VectifyAI/PageIndex) into the knowledge base to provide structured, context-aware retrieval for long documents—avoiding the information loss common in summary-based approaches.
+We integrate [PageIndex](https://github.com/VectifyAI/PageIndex) into the knowledge base to provide structured, context-aware retrieval for long documents, avoiding the information loss common in summary-based approaches.
 
 By default, PageIndex runs locally using the open-source version, with no external dependencies required.
 
@@ -126,7 +126,7 @@ For large or complex PDFs, [PageIndex Cloud](https://docs.pageindex.ai/) can be 
 Set `PAGEINDEX_API_KEY` in your `.env` to enable cloud features:
 
 ```
-PAGEINDEX_API_KEY=your_api_key
+PAGEINDEX_API_KEY=your_pageindex_api_key
 ```
 
 ---
@@ -140,7 +140,7 @@ When you add a document, the LLM:
 3. Creates or updates concepts with cross-document synthesis
 4. Updates the **index** and **log**
 
-A single source might touch 10-15 wiki pages. Knowledge accumulates — each document enriches the existing wiki rather than sitting in isolation.
+A single source might touch 10-15 wiki pages. Knowledge accumulates: each document enriches the existing wiki rather than sitting in isolation.
 
 # 📦 Usage
 
@@ -164,9 +164,9 @@ Generated by `okb init`, stored in `.okb/config.yaml`:
 
 ```yaml
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
-api_key_env: OPENAI_API_KEY      # Environment variable for API key
+api_key_env: LLM_API_KEY         # Environment variable for API key
 language: en                      # Wiki output language
-pageindex_threshold: 50           # PDF pages threshold for PageIndex
+pageindex_threshold: 20           # PDF pages threshold for PageIndex
 pageindex_api_key_env: ""                # Env var name for PageIndex Cloud API key (default: auto-detect PAGEINDEX_API_KEY)
 ```
 
@@ -174,11 +174,11 @@ pageindex_api_key_env: ""                # Env var name for PageIndex Cloud API 
 
 The `wiki/AGENTS.md` file defines wiki structure and conventions. It's the LLM's instruction manual for maintaining the wiki. Customize it to change how your wiki is organized.
 
-At runtime, the LLM reads `AGENTS.md` from disk — your edits take effect immediately.
+At runtime, the LLM reads `AGENTS.md` from disk, so your edits take effect immediately.
 
 ### Using with Obsidian
 
-OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]` — Obsidian renders it natively.
+OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian renders it natively.
 
 1. Open `wiki/` as an Obsidian vault
 2. Browse summaries, concepts, and explorations
@@ -209,7 +209,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]` — Obsidian
 
 ### License
 
-Apache 2.0 — see [LICENSE](LICENSE)
+Apache 2.0. See [LICENSE](LICENSE).
 
 ### Acknowledgments
 

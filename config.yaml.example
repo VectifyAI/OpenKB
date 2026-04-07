@@ -1,0 +1,5 @@
+model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
+api_key_env: LLM_API_KEY         # Environment variable for API key
+language: en                      # Wiki output language
+pageindex_threshold: 20           # PDF pages threshold for PageIndex
+pageindex_api_key_env: ""         # Env var name for PageIndex Cloud API key
