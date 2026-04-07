@@ -66,7 +66,7 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     raw_dir = kb_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     raw_dest = raw_dir / src.name
-    if raw_dest != src:
+    if raw_dest.resolve() != src.resolve():
         shutil.copy2(src, raw_dest)
 
     # ------------------------------------------------------------------
