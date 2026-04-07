@@ -46,17 +46,19 @@ pip install openkb
 ```bash
 # 1. Create a knowledge base
 mkdir my-kb && cd my-kb
+
+# 2. Initialize
 okb init
 
-# 2. Add documents
+# 3. Add documents
 okb add paper.pdf
 okb add ~/papers/                   # Add a whole directory
 okb add article.html
 
-# 3. Ask questions
+# 4. Ask questions
 okb query "What are the main findings?"
 
-# 4. Check wiki health
+# 5. Check wiki health
 okb lint
 ```
 
