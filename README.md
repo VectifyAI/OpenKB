@@ -6,9 +6,9 @@
 
 # OpenKB (Open Knowledge Base)
 
-## LLM-Powered Wiki Knowledge Base
+<h3 align="center">LLM-Powered Wiki Knowledge Base</h3>
 
- *Scales to long documents* · *Reasoning-based retrieval* · *Native multimodality support*
+<p align="center"><i>Scale to long documents&nbsp; ◦ &nbsp;Reasoning-based retrieval&nbsp; ◦ &nbsp;Native multimodality support&nbsp; ◦ &nbsp;No Vector DB</i></p>
 
 </div>
 
