@@ -20,7 +20,10 @@ def list_wiki_files(directory: str, wiki_root: str) -> str:
         Newline-separated list of ``.md`` filenames found in *directory*,
         or ``"No files found."`` if the directory is empty or does not exist.
     """
-    target = Path(wiki_root) / directory
+    root = Path(wiki_root).resolve()
+    target = (root / directory).resolve()
+    if not target.is_relative_to(root):
+        return "Access denied: path escapes wiki root."
     if not target.exists() or not target.is_dir():
         return "No files found."
 
@@ -40,7 +43,10 @@ def read_wiki_file(path: str, wiki_root: str) -> str:
     Returns:
         File contents as a string, or ``"File not found: {path}"`` if missing.
     """
-    full_path = Path(wiki_root) / path
+    root = Path(wiki_root).resolve()
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root):
+        return "Access denied: path escapes wiki root."
     if not full_path.exists():
         return f"File not found: {path}"
     return full_path.read_text(encoding="utf-8")
@@ -59,7 +65,10 @@ def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     Returns:
         ``"Written: {path}"`` on success.
     """
-    full_path = Path(wiki_root) / path
+    root = Path(wiki_root).resolve()
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root):
+        return "Access denied: path escapes wiki root."
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return f"Written: {path}"
