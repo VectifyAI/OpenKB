@@ -192,7 +192,6 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 | Supported formats | Web clipper → .md | PDF, Word, PPT, Excel, HTML, text, CSV, .md |
 | Wiki compilation | LLM agent | LLM agent (same) |
 | Q&A | Query over wiki | Wiki + PageIndex retrieval |
-| Open source | No | Yes |
 
 ### Tech Stack
 
@@ -202,6 +201,10 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 - [LiteLLM](https://github.com/BerriAI/litellm) — Multi-provider LLM gateway
 - [Click](https://click.palletsprojects.com/) — CLI framework
 - [watchdog](https://github.com/gorakhargosh/watchdog) — Filesystem monitoring
+
+### Contributing
+
+Contributions are welcome! Please submit a pull request, or open an [issue](https://github.com/VectifyAI/OpenKB/issues) for bugs or feature requests. For larger changes, consider opening an issue first to discuss the approach.
 
 ### License
 
