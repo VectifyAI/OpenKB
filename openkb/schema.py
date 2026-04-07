@@ -30,7 +30,7 @@ index.md lists all documents, concepts, and explorations with metadata:
 - Explorations: name, one-liner description
 
 ## Log Format
-Each log entry: `## [YYYY-MM-DD] operation | description`
+Each log entry: `## [YYYY-MM-DD HH:MM:SS] operation | description`
 Operations: ingest, query, lint
 
 ## Format
