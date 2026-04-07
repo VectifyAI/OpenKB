@@ -4,11 +4,9 @@
   <img src="https://docs.pageindex.ai/images/openkb.png" alt="OpenKB (by PageIndex)" />
 </a>
 
-# OpenKB
+# OpenKB: Open LLM Knowledge Base
 
-<h3 align="center">Open LLM Knowledge Base (by <a href="https://github.com/VectifyAI/PageIndex">PageIndex</a>)</h3>
-
-<p align="center"><i>Scale to long documents&nbsp; • &nbsp;Reasoning-based retrieval&nbsp; • &nbsp;Native multimodality&nbsp; • &nbsp;No Vector DB</i></p>
+<p align="center"><i>Scale to long documents&nbsp; • &nbsp;Reasoning-based retrieval&nbsp; • &nbsp;Native multi-modality&nbsp; • &nbsp;No Vector DB</i></p>
 
 </div>
 
@@ -27,8 +25,8 @@ Traditional RAG rediscovers knowledge from scratch on every query. Nothing accum
 ### Features
 
 - **Any format** — PDF, Word, PowerPoint, Excel, HTML, Markdown, text, CSV, and more via markitdown
-- **Long documents** — Books and reports that exceed LLM context windows are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing
-- **Native multimodality** — Retrieves and understands figures, tables, and images, not just text
+- **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling better long-context retrieval
+- **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
 - **Auto wiki** — LLM generates summaries, concept pages, and cross-links. You curate sources; the LLM does the rest
 - **Query** — Ask questions against your wiki. The LLM navigates your compiled knowledge to answer
 - **Lint** — Health checks find contradictions, gaps, orphans, and stale content
