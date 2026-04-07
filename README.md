@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://openkb.ai">
-  <img src="https://docs.pageindex.ai/images/general/openkb.png" alt="OpenKB (by PageIndex)" />
+  <img src="https://docs.pageindex.ai/images/openkb.png" alt="OpenKB (by PageIndex)" />
 </a>
 
 # OpenKB (by <a href="https://pageindex.ai/">PageIndex</a>)
