@@ -20,10 +20,9 @@ from openkb.schema import AGENTS_MD
 load_dotenv()
 
 
-def _setup_llm_key(config: dict) -> None:
-    """Set LiteLLM API key from the configured env var (default: LLM_API_KEY)."""
-    env_var = config.get("api_key_env", DEFAULT_CONFIG["api_key_env"])
-    api_key = os.environ.get(env_var, "")
+def _setup_llm_key() -> None:
+    """Set LiteLLM API key from LLM_API_KEY env var if present."""
+    api_key = os.environ.get("LLM_API_KEY", "")
     if api_key:
         litellm.api_key = api_key
 
@@ -76,7 +75,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(config)
+    _setup_llm_key()
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     registry = HashRegistry(openkb_dir / "hashes.json")
 
@@ -161,7 +160,6 @@ def init():
 
     # Interactive prompts
     model = click.prompt("Model", default=DEFAULT_CONFIG["model"])
-    api_key_env = click.prompt("API key env var", default=DEFAULT_CONFIG["api_key_env"])
     language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
     pageindex_threshold = click.prompt(
         "PageIndex threshold (pages)",
@@ -193,7 +191,6 @@ def init():
     openkb_dir.mkdir()
     config = {
         "model": model,
-        "api_key_env": api_key_env,
         "language": language,
         "pageindex_threshold": pageindex_threshold,
         "pageindex_api_key_env": pageindex_api_key_env,
@@ -255,7 +252,7 @@ def query(question, save):
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(config)
+    _setup_llm_key()
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     try:
@@ -320,7 +317,7 @@ def lint(fix):
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(config)
+    _setup_llm_key()
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint

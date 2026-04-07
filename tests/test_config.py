@@ -5,7 +5,6 @@ from openkb.config import DEFAULT_CONFIG, load_config, save_config
 
 def test_default_config_keys():
     assert "model" in DEFAULT_CONFIG
-    assert "api_key_env" in DEFAULT_CONFIG
     assert "language" in DEFAULT_CONFIG
     assert "pageindex_threshold" in DEFAULT_CONFIG
     assert "pageindex_api_key_env" in DEFAULT_CONFIG
@@ -13,7 +12,6 @@ def test_default_config_keys():
 
 def test_default_config_values():
     assert DEFAULT_CONFIG["model"] == "gpt-5.4"
-    assert DEFAULT_CONFIG["api_key_env"] == "LLM_API_KEY"
     assert DEFAULT_CONFIG["language"] == "en"
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
 
@@ -39,7 +37,6 @@ def test_save_load_roundtrip(tmp_path):
     assert loaded["model"] == "gpt-3.5-turbo"
     assert loaded["language"] == "fr"
     # Defaults fill in missing keys
-    assert loaded["api_key_env"] == DEFAULT_CONFIG["api_key_env"]
     assert loaded["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
 
 
