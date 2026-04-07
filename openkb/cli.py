@@ -294,7 +294,7 @@ def watch():
 
 
 @cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues.")
+@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues.")  # TODO: --fix not yet implemented
 def lint(fix):
     """Lint the knowledge base for structural and semantic inconsistencies."""
     kb_dir = _find_kb_dir()
