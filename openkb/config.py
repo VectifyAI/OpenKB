@@ -7,7 +7,6 @@ import yaml
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
-    "api_key_env": "LLM_API_KEY",
     "language": "en",
     "pageindex_threshold": 20,
     "pageindex_api_key_env": "",  # Set to env var name (e.g. PAGEINDEX_API_KEY) to use cloud PageIndex
