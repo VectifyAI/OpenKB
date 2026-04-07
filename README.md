@@ -4,7 +4,7 @@
   <img src="https://docs.pageindex.ai/images/openkb.png" alt="OpenKB (by PageIndex)" />
 </a>
 
-# OpenKB: Open LLM Knowledge Base
+# OpenKB — Open LLM Knowledge Base
 
 <p align="center"><i>Scale to long documents&nbsp; • &nbsp;Reasoning-based retrieval&nbsp; • &nbsp;Native multi-modality&nbsp; • &nbsp;No Vector DB</i></p>
 
@@ -64,7 +64,7 @@ okb lint
 
 ### Set up your LLM
 
-OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e.g., OpenAI, Claude, Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)). 
+OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e.g., OpenAI, Claude, Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
 Create a `.env` file with your LLM API key. Choose your LLM during `okb init` or edit [`.okb/config.yaml`](#configuration).
 
@@ -103,10 +103,10 @@ wiki/
 |---|---|---|
 | **Convert** | markitdown → Markdown | PageIndex → tree index + summaries |
 | **Images** | Extracted inline (pymupdf) | Extracted by PageIndex |
-| **LLM reads** | Full text | Tree summaries only |
+| **LLM reads** | Full text | Document trees |
 | **Result** | summary + concepts | summary + concepts |
 
-Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries. The LLM reads the tree instead of the full text, avoiding context window limits while retaining structural understanding.
+Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries. The LLM reads the tree instead of the full text, enabling better retrieval from long documents.
 
 ### The wiki compiles knowledge
 
@@ -144,7 +144,7 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 api_key_env: LLM_API_KEY         # Environment variable for LLM API key
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
-pageindex_api_key_env: ""        # (Optional) Environment variable for PageIndex Cloud API key 
+pageindex_api_key_env: ""        # (Optional) Environment variable for PageIndex Cloud API key
 ```
 
 ### PageIndex integration
@@ -190,7 +190,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 | | Karpathy's workflow | OpenKB |
 |---|---|---|
 | Short documents | LLM reads directly | markitdown → LLM reads |
-| Long documents | Doesn't fit in context | PageIndex tree index |
+| Long documents | Context limits, context rot | PageIndex tree index |
 | Supported formats | Web clipper → .md | PDF, Word, PPT, Excel, HTML, text, CSV, .md |
 | Wiki compilation | LLM agent | LLM agent (same) |
 | Q&A | Query over wiki | Wiki + PageIndex retrieval |
