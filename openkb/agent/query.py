@@ -121,7 +121,6 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, openkb_dir: str, model:
         response = litellm.completion(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
         )
         page_spec = response.choices[0].message.content.strip()
     except Exception as exc:
