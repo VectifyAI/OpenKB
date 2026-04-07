@@ -44,10 +44,10 @@ pip install openkb
 ### Quick start
 
 ```bash
-# 1. Create a knowledge base
+# 1. Create a directory for your knowledge base
 mkdir my-kb && cd my-kb
 
-# 2. Initialize
+# 2. Initialize the knowledge base
 openkb init
 
 # 3. Add documents
@@ -66,7 +66,7 @@ openkb lint
 
 OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e.g., OpenAI, Claude, Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
-Create a `.env` file with your LLM API key. Choose your LLM during `openkb init` or edit [`.openkb/config.yaml`](#configuration) (model names follow [LiteLLM format](https://docs.litellm.ai/docs/providers), e.g. `gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+Create a `.env` file with your LLM API key. Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using LiteLLM `provider/model` format (e.g., `gpt-5.4`, `anthropic/claude-sonnet-4-6`).
 
 ```bash
 LLM_API_KEY=your_llm_api_key

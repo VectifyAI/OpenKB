@@ -38,7 +38,7 @@ class TestBuildQueryAgent:
 
     def test_agent_model(self, tmp_path):
         agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "my-model")
-        assert agent.model == "my-model"
+        assert agent.model == "litellm/my-model"
 
 
 class TestPageindexRetrieve:

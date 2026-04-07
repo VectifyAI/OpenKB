@@ -200,7 +200,7 @@ def build_query_agent(wiki_root: str, openkb_dir: str, model: str, language: str
         name="wiki-query",
         instructions=instructions,
         tools=[list_files, read_file, pageindex_retrieve],
-        model=model,
+        model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
 
