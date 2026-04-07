@@ -18,11 +18,11 @@
 
 Andrej Karpathy [described](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) a workflow where LLMs compile raw documents into a structured, interlinked markdown wiki; summaries, concept pages, cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
 
-**OpenKB** (Open Knowledge Base) is an open-source CLI that implements this workflow, powered by [**PageIndex**](https://github.com/VectifyAI/PageIndex) for long document understanding.
+**OpenKB (Open Knowledge Base)** is an open-source CLI that implements this workflow, powered by [**PageIndex**](https://github.com/VectifyAI/PageIndex) for long document understanding.
 
-### Why not just RAG?
+### Why not just traditional RAG?
 
-RAG rediscovers knowledge from scratch on every query. Nothing accumulates. OpenKB compiles knowledge once into a persistent wiki, then keeps it current. Cross-references already exist. Contradictions are flagged. Synthesis reflects everything consumed.
+Traditional RAG rediscovers knowledge from scratch on every query. Nothing accumulates. OpenKB compiles knowledge once into a persistent wiki, then keeps it current. Cross-references already exist. Contradictions are flagged. Synthesis reflects everything consumed.
 
 ### Features
 
