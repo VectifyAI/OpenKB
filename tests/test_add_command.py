@@ -29,13 +29,13 @@ class TestSupportedExtensions:
 
 
 class TestFindKbDir:
-    def test_finds_okb_dir(self, tmp_path, monkeypatch):
-        (tmp_path / ".okb").mkdir()
+    def test_finds_openkb_dir(self, tmp_path, monkeypatch):
+        (tmp_path / ".openkb").mkdir()
         monkeypatch.chdir(tmp_path)
         result = _find_kb_dir()
         assert result is not None
 
-    def test_returns_none_if_no_okb(self, tmp_path, monkeypatch):
+    def test_returns_none_if_no_openkb(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         result = _find_kb_dir()
         assert result is None
@@ -49,10 +49,10 @@ class TestAddCommand:
         (tmp_path / "wiki" / "summaries").mkdir(parents=True)
         (tmp_path / "wiki" / "concepts").mkdir(parents=True)
         (tmp_path / "wiki" / "reports").mkdir(parents=True)
-        okb_dir = tmp_path / ".okb"
-        okb_dir.mkdir()
-        (okb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
-        (okb_dir / "hashes.json").write_text(json.dumps({}))
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        (openkb_dir / "hashes.json").write_text(json.dumps({}))
         return tmp_path
 
     def test_add_missing_init(self, tmp_path):

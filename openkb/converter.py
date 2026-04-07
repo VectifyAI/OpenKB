@@ -47,10 +47,10 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     # ------------------------------------------------------------------
     # Load config & state
     # ------------------------------------------------------------------
-    okb_dir = kb_dir / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
     threshold: int = config.get("pageindex_threshold", 20)
-    registry = HashRegistry(okb_dir / "hashes.json")
+    registry = HashRegistry(openkb_dir / "hashes.json")
 
     # ------------------------------------------------------------------
     # 1. Hash check

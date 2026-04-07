@@ -118,7 +118,7 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
 
     Args:
         wiki_root: Absolute path to the wiki directory.
-        kb_dir: Absolute path to the knowledge base root (contains .okb/).
+        kb_dir: Absolute path to the knowledge base root (contains .openkb/).
         model: LLM model name to use for the agent.
         language: Language code for wiki content (e.g. 'en', 'fr').
 
@@ -127,15 +127,15 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
     """
     from openkb.config import load_config
 
-    okb_dir = Path(kb_dir) / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = Path(kb_dir) / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
     _model = config.get("model", model)
     pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
     pi_api_key = os.environ.get(pi_key_env, "")
     client = PageIndexClient(
         api_key=pi_api_key or None,
         model=_model,
-        storage_path=str(okb_dir),
+        storage_path=str(openkb_dir),
     )
     col = client.collection()
 
@@ -214,13 +214,13 @@ async def compile_short_doc(
     Args:
         doc_name: Document stem name (no extension).
         source_path: Path to the converted Markdown in wiki/sources/.
-        kb_dir: Root of the knowledge base (contains wiki/ and .okb/).
+        kb_dir: Root of the knowledge base (contains wiki/ and .openkb/).
         model: LLM model name.
     """
     from openkb.config import load_config
 
-    okb_dir = kb_dir / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")
@@ -257,8 +257,8 @@ async def compile_long_doc(
     """
     from openkb.config import load_config
 
-    okb_dir = kb_dir / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")

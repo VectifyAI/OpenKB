@@ -50,9 +50,9 @@ class TestCompileShortDoc:
         source_path.parent.mkdir(parents=True)
         source_path.write_text("# My Doc\n\nSome content.", encoding="utf-8")
 
-        # Create .okb dir for agent build
-        okb_dir = tmp_path / ".okb"
-        okb_dir.mkdir()
+        # Create .openkb dir for agent build
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
 
         mock_result = MagicMock()
         mock_result.final_output = "Done"
@@ -78,7 +78,7 @@ class TestCompileShortDoc:
         source_path.parent.mkdir(parents=True)
         source_path.write_text("# Test Paper\n\nKey findings here.", encoding="utf-8")
 
-        (tmp_path / ".okb").mkdir()
+        (tmp_path / ".openkb").mkdir()
 
         captured = {}
 
@@ -101,10 +101,10 @@ class TestCompileLongDoc:
         summary_path.parent.mkdir(parents=True)
         summary_path.write_text("# Big Doc Summary\n\nSection tree.", encoding="utf-8")
 
-        okb_dir = tmp_path / ".okb"
-        okb_dir.mkdir()
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
         # Write minimal config
-        (okb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
 
         mock_result = MagicMock()
         mock_result.final_output = "Done"
@@ -134,9 +134,9 @@ class TestCompileLongDoc:
         summary_path.parent.mkdir(parents=True)
         summary_path.write_text("Summary content", encoding="utf-8")
 
-        okb_dir = tmp_path / ".okb"
-        okb_dir.mkdir()
-        (okb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
 
         captured_agent = {}
 

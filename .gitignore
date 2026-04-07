@@ -12,7 +12,7 @@ venv/
 # Knowledge base test artifacts
 raw/
 wiki/
-.okb/
+.openkb/
 
 # Local only
 docs/

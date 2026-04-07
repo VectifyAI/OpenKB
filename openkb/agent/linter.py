@@ -88,8 +88,8 @@ async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
     """
     from openkb.config import load_config
 
-    okb_dir = kb_dir / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")

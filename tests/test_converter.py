@@ -55,7 +55,7 @@ class TestConvertDocumentMarkdown:
 
         result1 = convert_document(src, kb_dir)  # first call
         # Simulate CLI registering the hash after successful compilation
-        registry = HashRegistry(kb_dir / ".okb" / "hashes.json")
+        registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
         registry.add(result1.file_hash, {"name": src.name, "type": "md"})
 
         result2 = convert_document(src, kb_dir)  # second call

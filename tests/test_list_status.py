@@ -1,4 +1,4 @@
-"""Tests for okb list and okb status CLI commands (Task 15)."""
+"""Tests for openkb list and openkb status CLI commands."""
 from __future__ import annotations
 
 import json
@@ -19,10 +19,10 @@ def _setup_kb(tmp_path: Path) -> Path:
     (kb_dir / "wiki" / "summaries").mkdir(parents=True)
     (kb_dir / "wiki" / "concepts").mkdir(parents=True)
     (kb_dir / "wiki" / "reports").mkdir(parents=True)
-    okb_dir = kb_dir / ".okb"
-    okb_dir.mkdir()
-    (okb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
-    (okb_dir / "hashes.json").write_text(json.dumps({}))
+    openkb_dir = kb_dir / ".openkb"
+    openkb_dir.mkdir()
+    (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (openkb_dir / "hashes.json").write_text(json.dumps({}))
     (kb_dir / "wiki" / "index.md").write_text(
         "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n"
     )
@@ -49,7 +49,7 @@ class TestListCommand:
             "abc123": {"name": "paper.pdf", "type": "pdf"},
             "def456": {"name": "notes.md", "type": "md"},
         }
-        (kb_dir / ".okb" / "hashes.json").write_text(json.dumps(hashes))
+        (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
 
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
@@ -63,7 +63,7 @@ class TestListCommand:
     def test_list_shows_concepts(self, tmp_path):
         kb_dir = _setup_kb(tmp_path)
         hashes = {"abc": {"name": "paper.pdf", "type": "pdf"}}
-        (kb_dir / ".okb" / "hashes.json").write_text(json.dumps(hashes))
+        (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
         (kb_dir / "wiki" / "concepts" / "attention.md").write_text("# Attention")
         (kb_dir / "wiki" / "concepts" / "transformer.md").write_text("# Transformer")
 
@@ -77,7 +77,7 @@ class TestListCommand:
     def test_list_no_concepts_section_when_empty(self, tmp_path):
         kb_dir = _setup_kb(tmp_path)
         hashes = {"abc": {"name": "paper.pdf", "type": "pdf"}}
-        (kb_dir / ".okb" / "hashes.json").write_text(json.dumps(hashes))
+        (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
 
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
@@ -119,7 +119,7 @@ class TestStatusCommand:
             "def": {"name": "b.pdf", "type": "pdf"},
             "ghi": {"name": "c.md", "type": "md"},
         }
-        (kb_dir / ".okb" / "hashes.json").write_text(json.dumps(hashes))
+        (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
 
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir):

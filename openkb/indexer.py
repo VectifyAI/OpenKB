@@ -31,7 +31,7 @@ class IndexResult:
 def _relocate_images(markdown: str, doc_stem: str, dest_images_dir: Path) -> str:
     """Copy images from PageIndex internal paths to wiki/sources/images/ and rewrite refs.
 
-    PageIndex stores images internally (e.g. .okb/files/{collection}/{doc_id}/images/).
+    PageIndex stores images internally (e.g. .openkb/files/{collection}/{doc_id}/images/).
     We copy them to dest_images_dir and rewrite paths to be relative to the .md file
     (i.e. images/{doc_stem}/filename).
     """
@@ -55,8 +55,8 @@ def _relocate_images(markdown: str, doc_stem: str, dest_images_dir: Path) -> str
 
 def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     """Index a long PDF document using PageIndex and write wiki pages."""
-    okb_dir = kb_dir / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
 
     model: str = config.get("model", "gpt-5.4")
     pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
@@ -71,7 +71,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     client = PageIndexClient(
         api_key=pi_api_key or None,
         model=model,
-        storage_path=str(okb_dir),
+        storage_path=str(openkb_dir),
         index_config=index_config,
     )
     col = client.collection()
