@@ -69,7 +69,7 @@ OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e
 Create a `.env` file with your LLM API key. Choose your LLM during `okb init` or edit [`.okb/config.yaml`](#configuration).
 
 ```bash
-LLM_API_KEY=your-llm-api-key-here
+LLM_API_KEY=your_llm_api_key
 ```
 
 # 🧩 How It Works
