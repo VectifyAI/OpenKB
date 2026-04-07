@@ -15,9 +15,9 @@ def kb_dir(tmp_path):
     (tmp_path / "wiki" / "explorations").mkdir(parents=True)
     (tmp_path / "wiki" / "reports").mkdir(parents=True)
 
-    # .okb state directory
-    okb_dir = tmp_path / ".okb"
-    okb_dir.mkdir()
+    # .openkb state directory
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
 
     config_yaml = """\
 version: "0.1.0"
@@ -26,8 +26,8 @@ llm_model: gpt-4o-mini
 chunk_size: 512
 chunk_overlap: 64
 """
-    (okb_dir / "config.yaml").write_text(config_yaml)
-    (okb_dir / "hashes.json").write_text(json.dumps({}))
+    (openkb_dir / "config.yaml").write_text(config_yaml)
+    (openkb_dir / "hashes.json").write_text(json.dumps({}))
 
     return tmp_path
 

@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-okb = "openkb.cli:cli"
+openkb = "openkb.cli:cli"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

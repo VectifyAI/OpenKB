@@ -30,14 +30,14 @@ information, say so clearly.
 """
 
 
-def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: str) -> str:
+def _pageindex_retrieve_impl(doc_id: str, question: str, openkb_dir: str, model: str) -> str:
     """Retrieve relevant content from a long document via PageIndex.
 
     For cloud-indexed docs: delegates to col.query() directly.
     For local docs: uses structure-based page selection + get_page_content.
     """
     from openkb.config import load_config
-    config = load_config(Path(okb_dir) / "config.yaml")
+    config = load_config(Path(openkb_dir) / "config.yaml")
     pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
     pi_api_key = os.environ.get(pi_key_env, "")
     # Determine if this doc was cloud-indexed (cloud doc_ids have "pi-" prefix)
@@ -87,7 +87,7 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
             return f"Error querying cloud PageIndex: {exc}"
 
     # Local doc: use local PageIndex with structure-based retrieval
-    client = PageIndexClient(model=model, storage_path=okb_dir)
+    client = PageIndexClient(model=model, storage_path=openkb_dir)
     col = client.collection()
 
     try:
@@ -148,12 +148,12 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, okb_dir: str, model: st
     return "\n\n".join(parts)
 
 
-def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = "en") -> Agent:
+def build_query_agent(wiki_root: str, openkb_dir: str, model: str, language: str = "en") -> Agent:
     """Build and return the Q&A agent.
 
     Args:
         wiki_root: Absolute path to the wiki directory.
-        okb_dir: Path to the .okb/ state directory.
+        openkb_dir: Path to the .openkb/ state directory.
         model: LLM model name.
         language: Language code for wiki content (e.g. 'en', 'fr').
 
@@ -193,7 +193,7 @@ def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = 
             doc_id: PageIndex document identifier (found in index.md).
             question: The question you are trying to answer.
         """
-        return _pageindex_retrieve_impl(doc_id, question, okb_dir, model)
+        return _pageindex_retrieve_impl(doc_id, question, openkb_dir, model)
 
     from agents.model_settings import ModelSettings
 
@@ -223,14 +223,14 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
     from openai.types.responses import ResponseTextDeltaEvent
     from openkb.config import load_config
 
-    okb_dir = kb_dir / ".okb"
-    config = load_config(okb_dir / "config.yaml")
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")
-    okb_path = str(okb_dir)
+    openkb_path = str(openkb_dir)
 
-    agent = build_query_agent(wiki_root, okb_path, model, language=language)
+    agent = build_query_agent(wiki_root, openkb_path, model, language=language)
 
     if not stream:
         result = await Runner.run(agent, question)
