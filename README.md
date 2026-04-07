@@ -212,6 +212,14 @@ Contributions are welcome! Please submit a pull request, or open an [issue](http
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-### Acknowledgments
+### Support Us
 
-Inspired by [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Powered by [PageIndex](https://pageindex.ai/).
+Leave us a star 🌟 if you like our project. Thank you!  
+
+<div>
+
+[![Twitter](https://img.shields.io/badge/Twitter-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/PageIndexAI)&ensp;
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/vectify-ai/)&ensp;
+[![Contact Us](https://img.shields.io/badge/Contact_Us-3B82F6?style=for-the-badge&logo=envelope&logoColor=white)](https://ii2abc2jejf.typeform.com/to/tK3AXl8T)
+
+</div>
