@@ -280,7 +280,14 @@ def watch():
 
     def on_new_files(paths):
         for p in paths:
-            _add_single_file(Path(p), kb_dir)
+            fp = Path(p)
+            if fp.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                click.echo(
+                    f"Skipping unsupported file type: {fp.suffix}. "
+                    f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+                )
+                continue
+            _add_single_file(fp, kb_dir)
 
     click.echo(f"Watching {raw_dir} for new documents. Press Ctrl+C to stop.")
     watch_directory(raw_dir, on_new_files)
