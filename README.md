@@ -4,7 +4,7 @@
   <img src="https://docs.pageindex.ai/images/openkb.png" alt="OpenKB (by PageIndex)" />
 </a>
 
-# OpenKB (by <a href="https://pageindex.ai/">PageIndex</a>)
+# OpenKB (by <a href="https://github.com/VectifyAI/PageIndex">PageIndex</a>)
 
 <h3 align="center">Open LLM Knowledge Base</h3>
 
