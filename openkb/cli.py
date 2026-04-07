@@ -159,7 +159,10 @@ def init():
         return
 
     # Interactive prompts
-    model = click.prompt("Model", default=DEFAULT_CONFIG["model"])
+    model = click.prompt(
+        "Model (e.g. gpt-5.4, anthropic/claude-sonnet-4-6, gemini/gemini-3.1-pro-preview)",
+        default=DEFAULT_CONFIG["model"],
+    )
     language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
     pageindex_threshold = click.prompt(
         "PageIndex threshold (pages)",
