@@ -5,7 +5,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from pageindex import IndexConfig, LocalClient
+import os
+
+from pageindex import IndexConfig, PageIndexClient
 
 from openkb.config import load_config
 from openkb.tree_renderer import render_source_md, render_summary_md
@@ -37,7 +39,8 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
 
-    model: str = config.get("llm_model") or config.get("model", "gpt-4o-mini")
+    model: str = config.get("model", "gpt-5.4")
+    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
 
     index_config = IndexConfig(
         if_add_node_text=True,
@@ -45,23 +48,33 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         if_add_doc_description=True,
     )
 
-    client = LocalClient(
+    client = PageIndexClient(
+        api_key=pi_api_key or None,
         model=model,
+        storage_path=str(okb_dir),
         index_config=index_config,
-        storage_path=str(okb_dir / "pageindex"),
     )
-    col = client.collection("default")
+    col = client.collection()
 
-    # 2. Add PDF → doc_id
-    doc_id = col.add(str(pdf_path))
-    logger.info("PageIndex added %s → doc_id=%s", pdf_path.name, doc_id)
+    # 2. Add PDF → doc_id (retry up to 3 times — PageIndex TOC accuracy is stochastic)
+    max_retries = 3
+    doc_id = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            doc_id = col.add(str(pdf_path))
+            logger.info("PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt)
+            break
+        except Exception as exc:
+            logger.warning("PageIndex attempt %d/%d failed for %s: %s", attempt, max_retries, pdf_path.name, exc)
+            if attempt == max_retries:
+                raise RuntimeError(f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}") from exc
 
     # 3. Fetch metadata and structure
     meta = col.get_document(doc_id)
     doc_name: str = meta.get("doc_name", pdf_path.stem)
     description: str = meta.get("doc_description", "")
 
-    structure: list = col._backend.get_document_structure(col._name, doc_id)
+    structure: list = col.get_document_structure(doc_id)
 
     tree = {
         "doc_name": doc_name,

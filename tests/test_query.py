@@ -52,13 +52,13 @@ class TestPageindexRetrieve:
         ]
 
         mock_col = MagicMock()
-        mock_col._backend.get_document_structure.return_value = mock_structure
-        mock_col._backend.get_page_content.return_value = mock_pages
+        mock_col.get_document_structure.return_value = mock_structure
+        mock_col.get_page_content.return_value = mock_pages
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.LocalClient", return_value=mock_client), \
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client), \
              patch("openkb.agent.query.litellm.completion") as mock_llm:
             mock_llm.return_value = MagicMock(
                 choices=[MagicMock(message=MagicMock(content="1-2"))]
@@ -70,24 +70,24 @@ class TestPageindexRetrieve:
 
     def test_handles_empty_structure(self, tmp_path):
         mock_col = MagicMock()
-        mock_col._backend.get_document_structure.return_value = []
+        mock_col.get_document_structure.return_value = []
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.LocalClient", return_value=mock_client):
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
             result = pageindex_retrieve("doc456", "What?", "/db", "gpt-4o-mini")
 
         assert "No structure found" in result
 
     def test_handles_structure_error(self, tmp_path):
         mock_col = MagicMock()
-        mock_col._backend.get_document_structure.side_effect = RuntimeError("DB error")
+        mock_col.get_document_structure.side_effect = RuntimeError("DB error")
 
         mock_client = MagicMock()
         mock_client.collection.return_value = mock_col
 
-        with patch("openkb.agent.query.LocalClient", return_value=mock_client):
+        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
             result = pageindex_retrieve("doc789", "What?", "/db", "gpt-4o-mini")
 
         assert "Error" in result

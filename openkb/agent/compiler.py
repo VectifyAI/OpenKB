@@ -8,15 +8,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from agents import Agent, Runner, function_tool
-from pageindex import LocalClient
+import os
+
+from pageindex import PageIndexClient
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file, write_wiki_file
-from openkb.schema import SCHEMA_MD
+from openkb.schema import SCHEMA_MD, get_agents_md
 
-_COMPILER_INSTRUCTIONS = f"""\
+_COMPILER_INSTRUCTIONS_TEMPLATE = """\
 You are a wiki compilation agent for a personal knowledge base.
 
-{SCHEMA_MD}
+{schema_md}
 
 ## Your job
 When given a new document, you must:
@@ -34,10 +36,10 @@ so you can append or update without losing prior content.
 Use [[wikilinks]] consistently to connect related pages.
 """
 
-_LONG_DOC_INSTRUCTIONS = f"""\
+_LONG_DOC_INSTRUCTIONS_TEMPLATE = """\
 You are a wiki compilation agent for a personal knowledge base.
 
-{SCHEMA_MD}
+{schema_md}
 
 ## Your job for long documents (already summarised by PageIndex)
 The summary and source pages are already written. Your tasks are:
@@ -54,7 +56,7 @@ Use [[wikilinks]] consistently to connect related pages.
 """
 
 
-def build_compiler_agent(wiki_root: str, model: str) -> Agent:
+def build_compiler_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
     """Build and return the wiki-compiler agent.
 
     Creates @function_tool wrappers that bind *wiki_root* so the agent
@@ -63,10 +65,14 @@ def build_compiler_agent(wiki_root: str, model: str) -> Agent:
     Args:
         wiki_root: Absolute path to the wiki directory.
         model: LLM model name to use for the agent.
+        language: Language code for wiki content (e.g. 'en', 'fr').
 
     Returns:
         Configured :class:`~agents.Agent` instance.
     """
+    schema_md = get_agents_md(Path(wiki_root))
+    instructions = _COMPILER_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
 
     @function_tool
     def list_files(directory: str) -> str:
@@ -98,19 +104,20 @@ def build_compiler_agent(wiki_root: str, model: str) -> Agent:
 
     return Agent(
         name="wiki-compiler",
-        instructions=_COMPILER_INSTRUCTIONS,
+        instructions=instructions,
         tools=[list_files, read_file, write_file],
         model=model,
     )
 
 
-def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str) -> Agent:
+def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, language: str = "en") -> Agent:
     """Build the wiki-compiler agent with an extra get_page_content tool.
 
     Args:
         wiki_root: Absolute path to the wiki directory.
         kb_dir: Absolute path to the knowledge base root (contains .okb/).
         model: LLM model name to use for the agent.
+        language: Language code for wiki content (e.g. 'en', 'fr').
 
     Returns:
         Configured :class:`~agents.Agent` instance.
@@ -120,11 +127,17 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str) -> Ag
     okb_dir = Path(kb_dir) / ".okb"
     config = load_config(okb_dir / "config.yaml")
     _model = config.get("model", model)
-    client = LocalClient(
+    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
+    client = PageIndexClient(
+        api_key=pi_api_key or None,
         model=_model,
-        storage_path=str(okb_dir / "pageindex"),
+        storage_path=str(okb_dir),
     )
-    _collection_name = "default"
+    col = client.collection()
+
+    schema_md = get_agents_md(Path(wiki_root))
+    instructions = _LONG_DOC_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
 
     @function_tool
     def list_files(directory: str) -> str:
@@ -162,8 +175,7 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str) -> Ag
             doc_id: Document identifier from PageIndex.
             pages: Page range string, e.g. '1-5' or '3,7,12'.
         """
-        col = client.collection(_collection_name)
-        results = col._backend.get_page_content(_collection_name, doc_id, pages)
+        results = col.get_page_content(doc_id, pages)
         if not results:
             return "No content found for the given pages."
         parts = []
@@ -175,7 +187,7 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str) -> Ag
 
     return Agent(
         name="wiki-compiler",
-        instructions=_LONG_DOC_INSTRUCTIONS,
+        instructions=instructions,
         tools=[list_files, read_file, write_file, get_page_content],
         model=model,
     )
@@ -198,8 +210,14 @@ async def compile_short_doc(
         kb_dir: Root of the knowledge base (contains wiki/ and .okb/).
         model: LLM model name.
     """
+    from openkb.config import load_config
+
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    language: str = config.get("language", "en")
+
     wiki_root = str(kb_dir / "wiki")
-    agent = build_compiler_agent(wiki_root, model)
+    agent = build_compiler_agent(wiki_root, model, language=language)
 
     content = source_path.read_text(encoding="utf-8")
     message = (
@@ -230,8 +248,14 @@ async def compile_long_doc(
         kb_dir: Root of the knowledge base.
         model: LLM model name.
     """
+    from openkb.config import load_config
+
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    language: str = config.get("language", "en")
+
     wiki_root = str(kb_dir / "wiki")
-    agent = build_long_doc_compiler_agent(wiki_root, str(kb_dir), model)
+    agent = build_long_doc_compiler_agent(wiki_root, str(kb_dir), model, language=language)
 
     content = summary_path.read_text(encoding="utf-8")
     message = (

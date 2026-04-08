@@ -22,10 +22,8 @@ class TestIndexLongDocument:
             "doc_description": sample_tree["doc_description"],
             "doc_type": "pdf",
         }
-        # Expose structure via _backend mock (used when backend is accessed directly)
-        col._backend = MagicMock()
-        col._backend.get_document_structure.return_value = sample_tree["structure"]
-        col._name = "default"
+        # get_document_structure returns the tree structure list
+        col.get_document_structure.return_value = sample_tree["structure"]
         return col
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):
@@ -38,7 +36,7 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.LocalClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
             result = index_long_document(pdf_path, kb_dir)
 
         assert isinstance(result, IndexResult)
@@ -56,7 +54,7 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.LocalClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
             index_long_document(pdf_path, kb_dir)
 
         source_file = kb_dir / "wiki" / "sources" / "sample.md"
@@ -75,7 +73,7 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.LocalClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
             index_long_document(pdf_path, kb_dir)
 
         summary_file = kb_dir / "wiki" / "summaries" / "sample.md"
@@ -95,13 +93,13 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "report.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.LocalClient", return_value=fake_client) as mock_cls:
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls:
             index_long_document(pdf_path, kb_dir)
 
-        # Verify LocalClient was instantiated
+        # Verify PageIndexClient was instantiated
         mock_cls.assert_called_once()
         # Check that index_config with correct flags was passed
         _, kwargs = mock_cls.call_args
         ic = kwargs.get("index_config") or mock_cls.call_args[0][0] if mock_cls.call_args[0] else None
-        # Either as positional or keyword — either way LocalClient was called
+        # Either as positional or keyword — either way PageIndexClient was called
         assert mock_cls.called

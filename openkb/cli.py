@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import click
@@ -10,15 +11,32 @@ from dotenv import load_dotenv
 
 from openkb.config import DEFAULT_CONFIG, load_config, save_config
 from openkb.converter import convert_document
-from openkb.schema import SCHEMA_MD
+from openkb.log import append_log
+from openkb.schema import AGENTS_MD
 
 load_dotenv()
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
     ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx",
-    ".html", ".htm", ".txt", ".csv", ".doc",
+    ".html", ".htm", ".txt", ".csv",
 }
+
+# Map raw doc types to display types
+_TYPE_DISPLAY_MAP = {
+    "long_pdf": "pageindex",
+}
+
+_SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx"}
+
+
+def _display_type(raw_type: str) -> str:
+    """Map a raw stored doc type to a display type string."""
+    if raw_type in _TYPE_DISPLAY_MAP:
+        return _TYPE_DISPLAY_MAP[raw_type]
+    if raw_type in _SHORT_DOC_TYPES:
+        return "short"
+    return raw_type
 
 
 # ---------------------------------------------------------------------------
@@ -43,10 +61,12 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
     4. Else: compile_short_doc.
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
+    from openkb.state import HashRegistry
 
     okb_dir = kb_dir / ".okb"
     config = load_config(okb_dir / "config.yaml")
     model: str = config.get("model", DEFAULT_CONFIG["model"])
+    registry = HashRegistry(okb_dir / "hashes.json")
 
     # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
@@ -74,21 +94,39 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
         click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})…")
-        try:
-            asyncio.run(
-                compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model)
-            )
-        except Exception as exc:
-            click.echo(f"  [ERROR] Compilation failed: {exc}")
-            return
+        for attempt in range(2):
+            try:
+                asyncio.run(
+                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model)
+                )
+                break
+            except Exception as exc:
+                if attempt == 0:
+                    click.echo(f"  Retrying compilation in 2s...")
+                    time.sleep(2)
+                else:
+                    click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    return
     else:
         click.echo(f"  Compiling short doc…")
-        try:
-            asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
-        except Exception as exc:
-            click.echo(f"  [ERROR] Compilation failed: {exc}")
-            return
+        for attempt in range(2):
+            try:
+                asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+                break
+            except Exception as exc:
+                if attempt == 0:
+                    click.echo(f"  Retrying compilation in 2s...")
+                    time.sleep(2)
+                else:
+                    click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    return
 
+    # Register hash only after successful compilation
+    if result.file_hash:
+        doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
+        registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
+
+    append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
 
 
@@ -109,23 +147,41 @@ def init():
         click.echo("Knowledge base already initialized.")
         return
 
+    # Interactive prompts
+    model = click.prompt("Model", default=DEFAULT_CONFIG["model"])
+    api_key_env = click.prompt("API key env var", default=DEFAULT_CONFIG["api_key_env"])
+    language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
+    pageindex_threshold = click.prompt(
+        "PageIndex threshold",
+        default=DEFAULT_CONFIG["pageindex_threshold"],
+        type=int,
+    )
+
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
+    Path("wiki/explorations").mkdir(parents=True, exist_ok=True)
     Path("wiki/reports").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
-    Path("wiki/SCHEMA.md").write_text(SCHEMA_MD, encoding="utf-8")
+    Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
     Path("wiki/index.md").write_text(
-        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n",
+        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
         encoding="utf-8",
     )
+    Path("wiki/log.md").write_text("# Operations Log\n\n", encoding="utf-8")
 
     # Create .okb/ state directory
     okb_dir.mkdir()
-    save_config(okb_dir / "config.yaml", DEFAULT_CONFIG)
+    config = {
+        "model": model,
+        "api_key_env": api_key_env,
+        "language": language,
+        "pageindex_threshold": pageindex_threshold,
+    }
+    save_config(okb_dir / "config.yaml", config)
     (okb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")
 
     click.echo("Knowledge base initialised.")
@@ -167,7 +223,8 @@ def add(path):
 
 @cli.command()
 @click.argument("question")
-def query(question):
+@click.option("--save", is_flag=True, default=False, help="Save the answer to wiki/explorations/.")
+def query(question, save):
     """Query the knowledge base with QUESTION."""
     kb_dir = _find_kb_dir()
     if kb_dir is None:
@@ -185,6 +242,20 @@ def query(question):
         click.echo(answer)
     except Exception as exc:
         click.echo(f"[ERROR] Query failed: {exc}")
+        return
+
+    append_log(kb_dir / "wiki", "query", question)
+
+    if save and answer:
+        import re
+        slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
+        explore_dir = kb_dir / "wiki" / "explorations"
+        explore_dir.mkdir(parents=True, exist_ok=True)
+        explore_path = explore_dir / f"{slug}.md"
+        explore_path.write_text(
+            f"---\nquery: \"{question}\"\n---\n\n{answer}\n", encoding="utf-8"
+        )
+        click.echo(f"\nSaved to {explore_path}")
 
 
 @cli.command()
@@ -245,6 +316,7 @@ def lint(fix):
     report_path = reports_dir / f"lint_{timestamp}.md"
     report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
     report_path.write_text(report_content, encoding="utf-8")
+    append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
     click.echo(f"\nReport written to {report_path}")
 
 
@@ -267,14 +339,18 @@ def list_cmd():
         click.echo("No documents indexed yet.")
         return
 
-    # Display documents table
-    click.echo("Documents:")
-    click.echo(f"  {'Name':<40} {'Type':<12}")
-    click.echo(f"  {'-'*40} {'-'*12}")
+    # Display documents table with count in header
+    doc_count = len(hashes)
+    click.echo(f"Documents ({doc_count}):")
+    click.echo(f"  {'Name':<40} {'Type':<12} {'Pages':<8}")
+    click.echo(f"  {'-'*40} {'-'*12} {'-'*8}")
     for file_hash, meta in hashes.items():
         name = meta.get("name", "unknown")
-        doc_type = meta.get("type", "unknown")
-        click.echo(f"  {name:<40} {doc_type:<12}")
+        raw_type = meta.get("type", "unknown")
+        display = _display_type(raw_type)
+        pages = meta.get("pages", "")
+        pages_str = str(pages) if pages else ""
+        click.echo(f"  {name:<40} {display:<12} {pages_str:<8}")
 
     # Display concepts
     concepts_dir = kb_dir / "wiki" / "concepts"
@@ -321,3 +397,23 @@ def status():
     if hashes_file.exists():
         hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
         click.echo(f"\n  Total indexed: {len(hashes)} document(s)")
+
+    # Last compile time: newest file in wiki/summaries/
+    summaries_dir = wiki_dir / "summaries"
+    if summaries_dir.exists():
+        summaries = list(summaries_dir.glob("*.md"))
+        if summaries:
+            newest_summary = max(summaries, key=lambda p: p.stat().st_mtime)
+            import datetime
+            mtime = datetime.datetime.fromtimestamp(newest_summary.stat().st_mtime)
+            click.echo(f"  Last compile:  {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Last lint time: newest file in wiki/reports/
+    reports_dir = wiki_dir / "reports"
+    if reports_dir.exists():
+        reports = list(reports_dir.glob("*.md"))
+        if reports:
+            newest_report = max(reports, key=lambda p: p.stat().st_mtime)
+            import datetime
+            mtime = datetime.datetime.fromtimestamp(newest_report.stat().st_mtime)
+            click.echo(f"  Last lint:     {mtime.strftime('%Y-%m-%d %H:%M:%S')}")

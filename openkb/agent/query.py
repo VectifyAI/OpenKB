@@ -5,15 +5,17 @@ from pathlib import Path
 
 import litellm
 from agents import Agent, Runner, function_tool
-from pageindex import LocalClient
+import os
+
+from pageindex import PageIndexClient
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.schema import SCHEMA_MD
+from openkb.schema import SCHEMA_MD, get_agents_md
 
-_QUERY_INSTRUCTIONS = f"""\
+_QUERY_INSTRUCTIONS_TEMPLATE = """\
 You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
 
-{SCHEMA_MD}
+{schema_md}
 
 ## Search strategy
 1. Start by reading index.md to understand what documents and concepts are available.
@@ -28,28 +30,31 @@ information, say so clearly.
 """
 
 
-def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> str:
+def pageindex_retrieve(doc_id: str, question: str, okb_dir: str, model: str) -> str:
     """Retrieve relevant content from a long document via PageIndex.
-
-    1. Gets the document structure from PageIndex storage.
-    2. Asks the LLM which sections/pages are relevant to *question*.
-    3. Fetches those pages and returns formatted text.
 
     Args:
         doc_id: PageIndex document identifier.
         question: The user's question.
-        db_path: Path to the PageIndex storage directory (.okb/pageindex).
+        okb_dir: Path to the .okb/ state directory.
         model: LLM model to use for relevance selection.
 
     Returns:
         Formatted string with retrieved page content.
     """
-    client = LocalClient(model=model, storage_path=db_path)
-    col = client.collection("default")
+    from openkb.config import load_config
+    config = load_config(Path(okb_dir) / "config.yaml")
+    pi_api_key = os.environ.get(config.get("pageindex_api_key_env", ""), "")
+    client = PageIndexClient(
+        api_key=pi_api_key or None,
+        model=model,
+        storage_path=okb_dir,
+    )
+    col = client.collection()
 
     # 1. Get document structure
     try:
-        structure = col._backend.get_document_structure("default", doc_id)
+        structure = col.get_document_structure(doc_id)
     except Exception as exc:
         return f"Error retrieving document structure: {exc}"
 
@@ -92,7 +97,7 @@ def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> 
 
     # 3. Fetch those pages
     try:
-        pages = col._backend.get_page_content("default", doc_id, page_spec)
+        pages = col.get_page_content(doc_id, page_spec)
     except Exception as exc:
         return f"Error fetching page content: {exc}"
 
@@ -108,17 +113,21 @@ def pageindex_retrieve(doc_id: str, question: str, db_path: str, model: str) -> 
     return "\n\n".join(parts)
 
 
-def build_query_agent(wiki_root: str, db_path: str, model: str) -> Agent:
+def build_query_agent(wiki_root: str, okb_dir: str, model: str, language: str = "en") -> Agent:
     """Build and return the Q&A agent.
 
     Args:
         wiki_root: Absolute path to the wiki directory.
-        db_path: Path to the PageIndex storage directory (.okb/pageindex).
+        okb_dir: Path to the .okb/ state directory.
         model: LLM model name.
+        language: Language code for wiki content (e.g. 'en', 'fr').
 
     Returns:
         Configured :class:`~agents.Agent` instance.
     """
+    schema_md = get_agents_md(Path(wiki_root))
+    instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
 
     @function_tool
     def list_files(directory: str) -> str:
@@ -149,11 +158,11 @@ def build_query_agent(wiki_root: str, db_path: str, model: str) -> Agent:
             doc_id: PageIndex document identifier (found in index.md).
             question: The question you are trying to answer.
         """
-        return pageindex_retrieve(doc_id, question, db_path, model)
+        return pageindex_retrieve(doc_id, question, okb_dir, model)
 
     return Agent(
         name="wiki-query",
-        instructions=_QUERY_INSTRUCTIONS,
+        instructions=instructions,
         tools=[list_files, read_file, retrieve],
         model=model,
     )
@@ -170,9 +179,15 @@ async def run_query(question: str, kb_dir: Path, model: str) -> str:
     Returns:
         The agent's final answer as a string.
     """
-    wiki_root = str(kb_dir / "wiki")
-    db_path = str(kb_dir / ".okb" / "pageindex")
+    from openkb.config import load_config
 
-    agent = build_query_agent(wiki_root, db_path, model)
+    okb_dir = kb_dir / ".okb"
+    config = load_config(okb_dir / "config.yaml")
+    language: str = config.get("language", "en")
+
+    wiki_root = str(kb_dir / "wiki")
+    okb_path = str(okb_dir)
+
+    agent = build_query_agent(wiki_root, okb_path, model, language=language)
     result = await Runner.run(agent, question)
     return result.final_output or ""

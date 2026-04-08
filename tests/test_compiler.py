@@ -110,7 +110,7 @@ class TestCompileLongDoc:
         mock_result.final_output = "Done"
 
         with patch("openkb.agent.compiler.Runner.run", new_callable=AsyncMock) as mock_run, \
-             patch("openkb.agent.compiler.LocalClient") as mock_client_cls:
+             patch("openkb.agent.compiler.PageIndexClient") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             mock_run.return_value = mock_result
@@ -145,7 +145,7 @@ class TestCompileLongDoc:
             return MagicMock(final_output="ok")
 
         with patch("openkb.agent.compiler.Runner.run", side_effect=fake_run), \
-             patch("openkb.agent.compiler.LocalClient") as mock_client_cls:
+             patch("openkb.agent.compiler.PageIndexClient") as mock_client_cls:
             mock_client_cls.return_value = MagicMock()
 
             await compile_long_doc(

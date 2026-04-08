@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
     "pageindex @ git+https://github.com/KylinMountain/PageIndex.git@feat/sdk#egg=pageindex",
-    "markitdown",
+    "markitdown[all]",
     "click>=8.0",
     "watchdog>=3.0",
     "litellm",
