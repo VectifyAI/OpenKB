@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 dependencies = [
-    "pageindex @ git+https://github.com/VectifyAI/PageIndex.git@dev",
+    "pageindex==0.3.0.dev0",
     "markitdown[all]",
     "click>=8.0",
     "watchdog>=3.0",
@@ -28,9 +28,6 @@ testpaths = ["tests"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["openkb"]
