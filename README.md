@@ -16,7 +16,7 @@
 
 **OpenKB (Open Knowledge Base)** is an open-source system (in CLI) that compiles raw documents into a structured, interlinked wiki-style knowledge base using LLMs, powered by [**PageIndex**](https://github.com/VectifyAI/PageIndex) for vectorless long document retrieval.
 
-The idea is based on a [concept described by Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): LLMs generate summaries, concept pages, and cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
+The idea is based on a [concept](https://x.com/karpathy/status/2039805659525644595) described by Andrej Karpathy: LLMs generate summaries, concept pages, and cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
 
 ### Why not just traditional RAG?
 
@@ -66,7 +66,9 @@ openkb lint
 
 OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e.g., OpenAI, Claude, Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
-Create a `.env` file with your LLM API key. Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using LiteLLM `provider/model` format (like `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (like `gpt-5.4`).
+Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using `provider/model` LiteLLM format (like `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (like `gpt-5.4`).
+
+Create a `.env` file with your LLM API key.
 
 ```bash
 LLM_API_KEY=your_llm_api_key
@@ -82,8 +84,7 @@ raw/                              You drop files here
  ├─ Long PDFs ──→ PageIndex ────→ LLM reads document trees
  │                                     │
  │                                     ▼
- │                              Wiki Compilation
- │                           (single LLM session)
+ │                         Wiki Compilation (using LLM)
  │                                     │
  ▼                                     ▼
 wiki/
@@ -190,7 +191,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 3. Use graph view to see knowledge connections
 4. Use Obsidian Web Clipper to add web articles to `raw/`
 
-# 🔗 Learn More
+# 🧭 Learn More
 
 ### Compared to Karpathy's Approach
 
@@ -221,7 +222,7 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ### Support Us
 
-Leave us a star 🌟 if you like our project. Thank you!  
+If you find OpenKB useful, give us a star 🌟 — and check out [PageIndex](https://github.com/VectifyAI/PageIndex) too!  
 
 <div>
 
