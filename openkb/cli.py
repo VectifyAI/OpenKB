@@ -169,11 +169,6 @@ def init():
         default=DEFAULT_CONFIG["pageindex_threshold"],
         type=int,
     )
-    pageindex_api_key_env = click.prompt(
-        "PageIndex cloud API key env var (leave empty for local)",
-        default=DEFAULT_CONFIG["pageindex_api_key_env"],
-    )
-
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
@@ -196,7 +191,6 @@ def init():
         "model": model,
         "language": language,
         "pageindex_threshold": pageindex_threshold,
-        "pageindex_api_key_env": pageindex_api_key_env,
     }
     save_config(openkb_dir / "config.yaml", config)
     (openkb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")

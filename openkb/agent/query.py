@@ -36,10 +36,7 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, openkb_dir: str, model:
     For cloud-indexed docs: delegates to col.query() directly.
     For local docs: uses structure-based page selection + get_page_content.
     """
-    from openkb.config import load_config
-    config = load_config(Path(openkb_dir) / "config.yaml")
-    pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
-    pi_api_key = os.environ.get(pi_key_env, "")
+    pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
     # Determine if this doc was cloud-indexed (cloud doc_ids have "pi-" prefix)
     is_cloud_doc = doc_id.startswith("pi-")
 
@@ -49,7 +46,7 @@ def _pageindex_retrieve_impl(doc_id: str, question: str, openkb_dir: str, model:
         import asyncio
         import threading
 
-        client = PageIndexClient(api_key=pi_api_key or None, model=model)
+        client = PageIndexClient(api_key=pageindex_api_key or None, model=model)
         col = client.collection()
         try:
             stream = col.query(question, doc_ids=[doc_id], stream=True)

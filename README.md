@@ -147,7 +147,6 @@ Settings are initialized by `openkb init`, and stored in `.openkb/config.yaml`:
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
-pageindex_api_key_env: ""        # (Optional) Environment variable for PageIndex Cloud API key
 ```
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
@@ -208,7 +207,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 
 ### Tech Stack
 
-- [PageIndex](https://github.com/VectifyAI/PageIndex) — Vectorless, reasoning-based document indexing
+- [PageIndex](https://github.com/VectifyAI/PageIndex) — Vectorless, reasoning-based document indexing and retrieval
 - [markitdown](https://github.com/microsoft/markitdown) — Universal file-to-markdown conversion
 - [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) — Agent framework (supports non-OpenAI models via LiteLLM)
 - [LiteLLM](https://github.com/BerriAI/litellm) — Multi-provider LLM gateway

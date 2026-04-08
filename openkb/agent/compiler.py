@@ -130,10 +130,9 @@ def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, langu
     openkb_dir = Path(kb_dir) / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     _model = config.get("model", model)
-    pi_key_env = config.get("pageindex_api_key_env", "") or "PAGEINDEX_API_KEY"
-    pi_api_key = os.environ.get(pi_key_env, "")
+    pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
     client = PageIndexClient(
-        api_key=pi_api_key or None,
+        api_key=pageindex_api_key or None,
         model=_model,
         storage_path=str(openkb_dir),
     )
