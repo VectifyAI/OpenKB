@@ -36,41 +36,39 @@ def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[
     page_images: dict[int, list[str]] = {}
     img_counter = 0
 
-    doc = pymupdf.open(str(pdf_path))
-    for page_idx in range(len(doc)):
-        page = doc[page_idx]
-        page_num = page_idx + 1
+    with pymupdf.open(str(pdf_path)) as doc:
+        for page_idx in range(len(doc)):
+            page = doc[page_idx]
+            page_num = page_idx + 1
 
-        for block in page.get_text("dict")["blocks"]:
-            if block["type"] != 1:  # not an image block
-                continue
+            for block in page.get_text("dict")["blocks"]:
+                if block["type"] != 1:  # not an image block
+                    continue
 
-            width = block.get("width", 0)
-            height = block.get("height", 0)
-            if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
-                continue
+                width = block.get("width", 0)
+                height = block.get("height", 0)
+                if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
+                    continue
 
-            image_bytes = block.get("image")
-            if not image_bytes:
-                continue
+                image_bytes = block.get("image")
+                if not image_bytes:
+                    continue
 
-            try:
-                pix = pymupdf.Pixmap(image_bytes)
-                if pix.n > 4:
-                    pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                img_counter += 1
-                filename = f"p{page_num}_img{img_counter}.png"
-                save_path = images_dir / filename
-                pix.save(str(save_path))
-                pix = None
-            except Exception:
-                logger.warning("Failed to save image block on page %d", page_num)
-                continue
+                try:
+                    pix = pymupdf.Pixmap(image_bytes)
+                    if pix.n > 4:
+                        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+                    img_counter += 1
+                    filename = f"p{page_num}_img{img_counter}.png"
+                    save_path = images_dir / filename
+                    pix.save(str(save_path))
+                    pix = None
+                except Exception:
+                    logger.warning("Failed to save image block on page %d", page_num)
+                    continue
 
-            rel_path = f"images/{doc_name}/{filename}"
-            page_images.setdefault(page_num, []).append(rel_path)
-
-    doc.close()
+                rel_path = f"images/{doc_name}/{filename}"
+                page_images.setdefault(page_num, []).append(rel_path)
     return page_images
 
 
@@ -87,41 +85,39 @@ def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> 
     parts: list[str] = []
     img_counter = 0
 
-    doc = pymupdf.open(str(pdf_path))
-    for page_idx in range(len(doc)):
-        page = doc[page_idx]
-        page_num = page_idx + 1
-        parts.append(f"\n\n<!-- Page {page_num} -->\n")
+    with pymupdf.open(str(pdf_path)) as doc:
+        for page_idx in range(len(doc)):
+            page = doc[page_idx]
+            page_num = page_idx + 1
+            parts.append(f"\n\n<!-- Page {page_num} -->\n")
 
-        for block in page.get_text("dict")["blocks"]:
-            if block["type"] == 0:  # text block
-                lines = []
-                for line in block["lines"]:
-                    spans_text = "".join(span["text"] for span in line["spans"])
-                    lines.append(spans_text)
-                parts.append("\n".join(lines))
+            for block in page.get_text("dict")["blocks"]:
+                if block["type"] == 0:  # text block
+                    lines = []
+                    for line in block["lines"]:
+                        spans_text = "".join(span["text"] for span in line["spans"])
+                        lines.append(spans_text)
+                    parts.append("\n".join(lines))
 
-            elif block["type"] == 1:  # image block
-                width = block.get("width", 0)
-                height = block.get("height", 0)
-                if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
-                    continue
-                image_bytes = block.get("image")
-                if not image_bytes:
-                    continue
-                try:
-                    pix = pymupdf.Pixmap(image_bytes)
-                    if pix.n > 4:
-                        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                    img_counter += 1
-                    filename = f"p{page_num}_img{img_counter}.png"
-                    (images_dir / filename).write_bytes(pix.tobytes("png"))
-                    pix = None
-                    parts.append(f"\n![image](images/{doc_name}/{filename})\n")
-                except Exception:
-                    logger.warning("Failed to save image block on page %d", page_num)
-
-    doc.close()
+                elif block["type"] == 1:  # image block
+                    width = block.get("width", 0)
+                    height = block.get("height", 0)
+                    if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
+                        continue
+                    image_bytes = block.get("image")
+                    if not image_bytes:
+                        continue
+                    try:
+                        pix = pymupdf.Pixmap(image_bytes)
+                        if pix.n > 4:
+                            pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+                        img_counter += 1
+                        filename = f"p{page_num}_img{img_counter}.png"
+                        (images_dir / filename).write_bytes(pix.tobytes("png"))
+                        pix = None
+                        parts.append(f"\n![image](images/{doc_name}/{filename})\n")
+                    except Exception:
+                        logger.warning("Failed to save image block on page %d", page_num)
     return "\n".join(parts)
 
 
