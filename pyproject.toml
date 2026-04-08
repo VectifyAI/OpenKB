@@ -9,6 +9,22 @@ description = "Karpathy's LLM Knowledge Base workflow — powered by PageIndex"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
+authors = [
+    {name = "Kylin", email = "quanqi@pageindex.ai"},
+    {name = "Ray", email = "ray@vectify.ai"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "agents", "document"]
 dependencies = [
     "pageindex==0.3.0.dev0",
     "markitdown[all]",
@@ -19,6 +35,11 @@ dependencies = [
     "pyyaml",
     "python-dotenv",
 ]
+
+[project.urls]
+Repository = "https://github.com/VectifyAI/OpenKB"
+Homepage = "https://github.com/VectifyAI/OpenKB"
+Issues = "https://github.com/VectifyAI/OpenKB/issues"
 
 [project.scripts]
 openkb = "openkb.cli:cli"
