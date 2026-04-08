@@ -215,6 +215,14 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 - [Click](https://click.palletsprojects.com/) — CLI framework
 - [watchdog](https://github.com/gorakhargosh/watchdog) — Filesystem monitoring
 
+### Roadmap
+
+- [ ] Extend long document handling to non-PDF formats
+- [ ] Scale to large document collections with nested folder support
+- [ ] Hierarchical concept (topic) indexing for massive knowledge bases
+- [ ] Database-backed storage engine
+- [ ] Web UI for browsing and managing wikis
+
 ### Contributing
 
 Contributions are welcome! Please submit a pull request, or open an [issue](https://github.com/VectifyAI/OpenKB/issues) for bugs or feature requests. For larger changes, consider opening an issue first to discuss the approach.
