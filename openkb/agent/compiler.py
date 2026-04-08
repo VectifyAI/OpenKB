@@ -1,202 +1,281 @@
-"""Wiki compilation agent for OpenKB.
+"""Wiki compilation pipeline for OpenKB.
 
-Provides an agent that reads converted documents, generates summaries,
-updates concept pages, and maintains the wiki index.
+Pipeline leveraging LLM prompt caching:
+  Step 1: Build base context A (schema + document content).
+  Step 2: A → generate summary.
+  Step 3: A + summary → extract concept list.
+  Step 4: Concurrent LLM calls (A cached) → generate each concept page.
+  Step 5: Code writes all files, updates index, appends log.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import sys
+import time
 from pathlib import Path
 
-from agents import Agent, Runner, function_tool
-import os
+import litellm
 
-from pageindex import PageIndexClient
+from openkb.schema import get_agents_md
 
-from openkb.agent.tools import list_wiki_files, read_wiki_file, write_wiki_file
-from openkb.schema import SCHEMA_MD, get_agents_md
+logger = logging.getLogger(__name__)
 
-_COMPILER_INSTRUCTIONS_TEMPLATE = """\
+# ---------------------------------------------------------------------------
+# Prompt templates
+# ---------------------------------------------------------------------------
+
+_SYSTEM_TEMPLATE = """\
 You are a wiki compilation agent for a personal knowledge base.
 
 {schema_md}
 
-## Your job
-When given a new document, you must:
-1. Write a summary page to summaries/<doc_name>.md with:
-   - A YAML frontmatter block: `sources: [filename]`
-   - Key concepts, findings, and ideas from the document
-   - [[wikilinks]] to related concepts
-2. Update or create concept pages in concepts/ for any significant cross-document themes.
-3. Update index.md:
-   - Under ## Documents: add a one-liner entry for the new document
-   - Under ## Concepts: add/update entries for any concepts you touched
-
-Always use the provided tools to read existing wiki pages before writing,
-so you can append or update without losing prior content.
-Use [[wikilinks]] consistently to connect related pages.
+Write all content in {language} language.
+Use [[wikilinks]] to connect related pages (e.g. [[concepts/attention]]).
 """
 
-_LONG_DOC_INSTRUCTIONS_TEMPLATE = """\
-You are a wiki compilation agent for a personal knowledge base.
+_SUMMARY_USER = """\
+New document: {doc_name}
 
-{schema_md}
+Full text:
+{content}
 
-## Your job for long documents (already summarised by PageIndex)
-The summary and source pages are already written. Your tasks are:
-1. Update or create concept pages in concepts/ for significant themes.
-2. Update index.md:
-   - Under ## Documents: add a one-liner entry referencing the document
-   - Under ## Concepts: add/update entries for any concepts you touched
-3. Do NOT regenerate or overwrite the existing summary page.
+Write a summary page for this document in Markdown. Include:
+- Key concepts, findings, and ideas
+- [[wikilinks]] to concepts that could become cross-document concept pages
 
-Use get_page_content to fetch specific page ranges from long documents when
-you need more detail before writing concept pages.
-Always read existing wiki pages before writing to preserve prior content.
-Use [[wikilinks]] consistently to connect related pages.
+Return ONLY the Markdown content (no frontmatter, no code fences).
+"""
+
+_CONCEPTS_LIST_USER = """\
+Based on the summary above, identify the key concepts worth creating as \
+standalone wiki concept pages.
+
+Existing concept pages: {existing_concepts}
+
+Return a JSON array of objects, each with:
+- "name": concept slug (e.g. "transformer-architecture")
+- "title": human-readable title (e.g. "Transformer Architecture")
+- "is_update": true if this concept already exists and should be updated
+
+Only include concepts for significant themes. For the first document, \
+create 2-3 foundational concepts at most. Do NOT create concepts that are \
+just the document topic itself (e.g. don't create "machine-translation" \
+for a translation paper).
+
+Return ONLY valid JSON array, no fences, no explanation.
+"""
+
+_CONCEPT_PAGE_USER = """\
+Write the concept page for: {title}
+
+This concept relates to the document "{doc_name}" summarized above.
+{update_instruction}
+
+Return ONLY the Markdown content (no frontmatter, no code fences). Include:
+- Clear explanation of the concept
+- Key details from the source document
+- [[wikilinks]] to related concepts and [[summaries/{doc_name}]]
+"""
+
+_LONG_DOC_SUMMARY_USER = """\
+This is a PageIndex summary for long document "{doc_name}" (doc_id: {doc_id}):
+
+{content}
+
+Based on this structured summary, write a concise overview that captures \
+the key themes and findings. This will be used to generate concept pages.
+
+Return ONLY the Markdown content (no frontmatter, no code fences).
 """
 
 
-def build_compiler_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
-    """Build and return the wiki-compiler agent.
+# ---------------------------------------------------------------------------
+# LLM helpers
+# ---------------------------------------------------------------------------
 
-    Creates @function_tool wrappers that bind *wiki_root* so the agent
-    doesn't need to supply it explicitly.
-
-    Args:
-        wiki_root: Absolute path to the wiki directory.
-        model: LLM model name to use for the agent.
-        language: Language code for wiki content (e.g. 'en', 'fr').
-
-    Returns:
-        Configured :class:`~agents.Agent` instance.
-    """
-    schema_md = get_agents_md(Path(wiki_root))
-    instructions = _COMPILER_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
-    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
-
-    @function_tool
-    def list_files(directory: str) -> str:
-        """List all Markdown files in a wiki subdirectory.
-
-        Args:
-            directory: Subdirectory path relative to wiki root (e.g. 'sources').
-        """
-        return list_wiki_files(directory, wiki_root)
-
-    @function_tool
-    def read_file(path: str) -> str:
-        """Read a Markdown file from the wiki.
-
-        Args:
-            path: File path relative to wiki root (e.g. 'sources/notes.md').
-        """
-        return read_wiki_file(path, wiki_root)
-
-    @function_tool
-    def write_file(path: str, content: str) -> str:
-        """Write or overwrite a Markdown file in the wiki.
-
-        Args:
-            path: File path relative to wiki root (e.g. 'concepts/attention.md').
-            content: Markdown content to write.
-        """
-        return write_wiki_file(path, content, wiki_root)
-
-    from agents.model_settings import ModelSettings
-
-    return Agent(
-        name="wiki-compiler",
-        instructions=instructions,
-        tools=[list_files, read_file, write_file],
-        model=f"litellm/{model}",
-        model_settings=ModelSettings(parallel_tool_calls=False),
-    )
+import threading
 
 
-def build_long_doc_compiler_agent(wiki_root: str, kb_dir: str, model: str, language: str = "en") -> Agent:
-    """Build the wiki-compiler agent with an extra get_page_content tool.
+class _Spinner:
+    """Animated dots spinner that runs in a background thread."""
 
-    Args:
-        wiki_root: Absolute path to the wiki directory.
-        kb_dir: Absolute path to the knowledge base root (contains .openkb/).
-        model: LLM model name to use for the agent.
-        language: Language code for wiki content (e.g. 'en', 'fr').
+    def __init__(self, label: str):
+        self._label = label
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
-    Returns:
-        Configured :class:`~agents.Agent` instance.
-    """
-    from openkb.config import load_config
+    def start(self) -> None:
+        sys.stdout.write(f"    {self._label}")
+        sys.stdout.flush()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
-    openkb_dir = Path(kb_dir) / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
-    _model = config.get("model", model)
-    pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
-    client = PageIndexClient(
-        api_key=pageindex_api_key or None,
-        model=_model,
-        storage_path=str(openkb_dir),
-    )
-    col = client.collection()
+    def _run(self) -> None:
+        while not self._stop.wait(timeout=1.0):
+            sys.stdout.write(".")
+            sys.stdout.flush()
 
-    schema_md = get_agents_md(Path(wiki_root))
-    instructions = _LONG_DOC_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
-    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
+    def stop(self, suffix: str = "") -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join()
+        sys.stdout.write(f" {suffix}\n")
+        sys.stdout.flush()
 
-    @function_tool
-    def list_files(directory: str) -> str:
-        """List all Markdown files in a wiki subdirectory.
 
-        Args:
-            directory: Subdirectory path relative to wiki root (e.g. 'sources').
-        """
-        return list_wiki_files(directory, wiki_root)
+def _format_usage(elapsed: float, usage) -> str:
+    """Format timing and token usage into a short summary string."""
+    cached = getattr(usage, "prompt_tokens_details", None)
+    cache_info = ""
+    if cached and hasattr(cached, "cached_tokens") and cached.cached_tokens:
+        cache_info = f", cached={cached.cached_tokens}"
+    return f"{elapsed:.1f}s (in={usage.prompt_tokens}, out={usage.completion_tokens}{cache_info})"
 
-    @function_tool
-    def read_file(path: str) -> str:
-        """Read a Markdown file from the wiki.
 
-        Args:
-            path: File path relative to wiki root (e.g. 'sources/notes.md').
-        """
-        return read_wiki_file(path, wiki_root)
+def _fmt_messages(messages: list[dict], max_content: int = 200) -> str:
+    """Format messages for debug output, truncating long content."""
+    parts = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+        if len(content) > max_content:
+            preview = content[:max_content] + f"... ({len(content)} chars)"
+        else:
+            preview = content
+        parts.append(f"      [{role}] {preview}")
+    return "\n".join(parts)
 
-    @function_tool
-    def write_file(path: str, content: str) -> str:
-        """Write or overwrite a Markdown file in the wiki.
 
-        Args:
-            path: File path relative to wiki root (e.g. 'concepts/attention.md').
-            content: Markdown content to write.
-        """
-        return write_wiki_file(path, content, wiki_root)
+def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
+    """Single LLM call with animated progress and debug logging."""
+    logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
+    if kwargs:
+        logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
 
-    @function_tool
-    def get_page_content(doc_id: str, pages: str) -> str:
-        """Retrieve text content for specific pages of a long document.
+    spinner = _Spinner(step_name)
+    spinner.start()
+    t0 = time.time()
 
-        Args:
-            doc_id: Document identifier from PageIndex.
-            pages: Page range string, e.g. '1-5' or '3,7,12'.
-        """
-        results = col.get_page_content(doc_id, pages)
-        if not results:
-            return "No content found for the given pages."
-        parts = []
-        for item in results:
-            page_num = item.get("page_index", "?")
-            text = item.get("text", "")
-            parts.append(f"[Page {page_num}]\n{text}")
-        return "\n\n".join(parts)
+    response = litellm.completion(model=model, messages=messages, **kwargs)
+    content = response.choices[0].message.content or ""
 
-    from agents.model_settings import ModelSettings
+    spinner.stop(_format_usage(time.time() - t0, response.usage))
+    logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
+    return content.strip()
 
-    return Agent(
-        name="wiki-compiler",
-        instructions=instructions,
-        tools=[list_files, read_file, write_file, get_page_content],
-        model=f"litellm/{_model}",
-        model_settings=ModelSettings(parallel_tool_calls=False),
-    )
+
+async def _llm_call_async(model: str, messages: list[dict], step_name: str) -> str:
+    """Async LLM call with timing output and debug logging."""
+    logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
+
+    t0 = time.time()
+
+    response = await litellm.acompletion(model=model, messages=messages)
+    content = response.choices[0].message.content or ""
+
+    elapsed = time.time() - t0
+    sys.stdout.write(f"    {step_name}... {_format_usage(elapsed, response.usage)}\n")
+    sys.stdout.flush()
+    logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
+    return content.strip()
+
+
+def _parse_json(text: str) -> list | dict:
+    """Parse JSON from LLM response, stripping markdown fences if present."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        first_nl = cleaned.index("\n")
+        cleaned = cleaned[first_nl + 1:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+    return json.loads(cleaned.strip())
+
+
+# ---------------------------------------------------------------------------
+# File I/O helpers
+# ---------------------------------------------------------------------------
+
+def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
+    """Read current index.md content and list of existing concept slugs."""
+    index_path = wiki_dir / "index.md"
+    index_content = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
+
+    concepts_dir = wiki_dir / "concepts"
+    existing = sorted(p.stem for p in concepts_dir.glob("*.md")) if concepts_dir.exists() else []
+
+    return index_content, existing
+
+
+def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
+    """Find the original filename in raw/ for a given doc stem."""
+    raw_dir = kb_dir / "raw"
+    if raw_dir.exists():
+        for f in raw_dir.iterdir():
+            if f.stem == doc_name:
+                return f.name
+    return f"{doc_name}.pdf"
+
+
+def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str) -> None:
+    """Write summary page with frontmatter."""
+    summaries_dir = wiki_dir / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = f"---\nsources: [{source_file}]\n---\n\n"
+    (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
+
+
+def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool) -> None:
+    """Write or update a concept page, managing the sources frontmatter."""
+    concepts_dir = wiki_dir / "concepts"
+    concepts_dir.mkdir(parents=True, exist_ok=True)
+    path = concepts_dir / f"{name}.md"
+
+    if is_update and path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if source_file not in existing:
+            if existing.startswith("---"):
+                end = existing.index("---", 3)
+                fm = existing[:end + 3]
+                body = existing[end + 3:]
+                if "sources:" in fm:
+                    fm = fm.replace("sources: [", f"sources: [{source_file}, ")
+                existing = fm + body
+            existing += f"\n\n{content}"
+        path.write_text(existing, encoding="utf-8")
+    else:
+        frontmatter = f"---\nsources: [{source_file}]\n---\n\n"
+        path.write_text(frontmatter + content, encoding="utf-8")
+
+
+def _update_index(wiki_dir: Path, doc_name: str, concept_names: list[str]) -> None:
+    """Append document and concept entries to index.md."""
+    index_path = wiki_dir / "index.md"
+    if not index_path.exists():
+        return
+
+    text = index_path.read_text(encoding="utf-8")
+
+    doc_entry = f"- [[summaries/{doc_name}]]"
+    if doc_entry not in text:
+        if "## Documents" in text:
+            text = text.replace("## Documents\n", f"## Documents\n{doc_entry}\n", 1)
+
+    for name in concept_names:
+        concept_entry = f"- [[concepts/{name}]]"
+        if concept_entry not in text:
+            if "## Concepts" in text:
+                text = text.replace("## Concepts\n", f"## Concepts\n{concept_entry}\n", 1)
+
+    index_path.write_text(text, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+DEFAULT_COMPILE_CONCURRENCY = 5
 
 
 async def compile_short_doc(
@@ -204,17 +283,15 @@ async def compile_short_doc(
     source_path: Path,
     kb_dir: Path,
     model: str,
+    max_concurrency: int = DEFAULT_COMPILE_CONCURRENCY,
 ) -> None:
-    """Run the compiler agent for a short (non-PageIndex) document.
+    """Compile a short document using a multi-step LLM pipeline with caching.
 
-    Reads the converted source Markdown, then asks the agent to generate a
-    summary, update concept pages, and update the index.
-
-    Args:
-        doc_name: Document stem name (no extension).
-        source_path: Path to the converted Markdown in wiki/sources/.
-        kb_dir: Root of the knowledge base (contains wiki/ and .openkb/).
-        model: LLM model name.
+    Step 1: Build base context A (schema + doc content).
+    Step 2: A → generate summary.
+    Step 3: A + summary → extract concept list.
+    Step 4: Concurrent LLM calls (A cached) → generate each concept page.
+    Step 5: Code writes files, updates index.
     """
     from openkb.config import load_config
 
@@ -222,17 +299,92 @@ async def compile_short_doc(
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
 
-    wiki_root = str(kb_dir / "wiki")
-    agent = build_compiler_agent(wiki_root, model, language=language)
-
+    wiki_dir = kb_dir / "wiki"
+    schema_md = get_agents_md(wiki_dir)
+    source_file = _find_source_filename(doc_name, kb_dir)
     content = source_path.read_text(encoding="utf-8")
-    message = (
-        f"New document: {doc_name}\n\n"
-        f"Full text:\n{content}\n\n"
-        "Generate summary, update concepts, update index."
+
+    # Base context A: system + document
+    system_msg = {"role": "system", "content": _SYSTEM_TEMPLATE.format(
+        schema_md=schema_md, language=language,
+    )}
+    doc_msg = {"role": "user", "content": _SUMMARY_USER.format(
+        doc_name=doc_name, content=content,
+    )}
+
+    # --- Step 1: Generate summary ---
+    summary = _llm_call(model, [system_msg, doc_msg], "summary")
+    _write_summary(wiki_dir, doc_name, source_file, summary)
+
+    # --- Step 2: Extract concept list (A cached) ---
+    _, existing_concepts = _read_wiki_context(wiki_dir)
+
+    concepts_list_raw = _llm_call(model, [
+        system_msg,
+        doc_msg,
+        {"role": "assistant", "content": summary},
+        {"role": "user", "content": _CONCEPTS_LIST_USER.format(
+            existing_concepts=", ".join(existing_concepts) if existing_concepts else "(none yet)",
+        )},
+    ], "concepts-list", max_tokens=512)
+
+    try:
+        concepts_list = _parse_json(concepts_list_raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse concepts list: %s", exc)
+        logger.debug("Raw: %s", concepts_list_raw)
+        _update_index(wiki_dir, doc_name, [])
+        return
+
+    if not concepts_list:
+        _update_index(wiki_dir, doc_name, [])
+        return
+
+    # --- Step 3: Generate concept pages concurrently (A cached) ---
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _gen_concept(concept: dict) -> tuple[str, str, bool]:
+        name = concept["name"]
+        title = concept.get("title", name)
+        is_update = concept.get("is_update", False)
+        update_instruction = (
+            "This concept page already exists. Add new information from this document "
+            "without duplicating existing content."
+            if is_update else ""
+        )
+
+        async with semaphore:
+            page_content = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,
+                {"role": "assistant", "content": summary},
+                {"role": "user", "content": _CONCEPT_PAGE_USER.format(
+                    title=title, doc_name=doc_name,
+                    update_instruction=update_instruction,
+                )},
+            ], f"concept:{name}")
+
+        return name, page_content, is_update
+
+    sys.stdout.write(f"    Generating {len(concepts_list)} concept(s) (concurrency={max_concurrency})...\n")
+    sys.stdout.flush()
+
+    results = await asyncio.gather(
+        *[_gen_concept(c) for c in concepts_list],
+        return_exceptions=True,
     )
 
-    await Runner.run(agent, message)
+    concept_names = []
+    for r in results:
+        if isinstance(r, Exception):
+            logger.warning("Concept generation failed: %s", r)
+            continue
+        name, page_content, is_update = r
+        _write_concept(wiki_dir, name, page_content, source_file, is_update)
+        concept_names.append(name)
+
+    # --- Step 4: Update index (code only) ---
+    _update_index(wiki_dir, doc_name, concept_names)
 
 
 async def compile_long_doc(
@@ -241,18 +393,12 @@ async def compile_long_doc(
     doc_id: str,
     kb_dir: Path,
     model: str,
+    max_concurrency: int = DEFAULT_COMPILE_CONCURRENCY,
 ) -> None:
-    """Run the compiler agent for a long (PageIndex) document.
+    """Compile a long (PageIndex) document's concepts and index.
 
-    The summary page is already written. The agent updates concept pages and
-    the index without regenerating the summary.
-
-    Args:
-        doc_name: Document stem name (no extension).
-        summary_path: Path to the existing summary Markdown in wiki/summaries/.
-        doc_id: PageIndex document identifier.
-        kb_dir: Root of the knowledge base.
-        model: LLM model name.
+    The summary page is already written by the indexer. This function
+    generates concept pages and updates the index.
     """
     from openkb.config import load_config
 
@@ -260,14 +406,87 @@ async def compile_long_doc(
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
 
-    wiki_root = str(kb_dir / "wiki")
-    agent = build_long_doc_compiler_agent(wiki_root, str(kb_dir), model, language=language)
+    wiki_dir = kb_dir / "wiki"
+    schema_md = get_agents_md(wiki_dir)
+    source_file = _find_source_filename(doc_name, kb_dir)
+    summary = summary_path.read_text(encoding="utf-8")
 
-    content = summary_path.read_text(encoding="utf-8")
-    message = (
-        f"New long document: {doc_name} (doc_id: {doc_id})\n"
-        f"Summary tree:\n{content}\n"
-        "Update concepts and index. Do NOT regenerate summary."
+    # Base context A
+    system_msg = {"role": "system", "content": _SYSTEM_TEMPLATE.format(
+        schema_md=schema_md, language=language,
+    )}
+    doc_msg = {"role": "user", "content": _LONG_DOC_SUMMARY_USER.format(
+        doc_name=doc_name, doc_id=doc_id, content=summary,
+    )}
+
+    # --- Step 1: Extract concept list ---
+    _, existing_concepts = _read_wiki_context(wiki_dir)
+
+    # Get a concise overview first (for concept generation context)
+    overview = _llm_call(model, [system_msg, doc_msg], "overview")
+
+    concepts_list_raw = _llm_call(model, [
+        system_msg,
+        doc_msg,
+        {"role": "assistant", "content": overview},
+        {"role": "user", "content": _CONCEPTS_LIST_USER.format(
+            existing_concepts=", ".join(existing_concepts) if existing_concepts else "(none yet)",
+        )},
+    ], "concepts-list", max_tokens=512)
+
+    try:
+        concepts_list = _parse_json(concepts_list_raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse concepts list: %s", exc)
+        logger.debug("Raw: %s", concepts_list_raw)
+        _update_index(wiki_dir, doc_name, [])
+        return
+
+    if not concepts_list:
+        _update_index(wiki_dir, doc_name, [])
+        return
+
+    # --- Step 2: Generate concept pages concurrently ---
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _gen_concept(concept: dict) -> tuple[str, str, bool]:
+        name = concept["name"]
+        title = concept.get("title", name)
+        is_update = concept.get("is_update", False)
+        update_instruction = (
+            "This concept page already exists. Add new information."
+            if is_update else ""
+        )
+
+        async with semaphore:
+            page_content = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,
+                {"role": "assistant", "content": overview},
+                {"role": "user", "content": _CONCEPT_PAGE_USER.format(
+                    title=title, doc_name=doc_name,
+                    update_instruction=update_instruction,
+                )},
+            ], f"concept:{name}")
+
+        return name, page_content, is_update
+
+    sys.stdout.write(f"    Generating {len(concepts_list)} concept(s) (concurrency={max_concurrency})...\n")
+    sys.stdout.flush()
+
+    results = await asyncio.gather(
+        *[_gen_concept(c) for c in concepts_list],
+        return_exceptions=True,
     )
 
-    await Runner.run(agent, message)
+    concept_names = []
+    for r in results:
+        if isinstance(r, Exception):
+            logger.warning("Concept generation failed: %s", r)
+            continue
+        name, page_content, is_update = r
+        _write_concept(wiki_dir, name, page_content, source_file, is_update)
+        concept_names.append(name)
+
+    # --- Step 3: Update index (code only) ---
+    _update_index(wiki_dir, doc_name, concept_names)

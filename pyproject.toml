@@ -27,7 +27,7 @@ classifiers = [
 keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "agents", "document"]
 dependencies = [
     "pageindex==0.3.0.dev0",
-    "markitdown[all]",
+    "markitdown",
     "click>=8.0",
     "watchdog>=3.0",
     "litellm",

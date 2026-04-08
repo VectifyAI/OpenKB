@@ -3,13 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
 import os
 
+# Disable Agents SDK tracing (requires OPENAI_API_KEY otherwise)
+os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
+# Use local model cost map — skip fetching from GitHub on every invocation
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import click
 import litellm
+litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
 from openkb.config import DEFAULT_CONFIG, load_config, save_config
@@ -17,14 +24,28 @@ from openkb.converter import convert_document
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD
 
-load_dotenv()
+load_dotenv()  # load from cwd (covers running inside the KB dir)
 
 
-def _setup_llm_key() -> None:
-    """Set LiteLLM API key from LLM_API_KEY env var if present."""
+def _setup_llm_key(kb_dir: Path | None = None) -> None:
+    """Set LiteLLM API key from LLM_API_KEY env var if present.
+
+    If *kb_dir* is given, also loads ``.env`` from the KB root so that
+    the key is found even when the CLI is invoked from another directory.
+    Also propagates to provider-specific env vars (OPENAI_API_KEY, etc.)
+    so that the Agents SDK litellm provider can pick them up.
+    """
+    if kb_dir is not None:
+        env_file = kb_dir / ".env"
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
+
     api_key = os.environ.get("LLM_API_KEY", "")
     if api_key:
         litellm.api_key = api_key
+        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+            if not os.environ.get(env_var):
+                os.environ[env_var] = api_key
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
@@ -73,9 +94,10 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
 
+    logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key()
+    _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     registry = HashRegistry(openkb_dir / "hashes.json")
 
@@ -85,6 +107,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
         result = convert_document(file_path, kb_dir)
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
+        logger.debug("Conversion traceback:", exc_info=True)
         return
 
     if result.skipped:
@@ -101,6 +124,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
             index_result = index_long_document(result.raw_path, kb_dir)
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
+            logger.debug("Indexing traceback:", exc_info=True)
             return
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
@@ -117,6 +141,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
                     time.sleep(2)
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    logger.debug("Compilation traceback:", exc_info=True)
                     return
     else:
         click.echo(f"  Compiling short doc…")
@@ -130,6 +155,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
                     time.sleep(2)
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    logger.debug("Compilation traceback:", exc_info=True)
                     return
 
     # Register hash only after successful compilation
@@ -146,8 +172,15 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 @click.group()
-def cli():
+@click.option("-v", "--verbose", is_flag=True, default=False, help="Enable verbose logging.")
+def cli(verbose):
     """OpenKB — Karpathy's LLM Knowledge Base workflow, powered by PageIndex."""
+    logging.basicConfig(
+        format="%(name)s %(levelname)s: %(message)s",
+        level=logging.WARNING,
+    )
+    if verbose:
+        logging.getLogger("openkb").setLevel(logging.DEBUG)
 
 
 @cli.command()
@@ -249,7 +282,7 @@ def query(question, save):
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key()
+    _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     try:
@@ -314,7 +347,7 @@ def lint(fix):
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key()
+    _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint

@@ -1,158 +1,266 @@
-"""Tests for openkb.agent.compiler."""
+"""Tests for openkb.agent.compiler pipeline."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
 from openkb.agent.compiler import (
-    build_compiler_agent,
     compile_long_doc,
     compile_short_doc,
+    _parse_json,
+    _write_summary,
+    _write_concept,
+    _update_index,
+    _read_wiki_context,
 )
-from openkb.schema import SCHEMA_MD
 
 
-class TestBuildCompilerAgent:
-    def test_agent_name(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        assert agent.name == "wiki-compiler"
+class TestParseJson:
+    def test_plain_json(self):
+        assert _parse_json('[{"name": "foo"}]') == [{"name": "foo"}]
 
-    def test_agent_tools_count(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        # list_files, read_file, write_file
-        assert len(agent.tools) == 3
+    def test_fenced_json(self):
+        text = '```json\n[{"name": "bar"}]\n```'
+        assert _parse_json(text) == [{"name": "bar"}]
 
-    def test_schema_in_instructions(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        assert SCHEMA_MD in agent.instructions
+    def test_invalid_json(self):
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            _parse_json("not json")
 
-    def test_agent_model(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "my-custom-model")
-        assert agent.model == "litellm/my-custom-model"
 
-    def test_tool_names(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        tool_names = {t.name for t in agent.tools}
-        assert "list_files" in tool_names
-        assert "read_file" in tool_names
-        assert "write_file" in tool_names
+class TestWriteSummary:
+    def test_writes_with_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.")
+        path = wiki / "summaries" / "my-doc.md"
+        assert path.exists()
+        text = path.read_text()
+        assert "sources: [my-doc.pdf]" in text
+        assert "# Summary" in text
+
+
+class TestWriteConcept:
+    def test_new_concept(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "paper.pdf", False)
+        path = wiki / "concepts" / "attention.md"
+        assert path.exists()
+        text = path.read_text()
+        assert "sources: [paper.pdf]" in text
+        assert "# Attention" in text
+
+    def test_update_concept_appends_source(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\n---\n\n# Attention\n\nOld content.",
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New info from paper2.", "paper2.pdf", True)
+        text = (concepts / "attention.md").read_text()
+        assert "paper2.pdf" in text
+        assert "paper1.pdf" in text
+        assert "New info from paper2." in text
+
+
+class TestUpdateIndex:
+    def test_appends_entries(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", ["attention", "transformer"])
+        text = (wiki / "index.md").read_text()
+        assert "[[summaries/my-doc]]" in text
+        assert "[[concepts/attention]]" in text
+        assert "[[concepts/transformer]]" in text
+
+    def test_no_duplicates(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n- [[summaries/my-doc]]\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", [])
+        text = (wiki / "index.md").read_text()
+        assert text.count("[[summaries/my-doc]]") == 1
+
+
+class TestReadWikiContext:
+    def test_empty_wiki(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        index, concepts = _read_wiki_context(wiki)
+        assert index == ""
+        assert concepts == []
+
+    def test_with_content(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text("# Index\n", encoding="utf-8")
+        concepts_dir = wiki / "concepts"
+        concepts_dir.mkdir()
+        (concepts_dir / "attention.md").write_text("# Attention", encoding="utf-8")
+        (concepts_dir / "transformer.md").write_text("# Transformer", encoding="utf-8")
+        index, concepts = _read_wiki_context(wiki)
+        assert "# Index" in index
+        assert concepts == ["attention", "transformer"]
+
+
+def _mock_completion(responses: list[str]):
+    """Create a mock for litellm.completion that returns responses in order."""
+    call_count = {"n": 0}
+
+    def side_effect(*args, **kwargs):
+        idx = min(call_count["n"], len(responses) - 1)
+        call_count["n"] += 1
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = responses[idx]
+        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_resp.usage.prompt_tokens_details = None
+        return mock_resp
+
+    return side_effect
+
+
+def _mock_acompletion(responses: list[str]):
+    """Create an async mock for litellm.acompletion."""
+    call_count = {"n": 0}
+
+    async def side_effect(*args, **kwargs):
+        idx = min(call_count["n"], len(responses) - 1)
+        call_count["n"] += 1
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = responses[idx]
+        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_resp.usage.prompt_tokens_details = None
+        return mock_resp
+
+    return side_effect
 
 
 class TestCompileShortDoc:
     @pytest.mark.asyncio
-    async def test_calls_runner_run(self, tmp_path):
-        # Create a source file
-        wiki_dir = tmp_path / "wiki"
-        wiki_dir.mkdir()
-        source_path = wiki_dir / "sources" / "my_doc.md"
-        source_path.parent.mkdir(parents=True)
-        source_path.write_text("# My Doc\n\nSome content.", encoding="utf-8")
+    async def test_full_pipeline(self, tmp_path):
+        # Setup KB structure
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nSome content about transformers.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
-        # Create .openkb dir for agent build
-        openkb_dir = tmp_path / ".openkb"
-        openkb_dir.mkdir()
+        summary_response = "# Summary\n\nThis document discusses transformers."
+        concepts_list_response = json.dumps([
+            {"name": "transformer", "title": "Transformer", "is_update": False},
+        ])
+        concept_page_response = "# Transformer\n\nA neural network architecture."
 
-        mock_result = MagicMock()
-        mock_result.final_output = "Done"
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, concepts_list_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_page_response])
+            )
+            await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
 
-        with patch("openkb.agent.compiler.Runner.run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = mock_result
-            await compile_short_doc("my_doc", source_path, tmp_path, "gpt-4o-mini")
+        # Verify summary written
+        summary_path = wiki / "summaries" / "test-doc.md"
+        assert summary_path.exists()
+        assert "sources: [test-doc.pdf]" in summary_path.read_text()
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        agent_arg = call_args[0][0]
-        message_arg = call_args[0][1]
+        # Verify concept written
+        concept_path = wiki / "concepts" / "transformer.md"
+        assert concept_path.exists()
+        assert "sources: [test-doc.pdf]" in concept_path.read_text()
 
-        assert agent_arg.name == "wiki-compiler"
-        assert "my_doc" in message_arg
-        assert "Some content." in message_arg
-        assert "Generate summary" in message_arg
+        # Verify index updated
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/test-doc]]" in index_text
+        assert "[[concepts/transformer]]" in index_text
 
     @pytest.mark.asyncio
-    async def test_message_contains_doc_name_and_content(self, tmp_path):
-        wiki_dir = tmp_path / "wiki"
-        source_path = wiki_dir / "sources" / "test_paper.md"
-        source_path.parent.mkdir(parents=True)
-        source_path.write_text("# Test Paper\n\nKey findings here.", encoding="utf-8")
-
+    async def test_handles_bad_json(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "doc.md"
+        source_path.write_text("Content", encoding="utf-8")
         (tmp_path / ".openkb").mkdir()
 
-        captured = {}
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion(["Summary text", "not valid json"])
+            )
+            # Should not raise
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
 
-        async def fake_run(agent, message, **kwargs):
-            captured["message"] = message
-            return MagicMock(final_output="ok")
-
-        with patch("openkb.agent.compiler.Runner.run", side_effect=fake_run):
-            await compile_short_doc("test_paper", source_path, tmp_path, "gpt-4o-mini")
-
-        assert "test_paper" in captured["message"]
-        assert "Key findings here." in captured["message"]
+        # Summary should still be written
+        assert (wiki / "summaries" / "doc.md").exists()
 
 
 class TestCompileLongDoc:
     @pytest.mark.asyncio
-    async def test_calls_runner_run(self, tmp_path):
-        wiki_dir = tmp_path / "wiki"
-        summary_path = wiki_dir / "summaries" / "big_doc.md"
-        summary_path.parent.mkdir(parents=True)
-        summary_path.write_text("# Big Doc Summary\n\nSection tree.", encoding="utf-8")
-
-        openkb_dir = tmp_path / ".openkb"
-        openkb_dir.mkdir()
-        # Write minimal config
-        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
-
-        mock_result = MagicMock()
-        mock_result.final_output = "Done"
-
-        with patch("openkb.agent.compiler.Runner.run", new_callable=AsyncMock) as mock_run, \
-             patch("openkb.agent.compiler.PageIndexClient") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client_cls.return_value = mock_client
-            mock_run.return_value = mock_result
-
-            await compile_long_doc(
-                "big_doc", summary_path, "doc-abc123", tmp_path, "gpt-4o-mini"
-            )
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        message_arg = call_args[0][1]
-
-        assert "big_doc" in message_arg
-        assert "doc-abc123" in message_arg
-        assert "Do NOT regenerate summary" in message_arg
-
-    @pytest.mark.asyncio
-    async def test_long_doc_agent_has_four_tools(self, tmp_path):
-        wiki_dir = tmp_path / "wiki"
-        summary_path = wiki_dir / "summaries" / "big.md"
-        summary_path.parent.mkdir(parents=True)
-        summary_path.write_text("Summary content", encoding="utf-8")
-
+    async def test_full_pipeline(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        summary_path = wiki / "summaries" / "big-doc.md"
+        summary_path.write_text("# Big Doc\n\nPageIndex summary tree.", encoding="utf-8")
         openkb_dir = tmp_path / ".openkb"
         openkb_dir.mkdir()
         (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "big-doc.pdf").write_bytes(b"fake")
 
-        captured_agent = {}
+        overview_response = "Overview of the big document."
+        concepts_list_response = json.dumps([
+            {"name": "deep-learning", "title": "Deep Learning", "is_update": False},
+        ])
+        concept_page_response = "# Deep Learning\n\nA subfield of ML."
 
-        async def fake_run(agent, message, **kwargs):
-            captured_agent["agent"] = agent
-            return MagicMock(final_output="ok")
-
-        with patch("openkb.agent.compiler.Runner.run", side_effect=fake_run), \
-             patch("openkb.agent.compiler.PageIndexClient") as mock_client_cls:
-            mock_client_cls.return_value = MagicMock()
-
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([overview_response, concepts_list_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_page_response])
+            )
             await compile_long_doc(
-                "big", summary_path, "doc-xyz", tmp_path, "gpt-4o-mini"
+                "big-doc", summary_path, "doc-123", tmp_path, "gpt-4o-mini"
             )
 
-        agent = captured_agent["agent"]
-        assert len(agent.tools) == 4
-        tool_names = {t.name for t in agent.tools}
-        assert "get_page_content" in tool_names
+        concept_path = wiki / "concepts" / "deep-learning.md"
+        assert concept_path.exists()
+        assert "Deep Learning" in concept_path.read_text()
+
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/big-doc]]" in index_text
+        assert "[[concepts/deep-learning]]" in index_text

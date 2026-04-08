@@ -72,3 +72,42 @@ def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return f"Written: {path}"
+
+
+def write_wiki_files(files_json: str, wiki_root: str) -> str:
+    """Write multiple Markdown files to the wiki in one call.
+
+    Args:
+        files_json: JSON array of objects, each with ``"path"`` and ``"content"`` keys.
+            Example: ``[{"path": "concepts/foo.md", "content": "# Foo\\n..."}]``
+        wiki_root: Absolute path to the wiki root directory.
+
+    Returns:
+        Summary of written files, or error message on failure.
+    """
+    import json
+
+    try:
+        files = json.loads(files_json)
+    except json.JSONDecodeError as exc:
+        return f"Invalid JSON: {exc}"
+
+    if not isinstance(files, list):
+        return "Expected a JSON array of {path, content} objects."
+
+    root = Path(wiki_root).resolve()
+    written: list[str] = []
+    for entry in files:
+        path = entry.get("path", "")
+        content = entry.get("content", "")
+        if not path:
+            continue
+        full_path = (root / path).resolve()
+        if not full_path.is_relative_to(root):
+            written.append(f"Skipped (path escape): {path}")
+            continue
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content, encoding="utf-8")
+        written.append(path)
+
+    return f"Written {len(written)} files: {', '.join(written)}"
