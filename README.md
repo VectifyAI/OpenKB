@@ -146,7 +146,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 pageindex_api_key_env: ""        # (Optional) Environment variable for PageIndex Cloud API key
 ```
 
-Model names follow [LiteLLM format](https://docs.litellm.ai/docs/providers):
+Model names use `provider/model` [LiteLLM format](https://docs.litellm.ai/docs/providers):
 
 | Provider | Model example |
 |---|---|
