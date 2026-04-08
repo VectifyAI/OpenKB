@@ -14,9 +14,9 @@
 
 # 📑 Introduction to OpenKB
 
-Andrej Karpathy [described](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) a workflow where LLMs compile raw documents into a structured, interlinked markdown wiki; summaries, concept pages, cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
+**OpenKB (Open Knowledge Base)** is an open-source system (in CLI) that compiles raw documents into a structured, interlinked wiki-style knowledge base using LLMs, powered by [**PageIndex**](https://github.com/VectifyAI/PageIndex) for vectorless long document retrieval.
 
-**OpenKB (Open Knowledge Base)** is an open-source CLI that implements this workflow, powered by [**PageIndex**](https://github.com/VectifyAI/PageIndex) for vectorless long document retrieval.
+The idea is based on a [concept described by Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): LLMs generate summaries, concept pages, and cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
 
 ### Why not just traditional RAG?
 
@@ -66,7 +66,7 @@ openkb lint
 
 OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e.g., OpenAI, Claude, Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
-Create a `.env` file with your LLM API key. Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using LiteLLM `provider/model` format (e.g., `gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+Create a `.env` file with your LLM API key. Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using LiteLLM `provider/model` format (like `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (like `gpt-5.4`).
 
 ```bash
 LLM_API_KEY=your_llm_api_key
@@ -146,7 +146,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 pageindex_api_key_env: ""        # (Optional) Environment variable for PageIndex Cloud API key
 ```
 
-Model names use `provider/model` [LiteLLM format](https://docs.litellm.ai/docs/providers):
+Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
 
 | Provider | Model example |
 |---|---|
