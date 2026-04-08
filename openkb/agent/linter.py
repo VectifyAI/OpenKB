@@ -72,7 +72,7 @@ def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
         name="wiki-linter",
         instructions=instructions,
         tools=[list_files, read_file],
-        model=model,
+        model=f"litellm/{model}",
     )
 
 

@@ -31,7 +31,7 @@ class TestBuildLintAgent:
 
     def test_agent_model(self, tmp_path):
         agent = build_lint_agent(str(tmp_path), "custom-model")
-        assert agent.model == "custom-model"
+        assert agent.model == "litellm/custom-model"
 
     def test_instructions_mention_contradictions(self, tmp_path):
         agent = build_lint_agent(str(tmp_path), "gpt-4o-mini")

@@ -30,7 +30,7 @@ class TestBuildCompilerAgent:
 
     def test_agent_model(self, tmp_path):
         agent = build_compiler_agent(str(tmp_path), "my-custom-model")
-        assert agent.model == "my-custom-model"
+        assert agent.model == "litellm/my-custom-model"
 
     def test_tool_names(self, tmp_path):
         agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
