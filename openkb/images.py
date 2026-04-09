@@ -67,9 +67,64 @@ def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[
                     logger.warning("Failed to save image block on page %d", page_num)
                     continue
 
-                rel_path = f"images/{doc_name}/{filename}"
+                rel_path = f"sources/images/{doc_name}/{filename}"
                 page_images.setdefault(page_num, []).append(rel_path)
     return page_images
+
+
+def convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> list[dict]:
+    """Convert a PDF to per-page dicts with text content and images.
+
+    Each dict has ``{"page": int, "content": str, "images": [{"path": str}]}``.
+    Images are saved to *images_dir* and referenced with wiki-root-relative paths.
+    """
+    images_dir.mkdir(parents=True, exist_ok=True)
+    pages: list[dict] = []
+    img_counter = 0
+
+    with pymupdf.open(str(pdf_path)) as doc:
+        for page_idx in range(len(doc)):
+            page = doc[page_idx]
+            page_num = page_idx + 1
+            parts: list[str] = []
+            page_images: list[dict] = []
+
+            for block in page.get_text("dict")["blocks"]:
+                if block["type"] == 0:  # text block
+                    lines = []
+                    for line in block["lines"]:
+                        spans_text = "".join(span["text"] for span in line["spans"])
+                        lines.append(spans_text)
+                    parts.append("\n".join(lines))
+
+                elif block["type"] == 1:  # image block
+                    width = block.get("width", 0)
+                    height = block.get("height", 0)
+                    if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
+                        continue
+                    image_bytes = block.get("image")
+                    if not image_bytes:
+                        continue
+                    try:
+                        pix = pymupdf.Pixmap(image_bytes)
+                        if pix.n > 4:
+                            pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+                        img_counter += 1
+                        filename = f"p{page_num}_img{img_counter}.png"
+                        (images_dir / filename).write_bytes(pix.tobytes("png"))
+                        pix = None
+                        img_path = f"sources/images/{doc_name}/{filename}"
+                        parts.append(f"\n![image]({img_path})\n")
+                        page_images.append({"path": img_path})
+                    except Exception:
+                        logger.warning("Failed to save image block on page %d", page_num)
+
+            pages.append({
+                "page": page_num,
+                "content": "\n".join(parts),
+                "images": page_images,
+            })
+    return pages
 
 
 def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> str:
@@ -115,7 +170,7 @@ def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> 
                         filename = f"p{page_num}_img{img_counter}.png"
                         (images_dir / filename).write_bytes(pix.tobytes("png"))
                         pix = None
-                        parts.append(f"\n![image](images/{doc_name}/{filename})\n")
+                        parts.append(f"\n![image](sources/images/{doc_name}/{filename})\n")
                     except Exception:
                         logger.warning("Failed to save image block on page %d", page_num)
     return "\n".join(parts)
@@ -126,7 +181,7 @@ def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str
 
     For each ``![alt](data:image/ext;base64,DATA)`` match:
     - Decode base64 bytes → save to ``images_dir/img_NNN.ext``
-    - Replace the link with ``![alt](images/{doc_name}/img_NNN.ext)``
+    - Replace the link with ``![alt](sources/images/{doc_name}/img_NNN.ext)``
     - On decode failure: log a warning and leave the original text unchanged.
     """
     counter = 0
@@ -150,7 +205,7 @@ def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str
         images_dir.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(image_bytes)
 
-        new_ref = f"![{alt}](images/{doc_name}/{filename})"
+        new_ref = f"![{alt}](sources/images/{doc_name}/{filename})"
         result = result.replace(match.group(0), new_ref, 1)
 
     return result
@@ -164,7 +219,7 @@ def copy_relative_images(
     For each ``![alt](relative/path)`` match (skipping http/https and data URIs):
     - Resolve path relative to ``source_dir``
     - Copy to ``images_dir/{filename}``
-    - Replace link with ``![alt](images/{doc_name}/{filename})``
+    - Replace link with ``![alt](sources/images/{doc_name}/{filename})``
     - Missing source file: log a warning and leave the original text unchanged.
     """
     result = markdown
@@ -186,7 +241,7 @@ def copy_relative_images(
         images_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
 
-        new_ref = f"![{alt}](images/{doc_name}/{filename})"
+        new_ref = f"![{alt}](sources/images/{doc_name}/{filename})"
         result = result.replace(match.group(0), new_ref, 1)
 
     return result

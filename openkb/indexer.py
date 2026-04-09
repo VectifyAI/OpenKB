@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json as json_mod
 import logging
-import shutil
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,40 +77,13 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         "structure": structure,
     }
 
-    # Write wiki/sources/ — get per-page content from PageIndex and store as JSON
+    # Write wiki/sources/ — extract per-page content with pymupdf (not PageIndex)
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    dest_images_dir = sources_dir / "images" / pdf_path.stem
+    images_dir = sources_dir / "images" / pdf_path.stem
 
-    # Get per-page content from PageIndex — use actual page count
-    page_count = doc.get("page_count")
-    if page_count is None:
-        # Fallback: count pages from structure's max end_index
-        max_page = 0
-        for node in structure:
-            end = node.get("end_index", 0)
-            if end > max_page:
-                max_page = end
-        page_count = max_page if max_page > 0 else 100
-        logger.info("page_count not in doc, inferred from structure: %d", page_count)
-    all_pages = col.get_page_content(doc_id, f"1-{page_count}")
-
-    # Relocate image paths in each page
-    dest_images_dir.mkdir(parents=True, exist_ok=True)
-    for page in all_pages:
-        if "images" in page:
-            for img in page["images"]:
-                src_path = Path(img["path"])
-                if src_path.exists():
-                    filename = src_path.name
-                    dest = dest_images_dir / filename
-                    if not dest.exists():
-                        shutil.copy2(src_path, dest)
-                    new_path = f"images/{pdf_path.stem}/{filename}"
-                    # Also fix image references in page content
-                    if "content" in page:
-                        page["content"] = page["content"].replace(str(src_path), new_path)
-                    img["path"] = new_path
+    from openkb.images import convert_pdf_to_pages
+    all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
 
     (sources_dir / f"{pdf_path.stem}.json").write_text(
         json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
