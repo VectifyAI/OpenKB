@@ -6,6 +6,8 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 
 from openkb.agent.tools import read_wiki_file
+
+MAX_TURNS = 50
 from openkb.schema import get_agents_md
 
 _QUERY_INSTRUCTIONS_TEMPLATE = """\
@@ -92,10 +94,10 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
     agent = build_query_agent(wiki_root, model, language=language)
 
     if not stream:
-        result = await Runner.run(agent, question)
+        result = await Runner.run(agent, question, max_turns=MAX_TURNS)
         return result.final_output or ""
 
-    result = Runner.run_streamed(agent, question)
+    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
     collected = []
     async for event in result.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
