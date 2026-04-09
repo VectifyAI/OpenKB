@@ -334,9 +334,11 @@ def watch():
 
 
 @cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues.")  # TODO: --fix not yet implemented
+@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
 def lint(fix):
     """Lint the knowledge base for structural and semantic inconsistencies."""
+    if fix:
+        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
     kb_dir = _find_kb_dir()
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")

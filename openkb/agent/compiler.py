@@ -302,14 +302,15 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
         existing = path.read_text(encoding="utf-8")
         if source_file not in existing:
             if existing.startswith("---"):
-                end = existing.index("---", 3)
-                fm = existing[:end + 3]
-                body = existing[end + 3:]
-                if "sources:" in fm:
-                    fm = fm.replace("sources: [", f"sources: [{source_file}, ")
-                else:
-                    fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
-                existing = fm + body
+                end = existing.find("---", 3)
+                if end != -1:
+                    fm = existing[:end + 3]
+                    body = existing[end + 3:]
+                    if "sources:" in fm:
+                        fm = fm.replace("sources: [", f"sources: [{source_file}, ")
+                    else:
+                        fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
+                    existing = fm + body
             else:
                 existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
             existing += f"\n\n{content}"
@@ -334,14 +335,15 @@ def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_f
     # Update sources in frontmatter
     if source_file not in text:
         if text.startswith("---"):
-            end = text.index("---", 3)
-            fm = text[:end + 3]
-            body = text[end + 3:]
-            if "sources:" in fm:
-                fm = fm.replace("sources: [", f"sources: [{source_file}, ")
-            else:
-                fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
-            text = fm + body
+            end = text.find("---", 3)
+            if end != -1:
+                fm = text[:end + 3]
+                body = text[end + 3:]
+                if "sources:" in fm:
+                    fm = fm.replace("sources: [", f"sources: [{source_file}, ")
+                else:
+                    fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
+                text = fm + body
         else:
             text = f"---\nsources: [{source_file}]\n---\n\n" + text
 

@@ -95,10 +95,11 @@ class TestIndexLongDocument:
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls:
             index_long_document(pdf_path, kb_dir)
 
-        # Verify PageIndexClient was instantiated
+        # Verify PageIndexClient was instantiated with correct IndexConfig
         mock_cls.assert_called_once()
-        # Check that index_config with correct flags was passed
         _, kwargs = mock_cls.call_args
-        ic = kwargs.get("index_config") or mock_cls.call_args[0][0] if mock_cls.call_args[0] else None
-        # Either as positional or keyword — either way PageIndexClient was called
-        assert mock_cls.called
+        ic = kwargs.get("index_config")
+        assert ic is not None, "index_config must be passed to PageIndexClient"
+        assert ic.if_add_node_text is True
+        assert ic.if_add_node_summary is True
+        assert ic.if_add_doc_description is True

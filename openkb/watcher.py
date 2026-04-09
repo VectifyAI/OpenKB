@@ -37,11 +37,12 @@ class DebouncedHandler(FileSystemEventHandler):
 
     def _schedule_flush(self) -> None:
         """Cancel any existing timer and start a fresh debounce timer."""
-        if self._timer is not None:
-            self._timer.cancel()
-        self._timer = threading.Timer(self._debounce_seconds, self._flush)
-        self._timer.daemon = True
-        self._timer.start()
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self._debounce_seconds, self._flush)
+            self._timer.daemon = True
+            self._timer.start()
 
     def _flush(self) -> None:
         """Call the callback with all collected pending paths, then clear."""

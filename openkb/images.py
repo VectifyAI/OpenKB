@@ -171,7 +171,10 @@ def copy_relative_images(
 
     for match in _RELATIVE_RE.finditer(markdown):
         alt, rel_path = match.group(1), match.group(2)
-        src = source_dir / rel_path
+        src = (source_dir / rel_path).resolve()
+        if not src.is_relative_to(source_dir.resolve()):
+            logger.warning("Image path escapes source dir: %s; skipping.", rel_path)
+            continue
         if not src.exists():
             logger.warning(
                 "Relative image not found: %s; leaving original link.", src
