@@ -1,4 +1,6 @@
 import json
+from unittest.mock import patch
+
 import pytest
 from click.testing import CliRunner
 
@@ -8,7 +10,8 @@ from openkb.schema import AGENTS_MD
 
 def test_init_creates_structure(tmp_path):
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path), \
+         patch("openkb.cli.register_kb"):
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
 
@@ -42,7 +45,8 @@ def test_init_creates_structure(tmp_path):
 
 def test_init_schema_content(tmp_path):
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path), \
+         patch("openkb.cli.register_kb"):
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
 
@@ -53,7 +57,8 @@ def test_init_schema_content(tmp_path):
 
 def test_init_already_exists(tmp_path):
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path), \
+         patch("openkb.cli.register_kb"):
         # First run should succeed
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0

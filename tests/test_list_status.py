@@ -32,7 +32,8 @@ def _setup_kb(tmp_path: Path) -> Path:
 class TestListCommand:
     def test_list_no_kb(self, tmp_path):
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path):
+        with runner.isolated_filesystem(temp_dir=tmp_path), \
+             patch("openkb.cli._find_kb_dir", return_value=None):
             result = runner.invoke(cli, ["list"])
             assert "No knowledge base found" in result.output
 
@@ -91,7 +92,8 @@ class TestListCommand:
 class TestStatusCommand:
     def test_status_no_kb(self, tmp_path):
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path):
+        with runner.isolated_filesystem(temp_dir=tmp_path), \
+             patch("openkb.cli._find_kb_dir", return_value=None):
             result = runner.invoke(cli, ["status"])
             assert "No knowledge base found" in result.output
 

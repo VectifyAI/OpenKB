@@ -37,8 +37,9 @@ class TestFindKbDir:
 
     def test_returns_none_if_no_openkb(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = _find_kb_dir()
-        assert result is None
+        with patch("openkb.cli.load_global_config", return_value={}):
+            result = _find_kb_dir()
+            assert result is None
 
 
 class TestAddCommand:
