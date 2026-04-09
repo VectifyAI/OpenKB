@@ -3,9 +3,9 @@
 Pipeline leveraging LLM prompt caching:
   Step 1: Build base context A (schema + document content).
   Step 2: A → generate summary.
-  Step 3: A + summary → extract concept list.
-  Step 4: Concurrent LLM calls (A cached) → generate each concept page.
-  Step 5: Code writes all files, updates index, appends log.
+  Step 3: A + summary → concepts plan (create/update/related).
+  Step 4: Concurrent LLM calls (A cached) → generate new + rewrite updated concepts.
+  Step 5: Code adds cross-ref links to related concepts, updates index.
 """
 from __future__ import annotations
 
@@ -50,24 +50,6 @@ Write a summary page for this document in Markdown. Include:
 Return ONLY the Markdown content (no frontmatter, no code fences).
 """
 
-_CONCEPTS_LIST_USER = """\
-Based on the summary above, identify the key concepts worth creating as \
-standalone wiki concept pages.
-
-Existing concept pages: {existing_concepts}
-
-Return a JSON array of objects, each with:
-- "name": concept slug (e.g. "transformer-architecture")
-- "title": human-readable title (e.g. "Transformer Architecture")
-- "is_update": true if this concept already exists and should be updated
-
-Only include concepts for significant themes. For the first document, \
-create 2-3 foundational concepts at most. Do NOT create concepts that are \
-just the document topic itself (e.g. don't create "machine-translation" \
-for a translation paper).
-
-Return ONLY valid JSON array, no fences, no explanation.
-"""
 
 _CONCEPTS_PLAN_USER = """\
 Based on the summary above, decide how to update the wiki's concept pages.
