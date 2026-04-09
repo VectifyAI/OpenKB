@@ -6,7 +6,7 @@ AGENTS_MD = """\
 # Wiki Schema
 
 ## Directory Structure
-- sources/ — Full-text converted from raw documents. Do not modify directly.
+- sources/ — Document content. Short docs as .md, long docs as .json (per-page). Do not modify directly.
 - sources/images/ — Extracted images from documents, referenced by sources.
 - summaries/ — One per source document. Summary of key content.
 - concepts/ — Cross-document topic synthesis. Created when a theme spans multiple documents.

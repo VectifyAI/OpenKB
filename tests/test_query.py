@@ -6,117 +6,39 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openkb.agent.query import _pageindex_retrieve_impl, build_query_agent, run_query
+from openkb.agent.query import build_query_agent, run_query
 from openkb.schema import SCHEMA_MD
 
 
 class TestBuildQueryAgent:
     def test_agent_name(self, tmp_path):
-        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.name == "wiki-query"
 
     def test_agent_has_three_tools(self, tmp_path):
-        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert len(agent.tools) == 3
 
     def test_agent_tool_names(self, tmp_path):
-        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         names = {t.name for t in agent.tools}
         assert "list_files" in names
         assert "read_file" in names
-        assert "pageindex_retrieve" in names
+        assert "get_page_content_tool" in names
+        assert "pageindex_retrieve" not in names
 
-    def test_instructions_reference_registered_pageindex_tool(self, tmp_path):
-        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
-        tool_names = {t.name for t in agent.tools}
-        assert "pageindex_retrieve" in agent.instructions
-        assert "pageindex_retrieve" in tool_names
+    def test_instructions_mention_get_page_content(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert "get_page_content" in agent.instructions
+        assert "pageindex_retrieve" not in agent.instructions
 
     def test_schema_in_instructions(self, tmp_path):
-        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "gpt-4o-mini")
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert SCHEMA_MD in agent.instructions
 
     def test_agent_model(self, tmp_path):
-        agent = build_query_agent(str(tmp_path), str(tmp_path / "pi"), "my-model")
+        agent = build_query_agent(str(tmp_path), "my-model")
         assert agent.model == "litellm/my-model"
-
-
-class TestPageindexRetrieve:
-    def test_returns_page_content(self, tmp_path):
-        mock_structure = [
-            {
-                "node_id": "n1",
-                "title": "Introduction",
-                "start_index": 1,
-                "end_index": 5,
-                "summary": "Overview section",
-            }
-        ]
-        mock_pages = [
-            {"page_index": 1, "text": "Introduction text here."},
-            {"page_index": 2, "text": "More intro content."},
-        ]
-
-        mock_col = MagicMock()
-        mock_col.get_document_structure.return_value = mock_structure
-        mock_col.get_page_content.return_value = mock_pages
-
-        mock_client = MagicMock()
-        mock_client.collection.return_value = mock_col
-
-        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client), \
-             patch("openkb.agent.query.litellm.completion") as mock_llm, \
-             patch.dict("os.environ", {"PAGEINDEX_API_KEY": ""}, clear=False):
-            mock_llm.return_value = MagicMock(
-                choices=[MagicMock(message=MagicMock(content="1-2"))]
-            )
-            result = _pageindex_retrieve_impl("doc123", "What is the intro?", "/db", "gpt-4o-mini")
-
-        assert "Introduction text here." in result
-        assert "More intro content." in result
-
-    def test_cloud_doc_uses_streaming_query(self, tmp_path):
-        """Cloud doc (pi- prefix) delegates to col.query(stream=True)."""
-        from dataclasses import dataclass
-        from typing import Any
-
-        @dataclass
-        class FakeEvent:
-            type: str
-            data: Any
-
-        class FakeStream:
-            async def __aiter__(self):
-                yield FakeEvent(type="answer_delta", data="Cloud ")
-                yield FakeEvent(type="answer_delta", data="answer about MCP.")
-
-        mock_stream = FakeStream()
-
-        mock_col = MagicMock()
-        mock_col.query.return_value = mock_stream
-
-        mock_client = MagicMock()
-        mock_client.collection.return_value = mock_col
-
-        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client):
-            result = _pageindex_retrieve_impl("pi-abc123", "What is MCP?", "/db", "gpt-4o-mini")
-
-        assert "Cloud answer about MCP." in result
-        mock_col.query.assert_called_once_with("What is MCP?", doc_ids=["pi-abc123"], stream=True)
-
-    def test_local_empty_structure_returns_error(self, tmp_path):
-        """Local doc with empty structure returns error."""
-        mock_col = MagicMock()
-        mock_col.get_document_structure.return_value = []
-
-        mock_client = MagicMock()
-        mock_client.collection.return_value = mock_col
-
-        with patch("openkb.agent.query.PageIndexClient", return_value=mock_client), \
-             patch.dict("os.environ", {"PAGEINDEX_API_KEY": ""}, clear=False):
-            result = _pageindex_retrieve_impl("local-uuid-123", "What?", "/db", "gpt-4o-mini")
-
-        assert "No structure found" in result
 
 
 class TestRunQuery:
