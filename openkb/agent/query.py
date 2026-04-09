@@ -5,8 +5,8 @@ from pathlib import Path
 
 from agents import Agent, Runner, function_tool
 
-from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.schema import SCHEMA_MD, get_agents_md
+from openkb.agent.tools import read_wiki_file
+from openkb.schema import get_agents_md
 
 _QUERY_INSTRUCTIONS_TEMPLATE = """\
 You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
@@ -14,18 +14,18 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
 {schema_md}
 
 ## Search strategy
-1. Read index.md to understand what documents and concepts are available.
-   Each entry has a brief summary to help you judge relevance.
+1. Read index.md to see all documents and concepts with brief summaries.
+   Each document is marked (short) or (pageindex) to indicate its type.
 2. Read relevant summary pages (summaries/) for document overviews.
 3. Read concept pages (concepts/) for cross-document synthesis.
-4. For long documents, use get_page_content(doc_name, pages) to read
-   specific pages when you need detailed content. The summary page
-   shows chapter structure with page ranges to help you decide which
-   pages to read.
-5. Synthesise a clear, well-cited answer.
+4. When you need detailed source content:
+   - Short documents: read_file("sources/{{doc_name}}.md") for the full text.
+   - PageIndex documents: use get_page_content(doc_name, pages) to read
+     specific pages. The summary page shows chapter structure with page
+     ranges to help you decide which pages to read.
+5. Synthesise a clear, well-cited answer grounded in wiki content.
 
-Always ground your answer in the wiki content. If you cannot find relevant
-information, say so clearly.
+If you cannot find relevant information, say so clearly.
 """
 
 
@@ -34,14 +34,6 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
     instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
-
-    @function_tool
-    def list_files(directory: str) -> str:
-        """List all Markdown files in a wiki subdirectory.
-        Args:
-            directory: Subdirectory path relative to wiki root (e.g. 'sources').
-        """
-        return list_wiki_files(directory, wiki_root)
 
     @function_tool
     def read_file(path: str) -> str:
@@ -68,7 +60,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[list_files, read_file, get_page_content_tool],
+        tools=[read_file, get_page_content_tool],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )

@@ -160,7 +160,7 @@ class TestUpdateIndex:
                        doc_brief="Introduces transformers",
                        concept_briefs={"attention": "Focus mechanism", "transformer": "NN architecture"})
         text = (wiki / "index.md").read_text()
-        assert "[[summaries/my-doc]] — Introduces transformers" in text
+        assert "[[summaries/my-doc]] (short) — Introduces transformers" in text
         assert "[[concepts/attention]] — Focus mechanism" in text
         assert "[[concepts/transformer]] — NN architecture" in text
 

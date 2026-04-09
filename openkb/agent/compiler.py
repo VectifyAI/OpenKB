@@ -289,13 +289,20 @@ def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
     return f"{doc_name}.pdf"
 
 
-def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str, brief: str = "") -> None:
-    """Write summary page with frontmatter."""
+def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str,
+                    brief: str = "", doc_type: str = "short") -> None:
+    """Write summary page with frontmatter.
+
+    For short docs, includes a ``source_doc`` field linking to the full
+    source text in ``sources/{doc_name}.md``.
+    """
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     fm_lines = [f"sources: [{source_file}]"]
     if brief:
         fm_lines.append(f"brief: {brief}")
+    if doc_type == "short":
+        fm_lines.append(f"source_doc: sources/{doc_name}.md")
     frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
@@ -442,12 +449,15 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
 def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
     doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
+    doc_type: str = "short",
 ) -> None:
     """Append document and concept entries to index.md.
 
     When ``doc_brief`` or entries in ``concept_briefs`` are provided, entries
-    are written as ``- [[link]] — brief text``.  Existing entries are detected
-    by the link part only, so updating a brief on a re-compile works correctly.
+    are written as ``- [[link]] (type) — brief text``.  Existing entries are
+    detected by the link part only, so updating a brief on a re-compile works.
+    ``doc_type`` is ``"short"`` or ``"pageindex"`` — shown in the entry so the
+    query agent knows how to access detailed content.
     """
     if concept_briefs is None:
         concept_briefs = {}
@@ -463,7 +473,7 @@ def _update_index(
 
     doc_link = f"[[summaries/{doc_name}]]"
     if doc_link not in text:
-        doc_entry = f"- {doc_link}"
+        doc_entry = f"- {doc_link} ({doc_type})"
         if doc_brief:
             doc_entry += f" — {doc_brief}"
         if "## Documents" in text:
@@ -498,6 +508,7 @@ async def _compile_concepts(
     doc_name: str,
     max_concurrency: int,
     doc_brief: str = "",
+    doc_type: str = "short",
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -635,7 +646,8 @@ async def _compile_concepts(
 
     # --- Step 4: Update index (code only) ---
     _update_index(wiki_dir, doc_name, concept_names,
-                  doc_brief=doc_brief, concept_briefs=concept_briefs_map)
+                  doc_brief=doc_brief, concept_briefs=concept_briefs_map,
+                  doc_type=doc_type)
 
 
 async def compile_short_doc(
@@ -684,6 +696,7 @@ async def compile_short_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         summary, doc_name, max_concurrency, doc_brief=doc_brief,
+        doc_type="short",
     )
 
 
@@ -726,4 +739,5 @@ async def compile_long_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         overview, doc_name, max_concurrency, doc_brief=doc_description,
+        doc_type="pageindex",
     )
