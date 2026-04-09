@@ -518,7 +518,7 @@ class TestCompileShortDoc:
         # Verify concept written
         concept_path = wiki / "concepts" / "transformer.md"
         assert concept_path.exists()
-        assert "sources: [test-doc.pdf]" in concept_path.read_text()
+        assert "sources: [summaries/test-doc.md]" in concept_path.read_text()
 
         # Verify index updated
         index_text = (wiki / "index.md").read_text()
@@ -678,14 +678,14 @@ class TestCompileConceptsPlan:
         fa_path = wiki / "concepts" / "flash-attention.md"
         assert fa_path.exists()
         fa_text = fa_path.read_text()
-        assert "sources: [test-doc.pdf]" in fa_text
+        assert "sources: [summaries/test-doc.md]" in fa_text
         assert "Flash Attention" in fa_text
 
         # Verify attention updated (is_update=True path in _write_concept)
         att_path = wiki / "concepts" / "attention.md"
         assert att_path.exists()
         att_text = att_path.read_text()
-        assert "test-doc.pdf" in att_text
+        assert "summaries/test-doc.md" in att_text
         assert "old-paper.pdf" in att_text
 
         # Verify index updated
@@ -725,7 +725,7 @@ class TestCompileConceptsPlan:
         # Verify link added to transformer page
         transformer_text = (wiki / "concepts" / "transformer.md").read_text()
         assert "[[summaries/test-doc]]" in transformer_text
-        assert "test-doc.pdf" in transformer_text
+        assert "summaries/test-doc.md" in transformer_text
 
     @pytest.mark.asyncio
     async def test_fallback_list_format(self, tmp_path):
@@ -760,7 +760,7 @@ class TestCompileConceptsPlan:
         att_path = wiki / "concepts" / "attention.md"
         assert att_path.exists()
         att_text = att_path.read_text()
-        assert "sources: [test-doc.pdf]" in att_text
+        assert "sources: [summaries/test-doc.md]" in att_text
         assert "Attention" in att_text
 
 

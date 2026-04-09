@@ -279,15 +279,6 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
-def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
-    """Find the original filename in raw/ for a given doc stem."""
-    raw_dir = kb_dir / "raw"
-    if raw_dir.exists():
-        for f in raw_dir.iterdir():
-            if f.stem == doc_name:
-                return f.name
-    return f"{doc_name}.pdf"
-
 
 def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
                     doc_type: str = "short") -> None:
@@ -337,7 +328,13 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                     existing = fm + body
             else:
                 existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
-            existing += f"\n\n{content}"
+            # Strip frontmatter from LLM content to avoid duplicate blocks
+            clean = content
+            if clean.startswith("---"):
+                end = clean.find("---", 3)
+                if end != -1:
+                    clean = clean[end + 3:].lstrip("\n")
+            existing += f"\n\n{clean}"
         if brief and existing.startswith("---"):
             end = existing.find("---", 3)
             if end != -1:
@@ -511,7 +508,7 @@ async def _compile_concepts(
     Uses ``_CONCEPTS_PLAN_USER`` to get a plan with create/update/related
     actions, then executes each action type accordingly.
     """
-    source_file = _find_source_filename(doc_name, kb_dir)
+    source_file = f"summaries/{doc_name}.md"
 
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
@@ -666,7 +663,6 @@ async def compile_short_doc(
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
-    source_file = _find_source_filename(doc_name, kb_dir)
     content = source_path.read_text(encoding="utf-8")
 
     # Base context A: system + document
