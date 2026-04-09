@@ -487,13 +487,19 @@ class TestCompileShortDoc:
         (tmp_path / "raw").mkdir()
         (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
-        summary_response = "# Summary\n\nThis document discusses transformers."
+        summary_response = json.dumps({
+            "brief": "Discusses transformers",
+            "content": "# Summary\n\nThis document discusses transformers.",
+        })
         concepts_list_response = json.dumps({
             "create": [{"name": "transformer", "title": "Transformer"}],
             "update": [],
             "related": [],
         })
-        concept_page_response = "# Transformer\n\nA neural network architecture."
+        concept_page_response = json.dumps({
+            "brief": "NN architecture using self-attention",
+            "content": "# Transformer\n\nA neural network architecture.",
+        })
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
@@ -534,7 +540,7 @@ class TestCompileShortDoc:
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
-                side_effect=_mock_completion(["Summary text", "not valid json"])
+                side_effect=_mock_completion(["Plain summary text", "not valid json"])
             )
             # Should not raise
             await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
@@ -567,7 +573,10 @@ class TestCompileLongDoc:
             "update": [],
             "related": [],
         })
-        concept_page_response = "# Deep Learning\n\nA subfield of ML."
+        concept_page_response = json.dumps({
+            "brief": "Subfield of ML using neural networks",
+            "content": "# Deep Learning\n\nA subfield of ML.",
+        })
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
@@ -624,8 +633,14 @@ class TestCompileConceptsPlan:
             "update": [{"name": "attention", "title": "Attention"}],
             "related": [],
         })
-        create_page_response = "# Flash Attention\n\nAn efficient attention algorithm."
-        update_page_response = "# Attention\n\nUpdated content with new info."
+        create_page_response = json.dumps({
+            "brief": "Efficient attention algorithm",
+            "content": "# Flash Attention\n\nAn efficient attention algorithm.",
+        })
+        update_page_response = json.dumps({
+            "brief": "Updated attention mechanism",
+            "content": "# Attention\n\nUpdated content with new info.",
+        })
 
         system_msg = {"role": "system", "content": "You are a wiki agent."}
         doc_msg = {"role": "user", "content": "Document about attention mechanisms."}
@@ -720,7 +735,10 @@ class TestCompileConceptsPlan:
         plan_response = json.dumps([
             {"name": "attention", "title": "Attention"},
         ])
-        concept_page_response = "# Attention\n\nA mechanism for focusing."
+        concept_page_response = json.dumps({
+            "brief": "A mechanism for focusing",
+            "content": "# Attention\n\nA mechanism for focusing.",
+        })
 
         system_msg = {"role": "system", "content": "You are a wiki agent."}
         doc_msg = {"role": "user", "content": "Document content."}
@@ -744,3 +762,57 @@ class TestCompileConceptsPlan:
         att_text = att_path.read_text()
         assert "sources: [test-doc.pdf]" in att_text
         assert "Attention" in att_text
+
+
+class TestBriefIntegration:
+    @pytest.mark.asyncio
+    async def test_short_doc_briefs_in_index_and_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nContent.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
+
+        summary_resp = json.dumps({
+            "brief": "A paper about transformers",
+            "content": "# Summary\n\nThis paper discusses transformers.",
+        })
+        plan_resp = json.dumps({
+            "create": [{"name": "transformer", "title": "Transformer"}],
+            "update": [],
+            "related": [],
+        })
+        concept_resp = json.dumps({
+            "brief": "NN architecture using self-attention",
+            "content": "# Transformer\n\nA neural network architecture.",
+        })
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_resp, plan_resp])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_resp])
+            )
+            await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
+
+        # Summary frontmatter has brief
+        summary_text = (wiki / "summaries" / "test-doc.md").read_text()
+        assert "brief: A paper about transformers" in summary_text
+
+        # Concept frontmatter has brief
+        concept_text = (wiki / "concepts" / "transformer.md").read_text()
+        assert "brief: NN architecture using self-attention" in concept_text
+
+        # Index has briefs
+        index_text = (wiki / "index.md").read_text()
+        assert "— A paper about transformers" in index_text
+        assert "— NN architecture using self-attention" in index_text

@@ -497,6 +497,7 @@ async def _compile_concepts(
     summary: str,
     doc_name: str,
     max_concurrency: int,
+    doc_brief: str = "",
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -546,11 +547,11 @@ async def _compile_concepts(
     # --- Step 3: Generate/update concept pages concurrently (A cached) ---
     semaphore = asyncio.Semaphore(max_concurrency)
 
-    async def _gen_create(concept: dict) -> tuple[str, str, bool]:
+    async def _gen_create(concept: dict) -> tuple[str, str, bool, str]:
         name = concept["name"]
         title = concept.get("title", name)
         async with semaphore:
-            page_content = await _llm_call_async(model, [
+            raw = await _llm_call_async(model, [
                 system_msg,
                 doc_msg,
                 {"role": "assistant", "content": summary},
@@ -559,9 +560,15 @@ async def _compile_concepts(
                     update_instruction="",
                 )},
             ], f"concept:{name}")
-        return name, page_content, False
+        try:
+            parsed = _parse_json(raw)
+            brief = parsed.get("brief", "")
+            content = parsed.get("content", raw)
+        except (json.JSONDecodeError, ValueError):
+            brief, content = "", raw
+        return name, content, False, brief
 
-    async def _gen_update(concept: dict) -> tuple[str, str, bool]:
+    async def _gen_update(concept: dict) -> tuple[str, str, bool, str]:
         name = concept["name"]
         title = concept.get("title", name)
         concept_path = wiki_dir / "concepts" / f"{name}.md"
@@ -575,7 +582,7 @@ async def _compile_concepts(
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
-            page_content = await _llm_call_async(model, [
+            raw = await _llm_call_async(model, [
                 system_msg,
                 doc_msg,
                 {"role": "assistant", "content": summary},
@@ -584,13 +591,20 @@ async def _compile_concepts(
                     existing_content=existing_content,
                 )},
             ], f"update:{name}")
-        return name, page_content, True
+        try:
+            parsed = _parse_json(raw)
+            brief = parsed.get("brief", "")
+            content = parsed.get("content", raw)
+        except (json.JSONDecodeError, ValueError):
+            brief, content = "", raw
+        return name, content, True, brief
 
     tasks = []
     tasks.extend(_gen_create(c) for c in create_items)
     tasks.extend(_gen_update(c) for c in update_items)
 
     concept_names: list[str] = []
+    concept_briefs_map: dict[str, str] = {}
 
     if tasks:
         total = len(tasks)
@@ -603,9 +617,11 @@ async def _compile_concepts(
             if isinstance(r, Exception):
                 logger.warning("Concept generation failed: %s", r)
                 continue
-            name, page_content, is_update = r
-            _write_concept(wiki_dir, name, page_content, source_file, is_update)
+            name, page_content, is_update, brief = r
+            _write_concept(wiki_dir, name, page_content, source_file, is_update, brief=brief)
             concept_names.append(name)
+            if brief:
+                concept_briefs_map[name] = brief
 
     # --- Step 3b: Process related items (code only, no LLM) ---
     for slug in related_items:
@@ -618,7 +634,8 @@ async def _compile_concepts(
         _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
     # --- Step 4: Update index (code only) ---
-    _update_index(wiki_dir, doc_name, concept_names)
+    _update_index(wiki_dir, doc_name, concept_names,
+                  doc_brief=doc_brief, concept_briefs=concept_briefs_map)
 
 
 async def compile_short_doc(
@@ -653,13 +670,20 @@ async def compile_short_doc(
     )}
 
     # --- Step 1: Generate summary ---
-    summary = _llm_call(model, [system_msg, doc_msg], "summary")
-    _write_summary(wiki_dir, doc_name, source_file, summary)
+    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary")
+    try:
+        summary_parsed = _parse_json(summary_raw)
+        doc_brief = summary_parsed.get("brief", "")
+        summary = summary_parsed.get("content", summary_raw)
+    except (json.JSONDecodeError, ValueError):
+        doc_brief = ""
+        summary = summary_raw
+    _write_summary(wiki_dir, doc_name, source_file, summary, brief=doc_brief)
 
     # --- Steps 2-4: Concept plan → generate/update → index ---
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
-        summary, doc_name, max_concurrency,
+        summary, doc_name, max_concurrency, doc_brief=doc_brief,
     )
 
 
@@ -669,6 +693,7 @@ async def compile_long_doc(
     doc_id: str,
     kb_dir: Path,
     model: str,
+    doc_description: str = "",
     max_concurrency: int = DEFAULT_COMPILE_CONCURRENCY,
 ) -> None:
     """Compile a long (PageIndex) document's concepts and index.
@@ -700,5 +725,5 @@ async def compile_long_doc(
     # --- Steps 2-4: Concept plan → generate/update → index ---
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
-        overview, doc_name, max_concurrency,
+        overview, doc_name, max_concurrency, doc_brief=doc_description,
     )

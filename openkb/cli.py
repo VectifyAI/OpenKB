@@ -132,7 +132,8 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
         for attempt in range(2):
             try:
                 asyncio.run(
-                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model)
+                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
+                                     doc_description=index_result.description)
                 )
                 break
             except Exception as exc:
