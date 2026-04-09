@@ -283,6 +283,10 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
 def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
                     doc_type: str = "short") -> None:
     """Write summary page with frontmatter."""
+    if summary.startswith("---"):
+        end = summary.find("---", 3)
+        if end != -1:
+            summary = summary[end + 3:].lstrip("\n")
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     ext = "md" if doc_type == "short" else "json"
@@ -347,6 +351,10 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                 existing = fm + body
         path.write_text(existing, encoding="utf-8")
     else:
+        if content.startswith("---"):
+            end = content.find("---", 3)
+            if end != -1:
+                content = content[end + 3:].lstrip("\n")
         fm_lines = [f"sources: [{source_file}]"]
         if brief:
             fm_lines.append(f"brief: {brief}")
