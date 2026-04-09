@@ -10,6 +10,7 @@ import pytest
 from openkb.agent.compiler import (
     compile_long_doc,
     compile_short_doc,
+    _compile_concepts,
     _parse_json,
     _write_summary,
     _write_concept,
@@ -292,9 +293,11 @@ class TestCompileShortDoc:
         (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
         summary_response = "# Summary\n\nThis document discusses transformers."
-        concepts_list_response = json.dumps([
-            {"name": "transformer", "title": "Transformer", "is_update": False},
-        ])
+        concepts_list_response = json.dumps({
+            "create": [{"name": "transformer", "title": "Transformer"}],
+            "update": [],
+            "related": [],
+        })
         concept_page_response = "# Transformer\n\nA neural network architecture."
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
@@ -364,9 +367,11 @@ class TestCompileLongDoc:
         (tmp_path / "raw" / "big-doc.pdf").write_bytes(b"fake")
 
         overview_response = "Overview of the big document."
-        concepts_list_response = json.dumps([
-            {"name": "deep-learning", "title": "Deep Learning", "is_update": False},
-        ])
+        concepts_list_response = json.dumps({
+            "create": [{"name": "deep-learning", "title": "Deep Learning"}],
+            "update": [],
+            "related": [],
+        })
         concept_page_response = "# Deep Learning\n\nA subfield of ML."
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
@@ -387,3 +392,160 @@ class TestCompileLongDoc:
         index_text = (wiki / "index.md").read_text()
         assert "[[summaries/big-doc]]" in index_text
         assert "[[concepts/deep-learning]]" in index_text
+
+
+class TestCompileConceptsPlan:
+    """Integration tests for _compile_concepts with the new plan format."""
+
+    def _setup_wiki(self, tmp_path, existing_concepts=None):
+        """Helper to set up a wiki directory with optional existing concepts."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "raw").mkdir(exist_ok=True)
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
+
+        if existing_concepts:
+            for name, content in existing_concepts.items():
+                (wiki / "concepts" / f"{name}.md").write_text(
+                    content, encoding="utf-8",
+                )
+
+        return wiki
+
+    @pytest.mark.asyncio
+    async def test_create_and_update_flow(self, tmp_path):
+        """Pre-existing 'attention' concept; plan creates 'flash-attention' and updates 'attention'."""
+        wiki = self._setup_wiki(tmp_path, existing_concepts={
+            "attention": "---\nsources: [old-paper.pdf]\n---\n\n# Attention\n\nOriginal content about attention.",
+        })
+
+        plan_response = json.dumps({
+            "create": [{"name": "flash-attention", "title": "Flash Attention"}],
+            "update": [{"name": "attention", "title": "Attention"}],
+            "related": [],
+        })
+        create_page_response = "# Flash Attention\n\nAn efficient attention algorithm."
+        update_page_response = "# Attention\n\nUpdated content with new info."
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document about attention mechanisms."}
+        summary = "Summary of the document."
+
+        call_order = {"n": 0}
+
+        async def ordered_acompletion(*args, **kwargs):
+            idx = call_order["n"]
+            call_order["n"] += 1
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            # create tasks come first, then update tasks
+            if idx == 0:
+                mock_resp.choices[0].message.content = create_page_response
+            else:
+                mock_resp.choices[0].message.content = update_page_response
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=ordered_acompletion
+            )
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                summary, "test-doc", 5,
+            )
+
+        # Verify flash-attention created
+        fa_path = wiki / "concepts" / "flash-attention.md"
+        assert fa_path.exists()
+        fa_text = fa_path.read_text()
+        assert "sources: [test-doc.pdf]" in fa_text
+        assert "Flash Attention" in fa_text
+
+        # Verify attention updated (is_update=True path in _write_concept)
+        att_path = wiki / "concepts" / "attention.md"
+        assert att_path.exists()
+        att_text = att_path.read_text()
+        assert "test-doc.pdf" in att_text
+        assert "old-paper.pdf" in att_text
+
+        # Verify index updated
+        index_text = (wiki / "index.md").read_text()
+        assert "[[concepts/flash-attention]]" in index_text
+        assert "[[concepts/attention]]" in index_text
+
+    @pytest.mark.asyncio
+    async def test_related_adds_link_no_llm(self, tmp_path):
+        """Plan has only related items. No acompletion calls should be made."""
+        wiki = self._setup_wiki(tmp_path, existing_concepts={
+            "transformer": "---\nsources: [old.pdf]\n---\n\n# Transformer\n\nContent about transformers.",
+        })
+
+        plan_response = json.dumps({
+            "create": [],
+            "update": [],
+            "related": ["transformer"],
+        })
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document content."}
+        summary = "Summary."
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock()
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                summary, "test-doc", 5,
+            )
+            # acompletion should never be called — related is code-only
+            mock_litellm.acompletion.assert_not_called()
+
+        # Verify link added to transformer page
+        transformer_text = (wiki / "concepts" / "transformer.md").read_text()
+        assert "[[summaries/test-doc]]" in transformer_text
+        assert "test-doc.pdf" in transformer_text
+
+    @pytest.mark.asyncio
+    async def test_fallback_list_format(self, tmp_path):
+        """LLM returns a flat array instead of dict — treated as all create."""
+        wiki = self._setup_wiki(tmp_path)
+
+        plan_response = json.dumps([
+            {"name": "attention", "title": "Attention"},
+        ])
+        concept_page_response = "# Attention\n\nA mechanism for focusing."
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document content."}
+        summary = "Summary."
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_page_response])
+            )
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                summary, "test-doc", 5,
+            )
+
+        # Verify concept was created (not updated)
+        att_path = wiki / "concepts" / "attention.md"
+        assert att_path.exists()
+        att_text = att_path.read_text()
+        assert "sources: [test-doc.pdf]" in att_text
+        assert "Attention" in att_text

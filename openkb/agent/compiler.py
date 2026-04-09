@@ -396,6 +396,133 @@ def _update_index(wiki_dir: Path, doc_name: str, concept_names: list[str]) -> No
 DEFAULT_COMPILE_CONCURRENCY = 5
 
 
+async def _compile_concepts(
+    wiki_dir: Path,
+    kb_dir: Path,
+    model: str,
+    system_msg: dict,
+    doc_msg: dict,
+    summary: str,
+    doc_name: str,
+    max_concurrency: int,
+) -> None:
+    """Shared Steps 2-4: concepts plan → generate/update → index.
+
+    Uses ``_CONCEPTS_PLAN_USER`` to get a plan with create/update/related
+    actions, then executes each action type accordingly.
+    """
+    source_file = _find_source_filename(doc_name, kb_dir)
+
+    # --- Step 2: Get concepts plan (A cached) ---
+    concept_briefs = _read_concept_briefs(wiki_dir)
+
+    plan_raw = _llm_call(model, [
+        system_msg,
+        doc_msg,
+        {"role": "assistant", "content": summary},
+        {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
+            concept_briefs=concept_briefs,
+        )},
+    ], "concepts-plan", max_tokens=1024)
+
+    try:
+        parsed = _parse_json(plan_raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse concepts plan: %s", exc)
+        logger.debug("Raw: %s", plan_raw)
+        _update_index(wiki_dir, doc_name, [])
+        return
+
+    # Fallback: if LLM returns a flat list, treat all items as "create"
+    if isinstance(parsed, list):
+        plan = {"create": parsed, "update": [], "related": []}
+    else:
+        plan = {
+            "create": parsed.get("create", []),
+            "update": parsed.get("update", []),
+            "related": parsed.get("related", []),
+        }
+
+    create_items = plan["create"]
+    update_items = plan["update"]
+    related_items = plan["related"]
+
+    if not create_items and not update_items and not related_items:
+        _update_index(wiki_dir, doc_name, [])
+        return
+
+    # --- Step 3: Generate/update concept pages concurrently (A cached) ---
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _gen_create(concept: dict) -> tuple[str, str, bool]:
+        name = concept["name"]
+        title = concept.get("title", name)
+        async with semaphore:
+            page_content = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,
+                {"role": "assistant", "content": summary},
+                {"role": "user", "content": _CONCEPT_PAGE_USER.format(
+                    title=title, doc_name=doc_name,
+                    update_instruction="",
+                )},
+            ], f"concept:{name}")
+        return name, page_content, False
+
+    async def _gen_update(concept: dict) -> tuple[str, str, bool]:
+        name = concept["name"]
+        title = concept.get("title", name)
+        concept_path = wiki_dir / "concepts" / f"{name}.md"
+        if concept_path.exists():
+            raw_text = concept_path.read_text(encoding="utf-8")
+            if raw_text.startswith("---"):
+                parts = raw_text.split("---", 2)
+                existing_content = parts[2].strip() if len(parts) >= 3 else raw_text
+            else:
+                existing_content = raw_text
+        else:
+            existing_content = "(page not found — create from scratch)"
+        async with semaphore:
+            page_content = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,
+                {"role": "assistant", "content": summary},
+                {"role": "user", "content": _CONCEPT_UPDATE_USER.format(
+                    title=title, doc_name=doc_name,
+                    existing_content=existing_content,
+                )},
+            ], f"update:{name}")
+        return name, page_content, True
+
+    tasks = []
+    tasks.extend(_gen_create(c) for c in create_items)
+    tasks.extend(_gen_update(c) for c in update_items)
+
+    concept_names: list[str] = []
+
+    if tasks:
+        total = len(tasks)
+        sys.stdout.write(f"    Generating {total} concept(s) (concurrency={max_concurrency})...\n")
+        sys.stdout.flush()
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning("Concept generation failed: %s", r)
+                continue
+            name, page_content, is_update = r
+            _write_concept(wiki_dir, name, page_content, source_file, is_update)
+            concept_names.append(name)
+
+    # --- Step 3b: Process related items (code only, no LLM) ---
+    for slug in related_items:
+        _add_related_link(wiki_dir, slug, doc_name, source_file)
+
+    # --- Step 4: Update index (code only) ---
+    _update_index(wiki_dir, doc_name, concept_names)
+
+
 async def compile_short_doc(
     doc_name: str,
     source_path: Path,
@@ -405,11 +532,8 @@ async def compile_short_doc(
 ) -> None:
     """Compile a short document using a multi-step LLM pipeline with caching.
 
-    Step 1: Build base context A (schema + doc content).
-    Step 2: A → generate summary.
-    Step 3: A + summary → extract concept list.
-    Step 4: Concurrent LLM calls (A cached) → generate each concept page.
-    Step 5: Code writes files, updates index.
+    Step 1: Build base context A (schema + doc content), generate summary.
+    Steps 2-4: Delegated to ``_compile_concepts``.
     """
     from openkb.config import load_config
 
@@ -434,75 +558,11 @@ async def compile_short_doc(
     summary = _llm_call(model, [system_msg, doc_msg], "summary")
     _write_summary(wiki_dir, doc_name, source_file, summary)
 
-    # --- Step 2: Extract concept list (A cached) ---
-    _, existing_concepts = _read_wiki_context(wiki_dir)
-
-    concepts_list_raw = _llm_call(model, [
-        system_msg,
-        doc_msg,
-        {"role": "assistant", "content": summary},
-        {"role": "user", "content": _CONCEPTS_LIST_USER.format(
-            existing_concepts=", ".join(existing_concepts) if existing_concepts else "(none yet)",
-        )},
-    ], "concepts-list", max_tokens=512)
-
-    try:
-        concepts_list = _parse_json(concepts_list_raw)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to parse concepts list: %s", exc)
-        logger.debug("Raw: %s", concepts_list_raw)
-        _update_index(wiki_dir, doc_name, [])
-        return
-
-    if not concepts_list:
-        _update_index(wiki_dir, doc_name, [])
-        return
-
-    # --- Step 3: Generate concept pages concurrently (A cached) ---
-    semaphore = asyncio.Semaphore(max_concurrency)
-
-    async def _gen_concept(concept: dict) -> tuple[str, str, bool]:
-        name = concept["name"]
-        title = concept.get("title", name)
-        is_update = concept.get("is_update", False)
-        update_instruction = (
-            "This concept page already exists. Add new information from this document "
-            "without duplicating existing content."
-            if is_update else ""
-        )
-
-        async with semaphore:
-            page_content = await _llm_call_async(model, [
-                system_msg,
-                doc_msg,
-                {"role": "assistant", "content": summary},
-                {"role": "user", "content": _CONCEPT_PAGE_USER.format(
-                    title=title, doc_name=doc_name,
-                    update_instruction=update_instruction,
-                )},
-            ], f"concept:{name}")
-
-        return name, page_content, is_update
-
-    sys.stdout.write(f"    Generating {len(concepts_list)} concept(s) (concurrency={max_concurrency})...\n")
-    sys.stdout.flush()
-
-    results = await asyncio.gather(
-        *[_gen_concept(c) for c in concepts_list],
-        return_exceptions=True,
+    # --- Steps 2-4: Concept plan → generate/update → index ---
+    await _compile_concepts(
+        wiki_dir, kb_dir, model, system_msg, doc_msg,
+        summary, doc_name, max_concurrency,
     )
-
-    concept_names = []
-    for r in results:
-        if isinstance(r, Exception):
-            logger.warning("Concept generation failed: %s", r)
-            continue
-        name, page_content, is_update = r
-        _write_concept(wiki_dir, name, page_content, source_file, is_update)
-        concept_names.append(name)
-
-    # --- Step 4: Update index (code only) ---
-    _update_index(wiki_dir, doc_name, concept_names)
 
 
 async def compile_long_doc(
@@ -526,85 +586,21 @@ async def compile_long_doc(
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
-    source_file = _find_source_filename(doc_name, kb_dir)
-    summary = summary_path.read_text(encoding="utf-8")
+    summary_content = summary_path.read_text(encoding="utf-8")
 
     # Base context A
     system_msg = {"role": "system", "content": _SYSTEM_TEMPLATE.format(
         schema_md=schema_md, language=language,
     )}
     doc_msg = {"role": "user", "content": _LONG_DOC_SUMMARY_USER.format(
-        doc_name=doc_name, doc_id=doc_id, content=summary,
+        doc_name=doc_name, doc_id=doc_id, content=summary_content,
     )}
 
-    # --- Step 1: Extract concept list ---
-    _, existing_concepts = _read_wiki_context(wiki_dir)
-
-    # Get a concise overview first (for concept generation context)
+    # --- Step 1: Generate overview ---
     overview = _llm_call(model, [system_msg, doc_msg], "overview")
 
-    concepts_list_raw = _llm_call(model, [
-        system_msg,
-        doc_msg,
-        {"role": "assistant", "content": overview},
-        {"role": "user", "content": _CONCEPTS_LIST_USER.format(
-            existing_concepts=", ".join(existing_concepts) if existing_concepts else "(none yet)",
-        )},
-    ], "concepts-list", max_tokens=512)
-
-    try:
-        concepts_list = _parse_json(concepts_list_raw)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to parse concepts list: %s", exc)
-        logger.debug("Raw: %s", concepts_list_raw)
-        _update_index(wiki_dir, doc_name, [])
-        return
-
-    if not concepts_list:
-        _update_index(wiki_dir, doc_name, [])
-        return
-
-    # --- Step 2: Generate concept pages concurrently ---
-    semaphore = asyncio.Semaphore(max_concurrency)
-
-    async def _gen_concept(concept: dict) -> tuple[str, str, bool]:
-        name = concept["name"]
-        title = concept.get("title", name)
-        is_update = concept.get("is_update", False)
-        update_instruction = (
-            "This concept page already exists. Add new information."
-            if is_update else ""
-        )
-
-        async with semaphore:
-            page_content = await _llm_call_async(model, [
-                system_msg,
-                doc_msg,
-                {"role": "assistant", "content": overview},
-                {"role": "user", "content": _CONCEPT_PAGE_USER.format(
-                    title=title, doc_name=doc_name,
-                    update_instruction=update_instruction,
-                )},
-            ], f"concept:{name}")
-
-        return name, page_content, is_update
-
-    sys.stdout.write(f"    Generating {len(concepts_list)} concept(s) (concurrency={max_concurrency})...\n")
-    sys.stdout.flush()
-
-    results = await asyncio.gather(
-        *[_gen_concept(c) for c in concepts_list],
-        return_exceptions=True,
+    # --- Steps 2-4: Concept plan → generate/update → index ---
+    await _compile_concepts(
+        wiki_dir, kb_dir, model, system_msg, doc_msg,
+        overview, doc_name, max_concurrency,
     )
-
-    concept_names = []
-    for r in results:
-        if isinstance(r, Exception):
-            logger.warning("Concept generation failed: %s", r)
-            continue
-        name, page_content, is_update = r
-        _write_concept(wiki_dir, name, page_content, source_file, is_update)
-        concept_names.append(name)
-
-    # --- Step 3: Update index (code only) ---
-    _update_index(wiki_dir, doc_name, concept_names)
