@@ -89,7 +89,7 @@ def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> 
         for page_idx in range(len(doc)):
             page = doc[page_idx]
             page_num = page_idx + 1
-            parts.append(f"\n\n<!-- Page {page_num} -->\n")
+            parts.append("\n\n")
 
             for block in page.get_text("dict")["blocks"]:
                 if block["type"] == 0:  # text block
