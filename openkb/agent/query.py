@@ -24,7 +24,7 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
 4. When you need detailed source content, check the summary's full_text field:
    - Short documents (full_text ends in .md): read_file(full_text) for the full text.
    - PageIndex documents (full_text ends in .json): use get_page_content(doc_name, pages)
-     to read specific pages. The summary shows chapter structure with page ranges.
+     to read specific pages. The summary shows document tree structure with page ranges.
 5. Synthesise a clear, well-cited answer grounded in wiki content.
 
 If you cannot find relevant information, say so clearly.
@@ -49,7 +49,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     def get_page_content_tool(doc_name: str, pages: str) -> str:
         """Get text content of specific pages from a long document.
         Use this when you need detailed content from a document. The summary
-        page shows chapter structure with page ranges.
+        page shows document tree structure with page ranges.
         Args:
             doc_name: Document name (e.g. 'attention-is-all-you-need').
             pages: Page specification (e.g. '3-5,7,10-12').
