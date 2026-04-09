@@ -149,29 +149,43 @@ class TestWriteConcept:
 
 
 class TestUpdateIndex:
-    def test_appends_entries(self, tmp_path):
+    def test_appends_entries_with_briefs(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
         (wiki / "index.md").write_text(
             "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
             encoding="utf-8",
         )
-        _update_index(wiki, "my-doc", ["attention", "transformer"])
+        _update_index(wiki, "my-doc", ["attention", "transformer"],
+                       doc_brief="Introduces transformers",
+                       concept_briefs={"attention": "Focus mechanism", "transformer": "NN architecture"})
         text = (wiki / "index.md").read_text()
-        assert "[[summaries/my-doc]]" in text
-        assert "[[concepts/attention]]" in text
-        assert "[[concepts/transformer]]" in text
+        assert "[[summaries/my-doc]] — Introduces transformers" in text
+        assert "[[concepts/attention]] — Focus mechanism" in text
+        assert "[[concepts/transformer]] — NN architecture" in text
 
     def test_no_duplicates(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
         (wiki / "index.md").write_text(
-            "# Index\n\n## Documents\n- [[summaries/my-doc]]\n\n## Concepts\n",
+            "# Index\n\n## Documents\n- [[summaries/my-doc]] — Old brief\n\n## Concepts\n",
             encoding="utf-8",
         )
-        _update_index(wiki, "my-doc", [])
+        _update_index(wiki, "my-doc", [], doc_brief="New brief")
         text = (wiki / "index.md").read_text()
         assert text.count("[[summaries/my-doc]]") == 1
+
+    def test_backwards_compat_no_briefs(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", ["attention"])
+        text = (wiki / "index.md").read_text()
+        assert "[[summaries/my-doc]]" in text
+        assert "[[concepts/attention]]" in text
 
 
 class TestReadWikiContext:
@@ -256,6 +270,28 @@ class TestReadConceptBriefs:
         lines = result.strip().splitlines()
         slugs = [line.split(":")[0].lstrip("- ") for line in lines]
         assert slugs == ["apple", "mango", "zebra"]
+
+    def test_reads_brief_from_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper.pdf]\nbrief: Selective focus mechanism\n---\n\n# Attention\n\nLong content...",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- attention: Selective focus mechanism" in result
+
+    def test_falls_back_to_body_truncation(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "old.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\nOld concept without brief field.",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- old: Old concept without brief field." in result
 
 
 class TestBacklinkSummary:

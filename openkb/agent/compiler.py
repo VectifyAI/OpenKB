@@ -439,8 +439,19 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
         path.write_text(text, encoding="utf-8")
 
 
-def _update_index(wiki_dir: Path, doc_name: str, concept_names: list[str]) -> None:
-    """Append document and concept entries to index.md."""
+def _update_index(
+    wiki_dir: Path, doc_name: str, concept_names: list[str],
+    doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
+) -> None:
+    """Append document and concept entries to index.md.
+
+    When ``doc_brief`` or entries in ``concept_briefs`` are provided, entries
+    are written as ``- [[link]] — brief text``.  Existing entries are detected
+    by the link part only, so updating a brief on a re-compile works correctly.
+    """
+    if concept_briefs is None:
+        concept_briefs = {}
+
     index_path = wiki_dir / "index.md"
     if not index_path.exists():
         index_path.write_text(
@@ -450,14 +461,20 @@ def _update_index(wiki_dir: Path, doc_name: str, concept_names: list[str]) -> No
 
     text = index_path.read_text(encoding="utf-8")
 
-    doc_entry = f"- [[summaries/{doc_name}]]"
-    if doc_entry not in text:
+    doc_link = f"[[summaries/{doc_name}]]"
+    if doc_link not in text:
+        doc_entry = f"- {doc_link}"
+        if doc_brief:
+            doc_entry += f" — {doc_brief}"
         if "## Documents" in text:
             text = text.replace("## Documents\n", f"## Documents\n{doc_entry}\n", 1)
 
     for name in concept_names:
-        concept_entry = f"- [[concepts/{name}]]"
-        if concept_entry not in text:
+        concept_link = f"[[concepts/{name}]]"
+        if concept_link not in text:
+            concept_entry = f"- {concept_link}"
+            if name in concept_briefs:
+                concept_entry += f" — {concept_briefs[name]}"
             if "## Concepts" in text:
                 text = text.replace("## Concepts\n", f"## Concepts\n{concept_entry}\n", 1)
 
