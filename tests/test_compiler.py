@@ -61,6 +61,19 @@ class TestParseConceptsPlan:
         assert parsed["create"] == []
 
 
+class TestParseBriefContent:
+    def test_dict_with_brief_and_content(self):
+        text = json.dumps({"brief": "A short desc", "content": "# Full page\n\nDetails."})
+        parsed = _parse_json(text)
+        assert parsed["brief"] == "A short desc"
+        assert "# Full page" in parsed["content"]
+
+    def test_plain_text_fallback(self):
+        """If LLM returns plain text, _parse_json raises — caller handles fallback."""
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            _parse_json("Just plain markdown text without JSON")
+
+
 class TestWriteSummary:
     def test_writes_with_frontmatter(self, tmp_path):
         wiki = tmp_path / "wiki"

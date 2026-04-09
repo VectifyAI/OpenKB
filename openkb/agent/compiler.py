@@ -43,11 +43,14 @@ New document: {doc_name}
 Full text:
 {content}
 
-Write a summary page for this document in Markdown. Include:
-- Key concepts, findings, and ideas
-- [[wikilinks]] to concepts that could become cross-document concept pages
+Write a summary page for this document in Markdown.
 
-Return ONLY the Markdown content (no frontmatter, no code fences).
+Return a JSON object with two keys:
+- "brief": A single sentence (under 100 chars) describing the document's main contribution
+- "content": The full summary in Markdown. Include key concepts, findings, ideas, \
+and [[wikilinks]] to concepts that could become cross-document concept pages
+
+Return ONLY valid JSON, no fences.
 """
 
 
@@ -84,10 +87,13 @@ Write the concept page for: {title}
 This concept relates to the document "{doc_name}" summarized above.
 {update_instruction}
 
-Return ONLY the Markdown content (no frontmatter, no code fences). Include:
-- Clear explanation of the concept
-- Key details from the source document
-- [[wikilinks]] to related concepts and [[summaries/{doc_name}]]
+Return a JSON object with two keys:
+- "brief": A single sentence (under 100 chars) defining this concept
+- "content": The full concept page in Markdown. Include clear explanation, \
+key details from the source document, and [[wikilinks]] to related concepts \
+and [[summaries/{doc_name}]]
+
+Return ONLY valid JSON, no fences.
 """
 
 _CONCEPT_UPDATE_USER = """\
@@ -101,7 +107,11 @@ integrated into this page. Rewrite the full page incorporating the new \
 information naturally — do not just append. Maintain existing \
 [[wikilinks]] and add new ones where appropriate.
 
-Return ONLY the Markdown content (no frontmatter, no code fences).
+Return a JSON object with two keys:
+- "brief": A single sentence (under 100 chars) defining this concept (may differ from before)
+- "content": The rewritten full concept page in Markdown
+
+Return ONLY valid JSON, no fences.
 """
 
 _LONG_DOC_SUMMARY_USER = """\
