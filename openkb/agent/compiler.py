@@ -351,11 +351,68 @@ def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_f
     path.write_text(text, encoding="utf-8")
 
 
+def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
+    """Append missing concept wikilinks to the summary page (no LLM call).
+
+    After all concepts are generated, this ensures the summary page links
+    back to every related concept — closing the bidirectional link that
+    concept pages already have toward the summary.
+
+    If a ``## Related Concepts`` section already exists, new links are
+    appended into it rather than creating a duplicate section.
+    """
+    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
+    if not summary_path.exists():
+        return
+
+    text = summary_path.read_text(encoding="utf-8")
+    missing = [slug for slug in concept_slugs if f"[[concepts/{slug}]]" not in text]
+    if not missing:
+        return
+
+    new_links = "\n".join(f"- [[concepts/{s}]]" for s in missing)
+    if "## Related Concepts" in text:
+        # Append into existing section
+        text = text.replace("## Related Concepts\n", f"## Related Concepts\n{new_links}\n", 1)
+    else:
+        text += f"\n\n## Related Concepts\n{new_links}\n"
+    summary_path.write_text(text, encoding="utf-8")
+
+
+def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
+    """Append missing summary wikilink to each concept page (no LLM call).
+
+    Ensures every concept page links back to the source document's summary,
+    regardless of whether the LLM included the link in its output.
+
+    If a ``## Related Documents`` section already exists, the link is
+    appended into it rather than creating a duplicate section.
+    """
+    link = f"[[summaries/{doc_name}]]"
+    concepts_dir = wiki_dir / "concepts"
+
+    for slug in concept_slugs:
+        path = concepts_dir / f"{slug}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if link in text:
+            continue
+        if "## Related Documents" in text:
+            text = text.replace("## Related Documents\n", f"## Related Documents\n- {link}\n", 1)
+        else:
+            text += f"\n\n## Related Documents\n- {link}\n"
+        path.write_text(text, encoding="utf-8")
+
+
 def _update_index(wiki_dir: Path, doc_name: str, concept_names: list[str]) -> None:
     """Append document and concept entries to index.md."""
     index_path = wiki_dir / "index.md"
     if not index_path.exists():
-        return
+        index_path.write_text(
+            "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
 
     text = index_path.read_text(encoding="utf-8")
 
@@ -502,6 +559,12 @@ async def _compile_concepts(
     # --- Step 3b: Process related items (code only, no LLM) ---
     for slug in related_items:
         _add_related_link(wiki_dir, slug, doc_name, source_file)
+
+    # --- Step 3c: Backlink — summary ↔ concepts (code only) ---
+    all_concept_slugs = concept_names + [s for s in related_items]
+    if all_concept_slugs:
+        _backlink_summary(wiki_dir, doc_name, all_concept_slugs)
+        _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
     # --- Step 4: Update index (code only) ---
     _update_index(wiki_dir, doc_name, concept_names)

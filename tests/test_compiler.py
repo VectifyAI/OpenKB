@@ -18,6 +18,8 @@ from openkb.agent.compiler import (
     _read_wiki_context,
     _read_concept_briefs,
     _add_related_link,
+    _backlink_summary,
+    _backlink_concepts,
 )
 
 
@@ -205,6 +207,114 @@ class TestReadConceptBriefs:
         lines = result.strip().splitlines()
         slugs = [line.split(":")[0].lstrip("- ") for line in lines]
         assert slugs == ["apple", "mango", "zebra"]
+
+
+class TestBacklinkSummary:
+    def test_adds_missing_concept_links(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\n# Summary\n\nContent about attention.",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        assert "[[concepts/attention]]" in text
+        assert "[[concepts/transformer]]" in text
+
+    def test_skips_already_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\n# Summary\n\nSee [[concepts/attention]].",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        # attention already linked, should not duplicate
+        assert text.count("[[concepts/attention]]") == 1
+        # transformer should be added
+        assert "[[concepts/transformer]]" in text
+
+    def test_no_op_when_all_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        original = "# Summary\n\n[[concepts/attention]] and [[concepts/transformer]]"
+        (summaries / "paper.md").write_text(original, encoding="utf-8")
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        assert (summaries / "paper.md").read_text() == original
+
+    def test_skips_if_file_missing(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Should not raise
+        _backlink_summary(wiki, "nonexistent", ["attention"])
+
+    def test_merges_into_existing_section(self, tmp_path):
+        """Second add should merge into existing ## Related Concepts, not duplicate."""
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "# Summary\n\nContent.\n\n## Related Concepts\n- [[concepts/attention]]\n",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        assert text.count("## Related Concepts") == 1
+        assert "[[concepts/transformer]]" in text
+        assert text.count("[[concepts/attention]]") == 1
+
+
+class TestBacklinkConcepts:
+    def test_adds_summary_link_to_concept(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\n# Attention\n\nContent.",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert "[[summaries/paper]]" in text
+        assert "## Related Documents" in text
+
+    def test_skips_if_already_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "# Attention\n\nBased on [[summaries/paper]].",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert text.count("[[summaries/paper]]") == 1
+        assert "## Related Documents" not in text
+
+    def test_merges_into_existing_section(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "# Attention\n\n## Related Documents\n- [[summaries/old-paper]]\n",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "new-paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert text.count("## Related Documents") == 1
+        assert "[[summaries/old-paper]]" in text
+        assert "[[summaries/new-paper]]" in text
+
+    def test_skips_missing_concept_file(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "concepts").mkdir(parents=True)
+        # Should not raise
+        _backlink_concepts(wiki, "paper", ["nonexistent"])
 
 
 class TestAddRelatedLink:
