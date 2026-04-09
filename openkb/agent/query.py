@@ -113,13 +113,10 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
             if item.type == "tool_call_item":
                 raw = item.raw_item
                 args = getattr(raw, "arguments", "{}")
-                sys.stdout.write(f"\n[tool call] {raw.name}({args})\n")
+                sys.stdout.write(f"[tool call] {raw.name}({args})\n\n")
                 sys.stdout.flush()
             elif item.type == "tool_call_output_item":
-                output = str(item.output)
-                preview = output[:200] + "..." if len(output) > 200 else output
-                sys.stdout.write(f"[tool output] {preview}\n\n")
-                sys.stdout.flush()
+                pass
     sys.stdout.write("\n")
     sys.stdout.flush()
     return "".join(collected) if collected else result.final_output or ""
