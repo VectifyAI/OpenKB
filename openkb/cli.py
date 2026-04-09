@@ -14,9 +14,6 @@ set_tracing_disabled(True)
 # Use local model cost map — skip fetching from GitHub on every invocation
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-import warnings
-warnings.filterwarnings("ignore")
-
 import click
 import litellm
 litellm.suppress_debug_info = True
@@ -26,6 +23,10 @@ from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_
 from openkb.converter import convert_document
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD
+
+# Suppress warnings after all imports — markitdown overrides filters at import time
+import warnings
+warnings.filterwarnings("ignore")
 
 load_dotenv()  # load from cwd (covers running inside the KB dir)
 
