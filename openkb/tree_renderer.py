@@ -38,8 +38,7 @@ def _render_nodes_summary(nodes: list[dict], depth: int) -> str:
 def render_summary_md(tree: dict, source_name: str, doc_id: str) -> str:
     """Render the summary Markdown page for a PageIndex tree.
 
-    Identical structure to :func:`render_source_md` but replaces node text
-    with ``Summary: {summary}`` for each node.
+    Renders each node as a heading with page range and its summary text.
     """
     frontmatter = _yaml_frontmatter(source_name, doc_id)
     structure = tree.get("structure", [])
