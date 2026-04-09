@@ -78,22 +78,22 @@ class TestWriteSummary:
     def test_writes_with_frontmatter(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.", brief="Introduces transformers")
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
         path = wiki / "summaries" / "my-doc.md"
         assert path.exists()
         text = path.read_text()
-        assert "sources: [my-doc.pdf]" in text
-        assert "brief: Introduces transformers" in text
+        assert "doc_type: short" in text
+        assert "full_text: sources/my-doc.md" in text
         assert "# Summary" in text
 
     def test_writes_without_brief(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.")
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
         path = wiki / "summaries" / "my-doc.md"
         text = path.read_text()
-        assert "sources: [my-doc.pdf]" in text
-        assert "brief:" not in text
+        assert "doc_type: short" in text
+        assert "full_text: sources/my-doc.md" in text
 
 
 class TestWriteConcept:
@@ -513,7 +513,7 @@ class TestCompileShortDoc:
         # Verify summary written
         summary_path = wiki / "summaries" / "test-doc.md"
         assert summary_path.exists()
-        assert "sources: [test-doc.pdf]" in summary_path.read_text()
+        assert "full_text: sources/test-doc.md" in summary_path.read_text()
 
         # Verify concept written
         concept_path = wiki / "concepts" / "transformer.md"
@@ -804,9 +804,10 @@ class TestBriefIntegration:
             )
             await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
 
-        # Summary frontmatter has brief
+        # Summary frontmatter has doc_type and full_text
         summary_text = (wiki / "summaries" / "test-doc.md").read_text()
-        assert "brief: A paper about transformers" in summary_text
+        assert "doc_type: short" in summary_text
+        assert "full_text: sources/test-doc.md" in summary_text
 
         # Concept frontmatter has brief
         concept_text = (wiki / "concepts" / "transformer.md").read_text()

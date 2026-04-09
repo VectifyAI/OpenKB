@@ -90,7 +90,7 @@ class TestIndexLongDocument:
         summary_file = kb_dir / "wiki" / "summaries" / "sample.md"
         assert summary_file.exists()
         content = summary_file.read_text(encoding="utf-8")
-        assert "type: pageindex" in content
+        assert "doc_type: pageindex" in content
         assert "Summary:" in content
 
     def test_localclient_called_with_index_config(self, kb_dir, sample_tree, tmp_path):

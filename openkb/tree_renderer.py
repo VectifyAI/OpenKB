@@ -6,9 +6,8 @@ def _yaml_frontmatter(source_name: str, doc_id: str) -> str:
     """Return a YAML frontmatter block for a PageIndex wiki page."""
     return (
         "---\n"
-        f"source: {source_name}\n"
-        "type: pageindex\n"
-        f"doc_id: {doc_id}\n"
+        "doc_type: pageindex\n"
+        f"full_text: sources/{source_name}.json\n"
         "---\n"
     )
 

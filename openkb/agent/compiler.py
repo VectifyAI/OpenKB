@@ -289,20 +289,16 @@ def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
     return f"{doc_name}.pdf"
 
 
-def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str,
-                    brief: str = "", doc_type: str = "short") -> None:
-    """Write summary page with frontmatter.
-
-    For short docs, includes a ``source_doc`` field linking to the full
-    source text in ``sources/{doc_name}.md``.
-    """
+def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
+                    doc_type: str = "short") -> None:
+    """Write summary page with frontmatter."""
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    fm_lines = [f"sources: [{source_file}]"]
-    if brief:
-        fm_lines.append(f"brief: {brief}")
-    if doc_type == "short":
-        fm_lines.append(f"source_doc: sources/{doc_name}.md")
+    ext = "md" if doc_type == "short" else "json"
+    fm_lines = [
+        f"doc_type: {doc_type}",
+        f"full_text: sources/{doc_name}.{ext}",
+    ]
     frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
@@ -690,7 +686,7 @@ async def compile_short_doc(
     except (json.JSONDecodeError, ValueError):
         doc_brief = ""
         summary = summary_raw
-    _write_summary(wiki_dir, doc_name, source_file, summary, brief=doc_brief)
+    _write_summary(wiki_dir, doc_name, summary)
 
     # --- Steps 2-4: Concept plan → generate/update → index ---
     await _compile_concepts(

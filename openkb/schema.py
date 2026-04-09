@@ -35,7 +35,7 @@ Operations: ingest, query, lint
 
 ## Format
 - Use [[wikilink]] to link other wiki pages (e.g., [[concepts/attention]])
-- Summary pages header: `sources: [paper.pdf]`
+- Summary pages header: `doc_type: short|pageindex` and `full_text: sources/{name}.md|.json`
 - Concept pages header: `sources: [paper1.pdf, paper2.pdf, ...]`
 - Standard Markdown heading hierarchy
 - Keep each page focused on a single topic
