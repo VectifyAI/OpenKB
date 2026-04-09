@@ -9,10 +9,13 @@ from pathlib import Path
 
 import os
 
-# Disable Agents SDK tracing (requires OPENAI_API_KEY otherwise)
-os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
+from agents import set_tracing_disabled
+set_tracing_disabled(True)
 # Use local model cost map — skip fetching from GitHub on every invocation
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+import warnings
+warnings.filterwarnings("ignore")
 
 import click
 import litellm
