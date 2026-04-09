@@ -1,8 +1,8 @@
 """PageIndex indexer for long documents."""
 from __future__ import annotations
 
+import json as json_mod
 import logging
-import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,11 +12,9 @@ import os
 from pageindex import IndexConfig, PageIndexClient
 
 from openkb.config import load_config
-from openkb.tree_renderer import render_source_md, render_summary_md
+from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
-
-_IMG_REF_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
 @dataclass
@@ -26,31 +24,6 @@ class IndexResult:
     doc_id: str
     description: str
     tree: dict
-
-
-def _relocate_images(markdown: str, doc_stem: str, dest_images_dir: Path) -> str:
-    """Copy images from PageIndex internal paths to wiki/sources/images/ and rewrite refs.
-
-    PageIndex stores images internally (e.g. .openkb/files/{collection}/{doc_id}/images/).
-    We copy them to dest_images_dir and rewrite paths to be relative to the .md file
-    (i.e. images/{doc_stem}/filename).
-    """
-    dest_images_dir.mkdir(parents=True, exist_ok=True)
-
-    def _replace(match: re.Match) -> str:
-        alt = match.group(1)
-        src_path_str = match.group(2)
-        src_path = Path(src_path_str)
-        if not src_path.exists():
-            logger.warning("Image not found: %s", src_path)
-            return match.group(0)
-        filename = src_path.name
-        dest = dest_images_dir / filename
-        if not dest.exists():
-            shutil.copy2(src_path, dest)
-        return f"![{alt}](images/{doc_stem}/{filename})"
-
-    return _IMG_REF_RE.sub(_replace, markdown)
 
 
 def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
@@ -100,14 +73,30 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         "structure": structure,
     }
 
-    # Write wiki/sources/ — copy images from PageIndex internal location
-    # and rewrite paths to be relative to the .md file (images/{stem}/filename)
+    # Write wiki/sources/ — get per-page content from PageIndex and store as JSON
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     dest_images_dir = sources_dir / "images" / pdf_path.stem
-    source_md = render_source_md(tree, doc_name, doc_id)
-    source_md = _relocate_images(source_md, pdf_path.stem, dest_images_dir)
-    (sources_dir / f"{pdf_path.stem}.md").write_text(source_md, encoding="utf-8")
+
+    # Get per-page content from PageIndex
+    all_pages = col.get_page_content(doc_id, f"1-{doc.get('page_count', 9999)}")
+
+    # Relocate image paths in each page
+    dest_images_dir.mkdir(parents=True, exist_ok=True)
+    for page in all_pages:
+        if "images" in page:
+            for img in page["images"]:
+                src_path = Path(img["path"])
+                if src_path.exists():
+                    filename = src_path.name
+                    dest = dest_images_dir / filename
+                    if not dest.exists():
+                        shutil.copy2(src_path, dest)
+                    img["path"] = f"images/{pdf_path.stem}/{filename}"
+
+    (sources_dir / f"{pdf_path.stem}.json").write_text(
+        json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
 
     # Write wiki/summaries/ (no images, just summaries)
     summaries_dir = kb_dir / "wiki" / "summaries"

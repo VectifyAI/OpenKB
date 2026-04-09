@@ -23,6 +23,9 @@ class TestIndexLongDocument:
             "doc_type": "pdf",
             "structure": sample_tree["structure"],
         }
+
+        # get_page_content returns empty list by default (overridden per test as needed)
+        col.get_page_content.return_value = []
         return col
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):
@@ -43,12 +46,19 @@ class TestIndexLongDocument:
         assert result.description == sample_tree["doc_description"]
         assert result.tree is not None
 
-    def test_source_page_written(self, kb_dir, sample_tree, tmp_path):
+    def test_source_page_written_as_json(self, kb_dir, sample_tree, tmp_path):
+        """Long doc source should be written as JSON, not markdown."""
+        import json as json_mod
         doc_id = "abc-123"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
 
         fake_client = MagicMock()
         fake_client.collection.return_value = fake_col
+        # Mock get_page_content to return page data
+        fake_col.get_page_content.return_value = [
+            {"page": 1, "content": "Page one text."},
+            {"page": 2, "content": "Page two text."},
+        ]
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -56,11 +66,13 @@ class TestIndexLongDocument:
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
             index_long_document(pdf_path, kb_dir)
 
-        source_file = kb_dir / "wiki" / "sources" / "sample.md"
-        assert source_file.exists()
-        content = source_file.read_text(encoding="utf-8")
-        assert "type: pageindex" in content
-        assert "Introduction" in content
+        json_file = kb_dir / "wiki" / "sources" / "sample.json"
+        assert json_file.exists()
+        assert not (kb_dir / "wiki" / "sources" / "sample.md").exists()
+        data = json_mod.loads(json_file.read_text())
+        assert len(data) == 2
+        assert data[0]["page"] == 1
+        assert data[0]["content"] == "Page one text."
 
     def test_summary_page_written(self, kb_dir, sample_tree, tmp_path):
         doc_id = "abc-123"
