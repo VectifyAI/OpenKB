@@ -563,7 +563,7 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     update_instruction="",
                 )},
-            ], f"concept:{name}")
+            ], f"concept: {name}")
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
@@ -594,7 +594,7 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     existing_content=existing_content,
                 )},
-            ], f"update:{name}")
+            ], f"update: {name}")
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
