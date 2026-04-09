@@ -15,6 +15,7 @@ from openkb.agent.compiler import (
     _write_concept,
     _update_index,
     _read_wiki_context,
+    _read_concept_briefs,
 )
 
 
@@ -114,6 +115,69 @@ class TestReadWikiContext:
         index, concepts = _read_wiki_context(wiki)
         assert "# Index" in index
         assert concepts == ["attention", "transformer"]
+
+
+class TestReadConceptBriefs:
+    def test_empty_wiki(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "concepts").mkdir()
+        assert _read_concept_briefs(wiki) == "(none yet)"
+
+    def test_no_concepts_dir(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        assert _read_concept_briefs(wiki) == "(none yet)"
+
+    def test_reads_briefs_with_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\nAttention is a mechanism that allows models to focus on relevant parts.",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- attention:" in result
+        assert "Attention is a mechanism" in result
+        assert "sources" not in result
+        assert "---" not in result
+
+    def test_reads_briefs_without_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "transformer.md").write_text(
+            "Transformer is a neural network architecture based on attention.",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- transformer:" in result
+        assert "Transformer is a neural network" in result
+
+    def test_truncates_long_content(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        long_body = "A" * 300
+        (concepts / "longconcept.md").write_text(long_body, encoding="utf-8")
+        result = _read_concept_briefs(wiki)
+        # The brief part should be truncated at 150 chars
+        brief = result.split("- longconcept: ", 1)[1]
+        assert len(brief) == 150
+        assert brief == "A" * 150
+
+    def test_sorted_alphabetically(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "zebra.md").write_text("Zebra concept.", encoding="utf-8")
+        (concepts / "apple.md").write_text("Apple concept.", encoding="utf-8")
+        (concepts / "mango.md").write_text("Mango concept.", encoding="utf-8")
+        result = _read_concept_briefs(wiki)
+        lines = result.strip().splitlines()
+        slugs = [line.split(":")[0].lstrip("- ") for line in lines]
+        assert slugs == ["apple", "mango", "zebra"]
 
 
 def _mock_completion(responses: list[str]):

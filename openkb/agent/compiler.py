@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -94,9 +96,6 @@ Return ONLY the Markdown content (no frontmatter, no code fences).
 # ---------------------------------------------------------------------------
 # LLM helpers
 # ---------------------------------------------------------------------------
-
-import threading
-
 
 class _Spinner:
     """Animated dots spinner that runs in a background thread."""
@@ -208,6 +207,37 @@ def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
     return index_content, existing
 
 
+def _read_concept_briefs(wiki_dir: Path) -> str:
+    """Read existing concept pages and return compact one-line summaries.
+
+    For each concept, skips YAML frontmatter, takes the first 150 chars of the
+    body (newlines collapsed to spaces), and formats as ``- {slug}: {brief}``.
+
+    Returns "(none yet)" if the concepts directory is missing or empty.
+    """
+    concepts_dir = wiki_dir / "concepts"
+    if not concepts_dir.exists():
+        return "(none yet)"
+
+    md_files = sorted(concepts_dir.glob("*.md"))
+    if not md_files:
+        return "(none yet)"
+
+    lines: list[str] = []
+    for path in md_files:
+        text = path.read_text(encoding="utf-8")
+        # Strip YAML frontmatter if present
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end != -1:
+                text = text[end + 3:]
+        body = text.strip().replace("\n", " ")
+        brief = body[:150]
+        lines.append(f"- {path.stem}: {brief}")
+
+    return "\n".join(lines)
+
+
 def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
     """Find the original filename in raw/ for a given doc stem."""
     raw_dir = kb_dir / "raw"
@@ -226,11 +256,24 @@ def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
 
+_SAFE_NAME_RE = re.compile(r'[^a-zA-Z0-9_\-]')
+
+
+def _sanitize_concept_name(name: str) -> str:
+    """Sanitize a concept name for safe use as a filename."""
+    sanitized = _SAFE_NAME_RE.sub("-", name).strip("-")
+    return sanitized or "unnamed-concept"
+
+
 def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool) -> None:
     """Write or update a concept page, managing the sources frontmatter."""
     concepts_dir = wiki_dir / "concepts"
     concepts_dir.mkdir(parents=True, exist_ok=True)
-    path = concepts_dir / f"{name}.md"
+    safe_name = _sanitize_concept_name(name)
+    path = (concepts_dir / f"{safe_name}.md").resolve()
+    if not path.is_relative_to(concepts_dir.resolve()):
+        logger.warning("Concept name escapes concepts dir: %s", name)
+        return
 
     if is_update and path.exists():
         existing = path.read_text(encoding="utf-8")
@@ -241,7 +284,11 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                 body = existing[end + 3:]
                 if "sources:" in fm:
                     fm = fm.replace("sources: [", f"sources: [{source_file}, ")
+                else:
+                    fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
                 existing = fm + body
+            else:
+                existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
             existing += f"\n\n{content}"
         path.write_text(existing, encoding="utf-8")
     else:
