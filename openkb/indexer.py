@@ -67,6 +67,10 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     description: str = doc.get("doc_description", "")
     structure: list = doc.get("structure", [])
 
+    # Debug: print doc keys and page_count to diagnose get_page_content range
+    logger.info("Doc keys: %s", list(doc.keys()))
+    logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
+
     tree = {
         "doc_name": doc_name,
         "doc_description": description,
@@ -78,8 +82,18 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     sources_dir.mkdir(parents=True, exist_ok=True)
     dest_images_dir = sources_dir / "images" / pdf_path.stem
 
-    # Get per-page content from PageIndex
-    all_pages = col.get_page_content(doc_id, f"1-{doc.get('page_count', 9999)}")
+    # Get per-page content from PageIndex — use actual page count
+    page_count = doc.get("page_count")
+    if page_count is None:
+        # Fallback: count pages from structure's max end_index
+        max_page = 0
+        for node in structure:
+            end = node.get("end_index", 0)
+            if end > max_page:
+                max_page = end
+        page_count = max_page if max_page > 0 else 100
+        logger.info("page_count not in doc, inferred from structure: %d", page_count)
+    all_pages = col.get_page_content(doc_id, f"1-{page_count}")
 
     # Relocate image paths in each page
     dest_images_dir.mkdir(parents=True, exist_ok=True)
