@@ -257,14 +257,20 @@ def init():
 
     # Interactive prompts
     model = click.prompt(
-        "Model (e.g. gpt-5.4, anthropic/claude-sonnet-4-6, gemini/gemini-3.1-pro-preview)",
+        f"Model (e.g. gpt-5.4, anthropic/claude-sonnet-4-6) [default: {DEFAULT_CONFIG['model']}]",
         default=DEFAULT_CONFIG["model"],
+        show_default=False,
     )
-    language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
+    language = click.prompt(
+        f"Language [default: {DEFAULT_CONFIG['language']}]",
+        default=DEFAULT_CONFIG["language"],
+        show_default=False,
+    )
     pageindex_threshold = click.prompt(
-        "PageIndex threshold (pages)",
+        f"PageIndex threshold (pages) [default: {DEFAULT_CONFIG['pageindex_threshold']}]",
         default=DEFAULT_CONFIG["pageindex_threshold"],
         type=int,
+        show_default=False,
     )
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
@@ -295,7 +301,7 @@ def init():
     # Register this KB in the global config
     register_kb(Path.cwd())
 
-    click.echo("Knowledge base initialised.")
+    click.echo("Knowledge base initialized.")
 
 
 @cli.command()

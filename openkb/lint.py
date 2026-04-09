@@ -29,7 +29,7 @@ def _read_md(path: Path) -> str:
 def _all_wiki_pages(wiki: Path) -> dict[str, Path]:
     """Return a mapping of stem/relative-path → absolute Path for all .md files.
 
-    Keys are normalised: 'concepts/attention', 'summaries/paper', 'index', etc.
+    Keys are normalized: 'concepts/attention', 'summaries/paper', 'index', etc.
     """
     pages: dict[str, Path] = {}
     for md in wiki.rglob("*.md"):
