@@ -78,16 +78,37 @@ class TestWriteSummary:
     def test_writes_with_frontmatter(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.")
+        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.", brief="Introduces transformers")
         path = wiki / "summaries" / "my-doc.md"
         assert path.exists()
         text = path.read_text()
         assert "sources: [my-doc.pdf]" in text
+        assert "brief: Introduces transformers" in text
         assert "# Summary" in text
+
+    def test_writes_without_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.")
+        path = wiki / "summaries" / "my-doc.md"
+        text = path.read_text()
+        assert "sources: [my-doc.pdf]" in text
+        assert "brief:" not in text
 
 
 class TestWriteConcept:
-    def test_new_concept(self, tmp_path):
+    def test_new_concept_with_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "paper.pdf", False, brief="Mechanism for selective focus")
+        path = wiki / "concepts" / "attention.md"
+        assert path.exists()
+        text = path.read_text()
+        assert "sources: [paper.pdf]" in text
+        assert "brief: Mechanism for selective focus" in text
+        assert "# Attention" in text
+
+    def test_new_concept_without_brief(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
         _write_concept(wiki, "attention", "# Attention\n\nDetails.", "paper.pdf", False)
@@ -95,7 +116,22 @@ class TestWriteConcept:
         assert path.exists()
         text = path.read_text()
         assert "sources: [paper.pdf]" in text
-        assert "# Attention" in text
+        assert "brief:" not in text
+
+    def test_update_concept_updates_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\nbrief: Old brief\n---\n\n# Attention\n\nOld content.",
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New info.", "paper2.pdf", True, brief="Updated brief")
+        text = (concepts / "attention.md").read_text()
+        assert "paper2.pdf" in text
+        assert "paper1.pdf" in text
+        assert "brief: Updated brief" in text
+        assert "Old brief" not in text
 
     def test_update_concept_appends_source(self, tmp_path):
         wiki = tmp_path / "wiki"

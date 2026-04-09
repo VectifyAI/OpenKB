@@ -243,8 +243,9 @@ def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
 def _read_concept_briefs(wiki_dir: Path) -> str:
     """Read existing concept pages and return compact one-line summaries.
 
-    For each concept, skips YAML frontmatter, takes the first 150 chars of the
-    body (newlines collapsed to spaces), and formats as ``- {slug}: {brief}``.
+    For each concept, reads the ``brief:`` field from YAML frontmatter if
+    present; otherwise falls back to truncating the first 150 chars of the body
+    (newlines collapsed to spaces).  Formats each as ``- {slug}: {brief}``.
 
     Returns "(none yet)" if the concepts directory is missing or empty.
     """
@@ -259,16 +260,23 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     lines: list[str] = []
     for path in md_files:
         text = path.read_text(encoding="utf-8")
-        # Strip YAML frontmatter if present
+        brief = ""
+        body = text
         if text.startswith("---"):
             end = text.find("---", 3)
             if end != -1:
-                text = text[end + 3:]
-        body = text.strip().replace("\n", " ")
-        brief = body[:150]
-        lines.append(f"- {path.stem}: {brief}")
+                fm = text[:end + 3]
+                body = text[end + 3:]
+                for line in fm.split("\n"):
+                    if line.startswith("brief:"):
+                        brief = line[len("brief:"):].strip()
+                        break
+        if not brief:
+            brief = body.strip().replace("\n", " ")[:150]
+        if brief:
+            lines.append(f"- {path.stem}: {brief}")
 
-    return "\n".join(lines)
+    return "\n".join(lines) or "(none yet)"
 
 
 def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
@@ -281,11 +289,14 @@ def _find_source_filename(doc_name: str, kb_dir: Path) -> str:
     return f"{doc_name}.pdf"
 
 
-def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str) -> None:
+def _write_summary(wiki_dir: Path, doc_name: str, source_file: str, summary: str, brief: str = "") -> None:
     """Write summary page with frontmatter."""
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = f"---\nsources: [{source_file}]\n---\n\n"
+    fm_lines = [f"sources: [{source_file}]"]
+    if brief:
+        fm_lines.append(f"brief: {brief}")
+    frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
 
@@ -298,7 +309,7 @@ def _sanitize_concept_name(name: str) -> str:
     return sanitized or "unnamed-concept"
 
 
-def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool) -> None:
+def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
     """Write or update a concept page, managing the sources frontmatter."""
     concepts_dir = wiki_dir / "concepts"
     concepts_dir.mkdir(parents=True, exist_ok=True)
@@ -324,9 +335,22 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
             else:
                 existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
             existing += f"\n\n{content}"
+        if brief and existing.startswith("---"):
+            end = existing.find("---", 3)
+            if end != -1:
+                fm = existing[:end + 3]
+                body = existing[end + 3:]
+                if "brief:" in fm:
+                    fm = re.sub(r"brief:.*", f"brief: {brief}", fm)
+                else:
+                    fm = fm.replace("---\n", f"---\nbrief: {brief}\n", 1)
+                existing = fm + body
         path.write_text(existing, encoding="utf-8")
     else:
-        frontmatter = f"---\nsources: [{source_file}]\n---\n\n"
+        fm_lines = [f"sources: [{source_file}]"]
+        if brief:
+            fm_lines.append(f"brief: {brief}")
+        frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
         path.write_text(frontmatter + content, encoding="utf-8")
 
 
