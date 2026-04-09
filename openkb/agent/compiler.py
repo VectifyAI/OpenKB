@@ -69,6 +69,33 @@ for a translation paper).
 Return ONLY valid JSON array, no fences, no explanation.
 """
 
+_CONCEPTS_PLAN_USER = """\
+Based on the summary above, decide how to update the wiki's concept pages.
+
+Existing concept pages:
+{concept_briefs}
+
+Return a JSON object with three keys:
+
+1. "create" — new concepts not covered by any existing page. Array of objects:
+   {{"name": "concept-slug", "title": "Human-Readable Title"}}
+
+2. "update" — existing concepts that have significant new information from \
+this document worth integrating. Array of objects:
+   {{"name": "existing-slug", "title": "Existing Title"}}
+
+3. "related" — existing concepts tangentially related to this document but \
+not needing content changes, just a cross-reference link. Array of slug strings.
+
+Rules:
+- For the first few documents, create 2-3 foundational concepts at most.
+- Do NOT create a concept that overlaps with an existing one — use "update".
+- Do NOT create concepts that are just the document topic itself.
+- "related" is for lightweight cross-linking only, no content rewrite needed.
+
+Return ONLY valid JSON, no fences, no explanation.
+"""
+
 _CONCEPT_PAGE_USER = """\
 Write the concept page for: {title}
 
@@ -79,6 +106,20 @@ Return ONLY the Markdown content (no frontmatter, no code fences). Include:
 - Clear explanation of the concept
 - Key details from the source document
 - [[wikilinks]] to related concepts and [[summaries/{doc_name}]]
+"""
+
+_CONCEPT_UPDATE_USER = """\
+Update the concept page for: {title}
+
+Current content of this page:
+{existing_content}
+
+New information from document "{doc_name}" (summarized above) should be \
+integrated into this page. Rewrite the full page incorporating the new \
+information naturally — do not just append. Maintain existing \
+[[wikilinks]] and add new ones where appropriate.
+
+Return ONLY the Markdown content (no frontmatter, no code fences).
 """
 
 _LONG_DOC_SUMMARY_USER = """\
@@ -294,6 +335,36 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
     else:
         frontmatter = f"---\nsources: [{source_file}]\n---\n\n"
         path.write_text(frontmatter + content, encoding="utf-8")
+
+
+def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_file: str) -> None:
+    """Add a cross-reference link to an existing concept page (no LLM call)."""
+    concepts_dir = wiki_dir / "concepts"
+    path = concepts_dir / f"{concept_slug}.md"
+    if not path.exists():
+        return
+
+    text = path.read_text(encoding="utf-8")
+    link = f"[[summaries/{doc_name}]]"
+    if link in text:
+        return
+
+    # Update sources in frontmatter
+    if source_file not in text:
+        if text.startswith("---"):
+            end = text.index("---", 3)
+            fm = text[:end + 3]
+            body = text[end + 3:]
+            if "sources:" in fm:
+                fm = fm.replace("sources: [", f"sources: [{source_file}, ")
+            else:
+                fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
+            text = fm + body
+        else:
+            text = f"---\nsources: [{source_file}]\n---\n\n" + text
+
+    text += f"\n\nSee also: {link}"
+    path.write_text(text, encoding="utf-8")
 
 
 def _update_index(wiki_dir: Path, doc_name: str, concept_names: list[str]) -> None:

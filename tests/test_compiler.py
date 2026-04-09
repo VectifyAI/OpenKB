@@ -16,6 +16,7 @@ from openkb.agent.compiler import (
     _update_index,
     _read_wiki_context,
     _read_concept_briefs,
+    _add_related_link,
 )
 
 
@@ -30,6 +31,31 @@ class TestParseJson:
     def test_invalid_json(self):
         with pytest.raises((json.JSONDecodeError, ValueError)):
             _parse_json("not json")
+
+
+class TestParseConceptsPlan:
+    def test_dict_format(self):
+        text = json.dumps({
+            "create": [{"name": "foo", "title": "Foo"}],
+            "update": [{"name": "bar", "title": "Bar"}],
+            "related": ["baz"],
+        })
+        parsed = _parse_json(text)
+        assert isinstance(parsed, dict)
+        assert len(parsed["create"]) == 1
+        assert len(parsed["update"]) == 1
+        assert parsed["related"] == ["baz"]
+
+    def test_fallback_list_format(self):
+        text = json.dumps([{"name": "foo", "title": "Foo"}])
+        parsed = _parse_json(text)
+        assert isinstance(parsed, list)
+
+    def test_fenced_dict(self):
+        text = '```json\n{"create": [], "update": [], "related": []}\n```'
+        parsed = _parse_json(text)
+        assert isinstance(parsed, dict)
+        assert parsed["create"] == []
 
 
 class TestWriteSummary:
@@ -178,6 +204,39 @@ class TestReadConceptBriefs:
         lines = result.strip().splitlines()
         slugs = [line.split(":")[0].lstrip("- ") for line in lines]
         assert slugs == ["apple", "mango", "zebra"]
+
+
+class TestAddRelatedLink:
+    def test_adds_see_also_link(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\n---\n\n# Attention\n\nSome content.",
+            encoding="utf-8",
+        )
+        _add_related_link(wiki, "attention", "new-doc", "paper2.pdf")
+        text = (concepts / "attention.md").read_text()
+        assert "[[summaries/new-doc]]" in text
+        assert "paper2.pdf" in text
+
+    def test_skips_if_already_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\n---\n\n# Attention\n\nSee also: [[summaries/new-doc]]",
+            encoding="utf-8",
+        )
+        _add_related_link(wiki, "attention", "new-doc", "paper1.pdf")
+        text = (concepts / "attention.md").read_text()
+        assert text.count("[[summaries/new-doc]]") == 1
+
+    def test_skips_if_file_missing(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Should not raise
+        _add_related_link(wiki, "nonexistent", "doc", "file.pdf")
 
 
 def _mock_completion(responses: list[str]):
