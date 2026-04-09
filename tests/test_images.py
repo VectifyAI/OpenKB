@@ -44,7 +44,7 @@ class TestExtractBase64Images:
 
         # Result should reference a saved file, not the raw base64
         assert "data:image/png;base64," not in result
-        assert "![alt text](images/doc/img_001.png)" == result
+        assert "![alt text](sources/images/doc/img_001.png)" == result
 
         # File should exist on disk
         saved = images_dir / "img_001.png"
@@ -62,8 +62,8 @@ class TestExtractBase64Images:
         )
         result = extract_base64_images(md, "doc", images_dir)
 
-        assert "![fig1](images/doc/img_001.png)" in result
-        assert "![fig2](images/doc/img_002.jpeg)" in result
+        assert "![fig1](sources/images/doc/img_001.png)" in result
+        assert "![fig2](sources/images/doc/img_002.jpeg)" in result
         assert (images_dir / "img_001.png").exists()
         assert (images_dir / "img_002.jpeg").exists()
 
@@ -92,7 +92,7 @@ class TestExtractBase64Images:
         import logging
         with caplog.at_level(logging.WARNING, logger="openkb.images"):
             result = extract_base64_images(md, "doc", images_dir)
-        assert "![good](images/doc/img_001.png)" in result
+        assert "![good](sources/images/doc/img_001.png)" in result
         assert f"data:image/png;base64,{bad}" in result
 
 
@@ -114,7 +114,7 @@ class TestCopyRelativeImages:
         md = "![diagram](diagram.png)"
         result = copy_relative_images(md, source_dir, "doc", images_dir)
 
-        assert "![diagram](images/doc/diagram.png)" == result
+        assert "![diagram](sources/images/doc/diagram.png)" == result
         assert (images_dir / "diagram.png").read_bytes() == FAKE_PNG
 
     def test_missing_relative_image_leaves_original(self, tmp_path, caplog):
@@ -163,7 +163,7 @@ class TestCopyRelativeImages:
         md = "![a](a.png)\n![b](b.jpg)"
         result = copy_relative_images(md, source_dir, "doc", images_dir)
 
-        assert "![a](images/doc/a.png)" in result
-        assert "![b](images/doc/b.jpg)" in result
+        assert "![a](sources/images/doc/a.png)" in result
+        assert "![b](sources/images/doc/b.jpg)" in result
         assert (images_dir / "a.png").exists()
         assert (images_dir / "b.jpg").exists()

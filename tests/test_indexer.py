@@ -28,6 +28,12 @@ class TestIndexLongDocument:
         col.get_page_content.return_value = []
         return col
 
+    def _fake_pages(self):
+        return [
+            {"page": 1, "content": "Page one text.", "images": []},
+            {"page": 2, "content": "Page two text.", "images": []},
+        ]
+
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):
         doc_id = "abc-123"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
@@ -38,7 +44,8 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             result = index_long_document(pdf_path, kb_dir)
 
         assert isinstance(result, IndexResult)
@@ -63,7 +70,8 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             index_long_document(pdf_path, kb_dir)
 
         json_file = kb_dir / "wiki" / "sources" / "sample.json"
@@ -84,7 +92,8 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             index_long_document(pdf_path, kb_dir)
 
         summary_file = kb_dir / "wiki" / "summaries" / "sample.md"
@@ -104,7 +113,8 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "report.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls:
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls, \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             index_long_document(pdf_path, kb_dir)
 
         # Verify PageIndexClient was instantiated with correct IndexConfig
