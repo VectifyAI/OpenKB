@@ -5,7 +5,8 @@ from pathlib import Path
 
 from agents import Agent, Runner, function_tool
 
-from openkb.agent.tools import read_wiki_file
+from agents import ToolOutputImage, ToolOutputText
+from openkb.agent.tools import read_wiki_file, read_wiki_image
 
 MAX_TURNS = 50
 from openkb.schema import get_agents_md
@@ -27,10 +28,13 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-5. Synthesize a clear, concise, well-cited answer grounded in wiki content.
+5. When source content references images (e.g. ![image](sources/images/doc/file.png)),
+   use get_image to view them. Always view images when the question asks about
+   a figure, chart, diagram, or visual content.
+6. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
-Before each tool call, briefly state what you are about to do.
+Before each tool call, output one short sentence explaining the reason.
 
 If you cannot find relevant information, say so clearly.
 """
@@ -62,12 +66,24 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         from openkb.agent.tools import get_page_content
         return get_page_content(doc_name, pages, wiki_root)
 
+    @function_tool
+    def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
+        """View an image from the wiki.
+        Use when source content references images you need to see.
+        Args:
+            image_path: Image path relative to wiki root (e.g. 'sources/images/doc/p1_img1.png').
+        """
+        result = read_wiki_image(image_path, wiki_root)
+        if result["type"] == "image":
+            return ToolOutputImage(image_url=result["image_url"])
+        return ToolOutputText(text=result["text"])
+
     from agents.model_settings import ModelSettings
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content_tool],
+        tools=[read_file, get_page_content_tool, get_image],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
