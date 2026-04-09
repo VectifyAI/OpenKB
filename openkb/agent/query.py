@@ -27,10 +27,10 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-5. Synthesize a clear, well-cited answer grounded in wiki content.
+5. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
-Answer based only on wiki content. Before each tool call, briefly state what you
-are about to do. Be concise.
+Answer based only on wiki content. Be concise.
+Before each tool call, briefly state what you are about to do.
 
 If you cannot find relevant information, say so clearly.
 """
@@ -52,9 +52,9 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
 
     @function_tool
     def get_page_content_tool(doc_name: str, pages: str) -> str:
-        """Get text content of specific pages from a long document.
-        Use this when you need detailed content from a document. The summary
-        page shows document tree structure with page ranges.
+        """Get text content of specific pages from a PageIndex (long) document.
+        Only use for documents with doc_type: pageindex. For short documents,
+        use read_file instead.
         Args:
             doc_name: Document name (e.g. 'attention-is-all-you-need').
             pages: Page specification (e.g. '3-5,7,10-12').

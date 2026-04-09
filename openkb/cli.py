@@ -257,7 +257,7 @@ def init():
 
     # Interactive prompts
     model = click.prompt(
-        f"Model (e.g. gpt-5.4, anthropic/claude-sonnet-4-6) [default: {DEFAULT_CONFIG['model']}]",
+        f"Model (e.g. gpt-5.4-mini, anthropic/claude-sonnet-4-6) [default: {DEFAULT_CONFIG['model']}]",
         default=DEFAULT_CONFIG["model"],
         show_default=False,
     )
