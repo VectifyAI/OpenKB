@@ -106,7 +106,11 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
                     dest = dest_images_dir / filename
                     if not dest.exists():
                         shutil.copy2(src_path, dest)
-                    img["path"] = f"images/{pdf_path.stem}/{filename}"
+                    new_path = f"images/{pdf_path.stem}/{filename}"
+                    # Also fix image references in page content
+                    if "content" in page:
+                        page["content"] = page["content"].replace(str(src_path), new_path)
+                    img["path"] = new_path
 
     (sources_dir / f"{pdf_path.stem}.json").write_text(
         json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",

@@ -158,7 +158,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     # 3/4. Index and compile
     if result.is_long_doc:
-        click.echo(f"  Long document detected — indexing with PageIndex…")
+        click.echo(f"  Long document detected — indexing with PageIndex...")
         try:
             from openkb.indexer import index_long_document
             index_result = index_long_document(result.raw_path, kb_dir)
@@ -168,7 +168,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
             return
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
-        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})…")
+        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
         for attempt in range(2):
             try:
                 asyncio.run(
@@ -185,7 +185,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
                     logger.debug("Compilation traceback:", exc_info=True)
                     return
     else:
-        click.echo(f"  Compiling short doc…")
+        click.echo(f"  Compiling short doc...")
         for attempt in range(2):
             try:
                 asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
@@ -277,8 +277,6 @@ def init():
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
-    Path("wiki/explorations").mkdir(parents=True, exist_ok=True)
-    Path("wiki/reports").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
     Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
@@ -430,12 +428,12 @@ def lint(ctx, fix):
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint
-    click.echo("Running structural lint…")
+    click.echo("Running structural lint...")
     structural_report = run_structural_lint(kb_dir)
     click.echo(structural_report)
 
     # Knowledge lint (semantic)
-    click.echo("Running knowledge lint…")
+    click.echo("Running knowledge lint...")
     try:
         knowledge_report = asyncio.run(run_knowledge_lint(kb_dir, model))
     except Exception as exc:
