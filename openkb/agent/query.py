@@ -28,6 +28,8 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
      to read specific pages. The summary shows document tree structure with page ranges.
 5. Synthesise a clear, well-cited answer grounded in wiki content.
 
+Before each tool call, briefly state what you are about to do.
+
 If you cannot find relevant information, say so clearly.
 """
 
@@ -113,7 +115,7 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
             if item.type == "tool_call_item":
                 raw = item.raw_item
                 args = getattr(raw, "arguments", "{}")
-                sys.stdout.write(f"[tool call] {raw.name}({args})\n\n")
+                sys.stdout.write(f"\n[tool call] {raw.name}({args})\n\n")
                 sys.stdout.flush()
             elif item.type == "tool_call_output_item":
                 pass
