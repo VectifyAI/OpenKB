@@ -6,6 +6,8 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
+
+MAX_TURNS = 50
 from openkb.schema import SCHEMA_MD, get_agents_md
 
 _LINTER_INSTRUCTIONS_TEMPLATE = """\
@@ -102,5 +104,5 @@ async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
         "Produce a structured Markdown report."
     )
 
-    result = await Runner.run(agent, prompt)
+    result = await Runner.run(agent, prompt, max_turns=MAX_TURNS)
     return result.final_output or "Knowledge lint completed. No output produced."

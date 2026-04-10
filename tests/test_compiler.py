@@ -1,158 +1,819 @@
-"""Tests for openkb.agent.compiler."""
+"""Tests for openkb.agent.compiler pipeline."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
 from openkb.agent.compiler import (
-    build_compiler_agent,
     compile_long_doc,
     compile_short_doc,
+    _compile_concepts,
+    _parse_json,
+    _write_summary,
+    _write_concept,
+    _update_index,
+    _read_wiki_context,
+    _read_concept_briefs,
+    _add_related_link,
+    _backlink_summary,
+    _backlink_concepts,
 )
-from openkb.schema import SCHEMA_MD
 
 
-class TestBuildCompilerAgent:
-    def test_agent_name(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        assert agent.name == "wiki-compiler"
+class TestParseJson:
+    def test_plain_json(self):
+        assert _parse_json('[{"name": "foo"}]') == [{"name": "foo"}]
 
-    def test_agent_tools_count(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        # list_files, read_file, write_file
-        assert len(agent.tools) == 3
+    def test_fenced_json(self):
+        text = '```json\n[{"name": "bar"}]\n```'
+        assert _parse_json(text) == [{"name": "bar"}]
 
-    def test_schema_in_instructions(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        assert SCHEMA_MD in agent.instructions
+    def test_invalid_json(self):
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            _parse_json("not json")
 
-    def test_agent_model(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "my-custom-model")
-        assert agent.model == "litellm/my-custom-model"
 
-    def test_tool_names(self, tmp_path):
-        agent = build_compiler_agent(str(tmp_path), "gpt-4o-mini")
-        tool_names = {t.name for t in agent.tools}
-        assert "list_files" in tool_names
-        assert "read_file" in tool_names
-        assert "write_file" in tool_names
+class TestParseConceptsPlan:
+    def test_dict_format(self):
+        text = json.dumps({
+            "create": [{"name": "foo", "title": "Foo"}],
+            "update": [{"name": "bar", "title": "Bar"}],
+            "related": ["baz"],
+        })
+        parsed = _parse_json(text)
+        assert isinstance(parsed, dict)
+        assert len(parsed["create"]) == 1
+        assert len(parsed["update"]) == 1
+        assert parsed["related"] == ["baz"]
+
+    def test_fallback_list_format(self):
+        text = json.dumps([{"name": "foo", "title": "Foo"}])
+        parsed = _parse_json(text)
+        assert isinstance(parsed, list)
+
+    def test_fenced_dict(self):
+        text = '```json\n{"create": [], "update": [], "related": []}\n```'
+        parsed = _parse_json(text)
+        assert isinstance(parsed, dict)
+        assert parsed["create"] == []
+
+
+class TestParseBriefContent:
+    def test_dict_with_brief_and_content(self):
+        text = json.dumps({"brief": "A short desc", "content": "# Full page\n\nDetails."})
+        parsed = _parse_json(text)
+        assert parsed["brief"] == "A short desc"
+        assert "# Full page" in parsed["content"]
+
+    def test_plain_text_fallback(self):
+        """If LLM returns plain text, _parse_json raises — caller handles fallback."""
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            _parse_json("Just plain markdown text without JSON")
+
+
+class TestWriteSummary:
+    def test_writes_with_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
+        path = wiki / "summaries" / "my-doc.md"
+        assert path.exists()
+        text = path.read_text()
+        assert "doc_type: short" in text
+        assert "full_text: sources/my-doc.md" in text
+        assert "# Summary" in text
+
+    def test_writes_without_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
+        path = wiki / "summaries" / "my-doc.md"
+        text = path.read_text()
+        assert "doc_type: short" in text
+        assert "full_text: sources/my-doc.md" in text
+
+
+class TestWriteConcept:
+    def test_new_concept_with_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "paper.pdf", False, brief="Mechanism for selective focus")
+        path = wiki / "concepts" / "attention.md"
+        assert path.exists()
+        text = path.read_text()
+        assert "sources: [paper.pdf]" in text
+        assert "brief: Mechanism for selective focus" in text
+        assert "# Attention" in text
+
+    def test_new_concept_without_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "paper.pdf", False)
+        path = wiki / "concepts" / "attention.md"
+        assert path.exists()
+        text = path.read_text()
+        assert "sources: [paper.pdf]" in text
+        assert "brief:" not in text
+
+    def test_update_concept_updates_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\nbrief: Old brief\n---\n\n# Attention\n\nOld content.",
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New info.", "paper2.pdf", True, brief="Updated brief")
+        text = (concepts / "attention.md").read_text()
+        assert "paper2.pdf" in text
+        assert "paper1.pdf" in text
+        assert "brief: Updated brief" in text
+        assert "Old brief" not in text
+
+    def test_update_concept_appends_source(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\n---\n\n# Attention\n\nOld content.",
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New info from paper2.", "paper2.pdf", True)
+        text = (concepts / "attention.md").read_text()
+        assert "paper2.pdf" in text
+        assert "paper1.pdf" in text
+        assert "New info from paper2." in text
+
+
+class TestUpdateIndex:
+    def test_appends_entries_with_briefs(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", ["attention", "transformer"],
+                       doc_brief="Introduces transformers",
+                       concept_briefs={"attention": "Focus mechanism", "transformer": "NN architecture"})
+        text = (wiki / "index.md").read_text()
+        assert "[[summaries/my-doc]] (short) — Introduces transformers" in text
+        assert "[[concepts/attention]] — Focus mechanism" in text
+        assert "[[concepts/transformer]] — NN architecture" in text
+
+    def test_no_duplicates(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n- [[summaries/my-doc]] — Old brief\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", [], doc_brief="New brief")
+        text = (wiki / "index.md").read_text()
+        assert text.count("[[summaries/my-doc]]") == 1
+
+    def test_backwards_compat_no_briefs(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", ["attention"])
+        text = (wiki / "index.md").read_text()
+        assert "[[summaries/my-doc]]" in text
+        assert "[[concepts/attention]]" in text
+
+
+class TestReadWikiContext:
+    def test_empty_wiki(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        index, concepts = _read_wiki_context(wiki)
+        assert index == ""
+        assert concepts == []
+
+    def test_with_content(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text("# Index\n", encoding="utf-8")
+        concepts_dir = wiki / "concepts"
+        concepts_dir.mkdir()
+        (concepts_dir / "attention.md").write_text("# Attention", encoding="utf-8")
+        (concepts_dir / "transformer.md").write_text("# Transformer", encoding="utf-8")
+        index, concepts = _read_wiki_context(wiki)
+        assert "# Index" in index
+        assert concepts == ["attention", "transformer"]
+
+
+class TestReadConceptBriefs:
+    def test_empty_wiki(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "concepts").mkdir()
+        assert _read_concept_briefs(wiki) == "(none yet)"
+
+    def test_no_concepts_dir(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        assert _read_concept_briefs(wiki) == "(none yet)"
+
+    def test_reads_briefs_with_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\nAttention is a mechanism that allows models to focus on relevant parts.",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- attention:" in result
+        assert "Attention is a mechanism" in result
+        assert "sources" not in result
+        assert "---" not in result
+
+    def test_reads_briefs_without_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "transformer.md").write_text(
+            "Transformer is a neural network architecture based on attention.",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- transformer:" in result
+        assert "Transformer is a neural network" in result
+
+    def test_truncates_long_content(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        long_body = "A" * 300
+        (concepts / "longconcept.md").write_text(long_body, encoding="utf-8")
+        result = _read_concept_briefs(wiki)
+        # The brief part should be truncated at 150 chars
+        brief = result.split("- longconcept: ", 1)[1]
+        assert len(brief) == 150
+        assert brief == "A" * 150
+
+    def test_sorted_alphabetically(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "zebra.md").write_text("Zebra concept.", encoding="utf-8")
+        (concepts / "apple.md").write_text("Apple concept.", encoding="utf-8")
+        (concepts / "mango.md").write_text("Mango concept.", encoding="utf-8")
+        result = _read_concept_briefs(wiki)
+        lines = result.strip().splitlines()
+        slugs = [line.split(":")[0].lstrip("- ") for line in lines]
+        assert slugs == ["apple", "mango", "zebra"]
+
+    def test_reads_brief_from_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper.pdf]\nbrief: Selective focus mechanism\n---\n\n# Attention\n\nLong content...",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- attention: Selective focus mechanism" in result
+
+    def test_falls_back_to_body_truncation(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "old.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\nOld concept without brief field.",
+            encoding="utf-8",
+        )
+        result = _read_concept_briefs(wiki)
+        assert "- old: Old concept without brief field." in result
+
+
+class TestBacklinkSummary:
+    def test_adds_missing_concept_links(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\n# Summary\n\nContent about attention.",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        assert "[[concepts/attention]]" in text
+        assert "[[concepts/transformer]]" in text
+
+    def test_skips_already_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\n# Summary\n\nSee [[concepts/attention]].",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        # attention already linked, should not duplicate
+        assert text.count("[[concepts/attention]]") == 1
+        # transformer should be added
+        assert "[[concepts/transformer]]" in text
+
+    def test_no_op_when_all_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        original = "# Summary\n\n[[concepts/attention]] and [[concepts/transformer]]"
+        (summaries / "paper.md").write_text(original, encoding="utf-8")
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        assert (summaries / "paper.md").read_text() == original
+
+    def test_skips_if_file_missing(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Should not raise
+        _backlink_summary(wiki, "nonexistent", ["attention"])
+
+    def test_merges_into_existing_section(self, tmp_path):
+        """Second add should merge into existing ## Related Concepts, not duplicate."""
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "# Summary\n\nContent.\n\n## Related Concepts\n- [[concepts/attention]]\n",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        assert text.count("## Related Concepts") == 1
+        assert "[[concepts/transformer]]" in text
+        assert text.count("[[concepts/attention]]") == 1
+
+
+class TestBacklinkConcepts:
+    def test_adds_summary_link_to_concept(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper.pdf]\n---\n\n# Attention\n\nContent.",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert "[[summaries/paper]]" in text
+        assert "## Related Documents" in text
+
+    def test_skips_if_already_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "# Attention\n\nBased on [[summaries/paper]].",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert text.count("[[summaries/paper]]") == 1
+        assert "## Related Documents" not in text
+
+    def test_merges_into_existing_section(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "# Attention\n\n## Related Documents\n- [[summaries/old-paper]]\n",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "new-paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert text.count("## Related Documents") == 1
+        assert "[[summaries/old-paper]]" in text
+        assert "[[summaries/new-paper]]" in text
+
+    def test_skips_missing_concept_file(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "concepts").mkdir(parents=True)
+        # Should not raise
+        _backlink_concepts(wiki, "paper", ["nonexistent"])
+
+
+class TestAddRelatedLink:
+    def test_adds_see_also_link(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\n---\n\n# Attention\n\nSome content.",
+            encoding="utf-8",
+        )
+        _add_related_link(wiki, "attention", "new-doc", "paper2.pdf")
+        text = (concepts / "attention.md").read_text()
+        assert "[[summaries/new-doc]]" in text
+        assert "paper2.pdf" in text
+
+    def test_skips_if_already_linked(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources: [paper1.pdf]\n---\n\n# Attention\n\nSee also: [[summaries/new-doc]]",
+            encoding="utf-8",
+        )
+        _add_related_link(wiki, "attention", "new-doc", "paper1.pdf")
+        text = (concepts / "attention.md").read_text()
+        assert text.count("[[summaries/new-doc]]") == 1
+
+    def test_skips_if_file_missing(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Should not raise
+        _add_related_link(wiki, "nonexistent", "doc", "file.pdf")
+
+
+def _mock_completion(responses: list[str]):
+    """Create a mock for litellm.completion that returns responses in order."""
+    call_count = {"n": 0}
+
+    def side_effect(*args, **kwargs):
+        idx = min(call_count["n"], len(responses) - 1)
+        call_count["n"] += 1
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = responses[idx]
+        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_resp.usage.prompt_tokens_details = None
+        return mock_resp
+
+    return side_effect
+
+
+def _mock_acompletion(responses: list[str]):
+    """Create an async mock for litellm.acompletion."""
+    call_count = {"n": 0}
+
+    async def side_effect(*args, **kwargs):
+        idx = min(call_count["n"], len(responses) - 1)
+        call_count["n"] += 1
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = responses[idx]
+        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_resp.usage.prompt_tokens_details = None
+        return mock_resp
+
+    return side_effect
 
 
 class TestCompileShortDoc:
     @pytest.mark.asyncio
-    async def test_calls_runner_run(self, tmp_path):
-        # Create a source file
-        wiki_dir = tmp_path / "wiki"
-        wiki_dir.mkdir()
-        source_path = wiki_dir / "sources" / "my_doc.md"
-        source_path.parent.mkdir(parents=True)
-        source_path.write_text("# My Doc\n\nSome content.", encoding="utf-8")
+    async def test_full_pipeline(self, tmp_path):
+        # Setup KB structure
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nSome content about transformers.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
-        # Create .openkb dir for agent build
-        openkb_dir = tmp_path / ".openkb"
-        openkb_dir.mkdir()
+        summary_response = json.dumps({
+            "brief": "Discusses transformers",
+            "content": "# Summary\n\nThis document discusses transformers.",
+        })
+        concepts_list_response = json.dumps({
+            "create": [{"name": "transformer", "title": "Transformer"}],
+            "update": [],
+            "related": [],
+        })
+        concept_page_response = json.dumps({
+            "brief": "NN architecture using self-attention",
+            "content": "# Transformer\n\nA neural network architecture.",
+        })
 
-        mock_result = MagicMock()
-        mock_result.final_output = "Done"
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, concepts_list_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_page_response])
+            )
+            await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
 
-        with patch("openkb.agent.compiler.Runner.run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = mock_result
-            await compile_short_doc("my_doc", source_path, tmp_path, "gpt-4o-mini")
+        # Verify summary written
+        summary_path = wiki / "summaries" / "test-doc.md"
+        assert summary_path.exists()
+        assert "full_text: sources/test-doc.md" in summary_path.read_text()
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        agent_arg = call_args[0][0]
-        message_arg = call_args[0][1]
+        # Verify concept written
+        concept_path = wiki / "concepts" / "transformer.md"
+        assert concept_path.exists()
+        assert "sources: [summaries/test-doc.md]" in concept_path.read_text()
 
-        assert agent_arg.name == "wiki-compiler"
-        assert "my_doc" in message_arg
-        assert "Some content." in message_arg
-        assert "Generate summary" in message_arg
+        # Verify index updated
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/test-doc]]" in index_text
+        assert "[[concepts/transformer]]" in index_text
 
     @pytest.mark.asyncio
-    async def test_message_contains_doc_name_and_content(self, tmp_path):
-        wiki_dir = tmp_path / "wiki"
-        source_path = wiki_dir / "sources" / "test_paper.md"
-        source_path.parent.mkdir(parents=True)
-        source_path.write_text("# Test Paper\n\nKey findings here.", encoding="utf-8")
-
+    async def test_handles_bad_json(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "doc.md"
+        source_path.write_text("Content", encoding="utf-8")
         (tmp_path / ".openkb").mkdir()
 
-        captured = {}
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion(["Plain summary text", "not valid json"])
+            )
+            # Should not raise
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
 
-        async def fake_run(agent, message, **kwargs):
-            captured["message"] = message
-            return MagicMock(final_output="ok")
-
-        with patch("openkb.agent.compiler.Runner.run", side_effect=fake_run):
-            await compile_short_doc("test_paper", source_path, tmp_path, "gpt-4o-mini")
-
-        assert "test_paper" in captured["message"]
-        assert "Key findings here." in captured["message"]
+        # Summary should still be written
+        assert (wiki / "summaries" / "doc.md").exists()
 
 
 class TestCompileLongDoc:
     @pytest.mark.asyncio
-    async def test_calls_runner_run(self, tmp_path):
-        wiki_dir = tmp_path / "wiki"
-        summary_path = wiki_dir / "summaries" / "big_doc.md"
-        summary_path.parent.mkdir(parents=True)
-        summary_path.write_text("# Big Doc Summary\n\nSection tree.", encoding="utf-8")
-
+    async def test_full_pipeline(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        summary_path = wiki / "summaries" / "big-doc.md"
+        summary_path.write_text("# Big Doc\n\nPageIndex summary tree.", encoding="utf-8")
         openkb_dir = tmp_path / ".openkb"
         openkb_dir.mkdir()
-        # Write minimal config
         (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "big-doc.pdf").write_bytes(b"fake")
 
-        mock_result = MagicMock()
-        mock_result.final_output = "Done"
+        overview_response = "Overview of the big document."
+        concepts_list_response = json.dumps({
+            "create": [{"name": "deep-learning", "title": "Deep Learning"}],
+            "update": [],
+            "related": [],
+        })
+        concept_page_response = json.dumps({
+            "brief": "Subfield of ML using neural networks",
+            "content": "# Deep Learning\n\nA subfield of ML.",
+        })
 
-        with patch("openkb.agent.compiler.Runner.run", new_callable=AsyncMock) as mock_run, \
-             patch("openkb.agent.compiler.PageIndexClient") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client_cls.return_value = mock_client
-            mock_run.return_value = mock_result
-
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([overview_response, concepts_list_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_page_response])
+            )
             await compile_long_doc(
-                "big_doc", summary_path, "doc-abc123", tmp_path, "gpt-4o-mini"
+                "big-doc", summary_path, "doc-123", tmp_path, "gpt-4o-mini"
             )
 
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        message_arg = call_args[0][1]
+        concept_path = wiki / "concepts" / "deep-learning.md"
+        assert concept_path.exists()
+        assert "Deep Learning" in concept_path.read_text()
 
-        assert "big_doc" in message_arg
-        assert "doc-abc123" in message_arg
-        assert "Do NOT regenerate summary" in message_arg
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/big-doc]]" in index_text
+        assert "[[concepts/deep-learning]]" in index_text
+
+
+class TestCompileConceptsPlan:
+    """Integration tests for _compile_concepts with the new plan format."""
+
+    def _setup_wiki(self, tmp_path, existing_concepts=None):
+        """Helper to set up a wiki directory with optional existing concepts."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "raw").mkdir(exist_ok=True)
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
+
+        if existing_concepts:
+            for name, content in existing_concepts.items():
+                (wiki / "concepts" / f"{name}.md").write_text(
+                    content, encoding="utf-8",
+                )
+
+        return wiki
 
     @pytest.mark.asyncio
-    async def test_long_doc_agent_has_four_tools(self, tmp_path):
-        wiki_dir = tmp_path / "wiki"
-        summary_path = wiki_dir / "summaries" / "big.md"
-        summary_path.parent.mkdir(parents=True)
-        summary_path.write_text("Summary content", encoding="utf-8")
+    async def test_create_and_update_flow(self, tmp_path):
+        """Pre-existing 'attention' concept; plan creates 'flash-attention' and updates 'attention'."""
+        wiki = self._setup_wiki(tmp_path, existing_concepts={
+            "attention": "---\nsources: [old-paper.pdf]\n---\n\n# Attention\n\nOriginal content about attention.",
+        })
 
-        openkb_dir = tmp_path / ".openkb"
-        openkb_dir.mkdir()
-        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        plan_response = json.dumps({
+            "create": [{"name": "flash-attention", "title": "Flash Attention"}],
+            "update": [{"name": "attention", "title": "Attention"}],
+            "related": [],
+        })
+        create_page_response = json.dumps({
+            "brief": "Efficient attention algorithm",
+            "content": "# Flash Attention\n\nAn efficient attention algorithm.",
+        })
+        update_page_response = json.dumps({
+            "brief": "Updated attention mechanism",
+            "content": "# Attention\n\nUpdated content with new info.",
+        })
 
-        captured_agent = {}
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document about attention mechanisms."}
+        summary = "Summary of the document."
 
-        async def fake_run(agent, message, **kwargs):
-            captured_agent["agent"] = agent
-            return MagicMock(final_output="ok")
+        call_order = {"n": 0}
 
-        with patch("openkb.agent.compiler.Runner.run", side_effect=fake_run), \
-             patch("openkb.agent.compiler.PageIndexClient") as mock_client_cls:
-            mock_client_cls.return_value = MagicMock()
+        async def ordered_acompletion(*args, **kwargs):
+            idx = call_order["n"]
+            call_order["n"] += 1
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            # create tasks come first, then update tasks
+            if idx == 0:
+                mock_resp.choices[0].message.content = create_page_response
+            else:
+                mock_resp.choices[0].message.content = update_page_response
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
 
-            await compile_long_doc(
-                "big", summary_path, "doc-xyz", tmp_path, "gpt-4o-mini"
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=ordered_acompletion
+            )
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                summary, "test-doc", 5,
             )
 
-        agent = captured_agent["agent"]
-        assert len(agent.tools) == 4
-        tool_names = {t.name for t in agent.tools}
-        assert "get_page_content" in tool_names
+        # Verify flash-attention created
+        fa_path = wiki / "concepts" / "flash-attention.md"
+        assert fa_path.exists()
+        fa_text = fa_path.read_text()
+        assert "sources: [summaries/test-doc.md]" in fa_text
+        assert "Flash Attention" in fa_text
+
+        # Verify attention updated (is_update=True path in _write_concept)
+        att_path = wiki / "concepts" / "attention.md"
+        assert att_path.exists()
+        att_text = att_path.read_text()
+        assert "summaries/test-doc.md" in att_text
+        assert "old-paper.pdf" in att_text
+
+        # Verify index updated
+        index_text = (wiki / "index.md").read_text()
+        assert "[[concepts/flash-attention]]" in index_text
+        assert "[[concepts/attention]]" in index_text
+
+    @pytest.mark.asyncio
+    async def test_related_adds_link_no_llm(self, tmp_path):
+        """Plan has only related items. No acompletion calls should be made."""
+        wiki = self._setup_wiki(tmp_path, existing_concepts={
+            "transformer": "---\nsources: [old.pdf]\n---\n\n# Transformer\n\nContent about transformers.",
+        })
+
+        plan_response = json.dumps({
+            "create": [],
+            "update": [],
+            "related": ["transformer"],
+        })
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document content."}
+        summary = "Summary."
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock()
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                summary, "test-doc", 5,
+            )
+            # acompletion should never be called — related is code-only
+            mock_litellm.acompletion.assert_not_called()
+
+        # Verify link added to transformer page
+        transformer_text = (wiki / "concepts" / "transformer.md").read_text()
+        assert "[[summaries/test-doc]]" in transformer_text
+        assert "summaries/test-doc.md" in transformer_text
+
+    @pytest.mark.asyncio
+    async def test_fallback_list_format(self, tmp_path):
+        """LLM returns a flat array instead of dict — treated as all create."""
+        wiki = self._setup_wiki(tmp_path)
+
+        plan_response = json.dumps([
+            {"name": "attention", "title": "Attention"},
+        ])
+        concept_page_response = json.dumps({
+            "brief": "A mechanism for focusing",
+            "content": "# Attention\n\nA mechanism for focusing.",
+        })
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document content."}
+        summary = "Summary."
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_page_response])
+            )
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                summary, "test-doc", 5,
+            )
+
+        # Verify concept was created (not updated)
+        att_path = wiki / "concepts" / "attention.md"
+        assert att_path.exists()
+        att_text = att_path.read_text()
+        assert "sources: [summaries/test-doc.md]" in att_text
+        assert "Attention" in att_text
+
+
+class TestBriefIntegration:
+    @pytest.mark.asyncio
+    async def test_short_doc_briefs_in_index_and_frontmatter(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nContent.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
+
+        summary_resp = json.dumps({
+            "brief": "A paper about transformers",
+            "content": "# Summary\n\nThis paper discusses transformers.",
+        })
+        plan_resp = json.dumps({
+            "create": [{"name": "transformer", "title": "Transformer"}],
+            "update": [],
+            "related": [],
+        })
+        concept_resp = json.dumps({
+            "brief": "NN architecture using self-attention",
+            "content": "# Transformer\n\nA neural network architecture.",
+        })
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_resp, plan_resp])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_resp])
+            )
+            await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
+
+        # Summary frontmatter has doc_type and full_text
+        summary_text = (wiki / "summaries" / "test-doc.md").read_text()
+        assert "doc_type: short" in summary_text
+        assert "full_text: sources/test-doc.md" in summary_text
+
+        # Concept frontmatter has brief
+        concept_text = (wiki / "concepts" / "transformer.md").read_text()
+        assert "brief: NN architecture using self-attention" in concept_text
+
+        # Index has briefs
+        index_text = (wiki / "index.md").read_text()
+        assert "— A paper about transformers" in index_text
+        assert "— NN architecture using self-attention" in index_text
