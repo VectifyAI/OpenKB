@@ -1,6 +1,12 @@
 """OpenKB CLI — command-line interface for the knowledge base workflow."""
 from __future__ import annotations
 
+# Silence import-time warnings (e.g. pydub's missing-ffmpeg warning emitted
+# when markitdown pulls it in). markitdown later clobbers the filters during
+# its own import, so we re-apply after all imports below.
+import warnings
+warnings.filterwarnings("ignore")
+
 import asyncio
 import json
 import logging
