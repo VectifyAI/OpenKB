@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from openkb.agent.tools import list_wiki_files, read_wiki_file, write_wiki_file
+from openkb.agent.tools import get_page_content, list_wiki_files, parse_pages, read_wiki_file, write_wiki_file
 
 
 # ---------------------------------------------------------------------------
@@ -128,3 +128,88 @@ class TestWriteWikiFile:
         result = write_wiki_file("reports/health.md", "All good.", wiki_root)
 
         assert result == "Written: reports/health.md"
+
+
+# ---------------------------------------------------------------------------
+# parse_pages
+# ---------------------------------------------------------------------------
+
+
+class TestParsePages:
+    def test_single_page(self):
+        assert parse_pages("3") == [3]
+
+    def test_range(self):
+        assert parse_pages("3-5") == [3, 4, 5]
+
+    def test_comma_separated(self):
+        assert parse_pages("1,3,5") == [1, 3, 5]
+
+    def test_mixed(self):
+        assert parse_pages("1-3,7,10-12") == [1, 2, 3, 7, 10, 11, 12]
+
+    def test_deduplication(self):
+        assert parse_pages("3,3,3") == [3]
+
+    def test_sorted(self):
+        assert parse_pages("5,1,3") == [1, 3, 5]
+
+    def test_ignores_zero_and_negative(self):
+        assert parse_pages("0,-1,3") == [3]
+
+
+# ---------------------------------------------------------------------------
+# get_page_content
+# ---------------------------------------------------------------------------
+
+
+class TestGetPageContent:
+    def test_reads_pages_from_json(self, tmp_path):
+        import json
+        wiki_root = str(tmp_path)
+        sources = tmp_path / "sources"
+        sources.mkdir()
+        pages = [
+            {"page": 1, "content": "Page one text."},
+            {"page": 2, "content": "Page two text."},
+            {"page": 3, "content": "Page three text."},
+        ]
+        (sources / "paper.json").write_text(json.dumps(pages), encoding="utf-8")
+        result = get_page_content("paper", "1,3", wiki_root)
+        assert "[Page 1]" in result
+        assert "Page one text." in result
+        assert "[Page 3]" in result
+        assert "Page three text." in result
+        assert "Page two" not in result
+
+    def test_returns_error_for_missing_file(self, tmp_path):
+        wiki_root = str(tmp_path)
+        (tmp_path / "sources").mkdir()
+        result = get_page_content("nonexistent", "1", wiki_root)
+        assert "not found" in result.lower()
+
+    def test_returns_error_for_no_matching_pages(self, tmp_path):
+        import json
+        wiki_root = str(tmp_path)
+        sources = tmp_path / "sources"
+        sources.mkdir()
+        pages = [{"page": 1, "content": "Only page."}]
+        (sources / "paper.json").write_text(json.dumps(pages), encoding="utf-8")
+        result = get_page_content("paper", "99", wiki_root)
+        assert "no content" in result.lower()
+
+    def test_includes_images_info(self, tmp_path):
+        import json
+        wiki_root = str(tmp_path)
+        sources = tmp_path / "sources"
+        sources.mkdir()
+        pages = [{"page": 1, "content": "Text.", "images": [{"path": "images/p/img.png", "width": 100, "height": 80}]}]
+        (sources / "doc.json").write_text(json.dumps(pages), encoding="utf-8")
+        result = get_page_content("doc", "1", wiki_root)
+        assert "img.png" in result
+
+    def test_path_escape_denied(self, tmp_path):
+        wiki_root = str(tmp_path)
+        (tmp_path / "sources").mkdir()
+        result = get_page_content("../../etc/passwd", "1", wiki_root)
+        assert "denied" in result.lower() or "not found" in result.lower()

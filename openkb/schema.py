@@ -6,7 +6,7 @@ AGENTS_MD = """\
 # Wiki Schema
 
 ## Directory Structure
-- sources/ — Full-text converted from raw documents. Do not modify directly.
+- sources/ — Document content. Short docs as .md, long docs as .json (per-page). Do not modify directly.
 - sources/images/ — Extracted images from documents, referenced by sources.
 - summaries/ — One per source document. Summary of key content.
 - concepts/ — Cross-document topic synthesis. Created when a theme spans multiple documents.
@@ -35,10 +35,9 @@ Operations: ingest, query, lint
 
 ## Format
 - Use [[wikilink]] to link other wiki pages (e.g., [[concepts/attention]])
-- Summary pages header: `sources: [paper.pdf]`
-- Concept pages header: `sources: [paper1.pdf, paper2.pdf, ...]`
 - Standard Markdown heading hierarchy
 - Keep each page focused on a single topic
+- Do not include YAML frontmatter (---) in generated content; it is managed by code
 """
 
 # Backward compat alias

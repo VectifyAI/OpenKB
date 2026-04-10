@@ -23,7 +23,16 @@ class TestIndexLongDocument:
             "doc_type": "pdf",
             "structure": sample_tree["structure"],
         }
+
+        # get_page_content returns empty list by default (overridden per test as needed)
+        col.get_page_content.return_value = []
         return col
+
+    def _fake_pages(self):
+        return [
+            {"page": 1, "content": "Page one text.", "images": []},
+            {"page": 2, "content": "Page two text.", "images": []},
+        ]
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):
         doc_id = "abc-123"
@@ -35,7 +44,8 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             result = index_long_document(pdf_path, kb_dir)
 
         assert isinstance(result, IndexResult)
@@ -43,24 +53,34 @@ class TestIndexLongDocument:
         assert result.description == sample_tree["doc_description"]
         assert result.tree is not None
 
-    def test_source_page_written(self, kb_dir, sample_tree, tmp_path):
+    def test_source_page_written_as_json(self, kb_dir, sample_tree, tmp_path):
+        """Long doc source should be written as JSON, not markdown."""
+        import json as json_mod
         doc_id = "abc-123"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
 
         fake_client = MagicMock()
         fake_client.collection.return_value = fake_col
+        # Mock get_page_content to return page data
+        fake_col.get_page_content.return_value = [
+            {"page": 1, "content": "Page one text."},
+            {"page": 2, "content": "Page two text."},
+        ]
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             index_long_document(pdf_path, kb_dir)
 
-        source_file = kb_dir / "wiki" / "sources" / "sample.md"
-        assert source_file.exists()
-        content = source_file.read_text(encoding="utf-8")
-        assert "type: pageindex" in content
-        assert "Introduction" in content
+        json_file = kb_dir / "wiki" / "sources" / "sample.json"
+        assert json_file.exists()
+        assert not (kb_dir / "wiki" / "sources" / "sample.md").exists()
+        data = json_mod.loads(json_file.read_text())
+        assert len(data) == 2
+        assert data[0]["page"] == 1
+        assert data[0]["content"] == "Page one text."
 
     def test_summary_page_written(self, kb_dir, sample_tree, tmp_path):
         doc_id = "abc-123"
@@ -72,13 +92,14 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             index_long_document(pdf_path, kb_dir)
 
         summary_file = kb_dir / "wiki" / "summaries" / "sample.md"
         assert summary_file.exists()
         content = summary_file.read_text(encoding="utf-8")
-        assert "type: pageindex" in content
+        assert "doc_type: pageindex" in content
         assert "Summary:" in content
 
     def test_localclient_called_with_index_config(self, kb_dir, sample_tree, tmp_path):
@@ -92,13 +113,15 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "report.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls:
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls, \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
             index_long_document(pdf_path, kb_dir)
 
-        # Verify PageIndexClient was instantiated
+        # Verify PageIndexClient was instantiated with correct IndexConfig
         mock_cls.assert_called_once()
-        # Check that index_config with correct flags was passed
         _, kwargs = mock_cls.call_args
-        ic = kwargs.get("index_config") or mock_cls.call_args[0][0] if mock_cls.call_args[0] else None
-        # Either as positional or keyword — either way PageIndexClient was called
-        assert mock_cls.called
+        ic = kwargs.get("index_config")
+        assert ic is not None, "index_config must be passed to PageIndexClient"
+        assert ic.if_add_node_text is True
+        assert ic.if_add_node_summary is True
+        assert ic.if_add_doc_description is True
