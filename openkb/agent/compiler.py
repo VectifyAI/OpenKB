@@ -468,7 +468,7 @@ def _update_index(
 
     When ``doc_brief`` or entries in ``concept_briefs`` are provided, entries
     are written as ``- [[link]] (type) — brief text``.  Existing entries are
-    detected by the link part only, so updating a brief on a re-compile works.
+    detected by the link part only and skipped to avoid duplicates.
     ``doc_type`` is ``"short"`` or ``"pageindex"`` — shown in the entry so the
     query agent knows how to access detailed content.
     """
@@ -595,7 +595,7 @@ async def _compile_concepts(
     async def _gen_update(concept: dict) -> tuple[str, str, bool, str]:
         name = concept["name"]
         title = concept.get("title", name)
-        concept_path = wiki_dir / "concepts" / f"{name}.md"
+        concept_path = wiki_dir / "concepts" / f"{_sanitize_concept_name(name)}.md"
         if concept_path.exists():
             raw_text = concept_path.read_text(encoding="utf-8")
             if raw_text.startswith("---"):
