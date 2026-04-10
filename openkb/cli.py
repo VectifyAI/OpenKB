@@ -3,28 +3,71 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
 import os
 
+from agents import set_tracing_disabled
+set_tracing_disabled(True)
+# Use local model cost map — skip fetching from GitHub on every invocation
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import click
 import litellm
+litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
-from openkb.config import DEFAULT_CONFIG, load_config, save_config
+from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import convert_document
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD
 
-load_dotenv()
+# Suppress warnings after all imports — markitdown overrides filters at import time
+import warnings
+warnings.filterwarnings("ignore")
+
+load_dotenv()  # load from cwd (covers running inside the KB dir)
 
 
-def _setup_llm_key() -> None:
-    """Set LiteLLM API key from LLM_API_KEY env var if present."""
+def _setup_llm_key(kb_dir: Path | None = None) -> None:
+    """Set LiteLLM API key from LLM_API_KEY env var if present.
+
+    Load order (override=False, so first one wins):
+    1. System environment variables (already set)
+    2. KB-local .env  (kb_dir/.env)
+    3. Global .env    (~/.config/openkb/.env)
+
+    Also propagates to provider-specific env vars (OPENAI_API_KEY, etc.)
+    so that the Agents SDK litellm provider can pick them up.
+    """
+    if kb_dir is not None:
+        env_file = kb_dir / ".env"
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
+
+    from openkb.config import GLOBAL_CONFIG_DIR
+    global_env = GLOBAL_CONFIG_DIR / ".env"
+    if global_env.exists():
+        load_dotenv(global_env, override=False)
+
     api_key = os.environ.get("LLM_API_KEY", "")
-    if api_key:
+    if not api_key:
+        # Check if any provider key is already set
+        has_key = any(os.environ.get(k) for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"))
+        if not has_key:
+            click.echo(
+                "Warning: No LLM API key found. Set one of:\n"
+                f"  1. {kb_dir / '.env' if kb_dir else '<kb_dir>/.env'} — LLM_API_KEY=sk-...\n"
+                f"  2. {GLOBAL_CONFIG_DIR / '.env'} — LLM_API_KEY=sk-...\n"
+                "  3. Export LLM_API_KEY in your shell profile"
+            )
+    else:
         litellm.api_key = api_key
+        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+            if not os.environ.get(env_var):
+                os.environ[env_var] = api_key
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
@@ -53,11 +96,29 @@ def _display_type(raw_type: str) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _find_kb_dir() -> Path | None:
-    """Return the knowledge-base root if .openkb/ exists in cwd, else None."""
-    candidate = Path(".openkb")
-    if candidate.exists() and candidate.is_dir():
-        return Path(".")
+def _find_kb_dir(override: Path | None = None) -> Path | None:
+    """Find the KB root: explicit override → walk up from cwd → global default_kb."""
+    # 0. Explicit override (--kb-dir or OPENKB_DIR)
+    if override is not None:
+        if (override / ".openkb").is_dir():
+            return override
+        return None
+    # 1. Walk up from cwd
+    current = Path.cwd().resolve()
+    while True:
+        if (current / ".openkb").is_dir():
+            return current
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    # 2. Fall back to global config default_kb
+    gc = load_global_config()
+    default = gc.get("default_kb")
+    if default:
+        p = Path(default)
+        if (p / ".openkb").is_dir():
+            return p
     return None
 
 
@@ -73,9 +134,10 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
 
+    logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key()
+    _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     registry = HashRegistry(openkb_dir / "hashes.json")
 
@@ -85,6 +147,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
         result = convert_document(file_path, kb_dir)
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
+        logger.debug("Conversion traceback:", exc_info=True)
         return
 
     if result.skipped:
@@ -95,20 +158,22 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     # 3/4. Index and compile
     if result.is_long_doc:
-        click.echo(f"  Long document detected — indexing with PageIndex…")
+        click.echo(f"  Long document detected — indexing with PageIndex...")
         try:
             from openkb.indexer import index_long_document
             index_result = index_long_document(result.raw_path, kb_dir)
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
+            logger.debug("Indexing traceback:", exc_info=True)
             return
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
-        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})…")
+        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
         for attempt in range(2):
             try:
                 asyncio.run(
-                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model)
+                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
+                                     doc_description=index_result.description)
                 )
                 break
             except Exception as exc:
@@ -117,9 +182,10 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
                     time.sleep(2)
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    logger.debug("Compilation traceback:", exc_info=True)
                     return
     else:
-        click.echo(f"  Compiling short doc…")
+        click.echo(f"  Compiling short doc...")
         for attempt in range(2):
             try:
                 asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
@@ -130,6 +196,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
                     time.sleep(2)
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    logger.debug("Compilation traceback:", exc_info=True)
                     return
 
     # Register hash only after successful compilation
@@ -146,8 +213,38 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 @click.group()
-def cli():
+@click.option("-v", "--verbose", is_flag=True, default=False, help="Enable verbose logging.")
+@click.option("--kb-dir", "kb_dir_override", default=None, type=click.Path(exists=True, file_okay=False, resolve_path=True), help="Path to a KB root directory (overrides auto-detection).")
+@click.pass_context
+def cli(ctx, verbose, kb_dir_override):
     """OpenKB — Karpathy's LLM Knowledge Base workflow, powered by PageIndex."""
+    logging.basicConfig(
+        format="%(name)s %(levelname)s: %(message)s",
+        level=logging.WARNING,
+    )
+    if verbose:
+        logging.getLogger("openkb").setLevel(logging.DEBUG)
+    ctx.ensure_object(dict)
+    if kb_dir_override:
+        ctx.obj["kb_dir_override"] = Path(kb_dir_override)
+    else:
+        env_kb = os.environ.get("OPENKB_DIR")
+        if env_kb:
+            ctx.obj["kb_dir_override"] = Path(env_kb).resolve()
+        else:
+            ctx.obj["kb_dir_override"] = None
+
+
+@cli.command()
+@click.argument("path", default=".")
+def use(path):
+    """Set PATH as the default knowledge base."""
+    target = Path(path).resolve()
+    if not (target / ".openkb").is_dir():
+        click.echo(f"Not a knowledge base: {target}")
+        return
+    register_kb(target)
+    click.echo(f"Default KB set to: {target}")
 
 
 @cli.command()
@@ -160,22 +257,26 @@ def init():
 
     # Interactive prompts
     model = click.prompt(
-        "Model (e.g. gpt-5.4, anthropic/claude-sonnet-4-6, gemini/gemini-3.1-pro-preview)",
+        f"Model (e.g. gpt-5.4-mini, anthropic/claude-sonnet-4-6) [default: {DEFAULT_CONFIG['model']}]",
         default=DEFAULT_CONFIG["model"],
+        show_default=False,
     )
-    language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
+    language = click.prompt(
+        f"Language [default: {DEFAULT_CONFIG['language']}]",
+        default=DEFAULT_CONFIG["language"],
+        show_default=False,
+    )
     pageindex_threshold = click.prompt(
-        "PageIndex threshold (pages)",
+        f"PageIndex threshold (pages) [default: {DEFAULT_CONFIG['pageindex_threshold']}]",
         default=DEFAULT_CONFIG["pageindex_threshold"],
         type=int,
+        show_default=False,
     )
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
-    Path("wiki/explorations").mkdir(parents=True, exist_ok=True)
-    Path("wiki/reports").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
     Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
@@ -195,14 +296,18 @@ def init():
     save_config(openkb_dir / "config.yaml", config)
     (openkb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")
 
-    click.echo("Knowledge base initialised.")
+    # Register this KB in the global config
+    register_kb(Path.cwd())
+
+    click.echo("Knowledge base initialized.")
 
 
 @cli.command()
 @click.argument("path")
-def add(path):
+@click.pass_context
+def add(ctx, path):
     """Add a document or directory of documents at PATH to the knowledge base."""
-    kb_dir = _find_kb_dir()
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
@@ -238,9 +343,10 @@ def add(path):
 @cli.command()
 @click.argument("question")
 @click.option("--save", is_flag=True, default=False, help="Save the answer to wiki/explorations/.")
-def query(question, save):
+@click.pass_context
+def query(ctx, question, save):
     """Query the knowledge base with QUESTION."""
-    kb_dir = _find_kb_dir()
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
@@ -249,7 +355,7 @@ def query(question, save):
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key()
+    _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     try:
@@ -273,9 +379,10 @@ def query(question, save):
 
 
 @cli.command()
-def watch():
+@click.pass_context
+def watch(ctx):
     """Watch the raw/ directory for new documents and process them automatically."""
-    kb_dir = _find_kb_dir()
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
@@ -301,10 +408,13 @@ def watch():
 
 
 @cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues.")  # TODO: --fix not yet implemented
-def lint(fix):
+@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
+@click.pass_context
+def lint(ctx, fix):
     """Lint the knowledge base for structural and semantic inconsistencies."""
-    kb_dir = _find_kb_dir()
+    if fix:
+        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
@@ -314,16 +424,16 @@ def lint(fix):
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key()
+    _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint
-    click.echo("Running structural lint…")
+    click.echo("Running structural lint...")
     structural_report = run_structural_lint(kb_dir)
     click.echo(structural_report)
 
     # Knowledge lint (semantic)
-    click.echo("Running knowledge lint…")
+    click.echo("Running knowledge lint...")
     try:
         knowledge_report = asyncio.run(run_knowledge_lint(kb_dir, model))
     except Exception as exc:
@@ -343,9 +453,10 @@ def lint(fix):
 
 
 @cli.command(name="list")
-def list_cmd():
+@click.pass_context
+def list_cmd(ctx):
     """List all documents in the knowledge base."""
-    kb_dir = _find_kb_dir()
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
@@ -403,9 +514,10 @@ def list_cmd():
 
 
 @cli.command()
-def status():
+@click.pass_context
+def status(ctx):
     """Show the current status of the knowledge base."""
-    kb_dir = _find_kb_dir()
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return

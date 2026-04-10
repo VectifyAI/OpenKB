@@ -1,4 +1,6 @@
 import json
+from unittest.mock import patch
+
 import pytest
 from click.testing import CliRunner
 
@@ -8,7 +10,8 @@ from openkb.schema import AGENTS_MD
 
 def test_init_creates_structure(tmp_path):
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path), \
+         patch("openkb.cli.register_kb"):
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
 
@@ -20,13 +23,11 @@ def test_init_creates_structure(tmp_path):
         assert (cwd / "wiki" / "sources" / "images").is_dir()
         assert (cwd / "wiki" / "summaries").is_dir()
         assert (cwd / "wiki" / "concepts").is_dir()
-        assert (cwd / "wiki" / "reports").is_dir()
         assert (cwd / ".openkb").is_dir()
 
         # Files
         assert (cwd / "wiki" / "AGENTS.md").is_file()
         assert (cwd / "wiki" / "log.md").is_file()
-        assert (cwd / "wiki" / "explorations").is_dir()
         assert (cwd / "wiki" / "index.md").is_file()
         assert (cwd / ".openkb" / "config.yaml").is_file()
         assert (cwd / ".openkb" / "hashes.json").is_file()
@@ -42,7 +43,8 @@ def test_init_creates_structure(tmp_path):
 
 def test_init_schema_content(tmp_path):
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path), \
+         patch("openkb.cli.register_kb"):
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
 
@@ -53,7 +55,8 @@ def test_init_schema_content(tmp_path):
 
 def test_init_already_exists(tmp_path):
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
+    with runner.isolated_filesystem(temp_dir=tmp_path), \
+         patch("openkb.cli.register_kb"):
         # First run should succeed
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0

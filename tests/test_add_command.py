@@ -37,8 +37,9 @@ class TestFindKbDir:
 
     def test_returns_none_if_no_openkb(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = _find_kb_dir()
-        assert result is None
+        with patch("openkb.cli.load_global_config", return_value={}):
+            result = _find_kb_dir()
+            assert result is None
 
 
 class TestAddCommand:
@@ -57,7 +58,8 @@ class TestAddCommand:
 
     def test_add_missing_init(self, tmp_path):
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path):
+        with runner.isolated_filesystem(temp_dir=tmp_path), \
+             patch("openkb.cli._find_kb_dir", return_value=None):
             result = runner.invoke(cli, ["add", "somefile.pdf"])
             assert "No knowledge base found" in result.output
 
