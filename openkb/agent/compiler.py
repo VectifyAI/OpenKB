@@ -338,21 +338,21 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                     existing = fm + body
             else:
                 existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
-            # Strip frontmatter from LLM content to avoid duplicate blocks
-            clean = content
-            if clean.startswith("---"):
-                end = clean.find("---", 3)
-                if end != -1:
-                    clean = clean[end + 3:].lstrip("\n")
-            # Replace body with LLM rewrite (prompt asks for full rewrite, not delta)
-            if existing.startswith("---"):
-                end = existing.find("---", 3)
-                if end != -1:
-                    existing = existing[:end + 3] + "\n\n" + clean
-                else:
-                    existing = clean
+        # Strip frontmatter from LLM content to avoid duplicate blocks
+        clean = content
+        if clean.startswith("---"):
+            end = clean.find("---", 3)
+            if end != -1:
+                clean = clean[end + 3:].lstrip("\n")
+        # Replace body with LLM rewrite (prompt asks for full rewrite, not delta)
+        if existing.startswith("---"):
+            end = existing.find("---", 3)
+            if end != -1:
+                existing = existing[:end + 3] + "\n\n" + clean
             else:
                 existing = clean
+        else:
+            existing = clean
         if brief and existing.startswith("---"):
             end = existing.find("---", 3)
             if end != -1:
