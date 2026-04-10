@@ -461,35 +461,6 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
         path.write_text(text, encoding="utf-8")
 
 
-def _find_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
-    """Return [start, end) line indexes for a section headed by ``heading``."""
-    for i, line in enumerate(lines):
-        if line != heading:
-            continue
-        start = i + 1
-        end = len(lines)
-        for j in range(start, len(lines)):
-            if lines[j].startswith("## "):
-                end = j
-                break
-        return start, end
-    return None
-
-
-def _find_index_entry_line(lines: list[str], heading: str, link: str) -> int | None:
-    """Find an index entry that starts with ``- {link}`` inside one section only."""
-    bounds = _find_section_bounds(lines, heading)
-    if bounds is None:
-        return None
-
-    start, end = bounds
-    entry_prefix = f"- {link}"
-    for i in range(start, end):
-        if lines[i].startswith(entry_prefix):
-            return i
-    return None
-
-
 def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
     doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
@@ -513,32 +484,34 @@ def _update_index(
             encoding="utf-8",
         )
 
-    lines = index_path.read_text(encoding="utf-8").split("\n")
+    text = index_path.read_text(encoding="utf-8")
 
     doc_link = f"[[summaries/{doc_name}]]"
-    if _find_index_entry_line(lines, "## Documents", doc_link) is None:
+    if doc_link not in text:
         doc_entry = f"- {doc_link} ({doc_type})"
         if doc_brief:
             doc_entry += f" — {doc_brief}"
-        doc_bounds = _find_section_bounds(lines, "## Documents")
-        if doc_bounds is not None:
-            lines.insert(doc_bounds[0], doc_entry)
+        if "## Documents" in text:
+            text = text.replace("## Documents\n", f"## Documents\n{doc_entry}\n", 1)
 
     for name in concept_names:
         concept_link = f"[[concepts/{name}]]"
         concept_entry = f"- {concept_link}"
         if name in concept_briefs:
             concept_entry += f" — {concept_briefs[name]}"
-        concept_line = _find_index_entry_line(lines, "## Concepts", concept_link)
-        if concept_line is not None:
+        if concept_link in text:
             if name in concept_briefs:
-                lines[concept_line] = concept_entry
+                lines = text.split("\n")
+                for i, line in enumerate(lines):
+                    if concept_link in line:
+                        lines[i] = concept_entry
+                        break
+                text = "\n".join(lines)
         else:
-            concept_bounds = _find_section_bounds(lines, "## Concepts")
-            if concept_bounds is not None:
-                lines.insert(concept_bounds[0], concept_entry)
+            if "## Concepts" in text:
+                text = text.replace("## Concepts\n", f"## Concepts\n{concept_entry}\n", 1)
 
-    index_path.write_text("\n".join(lines), encoding="utf-8")
+    index_path.write_text(text, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
