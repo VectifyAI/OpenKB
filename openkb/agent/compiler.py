@@ -299,13 +299,14 @@ def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | Non
 
 
 def _section_contains_link(lines: list[str], heading: str, link: str) -> bool:
-    """Check whether a wikilink already exists inside the named section."""
+    """Check whether an index entry already exists inside the named section."""
     bounds = _get_section_bounds(lines, heading)
     if bounds is None:
         return False
 
     start, end = bounds
-    return any(link in line for line in lines[start:end])
+    entry_prefix = f"- {link}"
+    return any(line.startswith(entry_prefix) for line in lines[start:end])
 
 
 def _replace_section_entry(lines: list[str], heading: str, link: str, entry: str) -> bool:
@@ -315,8 +316,9 @@ def _replace_section_entry(lines: list[str], heading: str, link: str, entry: str
         return False
 
     start, end = bounds
+    entry_prefix = f"- {link}"
     for i in range(start, end):
-        if link in lines[i]:
+        if lines[i].startswith(entry_prefix):
             lines[i] = entry
             return True
     return False
@@ -509,7 +511,6 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
             text += f"\n\n## Related Documents\n- {link}\n"
         path.write_text(text, encoding="utf-8")
 
-
 def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
     doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
@@ -519,7 +520,7 @@ def _update_index(
 
     When ``doc_brief`` or entries in ``concept_briefs`` are provided, entries
     are written as ``- [[link]] (type) — brief text``. Existing entries are
-    detected within their own section by the link part only and skipped to
+    detected within their own section by exact entry prefix and skipped to
     avoid duplicates.
     ``doc_type`` is ``"short"`` or ``"pageindex"`` — shown in the entry so the
     query agent knows how to access detailed content.
@@ -534,8 +535,7 @@ def _update_index(
             encoding="utf-8",
         )
 
-    text = index_path.read_text(encoding="utf-8")
-    lines = text.split("\n")
+    lines = index_path.read_text(encoding="utf-8").split("\n")
 
     doc_link = f"[[summaries/{doc_name}]]"
     if not _section_contains_link(lines, "## Documents", doc_link):
@@ -555,8 +555,7 @@ def _update_index(
         else:
             _insert_section_entry(lines, "## Concepts", concept_entry)
 
-    text = "\n".join(lines)
-    index_path.write_text(text, encoding="utf-8")
+    index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
