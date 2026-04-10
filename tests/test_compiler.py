@@ -198,6 +198,26 @@ class TestUpdateIndex:
         assert "[[concepts/attention]] — Focus mechanism" in text
         assert "[[concepts/transformer]] — NN architecture" in text
 
+    def test_updates_only_exact_concept_row(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n"
+            "- [[concepts/transformer]] — Uses [[concepts/attention]] internally\n"
+            "- [[concepts/attention]] — Old brief\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(
+            wiki,
+            "my-doc",
+            ["attention"],
+            concept_briefs={"attention": "New brief"},
+        )
+        text = (wiki / "index.md").read_text()
+        assert "- [[concepts/transformer]] — Uses [[concepts/attention]] internally" in text
+        assert "- [[concepts/attention]] — New brief" in text
+        assert text.count("[[concepts/attention]] — New brief") == 1
+
     def test_no_duplicates(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
