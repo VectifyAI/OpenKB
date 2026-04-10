@@ -16,6 +16,7 @@ import re
 import sys
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 import litellm
@@ -302,11 +303,12 @@ def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
 
-_SAFE_NAME_RE = re.compile(r'[^a-zA-Z0-9_\-]')
+_SAFE_NAME_RE = re.compile(r'[^\w\-]')
 
 
 def _sanitize_concept_name(name: str) -> str:
     """Sanitize a concept name for safe use as a filename."""
+    name = unicodedata.normalize("NFKC", name)
     sanitized = _SAFE_NAME_RE.sub("-", name).strip("-")
     return sanitized or "unnamed-concept"
 

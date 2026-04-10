@@ -12,6 +12,7 @@ from openkb.agent.compiler import (
     compile_short_doc,
     _compile_concepts,
     _parse_json,
+    _sanitize_concept_name,
     _write_summary,
     _write_concept,
     _update_index,
@@ -72,6 +73,39 @@ class TestParseBriefContent:
         """If LLM returns plain text, _parse_json raises — caller handles fallback."""
         with pytest.raises((json.JSONDecodeError, ValueError)):
             _parse_json("Just plain markdown text without JSON")
+
+
+class TestSanitizeConceptName:
+    def test_ascii_passthrough(self):
+        assert _sanitize_concept_name("hello-world") == "hello-world"
+
+    def test_spaces_replaced(self):
+        assert _sanitize_concept_name("hello world") == "hello-world"
+
+    def test_chinese(self):
+        result = _sanitize_concept_name("注意力机制")
+        assert result == "注意力机制"
+
+    def test_japanese(self):
+        result = _sanitize_concept_name("トランスフォーマー")
+        assert result == "トランスフォーマー"
+
+    def test_french_accents(self):
+        result = _sanitize_concept_name("réseau neuronal")
+        assert "r" in result
+        assert result != "r-seau-neuronal"  # accented chars preserved, not stripped
+
+    def test_distinct_chinese_names_no_collision(self):
+        a = _sanitize_concept_name("注意力机制")
+        b = _sanitize_concept_name("变压器模型")
+        assert a != b
+
+    def test_empty_fallback(self):
+        assert _sanitize_concept_name("!!!") == "unnamed-concept"
+
+    def test_nfkc_normalization(self):
+        # U+FF21 (fullwidth A) should normalize to regular A
+        assert _sanitize_concept_name("\uff21\uff22") == "AB"
 
 
 class TestWriteSummary:
