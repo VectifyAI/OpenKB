@@ -256,22 +256,23 @@ def init():
         return
 
     # Interactive prompts
+    click.echo("Pick an LLM in `provider/model` LiteLLM format:")
+    click.echo("  OpenAI:    gpt-5.4-mini, gpt-5.4")
+    click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
+    click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
+    click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
+    click.echo()
     model = click.prompt(
-        f"Model (e.g. gpt-5.4-mini, anthropic/claude-sonnet-4-6) [default: {DEFAULT_CONFIG['model']}]",
+        f"Model (enter for default {DEFAULT_CONFIG['model']})",
         default=DEFAULT_CONFIG["model"],
         show_default=False,
     )
-    language = click.prompt(
-        f"Language [default: {DEFAULT_CONFIG['language']}]",
-        default=DEFAULT_CONFIG["language"],
+    api_key = click.prompt(
+        "LLM API Key (saved to .env, enter to skip)",
+        default="",
+        hide_input=True,
         show_default=False,
-    )
-    pageindex_threshold = click.prompt(
-        f"PageIndex threshold (pages) [default: {DEFAULT_CONFIG['pageindex_threshold']}]",
-        default=DEFAULT_CONFIG["pageindex_threshold"],
-        type=int,
-        show_default=False,
-    )
+    ).strip()
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
@@ -290,11 +291,21 @@ def init():
     openkb_dir.mkdir()
     config = {
         "model": model,
-        "language": language,
-        "pageindex_threshold": pageindex_threshold,
+        "language": DEFAULT_CONFIG["language"],
+        "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
     }
     save_config(openkb_dir / "config.yaml", config)
     (openkb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")
+
+    # Write API key to KB-local .env (0600) if the user provided one
+    if api_key:
+        env_path = Path(".env")
+        if env_path.exists():
+            click.echo(".env already exists, skipping write. Add LLM_API_KEY manually if needed.")
+        else:
+            env_path.write_text(f"LLM_API_KEY={api_key}\n", encoding="utf-8")
+            os.chmod(env_path, 0o600)
+            click.echo("Saved LLM API key to .env.")
 
     # Register this KB in the global config
     register_kb(Path.cwd())
