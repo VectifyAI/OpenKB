@@ -77,13 +77,28 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         "structure": structure,
     }
 
-    # Write wiki/sources/ — extract per-page content with pymupdf (not PageIndex)
+    # Write wiki/sources/ — per-page content
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     images_dir = sources_dir / "images" / pdf_path.stem
 
     from openkb.images import convert_pdf_to_pages
-    all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
+
+    all_pages: list = []
+    if pageindex_api_key:
+        # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
+        # requires a page range, so pass "1-N".
+        from openkb.converter import get_pdf_page_count
+        page_count = get_pdf_page_count(pdf_path)
+        try:
+            all_pages = col.get_page_content(doc_id, f"1-{page_count}")
+        except Exception as exc:
+            logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
+
+    if not all_pages:
+        if pageindex_api_key:
+            logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
+        all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
 
     (sources_dir / f"{pdf_path.stem}.json").write_text(
         json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
