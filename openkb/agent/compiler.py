@@ -338,7 +338,15 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                 end = clean.find("---", 3)
                 if end != -1:
                     clean = clean[end + 3:].lstrip("\n")
-            existing += f"\n\n{clean}"
+            # Replace body with LLM rewrite (prompt asks for full rewrite, not delta)
+            if existing.startswith("---"):
+                end = existing.find("---", 3)
+                if end != -1:
+                    existing = existing[:end + 3] + "\n\n" + clean
+                else:
+                    existing = clean
+            else:
+                existing = clean
         if brief and existing.startswith("---"):
             end = existing.find("---", 3)
             if end != -1:
