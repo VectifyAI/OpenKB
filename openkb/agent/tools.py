@@ -89,7 +89,7 @@ def parse_pages(pages: str) -> list[int]:
     return sorted(n for n in result if n > 0)
 
 
-def get_page_content(doc_name: str, pages: str, wiki_root: str) -> str:
+def get_wiki_page_content(doc_name: str, pages: str, wiki_root: str) -> str:
     """Return formatted content for specified pages of a document.
 
     Reads ``{wiki_root}/sources/{doc_name}.json`` which must be a JSON array of

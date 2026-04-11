@@ -6,7 +6,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 
 from agents import ToolOutputImage, ToolOutputText
-from openkb.agent.tools import read_wiki_file, read_wiki_image
+from openkb.agent.tools import get_wiki_page_content, read_wiki_file, read_wiki_image
 
 MAX_TURNS = 50
 from openkb.schema import get_agents_md
@@ -55,7 +55,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         return read_wiki_file(path, wiki_root)
 
     @function_tool
-    def get_page_content_tool(doc_name: str, pages: str) -> str:
+    def get_page_content(doc_name: str, pages: str) -> str:
         """Get text content of specific pages from a PageIndex (long) document.
         Only use for documents with doc_type: pageindex. For short documents,
         use read_file instead.
@@ -63,8 +63,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
             doc_name: Document name (e.g. 'attention-is-all-you-need').
             pages: Page specification (e.g. '3-5,7,10-12').
         """
-        from openkb.agent.tools import get_page_content
-        return get_page_content(doc_name, pages, wiki_root)
+        return get_wiki_page_content(doc_name, pages, wiki_root)
 
     @function_tool
     def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
@@ -86,7 +85,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content_tool, get_image],
+        tools=[read_file, get_page_content, get_image],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
