@@ -138,14 +138,15 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     4. Else: compile_short_doc.
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
-    from openkb.state import HashRegistry
+    from openkb.state import get_registry
 
     logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
-    registry = HashRegistry(openkb_dir / "hashes.json")
+    backend = config.get("storage_backend", "sqlite")
+    registry = get_registry(openkb_dir, backend=backend)
 
     # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
@@ -299,9 +300,10 @@ def init():
         "model": model,
         "language": DEFAULT_CONFIG["language"],
         "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
+        "storage_backend": DEFAULT_CONFIG["storage_backend"],
     }
     save_config(openkb_dir / "config.yaml", config)
-    (openkb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")
+    # SQLite DB 会在首次访问时由 get_registry() 自动创建，无需预创建
 
     # Write API key to KB-local .env (0600) if the user provided one
     if api_key:
@@ -591,13 +593,13 @@ def lint(ctx, fix):
 
 def print_list(kb_dir: Path) -> None:
     """Print all documents in the knowledge base. Usable from CLI and chat REPL."""
-    openkb_dir = kb_dir / ".openkb"
-    hashes_file = openkb_dir / "hashes.json"
-    if not hashes_file.exists():
-        click.echo("No documents indexed yet.")
-        return
+    from openkb.state import get_registry
 
-    hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
+    backend = config.get("storage_backend", "sqlite")
+    registry = get_registry(openkb_dir, backend=backend)
+    hashes = registry.all_entries()
     if not hashes:
         click.echo("No documents indexed yet.")
         return
@@ -678,11 +680,14 @@ def print_status(kb_dir: Path) -> None:
         click.echo(f"  {'raw':<20} {raw_count:<10}")
 
     # Hash registry summary
+    from openkb.state import get_registry
+
     openkb_dir = kb_dir / ".openkb"
-    hashes_file = openkb_dir / "hashes.json"
-    if hashes_file.exists():
-        hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
-        click.echo(f"\n  Total indexed: {len(hashes)} document(s)")
+    config = load_config(openkb_dir / "config.yaml")
+    backend = config.get("storage_backend", "sqlite")
+    registry = get_registry(openkb_dir, backend=backend)
+    hashes = registry.all_entries()
+    click.echo(f"\n  Total indexed: {len(hashes)} document(s)")
 
     # Last compile time: newest file in wiki/summaries/
     summaries_dir = wiki_dir / "summaries"

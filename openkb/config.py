@@ -9,6 +9,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "language": "en",
     "pageindex_threshold": 20,
+    "storage_backend": "sqlite",
 }
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
