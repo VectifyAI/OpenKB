@@ -25,8 +25,8 @@ from openkb.log import append_log
 
 _STYLE_DICT: dict[str, str] = {
     "prompt":           "bold ansicyan",
-    "toolbar":          "bg:ansiblue fg:ansiwhite",
-    "toolbar.session":  "bg:ansiblue fg:ansiwhite bold",
+    "toolbar":          "noreverse bg:ansiblue fg:ansiwhite",
+    "toolbar.session":  "noreverse bg:ansiblue fg:ansiwhite bold",
     "header":           "ansibrightblack",
     "tool":             "ansibrightblack",
     "tool.name":        "ansibrightblack bold",
