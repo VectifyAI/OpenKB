@@ -281,7 +281,7 @@ async def _handle_slash(
     arg = parts[1].strip() if len(parts) > 1 else ""
 
     if head in ("/exit", "/quit"):
-        _fmt(style, ("class:header", "Bye.\n"))
+        _fmt(style, ("class:header", "Bye. Thanks for using OpenKB.\n\n"))
         return "exit"
 
     if head == "/help":
@@ -338,10 +338,10 @@ async def run_chat(
         try:
             user_input = await prompt_session.prompt_async()
         except KeyboardInterrupt:
-            _fmt(style, ("class:header", "\nBye.\n"))
+            _fmt(style, ("class:header", "\nBye. Thanks for using OpenKB.\n\n"))
             return
         except EOFError:
-            _fmt(style, ("class:header", "Bye.\n"))
+            _fmt(style, ("class:header", "Bye. Thanks for using OpenKB.\n\n"))
             return
 
         user_input = (user_input or "").strip()
