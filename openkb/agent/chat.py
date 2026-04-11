@@ -24,18 +24,18 @@ from openkb.log import append_log
 
 
 _STYLE_DICT: dict[str, str] = {
-    "prompt":           "bold ansicyan",
+    "prompt":           "bold #5fa0e0",
     "bottom-toolbar":   "noreverse nobold #8a8a8a bg:default",
     "toolbar":          "noreverse nobold #8a8a8a bg:default",
     "toolbar.session":  "noreverse #8a8a8a bg:default bold",
     "header":           "#8a8a8a",
-    "header.title":     "bold #ffffff",
+    "header.title":     "bold #5fa0e0",
     "tool":             "#8a8a8a",
     "tool.name":        "#8a8a8a bold",
     "slash.ok":         "ansigreen",
     "slash.help":       "#8a8a8a",
     "error":            "ansired bold",
-    "resume.turn":      "ansicyan",
+    "resume.turn":      "#5fa0e0",
     "resume.user":      "bold",
     "resume.assistant": "#8a8a8a",
 }
@@ -210,12 +210,16 @@ async def _run_turn(agent: Any, session: ChatSession, user_input: str, style: St
     sys.stdout.flush()
     collected: list[str] = []
     last_was_text = False
+    need_blank_before_text = False
     try:
         async for event in result.stream_events():
             if isinstance(event, RawResponsesStreamEvent):
                 if isinstance(event.data, ResponseTextDeltaEvent):
                     text = event.data.delta
                     if text:
+                        if need_blank_before_text:
+                            sys.stdout.write("\n")
+                            need_blank_before_text = False
                         sys.stdout.write(text)
                         sys.stdout.flush()
                         collected.append(text)
@@ -231,6 +235,7 @@ async def _run_turn(agent: Any, session: ChatSession, user_input: str, style: St
                     name = getattr(raw, "name", "?")
                     args = getattr(raw, "arguments", "") or ""
                     _fmt(style, ("class:tool", _format_tool_line(name, args) + "\n"))
+                    need_blank_before_text = True
     finally:
         sys.stdout.write("\n\n")
         sys.stdout.flush()
