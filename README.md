@@ -163,7 +163,19 @@ Settings are initialized by `openkb init`, and stored in `.openkb/config.yaml`:
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+storage_backend: sqlite          # Storage backend: sqlite (default) or json
 ```
+
+### Storage Backend
+
+OpenKB supports two storage backends for the file hash registry:
+
+| Backend | Description | Use Case |
+|---------|-------------|----------|
+| `sqlite` | SQLite database (default) | Better concurrency, scalability, recommended for production |
+| `json` | JSON file | Simple, human-readable, for small installations |
+
+Migration from JSON to SQLite happens automatically when you switch to `sqlite` backend and a `hashes.json` file exists. The JSON file is preserved but no longer used.
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
 
