@@ -128,12 +128,12 @@ def load_session(kb_dir: Path, session_id: str) -> ChatSession:
 
 
 def list_sessions(kb_dir: Path) -> list[dict[str, Any]]:
-    """Return session metadata dicts, newest first (by id, which is timestamp-prefixed)."""
+    """Return session metadata dicts, most recently updated first."""
     d = chats_dir(kb_dir)
     if not d.exists():
         return []
     out: list[dict[str, Any]] = []
-    for p in sorted(d.glob("*.json"), key=lambda x: x.name, reverse=True):
+    for p in d.glob("*.json"):
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -147,6 +147,7 @@ def list_sessions(kb_dir: Path) -> list[dict[str, Any]]:
                 "model": data.get("model", ""),
             }
         )
+    out.sort(key=lambda s: (s["updated_at"], s["id"]), reverse=True)
     return out
 
 
