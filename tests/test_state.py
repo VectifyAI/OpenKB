@@ -82,3 +82,50 @@ def test_load_existing_json(tmp_path):
     registry = HashRegistry(path)
     assert registry.is_known("existinghash") is True
     assert registry.get("existinghash") == {"file": "pre.pdf"}
+
+
+# ---------------------------------------------------------------------------
+# Factory function tests
+# ---------------------------------------------------------------------------
+
+from openkb.state import get_registry
+
+
+def test_get_registry_returns_db_registry_by_default(tmp_path):
+    """get_registry should return DbRegistry by default."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    
+    registry = get_registry(openkb_dir)
+    assert type(registry).__name__ == "DbRegistry"
+
+
+def test_get_registry_returns_hash_registry_for_json_backend(tmp_path):
+    """get_registry should return HashRegistry when backend is 'json'."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    
+    registry = get_registry(openkb_dir, backend="json")
+    assert type(registry).__name__ == "HashRegistry"
+
+
+def test_get_registry_returns_db_registry_for_sqlite_backend(tmp_path):
+    """get_registry should return DbRegistry when backend is 'sqlite'."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    
+    registry = get_registry(openkb_dir, backend="sqlite")
+    assert type(registry).__name__ == "DbRegistry"
+
+
+def test_get_registry_migrates_json_to_sqlite(tmp_path):
+    """get_registry should migrate existing JSON when switching to sqlite."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    
+    json_path = openkb_dir / "hashes.json"
+    json_path.write_text('{"hash1": {"name": "doc.pdf"}}', encoding="utf-8")
+    
+    registry = get_registry(openkb_dir, backend="sqlite")
+    assert registry.is_known("hash1")
+    assert registry.get("hash1") == {"name": "doc.pdf"}

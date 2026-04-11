@@ -48,14 +48,15 @@ class TestConvertDocumentMarkdown:
 
     def test_md_duplicate_skipped(self, kb_dir):
         """Second call with same file returns skipped=True when hash is registered."""
-        from openkb.state import HashRegistry
+        from openkb.state import get_registry
 
         src = kb_dir / "raw" / "notes.md"
         src.write_text("# Notes\n\nSome content here.", encoding="utf-8")
 
         result1 = convert_document(src, kb_dir)  # first call
         # Simulate CLI registering the hash after successful compilation
-        registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+        openkb_dir = kb_dir / ".openkb"
+        registry = get_registry(openkb_dir, backend="sqlite")
         registry.add(result1.file_hash, {"name": src.name, "type": "md"})
 
         result2 = convert_document(src, kb_dir)  # second call
