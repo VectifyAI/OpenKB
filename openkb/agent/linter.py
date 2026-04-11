@@ -11,7 +11,7 @@ MAX_TURNS = 50
 from openkb.schema import SCHEMA_MD, get_agents_md
 
 _LINTER_INSTRUCTIONS_TEMPLATE = """\
-You are a knowledge-base semantic lint agent. Your job is to audit the wiki
+You are OpenKB's semantic lint agent. Your job is to audit the wiki
 for quality issues that structural tools cannot detect.
 
 {schema_md}
@@ -50,7 +50,7 @@ def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
     """
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _LINTER_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
-    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
+    instructions += f"\n\nIMPORTANT: Write the lint report in {language} language."
 
     @function_tool
     def list_files(directory: str) -> str:
