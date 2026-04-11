@@ -5,7 +5,10 @@ from pathlib import Path
 
 from agents import Agent, Runner, function_tool
 
-from openkb.agent.tools import read_wiki_file
+from agents import ToolOutputImage, ToolOutputText
+from openkb.agent.tools import read_wiki_file, read_wiki_image
+
+MAX_TURNS = 50
 from openkb.schema import get_agents_md
 
 _QUERY_INSTRUCTIONS_TEMPLATE = """\
@@ -17,13 +20,21 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
 1. Read index.md to see all documents and concepts with brief summaries.
    Each document is marked (short) or (pageindex) to indicate its type.
 2. Read relevant summary pages (summaries/) for document overviews.
+   Note: summaries may omit details.
 3. Read concept pages (concepts/) for cross-document synthesis.
-4. When you need detailed source content:
-   - Short documents: read_file("sources/{{doc_name}}.md") for the full text.
-   - PageIndex documents: use get_page_content(doc_name, pages) to read
-     specific pages. The summary page shows chapter structure with page
-     ranges to help you decide which pages to read.
-5. Synthesise a clear, well-cited answer grounded in wiki content.
+4. When you need detailed source document content, each summary page has a
+   `full_text` frontmatter field with the path to the original document content:
+   - Short documents (doc_type: short): read_file with that path.
+   - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
+     with tight page ranges. The summary shows document tree structure with page
+     ranges to help you target. Never fetch the whole document.
+5. When source content references images (e.g. ![image](sources/images/doc/file.png)),
+   use get_image to view them. Always view images when the question asks about
+   a figure, chart, diagram, or visual content.
+6. Synthesize a clear, concise, well-cited answer grounded in wiki content.
+
+Answer based only on wiki content. Be concise.
+Before each tool call, output one short sentence explaining the reason.
 
 If you cannot find relevant information, say so clearly.
 """
@@ -45,9 +56,9 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
 
     @function_tool
     def get_page_content_tool(doc_name: str, pages: str) -> str:
-        """Get text content of specific pages from a long document.
-        Use this when you need detailed content from a document. The summary
-        page shows chapter structure with page ranges.
+        """Get text content of specific pages from a PageIndex (long) document.
+        Only use for documents with doc_type: pageindex. For short documents,
+        use read_file instead.
         Args:
             doc_name: Document name (e.g. 'attention-is-all-you-need').
             pages: Page specification (e.g. '3-5,7,10-12').
@@ -55,12 +66,24 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         from openkb.agent.tools import get_page_content
         return get_page_content(doc_name, pages, wiki_root)
 
+    @function_tool
+    def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
+        """View an image from the wiki.
+        Use when source content references images you need to see.
+        Args:
+            image_path: Image path relative to wiki root (e.g. 'sources/images/doc/p1_img1.png').
+        """
+        result = read_wiki_image(image_path, wiki_root)
+        if result["type"] == "image":
+            return ToolOutputImage(image_url=result["image_url"])
+        return ToolOutputText(text=result["text"])
+
     from agents.model_settings import ModelSettings
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content_tool],
+        tools=[read_file, get_page_content_tool, get_image],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
@@ -92,10 +115,10 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
     agent = build_query_agent(wiki_root, model, language=language)
 
     if not stream:
-        result = await Runner.run(agent, question)
+        result = await Runner.run(agent, question, max_turns=MAX_TURNS)
         return result.final_output or ""
 
-    result = Runner.run_streamed(agent, question)
+    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
     collected = []
     async for event in result.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
@@ -110,13 +133,10 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
             if item.type == "tool_call_item":
                 raw = item.raw_item
                 args = getattr(raw, "arguments", "{}")
-                sys.stdout.write(f"\n[tool call] {raw.name}({args})\n")
+                sys.stdout.write(f"\n[tool call] {raw.name}({args})\n\n")
                 sys.stdout.flush()
             elif item.type == "tool_call_output_item":
-                output = str(item.output)
-                preview = output[:200] + "..." if len(output) > 200 else output
-                sys.stdout.write(f"[tool output] {preview}\n\n")
-                sys.stdout.flush()
+                pass
     sys.stdout.write("\n")
     sys.stdout.flush()
     return "".join(collected) if collected else result.final_output or ""

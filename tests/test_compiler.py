@@ -12,6 +12,7 @@ from openkb.agent.compiler import (
     compile_short_doc,
     _compile_concepts,
     _parse_json,
+    _sanitize_concept_name,
     _write_summary,
     _write_concept,
     _update_index,
@@ -74,26 +75,59 @@ class TestParseBriefContent:
             _parse_json("Just plain markdown text without JSON")
 
 
+class TestSanitizeConceptName:
+    def test_ascii_passthrough(self):
+        assert _sanitize_concept_name("hello-world") == "hello-world"
+
+    def test_spaces_replaced(self):
+        assert _sanitize_concept_name("hello world") == "hello-world"
+
+    def test_chinese(self):
+        result = _sanitize_concept_name("注意力机制")
+        assert result == "注意力机制"
+
+    def test_japanese(self):
+        result = _sanitize_concept_name("トランスフォーマー")
+        assert result == "トランスフォーマー"
+
+    def test_french_accents(self):
+        result = _sanitize_concept_name("réseau neuronal")
+        assert "r" in result
+        assert result != "r-seau-neuronal"  # accented chars preserved, not stripped
+
+    def test_distinct_chinese_names_no_collision(self):
+        a = _sanitize_concept_name("注意力机制")
+        b = _sanitize_concept_name("变压器模型")
+        assert a != b
+
+    def test_empty_fallback(self):
+        assert _sanitize_concept_name("!!!") == "unnamed-concept"
+
+    def test_nfkc_normalization(self):
+        # U+FF21 (fullwidth A) should normalize to regular A
+        assert _sanitize_concept_name("\uff21\uff22") == "AB"
+
+
 class TestWriteSummary:
     def test_writes_with_frontmatter(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.", brief="Introduces transformers")
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
         path = wiki / "summaries" / "my-doc.md"
         assert path.exists()
         text = path.read_text()
-        assert "sources: [my-doc.pdf]" in text
-        assert "brief: Introduces transformers" in text
+        assert "doc_type: short" in text
+        assert "full_text: sources/my-doc.md" in text
         assert "# Summary" in text
 
     def test_writes_without_brief(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "my-doc.pdf", "# Summary\n\nContent here.")
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
         path = wiki / "summaries" / "my-doc.md"
         text = path.read_text()
-        assert "sources: [my-doc.pdf]" in text
-        assert "brief:" not in text
+        assert "doc_type: short" in text
+        assert "full_text: sources/my-doc.md" in text
 
 
 class TestWriteConcept:
@@ -164,6 +198,26 @@ class TestUpdateIndex:
         assert "[[concepts/attention]] — Focus mechanism" in text
         assert "[[concepts/transformer]] — NN architecture" in text
 
+    def test_updates_only_exact_concept_row(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n"
+            "- [[concepts/transformer]] — Uses [[concepts/attention]] internally\n"
+            "- [[concepts/attention]] — Old brief\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(
+            wiki,
+            "my-doc",
+            ["attention"],
+            concept_briefs={"attention": "New brief"},
+        )
+        text = (wiki / "index.md").read_text()
+        assert "- [[concepts/transformer]] — Uses [[concepts/attention]] internally" in text
+        assert "- [[concepts/attention]] — New brief" in text
+        assert text.count("[[concepts/attention]] — New brief") == 1
+
     def test_no_duplicates(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
@@ -186,6 +240,54 @@ class TestUpdateIndex:
         text = (wiki / "index.md").read_text()
         assert "[[summaries/my-doc]]" in text
         assert "[[concepts/attention]]" in text
+
+    def test_updates_concept_brief_only_inside_concepts_section(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n"
+            "## Documents\n"
+            "- [[summaries/my-doc]] (short) — Mentions [[concepts/attention]] here\n\n"
+            "## Concepts\n"
+            "- [[concepts/attention]] — Old brief\n\n"
+            "## Explorations\n",
+            encoding="utf-8",
+        )
+
+        _update_index(
+            wiki,
+            "my-doc",
+            ["attention"],
+            concept_briefs={"attention": "New brief"},
+        )
+
+        text = (wiki / "index.md").read_text()
+        assert "- [[summaries/my-doc]] (short) — Mentions [[concepts/attention]] here" in text
+        assert "- [[concepts/attention]] — New brief" in text
+        assert "- [[concepts/attention]] — Old brief" not in text
+
+    def test_adds_concept_entry_when_link_exists_outside_concepts_section(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n"
+            "## Documents\n"
+            "- [[summaries/my-doc]] (short) — Mentions [[concepts/attention]] here\n\n"
+            "## Concepts\n\n"
+            "## Explorations\n",
+            encoding="utf-8",
+        )
+
+        _update_index(
+            wiki,
+            "my-doc",
+            ["attention"],
+            concept_briefs={"attention": "New brief"},
+        )
+
+        text = (wiki / "index.md").read_text()
+        assert "- [[summaries/my-doc]] (short) — Mentions [[concepts/attention]] here" in text
+        assert "- [[concepts/attention]] — New brief" in text
 
 
 class TestReadWikiContext:
@@ -513,12 +615,12 @@ class TestCompileShortDoc:
         # Verify summary written
         summary_path = wiki / "summaries" / "test-doc.md"
         assert summary_path.exists()
-        assert "sources: [test-doc.pdf]" in summary_path.read_text()
+        assert "full_text: sources/test-doc.md" in summary_path.read_text()
 
         # Verify concept written
         concept_path = wiki / "concepts" / "transformer.md"
         assert concept_path.exists()
-        assert "sources: [test-doc.pdf]" in concept_path.read_text()
+        assert "sources: [summaries/test-doc.md]" in concept_path.read_text()
 
         # Verify index updated
         index_text = (wiki / "index.md").read_text()
@@ -678,14 +780,14 @@ class TestCompileConceptsPlan:
         fa_path = wiki / "concepts" / "flash-attention.md"
         assert fa_path.exists()
         fa_text = fa_path.read_text()
-        assert "sources: [test-doc.pdf]" in fa_text
+        assert "sources: [summaries/test-doc.md]" in fa_text
         assert "Flash Attention" in fa_text
 
         # Verify attention updated (is_update=True path in _write_concept)
         att_path = wiki / "concepts" / "attention.md"
         assert att_path.exists()
         att_text = att_path.read_text()
-        assert "test-doc.pdf" in att_text
+        assert "summaries/test-doc.md" in att_text
         assert "old-paper.pdf" in att_text
 
         # Verify index updated
@@ -725,7 +827,7 @@ class TestCompileConceptsPlan:
         # Verify link added to transformer page
         transformer_text = (wiki / "concepts" / "transformer.md").read_text()
         assert "[[summaries/test-doc]]" in transformer_text
-        assert "test-doc.pdf" in transformer_text
+        assert "summaries/test-doc.md" in transformer_text
 
     @pytest.mark.asyncio
     async def test_fallback_list_format(self, tmp_path):
@@ -760,7 +862,7 @@ class TestCompileConceptsPlan:
         att_path = wiki / "concepts" / "attention.md"
         assert att_path.exists()
         att_text = att_path.read_text()
-        assert "sources: [test-doc.pdf]" in att_text
+        assert "sources: [summaries/test-doc.md]" in att_text
         assert "Attention" in att_text
 
 
@@ -804,9 +906,10 @@ class TestBriefIntegration:
             )
             await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
 
-        # Summary frontmatter has brief
+        # Summary frontmatter has doc_type and full_text
         summary_text = (wiki / "summaries" / "test-doc.md").read_text()
-        assert "brief: A paper about transformers" in summary_text
+        assert "doc_type: short" in summary_text
+        assert "full_text: sources/test-doc.md" in summary_text
 
         # Concept frontmatter has brief
         concept_text = (wiki / "concepts" / "transformer.md").read_text()

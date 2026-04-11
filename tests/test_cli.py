@@ -23,13 +23,11 @@ def test_init_creates_structure(tmp_path):
         assert (cwd / "wiki" / "sources" / "images").is_dir()
         assert (cwd / "wiki" / "summaries").is_dir()
         assert (cwd / "wiki" / "concepts").is_dir()
-        assert (cwd / "wiki" / "reports").is_dir()
         assert (cwd / ".openkb").is_dir()
 
         # Files
         assert (cwd / "wiki" / "AGENTS.md").is_file()
         assert (cwd / "wiki" / "log.md").is_file()
-        assert (cwd / "wiki" / "explorations").is_dir()
         assert (cwd / "wiki" / "index.md").is_file()
         assert (cwd / ".openkb" / "config.yaml").is_file()
         assert (cwd / ".openkb" / "hashes.json").is_file()

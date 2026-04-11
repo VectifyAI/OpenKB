@@ -58,7 +58,8 @@ class TestAddCommand:
 
     def test_add_missing_init(self, tmp_path):
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path):
+        with runner.isolated_filesystem(temp_dir=tmp_path), \
+             patch("openkb.cli._find_kb_dir", return_value=None):
             result = runner.invoke(cli, ["add", "somefile.pdf"])
             assert "No knowledge base found" in result.output
 

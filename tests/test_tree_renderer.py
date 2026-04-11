@@ -15,9 +15,8 @@ class TestRenderSummaryMd:
     def test_has_yaml_frontmatter(self, sample_tree):
         output = render_summary_md(sample_tree, "Sample Document", "doc-abc")
         assert output.startswith("---\n")
-        assert "source: Sample Document" in output
-        assert "type: pageindex" in output
-        assert "doc_id: doc-abc" in output
+        assert "doc_type: pageindex" in output
+        assert "full_text: sources/Sample Document.json" in output
 
     def test_top_level_nodes_are_h1(self, sample_tree):
         output = render_summary_md(sample_tree, "Sample Document", "doc-abc")

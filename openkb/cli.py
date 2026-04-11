@@ -1,6 +1,12 @@
 """OpenKB CLI — command-line interface for the knowledge base workflow."""
 from __future__ import annotations
 
+# Silence import-time warnings (e.g. pydub's missing-ffmpeg warning emitted
+# when markitdown pulls it in). markitdown later clobbers the filters during
+# its own import, so we re-apply after all imports below.
+import warnings
+warnings.filterwarnings("ignore")
+
 import asyncio
 import json
 import logging
@@ -9,8 +15,8 @@ from pathlib import Path
 
 import os
 
-# Disable Agents SDK tracing (requires OPENAI_API_KEY otherwise)
-os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
+from agents import set_tracing_disabled
+set_tracing_disabled(True)
 # Use local model cost map — skip fetching from GitHub on every invocation
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
@@ -23,6 +29,10 @@ from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_
 from openkb.converter import convert_document
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD
+
+# Suppress warnings after all imports — markitdown overrides filters at import time
+import warnings
+warnings.filterwarnings("ignore")
 
 load_dotenv()  # load from cwd (covers running inside the KB dir)
 
@@ -154,7 +164,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     # 3/4. Index and compile
     if result.is_long_doc:
-        click.echo(f"  Long document detected — indexing with PageIndex…")
+        click.echo(f"  Long document detected — indexing with PageIndex...")
         try:
             from openkb.indexer import index_long_document
             index_result = index_long_document(result.raw_path, kb_dir)
@@ -164,7 +174,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
             return
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
-        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})…")
+        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
         for attempt in range(2):
             try:
                 asyncio.run(
@@ -181,7 +191,7 @@ def _add_single_file(file_path: Path, kb_dir: Path) -> None:
                     logger.debug("Compilation traceback:", exc_info=True)
                     return
     else:
-        click.echo(f"  Compiling short doc…")
+        click.echo(f"  Compiling short doc...")
         for attempt in range(2):
             try:
                 asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
@@ -252,23 +262,28 @@ def init():
         return
 
     # Interactive prompts
+    click.echo("Pick an LLM in `provider/model` LiteLLM format:")
+    click.echo("  OpenAI:    gpt-5.4-mini, gpt-5.4")
+    click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
+    click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
+    click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
+    click.echo()
     model = click.prompt(
-        "Model (e.g. gpt-5.4, anthropic/claude-sonnet-4-6, gemini/gemini-3.1-pro-preview)",
+        f"Model (enter for default {DEFAULT_CONFIG['model']})",
         default=DEFAULT_CONFIG["model"],
+        show_default=False,
     )
-    language = click.prompt("Language", default=DEFAULT_CONFIG["language"])
-    pageindex_threshold = click.prompt(
-        "PageIndex threshold (pages)",
-        default=DEFAULT_CONFIG["pageindex_threshold"],
-        type=int,
-    )
+    api_key = click.prompt(
+        "LLM API Key (saved to .env, enter to skip)",
+        default="",
+        hide_input=True,
+        show_default=False,
+    ).strip()
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
-    Path("wiki/explorations").mkdir(parents=True, exist_ok=True)
-    Path("wiki/reports").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
     Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
@@ -282,16 +297,26 @@ def init():
     openkb_dir.mkdir()
     config = {
         "model": model,
-        "language": language,
-        "pageindex_threshold": pageindex_threshold,
+        "language": DEFAULT_CONFIG["language"],
+        "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
     }
     save_config(openkb_dir / "config.yaml", config)
     (openkb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")
 
+    # Write API key to KB-local .env (0600) if the user provided one
+    if api_key:
+        env_path = Path(".env")
+        if env_path.exists():
+            click.echo(".env already exists, skipping write. Add LLM_API_KEY manually if needed.")
+        else:
+            env_path.write_text(f"LLM_API_KEY={api_key}\n", encoding="utf-8")
+            os.chmod(env_path, 0o600)
+            click.echo("Saved LLM API key to .env.")
+
     # Register this KB in the global config
     register_kb(Path.cwd())
 
-    click.echo("Knowledge base initialised.")
+    click.echo("Knowledge base initialized.")
 
 
 @cli.command()
@@ -420,12 +445,12 @@ def lint(ctx, fix):
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint
-    click.echo("Running structural lint…")
+    click.echo("Running structural lint...")
     structural_report = run_structural_lint(kb_dir)
     click.echo(structural_report)
 
     # Knowledge lint (semantic)
-    click.echo("Running knowledge lint…")
+    click.echo("Running knowledge lint...")
     try:
         knowledge_report = asyncio.run(run_knowledge_lint(kb_dir, model))
     except Exception as exc:

@@ -133,6 +133,41 @@ def get_page_content(doc_name: str, pages: str, wiki_root: str) -> str:
     return "\n\n".join(parts) + "\n\n"
 
 
+_MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
+
+def read_wiki_image(path: str, wiki_root: str) -> dict:
+    """Read an image file from the wiki and return as base64 data URL.
+
+    Args:
+        path: Image path relative to *wiki_root* (e.g. ``"sources/images/doc/p1_img1.png"``).
+        wiki_root: Absolute path to the wiki root directory.
+
+    Returns:
+        A dict with ``type``, ``image_url`` keys for ``ToolOutputImage``,
+        or a dict with ``type``, ``text`` keys on error.
+    """
+    import base64
+
+    root = Path(wiki_root).resolve()
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root):
+        return {"type": "text", "text": "Access denied: path escapes wiki root."}
+    if not full_path.exists():
+        return {"type": "text", "text": f"Image not found: {path}"}
+
+    mime = _MIME_TYPES.get(full_path.suffix.lower(), "image/png")
+    b64 = base64.b64encode(full_path.read_bytes()).decode()
+    return {"type": "image", "image_url": f"data:{mime};base64,{b64}"}
+
+
 def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     """Write or overwrite a Markdown file in the wiki.
 

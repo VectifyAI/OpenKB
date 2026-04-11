@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json as json_mod
 import logging
-import shutil
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,36 +77,28 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         "structure": structure,
     }
 
-    # Write wiki/sources/ — get per-page content from PageIndex and store as JSON
+    # Write wiki/sources/ — per-page content
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    dest_images_dir = sources_dir / "images" / pdf_path.stem
+    images_dir = sources_dir / "images" / pdf_path.stem
 
-    # Get per-page content from PageIndex — use actual page count
-    page_count = doc.get("page_count")
-    if page_count is None:
-        # Fallback: count pages from structure's max end_index
-        max_page = 0
-        for node in structure:
-            end = node.get("end_index", 0)
-            if end > max_page:
-                max_page = end
-        page_count = max_page if max_page > 0 else 100
-        logger.info("page_count not in doc, inferred from structure: %d", page_count)
-    all_pages = col.get_page_content(doc_id, f"1-{page_count}")
+    from openkb.images import convert_pdf_to_pages
 
-    # Relocate image paths in each page
-    dest_images_dir.mkdir(parents=True, exist_ok=True)
-    for page in all_pages:
-        if "images" in page:
-            for img in page["images"]:
-                src_path = Path(img["path"])
-                if src_path.exists():
-                    filename = src_path.name
-                    dest = dest_images_dir / filename
-                    if not dest.exists():
-                        shutil.copy2(src_path, dest)
-                    img["path"] = f"images/{pdf_path.stem}/{filename}"
+    all_pages: list = []
+    if pageindex_api_key:
+        # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
+        # requires a page range, so pass "1-N".
+        from openkb.converter import get_pdf_page_count
+        page_count = get_pdf_page_count(pdf_path)
+        try:
+            all_pages = col.get_page_content(doc_id, f"1-{page_count}")
+        except Exception as exc:
+            logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
+
+    if not all_pages:
+        if pageindex_api_key:
+            logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
+        all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
 
     (sources_dir / f"{pdf_path.stem}.json").write_text(
         json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -115,7 +107,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     # Write wiki/summaries/ (no images, just summaries)
     summaries_dir = kb_dir / "wiki" / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    summary_md = render_summary_md(tree, doc_name, doc_id)
+    summary_md = render_summary_md(tree, pdf_path.stem, doc_id)
     (summaries_dir / f"{pdf_path.stem}.md").write_text(summary_md, encoding="utf-8")
 
     return IndexResult(doc_id=doc_id, description=description, tree=tree)
