@@ -35,6 +35,7 @@ dependencies = [
     "pyyaml",
     "python-dotenv",
     "json-repair",
+    "prompt_toolkit>=3.0",
 ]
 
 [project.urls]

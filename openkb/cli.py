@@ -396,6 +396,107 @@ def query(ctx, question, save):
 
 
 @cli.command()
+@click.option(
+    "--resume", "-r", "resume",
+    is_flag=False, flag_value="__latest__", default=None, metavar="[ID]",
+    help="Resume the latest chat session, or a specific one by id or prefix.",
+)
+@click.option(
+    "--list", "list_sessions_flag",
+    is_flag=True, default=False,
+    help="List chat sessions.",
+)
+@click.option(
+    "--delete", "delete_id",
+    default=None, metavar="ID",
+    help="Delete a chat session by id or prefix.",
+)
+@click.option(
+    "--no-color", "no_color",
+    is_flag=True, default=False,
+    help="Disable colored output.",
+)
+@click.pass_context
+def chat(ctx, resume, list_sessions_flag, delete_id, no_color):
+    """Start an interactive chat with the knowledge base."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.agent.chat_session import (
+        ChatSession,
+        delete_session,
+        list_sessions,
+        load_session,
+        relative_time,
+        resolve_session_id,
+    )
+
+    if list_sessions_flag:
+        sessions = list_sessions(kb_dir)
+        if not sessions:
+            click.echo("No chat sessions yet.")
+            return
+        click.echo(f"  {'ID':<22} {'TURNS':<6} {'UPDATED':<12} TITLE")
+        click.echo(f"  {'-'*22} {'-'*6} {'-'*12} {'-'*30}")
+        for s in sessions:
+            rel = relative_time(s.get("updated_at", ""))
+            title = s.get("title") or "(empty)"
+            click.echo(
+                f"  {s['id']:<22} {s['turn_count']:<6} {rel:<12} {title}"
+            )
+        click.echo(
+            f"\n{len(sessions)} session(s) in {kb_dir / '.openkb' / 'chats'}"
+        )
+        return
+
+    if delete_id is not None:
+        try:
+            resolved = resolve_session_id(kb_dir, delete_id)
+        except ValueError as exc:
+            click.echo(f"[ERROR] {exc}")
+            return
+        if not resolved:
+            click.echo(f"No matching session: {delete_id}")
+            return
+        if delete_session(kb_dir, resolved):
+            click.echo(f"Deleted session {resolved}")
+        else:
+            click.echo(f"Could not delete session: {resolved}")
+        return
+
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
+    _setup_llm_key(kb_dir)
+
+    if resume is not None:
+        try:
+            resolved = resolve_session_id(kb_dir, resume)
+        except ValueError as exc:
+            click.echo(f"[ERROR] {exc}")
+            return
+        if not resolved:
+            if resume == "__latest__":
+                click.echo("No previous chat sessions to resume.")
+            else:
+                click.echo(f"No matching session: {resume}")
+            return
+        session = load_session(kb_dir, resolved)
+    else:
+        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        language: str = config.get("language", "en")
+        session = ChatSession.new(kb_dir, model, language)
+
+    from openkb.agent.chat import run_chat
+
+    try:
+        asyncio.run(run_chat(kb_dir, session, no_color=no_color))
+    except Exception as exc:
+        click.echo(f"[ERROR] Chat failed: {exc}")
+
+
+@cli.command()
 @click.pass_context
 def watch(ctx):
     """Watch the raw/ directory for new documents and process them automatically."""
