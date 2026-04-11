@@ -84,15 +84,8 @@ def _extract_preview(text: str, limit: int = 150) -> str:
 
 
 def _openkb_version() -> str:
-    try:
-        from importlib.metadata import version
-        return version("openkb")
-    except Exception:
-        try:
-            from openkb import __version__
-            return __version__
-        except Exception:
-            return ""
+    from openkb import __version__
+    return __version__
 
 
 def _display_kb_dir(kb_dir: Path) -> str:
