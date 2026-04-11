@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYSTEM_TEMPLATE = """\
-You are a wiki compilation agent for a personal knowledge base.
+You are OpenKB's wiki compilation agent for a personal knowledge base.
 
 {schema_md}
 

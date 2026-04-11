@@ -12,7 +12,7 @@ MAX_TURNS = 50
 from openkb.schema import get_agents_md
 
 _QUERY_INSTRUCTIONS_TEMPLATE = """\
-You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
+You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching the wiki.
 
 {schema_md}
 
@@ -20,7 +20,8 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
 1. Read index.md to see all documents and concepts with brief summaries.
    Each document is marked (short) or (pageindex) to indicate its type.
 2. Read relevant summary pages (summaries/) for document overviews.
-   Note: summaries may omit details.
+   Summaries may omit details — if you need more, follow the summary's
+   `full_text` frontmatter field to the source (see step 4).
 3. Read concept pages (concepts/) for cross-document synthesis.
 4. When you need detailed source document content, each summary page has a
    `full_text` frontmatter field with the path to the original document content:
@@ -28,9 +29,8 @@ You are a knowledge-base Q&A agent. You answer questions by searching the wiki.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-5. When source content references images (e.g. ![image](sources/images/doc/file.png)),
-   use get_image to view them. Always view images when the question asks about
-   a figure, chart, diagram, or visual content.
+5. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
+   Use the get_image tool to view them when needed.
 6. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
@@ -44,7 +44,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     """Build and return the Q&A agent."""
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
-    instructions += f"\n\nIMPORTANT: Write all wiki content in {language} language."
+    instructions += f"\n\nIMPORTANT: Answer in {language} language."
 
     @function_tool
     def read_file(path: str) -> str:
@@ -69,7 +69,10 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     @function_tool
     def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
         """View an image from the wiki.
-        Use when source content references images you need to see.
+
+        Use when a question asks about a specific figure, chart, or diagram
+        you'd need to see to answer accurately.
+
         Args:
             image_path: Image path relative to wiki root (e.g. 'sources/images/doc/p1_img1.png').
         """
