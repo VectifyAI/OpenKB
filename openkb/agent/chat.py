@@ -25,17 +25,19 @@ from openkb.log import append_log
 
 _STYLE_DICT: dict[str, str] = {
     "prompt":           "bold ansicyan",
-    "toolbar":          "noreverse bg:ansiblue fg:ansiwhite",
-    "toolbar.session":  "noreverse bg:ansiblue fg:ansiwhite bold",
-    "header":           "ansibrightblack",
-    "tool":             "ansibrightblack",
-    "tool.name":        "ansibrightblack bold",
+    "bottom-toolbar":   "noreverse nobold #8a8a8a bg:default",
+    "toolbar":          "noreverse nobold #8a8a8a bg:default",
+    "toolbar.session":  "noreverse #8a8a8a bg:default bold",
+    "header":           "#8a8a8a",
+    "header.title":     "bold #ffffff",
+    "tool":             "#8a8a8a",
+    "tool.name":        "#8a8a8a bold",
     "slash.ok":         "ansigreen",
-    "slash.help":       "ansibrightblack",
+    "slash.help":       "#8a8a8a",
     "error":            "ansired bold",
     "resume.turn":      "ansicyan",
     "resume.user":      "bold",
-    "resume.assistant": "ansibrightblack",
+    "resume.assistant": "#8a8a8a",
 }
 
 _HELP_TEXT = (
@@ -81,13 +83,46 @@ def _extract_preview(text: str, limit: int = 150) -> str:
     return text[: limit - 1] + "\u2026"
 
 
-def _print_header(session: ChatSession, style: Style) -> None:
+def _openkb_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("openkb")
+    except Exception:
+        try:
+            from openkb import __version__
+            return __version__
+        except Exception:
+            return ""
+
+
+def _display_kb_dir(kb_dir: Path) -> str:
+    home = str(Path.home())
+    s = str(kb_dir)
+    if s == home:
+        return "~"
+    if s.startswith(home + "/"):
+        return "~" + s[len(home):]
+    return s
+
+
+def _print_header(session: ChatSession, kb_dir: Path, style: Style) -> None:
+    disp_dir = _display_kb_dir(kb_dir)
+    version = _openkb_version()
+    version_suffix = f" v{version}\n" if version else "\n"
+    _fmt(
+        style,
+        ("class:header.title", "OpenKB Chat"),
+        ("class:header", version_suffix),
+    )
     _fmt(
         style,
         (
             "class:header",
-            f"OpenKB chat  session {session.id}  model {session.model}\n",
+            f"{disp_dir} \u00b7 {session.model} \u00b7 session {session.id}\n",
         ),
+    )
+    _fmt(
+        style,
         (
             "class:header",
             "Type /help for commands, Ctrl-D to exit, "
@@ -293,7 +328,7 @@ async def run_chat(
     wiki_root = str(kb_dir / "wiki")
     agent = build_query_agent(wiki_root, session.model, language=language)
 
-    _print_header(session, style)
+    _print_header(session, kb_dir, style)
     if session.turn_count > 0:
         _print_resume_view(session, style)
 
