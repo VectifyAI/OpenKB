@@ -64,7 +64,7 @@ def _build_style(use_color: bool) -> Style:
 
 
 def _fmt(style: Style, *fragments: tuple[str, str]) -> None:
-    print_formatted_text(FormattedText(list(fragments)), style=style)
+    print_formatted_text(FormattedText(list(fragments)), style=style, end="")
 
 
 def _format_tool_line(name: str, args: str, width: int = 78) -> str:
@@ -109,6 +109,7 @@ def _print_header(session: ChatSession, kb_dir: Path, style: Style) -> None:
     disp_dir = _display_kb_dir(kb_dir)
     version = _openkb_version()
     version_suffix = f" v{version}\n" if version else "\n"
+    print()
     _fmt(
         style,
         ("class:header.title", "OpenKB Chat"),
@@ -129,6 +130,7 @@ def _print_header(session: ChatSession, kb_dir: Path, style: Style) -> None:
             "Ctrl-C to abort current response.\n",
         ),
     )
+    print()
 
 
 def _print_resume_view(session: ChatSession, style: Style) -> None:
@@ -230,7 +232,7 @@ async def _run_turn(agent: Any, session: ChatSession, user_input: str, style: St
                     args = getattr(raw, "arguments", "") or ""
                     _fmt(style, ("class:tool", _format_tool_line(name, args) + "\n"))
     finally:
-        sys.stdout.write("\n")
+        sys.stdout.write("\n\n")
         sys.stdout.flush()
 
     answer = "".join(collected).strip()
