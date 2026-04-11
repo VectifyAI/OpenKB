@@ -24,11 +24,12 @@ Traditional RAG rediscovers knowledge from scratch on every query. Nothing accum
 
 ### Features
 
-- **Any format** — PDF, Word, PowerPoint, Excel, HTML, Markdown, text, CSV, and more via markitdown
+- **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, and more via markitdown
 - **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless long-context retrieval
 - **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
-- **Auto wiki** — LLM generates summaries, concept pages, and cross-links. You curate sources; the LLM does the rest
-- **Query** — Ask questions against your wiki. The LLM navigates your compiled knowledge to answer
+- **Compiled Wiki** — LLM manages and compiles your documents into summaries, concept pages, and cross-links, all kept in sync
+- **Query** — Ask questions (one-off) against your wiki. The LLM navigates your compiled knowledge to answer
+- **Interactive Chat** — Multi-turn conversations with persisted sessions you can resume across runs
 - **Lint** — Health checks find contradictions, gaps, orphans, and stale content
 - **Watch mode** — Drop files into `raw/`, wiki updates automatically
 - **Obsidian compatible** — Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
@@ -55,11 +56,11 @@ openkb add paper.pdf
 openkb add ~/papers/                   # Add a whole directory
 openkb add article.html
 
-# 4. Ask questions
+# 4. Ask a question
 openkb query "What are the main findings?"
 
-# 5. Check wiki health
-openkb lint
+# 5. Or start an interactive chat session
+openkb chat
 ```
 
 ### Set up your LLM
@@ -132,12 +133,27 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 | `openkb add <file_or_dir>` | Add documents and compile to wiki |
 | `openkb query "question"` | Ask a question against the knowledge base |
 | `openkb query "question" --save` | Ask and save the answer to `wiki/explorations/` |
+| `openkb chat` | Start an interactive multi-turn chat (use `--resume`, `--list`, `--delete` to manage sessions) |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
 | `openkb status` | Show knowledge base stats |
 
 <!-- | `openkb lint --fix` | Auto-fix what it can | -->
+
+### Interactive chat
+
+`openkb chat` opens an interactive chat session over your wiki knowledge base. Unlike the one-shot `openkb query`, each turn carries the conversation history, so you can dig into a topic without re-typing context.
+
+```bash
+openkb chat                       # start a new session
+openkb chat --resume              # resume the most recent session
+openkb chat --resume 20260411     # resume by id (unique prefix works)
+openkb chat --list                # list all sessions
+openkb chat --delete <id>         # delete a session
+```
+
+`/help` lists all slash commands: e.g., `/save` exports the transcript, `/clear` starts a fresh session.
 
 ### Configuration
 
