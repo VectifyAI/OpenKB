@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,8 @@ _HELP_TEXT = (
     "  /save [name]   Export transcript to wiki/explorations/\n"
     "  /help          Show this"
 )
+
+_SIGINT_EXIT_WINDOW = 2.0
 
 
 def _use_color(force_off: bool) -> bool:
@@ -334,12 +337,20 @@ async def run_chat(
 
     prompt_session = _make_prompt_session(session, style, use_color)
 
+    last_sigint = 0.0
+
     while True:
         try:
             user_input = await prompt_session.prompt_async()
+            last_sigint = 0.0
         except KeyboardInterrupt:
-            _fmt(style, ("class:header", "\nBye. Thanks for using OpenKB.\n\n"))
-            return
+            now = time.monotonic()
+            if last_sigint and (now - last_sigint) < _SIGINT_EXIT_WINDOW:
+                _fmt(style, ("class:header", "\nBye. Thanks for using OpenKB.\n\n"))
+                return
+            last_sigint = now
+            _fmt(style, ("class:header", "\n(Press Ctrl-C again to exit)\n"))
+            continue
         except EOFError:
             _fmt(style, ("class:header", "Bye. Thanks for using OpenKB.\n\n"))
             return
