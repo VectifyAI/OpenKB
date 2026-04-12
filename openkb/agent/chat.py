@@ -189,6 +189,36 @@ def _make_prompt_session(session: ChatSession, style: Style, use_color: bool) ->
     )
 
 
+def _make_rich_console() -> Any:
+    """Create a Rich Console with a Claude-Code-like Markdown theme."""
+    from rich.console import Console
+    from rich.theme import Theme
+
+    theme = Theme({
+        # Headings: bold, no color (clean and minimal)
+        "markdown.h1":        "bold",
+        "markdown.h2":        "bold",
+        "markdown.h3":        "bold",
+        "markdown.h4":        "bold dim",
+        # Code: dark background, no border
+        "markdown.code":      "bold #c0c0c0 on #1e1e1e",
+        # Links
+        "markdown.link":      "underline #5fa0e0",
+        "markdown.link_url":  "#5fa0e0",
+        # Emphasis
+        "markdown.bold":      "bold",
+        "markdown.italic":    "italic",
+        "markdown.strong":    "bold",
+        # Lists and block quotes
+        "markdown.item.bullet":   "#8a8a8a",
+        "markdown.item.number":   "#8a8a8a",
+        "markdown.block_quote":   "italic #8a8a8a",
+        # Horizontal rule
+        "markdown.hr":        "#4a4a4a",
+    })
+    return Console(theme=theme)
+
+
 async def _run_turn(
     agent: Any, session: ChatSession, user_input: str, style: Style,
     *, use_color: bool = True,
@@ -215,7 +245,7 @@ async def _run_turn(
         from rich.live import Live
         from rich.markdown import Markdown
 
-        console = Console()
+        console = _make_rich_console()
     else:
         console = None  # type: ignore[assignment]
 

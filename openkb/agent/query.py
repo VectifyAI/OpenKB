@@ -124,10 +124,10 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
     use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR", "")
 
     if use_color:
-        from rich.console import Console
         from rich.live import Live
         from rich.markdown import Markdown
-        console = Console()
+        from openkb.agent.chat import _make_rich_console
+        console = _make_rich_console()
     else:
         console = None  # type: ignore[assignment]
 
