@@ -69,7 +69,7 @@ class TestAddCommand:
         doc.write_text("# Hello")
 
         runner = CliRunner()
-        with patch("openkb.cli._add_single_file") as mock_add, \
+        with patch("openkb.cli.add_single_file") as mock_add, \
              patch("openkb.cli._find_kb_dir", return_value=kb_dir):
             result = runner.invoke(cli, ["add", str(doc)])
             mock_add.assert_called_once_with(doc, kb_dir)
@@ -83,7 +83,7 @@ class TestAddCommand:
         (docs_dir / "ignore.xyz").write_text("skip me")
 
         runner = CliRunner()
-        with patch("openkb.cli._add_single_file") as mock_add, \
+        with patch("openkb.cli.add_single_file") as mock_add, \
              patch("openkb.cli._find_kb_dir", return_value=kb_dir):
             result = runner.invoke(cli, ["add", str(docs_dir)])
             # Should be called for .md and .txt but not .xyz

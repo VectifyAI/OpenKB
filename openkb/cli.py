@@ -128,7 +128,7 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
-def _add_single_file(file_path: Path, kb_dir: Path) -> None:
+def add_single_file(file_path: Path, kb_dir: Path) -> None:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -346,7 +346,7 @@ def add(ctx, path):
         click.echo(f"Found {total} supported file(s) in {path}.")
         for i, f in enumerate(files, 1):
             click.echo(f"\n[{i}/{total}] ", nl=False)
-            _add_single_file(f, kb_dir)
+            add_single_file(f, kb_dir)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(
@@ -354,7 +354,7 @@ def add(ctx, path):
                 f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
             return
-        _add_single_file(target, kb_dir)
+        add_single_file(target, kb_dir)
 
 
 @cli.command()
@@ -519,24 +519,19 @@ def watch(ctx):
                     f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
                 )
                 continue
-            _add_single_file(fp, kb_dir)
+            add_single_file(fp, kb_dir)
 
     click.echo(f"Watching {raw_dir} for new documents. Press Ctrl+C to stop.")
     watch_directory(raw_dir, on_new_files)
 
 
-@cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
-@click.pass_context
-def lint(ctx, fix):
-    """Lint the knowledge base for structural and semantic inconsistencies."""
-    if fix:
-        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
-    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
-    if kb_dir is None:
-        click.echo("No knowledge base found. Run `openkb init` first.")
-        return
+async def run_lint(kb_dir: Path) -> Path | None:
+    """Run structural + knowledge lint, write report, return report path.
 
+    Returns ``None`` if the KB has no indexed documents (nothing to lint).
+    Async because knowledge lint uses an LLM agent. Usable from CLI
+    (via ``asyncio.run``) and directly from the chat REPL.
+    """
     from openkb.lint import run_structural_lint
     from openkb.agent.linter import run_knowledge_lint
 
@@ -556,15 +551,13 @@ def lint(ctx, fix):
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
-    # Structural lint
     click.echo("Running structural lint...")
     structural_report = run_structural_lint(kb_dir)
     click.echo(structural_report)
 
-    # Knowledge lint (semantic)
     click.echo("Running knowledge lint...")
     try:
-        knowledge_report = asyncio.run(run_knowledge_lint(kb_dir, model))
+        knowledge_report = await run_knowledge_lint(kb_dir, model)
     except Exception as exc:
         knowledge_report = f"Knowledge lint failed: {exc}"
     click.echo(knowledge_report)
@@ -579,17 +572,25 @@ def lint(ctx, fix):
     report_path.write_text(report_content, encoding="utf-8")
     append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
     click.echo(f"\nReport written to {report_path}")
+    return report_path
 
 
-@cli.command(name="list")
+@cli.command()
+@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
 @click.pass_context
-def list_cmd(ctx):
-    """List all documents in the knowledge base."""
+def lint(ctx, fix):
+    """Lint the knowledge base for structural and semantic inconsistencies."""
+    if fix:
+        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
+    asyncio.run(run_lint(kb_dir))
 
+
+def print_list(kb_dir: Path) -> None:
+    """Print all documents in the knowledge base. Usable from CLI and chat REPL."""
     openkb_dir = kb_dir / ".openkb"
     hashes_file = openkb_dir / "hashes.json"
     if not hashes_file.exists():
@@ -642,15 +643,19 @@ def list_cmd(ctx):
                 click.echo(f"  - {r}")
 
 
-@cli.command()
+@cli.command(name="list")
 @click.pass_context
-def status(ctx):
-    """Show the current status of the knowledge base."""
+def list_cmd(ctx):
+    """List all documents in the knowledge base."""
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
+    print_list(kb_dir)
 
+
+def print_status(kb_dir: Path) -> None:
+    """Print knowledge base status. Usable from CLI and chat REPL."""
     wiki_dir = kb_dir / "wiki"
     subdirs = ["sources", "summaries", "concepts", "reports"]
 
@@ -698,3 +703,14 @@ def status(ctx):
             import datetime
             mtime = datetime.datetime.fromtimestamp(newest_report.stat().st_mtime)
             click.echo(f"  Last lint:     {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+@cli.command()
+@click.pass_context
+def status(ctx):
+    """Show the current status of the knowledge base."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    print_status(kb_dir)
