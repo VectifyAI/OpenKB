@@ -541,9 +541,6 @@ def lint(ctx, fix):
     from openkb.agent.linter import run_knowledge_lint
 
     openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Skip lint entirely when the KB has no indexed documents
     hashes_file = openkb_dir / "hashes.json"
@@ -554,6 +551,10 @@ def lint(ctx, fix):
     if not hashes:
         click.echo("Nothing to lint — no documents indexed yet. Run `openkb add` first.")
         return
+
+    config = load_config(openkb_dir / "config.yaml")
+    _setup_llm_key(kb_dir)
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     # Structural lint
     click.echo("Running structural lint...")

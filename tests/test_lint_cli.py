@@ -69,6 +69,7 @@ class TestLintCommand:
              patch("openkb.cli._setup_llm_key"), \
              patch("openkb.agent.linter.run_knowledge_lint", return_value="No issues."):
             result = runner.invoke(cli, ["lint"])
+        assert result.exit_code == 0
         assert "Running structural lint" in result.output
         assert "Running knowledge lint" in result.output
         assert "Report written to" in result.output
