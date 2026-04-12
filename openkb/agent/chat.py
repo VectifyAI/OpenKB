@@ -250,10 +250,15 @@ def _make_prompt_session(session: ChatSession, style: Style, use_color: bool, kb
         """Tab accepts the current completion (like zsh), not cycle."""
         buf = event.current_buffer
         state = buf.complete_state
-        if state and state.current_completion:
+        if not state:
+            return
+        # Only one candidate or already selected — accept immediately
+        if state.current_completion:
             buf.apply_completion(state.current_completion)
+        elif len(state.completions) == 1:
+            buf.apply_completion(state.completions[0])
         else:
-            # Menu open but nothing selected yet — select first item
+            # Multiple candidates, nothing selected — highlight first
             buf.go_to_completion(0)
 
     @kb.add("tab", filter=~has_completions)
