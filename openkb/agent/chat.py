@@ -42,6 +42,12 @@ _STYLE_DICT: dict[str, str] = {
     "resume.turn":      "#5fa0e0",
     "resume.user":      "bold",
     "resume.assistant": "#8a8a8a",
+    # Completion menu — lightweight, no heavy background
+    "completion-menu":                    "bg:default #8a8a8a",
+    "completion-menu.completion":         "bg:default #d0d0d0",
+    "completion-menu.completion.current": "bg:#3a3a3a #ffffff bold",
+    "completion-menu.meta.completion":         "bg:default #6a6a6a",
+    "completion-menu.meta.completion.current": "bg:#3a3a3a #8a8a8a",
 }
 
 _HELP_TEXT = (
@@ -210,14 +216,19 @@ class _ChatCompleter(Completer):
     def get_completions(self, document: Document, complete_event: Any) -> Any:
         text = document.text_before_cursor
 
-        # After "/add ", complete file paths
+        # After "/add ", complete file paths (skip dotfiles)
         if text.lstrip().lower().startswith("/add "):
             path_text = text.lstrip()[5:]
             # Strip leading quote if user started one
             if path_text and path_text[0] in ("'", '"'):
                 path_text = path_text[1:]
             path_doc = Document(path_text, len(path_text))
-            yield from self._path_completer.get_completions(path_doc, complete_event)
+            for c in self._path_completer.get_completions(path_doc, complete_event):
+                # Hide dotfiles unless the user explicitly typed a dot
+                basename = c.text.lstrip("/")
+                if basename.startswith(".") and not path_text.rpartition("/")[2].startswith("."):
+                    continue
+                yield c
             return
 
         # Complete slash commands with descriptions
