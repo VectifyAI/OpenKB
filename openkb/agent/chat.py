@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion, PathCompleter
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.styles import Style
@@ -186,10 +188,46 @@ def _bottom_toolbar(session: ChatSession) -> FormattedText:
     )
 
 
+_SLASH_COMMANDS = [
+    "/exit", "/quit", "/help", "/clear", "/save",
+    "/status", "/list", "/lint", "/add",
+]
+
+
+class _ChatCompleter(Completer):
+    """Complete slash commands and file paths after /add."""
+
+    def __init__(self) -> None:
+        self._path_completer = PathCompleter(expanduser=True)
+
+    def get_completions(self, document: Document, complete_event: Any) -> Any:
+        text = document.text_before_cursor
+
+        # After "/add ", complete file paths
+        if text.lstrip().lower().startswith("/add "):
+            # Extract the path portion after "/add "
+            prefix = text.lstrip()
+            add_pos = prefix.lower().index("/add ") + 5
+            path_text = prefix[add_pos:]
+            # Strip surrounding quotes if the user started one
+            if path_text and path_text[0] in ("'", '"'):
+                path_text = path_text[1:]
+            path_doc = Document(path_text, len(path_text))
+            yield from self._path_completer.get_completions(path_doc, complete_event)
+            return
+
+        # Complete slash commands
+        if text.startswith("/"):
+            for cmd in _SLASH_COMMANDS:
+                if cmd.startswith(text.lower()):
+                    yield Completion(cmd, start_position=-len(text))
+
+
 def _make_prompt_session(session: ChatSession, style: Style, use_color: bool) -> PromptSession:
     return PromptSession(
         message=FormattedText([("class:prompt", ">>> ")]),
         style=style,
+        completer=_ChatCompleter(),
         bottom_toolbar=(lambda: _bottom_toolbar(session)) if use_color else None,
     )
 
