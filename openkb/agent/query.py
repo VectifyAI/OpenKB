@@ -157,6 +157,8 @@ async def run_query(
         return lv
 
     live: Live | None = None
+    last_was_text = False
+    need_blank_before_text = False
     result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
     collected: list[str] = []
     segment: list[str] = []
@@ -167,11 +169,18 @@ async def run_query(
                 if isinstance(event.data, ResponseTextDeltaEvent):
                     text = event.data.delta
                     if text:
+                        if need_blank_before_text:
+                            if console is not None:
+                                print()
+                                segment = []
+                                live = _start_live()
+                            else:
+                                sys.stdout.write("\n")
+                            need_blank_before_text = False
                         collected.append(text)
                         segment.append(text)
-                        if console is not None:
-                            if live is None:
-                                live = _start_live()
+                        last_was_text = True
+                        if live:
                             if "\n" in text:
                                 joined = "".join(segment)
                                 visible = joined[: joined.rfind("\n") + 1]
@@ -183,20 +192,24 @@ async def run_query(
             elif isinstance(event, RunItemStreamEvent):
                 item = event.item
                 if item.type == "tool_call_item":
+                    if last_was_text:
+                        if live:
+                            if segment:
+                                live.update(_make_markdown("".join(segment)))
+                            live.stop()
+                            live = None
+                        else:
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
+                        last_was_text = False
                     raw_item = item.raw_item
                     name = getattr(raw_item, "name", "?")
                     args = getattr(raw_item, "arguments", "") or ""
                     if live:
-                        if segment:
-                            live.update(_make_markdown("".join(segment)))
                         live.stop()
                         live = None
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
                     _fmt(style, ("class:tool", _format_tool_line(name, args) + "\n"))
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-                    segment = []
+                    need_blank_before_text = True
                 elif item.type == "tool_call_output_item":
                     pass
     finally:
