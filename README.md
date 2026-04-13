@@ -18,13 +18,13 @@
 
 The idea is based on a [concept](https://x.com/karpathy/status/2039805659525644595) described by Andrej Karpathy: LLMs generate summaries, concept pages, and cross-references, all maintained automatically. Knowledge compounds over time instead of being re-derived on every query.
 
-### Why not just traditional RAG?
+### Why not traditional RAG?
 
 Traditional RAG rediscovers knowledge from scratch on every query. Nothing accumulates. OpenKB compiles knowledge once into a persistent wiki, then keeps it current. Cross-references already exist. Contradictions are flagged. Synthesis reflects everything consumed.
 
 ### Features
 
-- **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, and more via markitdown
+- **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, text, and more via markitdown
 - **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless long-context retrieval
 - **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
 - **Compiled Wiki** — LLM manages and compiles your documents into summaries, concept pages, and cross-links, all kept in sync
@@ -42,7 +42,26 @@ Traditional RAG rediscovers knowledge from scratch on every query. Nothing accum
 pip install openkb
 ```
 
-### Quick start
+<details>
+<summary><i>Other install options</i></summary>
+
+- **Latest from GitHub:**
+
+  ```bash
+  pip install git+https://github.com/VectifyAI/OpenKB.git
+  ```
+
+- **Install from source** (editable, for development):
+
+  ```bash
+  git clone https://github.com/VectifyAI/OpenKB.git
+  cd OpenKB
+  pip install -e .
+  ```
+
+</details>
+
+### Quick Start
 
 ```bash
 # 1. Create a directory for your knowledge base
@@ -53,13 +72,12 @@ openkb init
 
 # 3. Add documents
 openkb add paper.pdf
-openkb add ~/papers/                   # Add a whole directory
-openkb add article.html
+openkb add ~/papers/  # Add a whole directory
 
 # 4. Ask a question
 openkb query "What are the main findings?"
 
-# 5. Or start an interactive chat session
+# 5. Or chat interactively
 openkb chat
 ```
 
@@ -75,7 +93,7 @@ Create a `.env` file with your LLM API key:
 LLM_API_KEY=your_llm_api_key
 ```
 
-# 🧩 How It Works
+# 🧩 How OpenKB Works
 
 ### Architecture
 
@@ -101,7 +119,7 @@ wiki/
  └── reports/            Lint reports
 ```
 
-### Short vs. long document handling
+### Short vs. Long Document Handling
 
 | | Short documents | Long documents (PDF ≥ 20 pages) |
 |---|---|---|
@@ -112,7 +130,7 @@ wiki/
 
 Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree with summaries. The LLM reads the tree instead of the full text, enabling better retrieval from long documents.
 
-### The wiki compiles knowledge
+### Knowledge Compilation
 
 When you add a document, the LLM:
 
@@ -123,7 +141,7 @@ When you add a document, the LLM:
 
 A single source might touch 10-15 wiki pages. Knowledge accumulates: each document enriches the existing wiki rather than sitting in isolation.
 
-# 📦 Usage
+# ⚙️ Usage
 
 ### Commands
 
@@ -131,8 +149,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
 | `openkb add <file_or_dir>` | Add documents and compile to wiki |
-| `openkb query "question"` | Ask a question against the knowledge base |
-| `openkb query "question" --save` | Ask and save the answer to `wiki/explorations/` |
+| `openkb query "question"` | Ask a question against the knowledge base (use `--save` to save the answer to `wiki/explorations/`) |
 | `openkb chat` | Start an interactive multi-turn chat (use `--resume`, `--list`, `--delete` to manage sessions) |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
@@ -141,7 +158,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 
 <!-- | `openkb lint --fix` | Auto-fix what it can | -->
 
-### Interactive chat
+### Interactive Chat
 
 `openkb chat` opens an interactive chat session over your wiki knowledge base. Unlike the one-shot `openkb query`, each turn carries the conversation history, so you can dig into a topic without re-typing context.
 
@@ -182,7 +199,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | Anthropic | `anthropic/claude-sonnet-4-6` |
 | Gemini | `gemini/gemini-3.1-pro-preview` |
 
-### PageIndex integration
+### PageIndex Integration
 
 Long documents are challenging for LLMs due to context limits, context rot, and summarization loss.
 [PageIndex](https://github.com/VectifyAI/PageIndex) solves this with vectorless, reasoning-based retrieval — building a hierarchical tree index that lets LLMs reason over the index for context-aware retrieval.
@@ -230,7 +247,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 | Wiki compilation | LLM agent | LLM agent (same) |
 | Q&A | Query over wiki | Wiki + PageIndex retrieval |
 
-### Tech Stack
+### The Stack
 
 - [PageIndex](https://github.com/VectifyAI/PageIndex) — Vectorless, reasoning-based document indexing and retrieval
 - [markitdown](https://github.com/microsoft/markitdown) — Universal file-to-markdown conversion
@@ -257,7 +274,7 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ### Support Us
 
-If you find OpenKB useful, give us a star 🌟 — and check out [PageIndex](https://github.com/VectifyAI/PageIndex) too!  
+If you find OpenKB useful, please give us a star 🌟 — and check out [PageIndex](https://github.com/VectifyAI/PageIndex) too!  
 
 <div>
 
