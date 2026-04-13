@@ -153,7 +153,16 @@ openkb chat --list                # list all sessions
 openkb chat --delete <id>         # delete a session
 ```
 
-`/help` lists all slash commands: e.g., `/save` exports the transcript, `/clear` starts a fresh session.
+Inside a chat, type `/` to access slash commands (Tab to complete):
+
+- `/help` — list available commands
+- `/status` — show knowledge base status
+- `/list` — list all documents
+- `/add <path>` — add a document or directory without leaving the chat
+- `/save [name]` — export the transcript to `wiki/explorations/`
+- `/clear` — start a fresh session (the current one stays on disk)
+- `/lint` — run knowledge base lint
+- `/exit` — exit (Ctrl-D also works)
 
 ### Configuration
 
