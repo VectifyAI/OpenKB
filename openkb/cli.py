@@ -360,8 +360,13 @@ def add(ctx, path):
 @cli.command()
 @click.argument("question")
 @click.option("--save", is_flag=True, default=False, help="Save the answer to wiki/explorations/.")
+@click.option(
+    "--raw", "raw",
+    is_flag=True, default=False,
+    help="Show raw markdown source instead of rendered output (keeps tool-call colors).",
+)
 @click.pass_context
-def query(ctx, question, save):
+def query(ctx, question, save, raw):
     """Query the knowledge base with QUESTION."""
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -376,7 +381,7 @@ def query(ctx, question, save):
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     try:
-        answer = asyncio.run(run_query(question, kb_dir, model, stream=True))
+        answer = asyncio.run(run_query(question, kb_dir, model, stream=True, raw=raw))
     except Exception as exc:
         click.echo(f"[ERROR] Query failed: {exc}")
         return
@@ -416,8 +421,13 @@ def query(ctx, question, save):
     is_flag=True, default=False,
     help="Disable colored output.",
 )
+@click.option(
+    "--raw", "raw",
+    is_flag=True, default=False,
+    help="Show raw markdown source instead of rendered output (keeps prompt and tool-call colors).",
+)
 @click.pass_context
-def chat(ctx, resume, list_sessions_flag, delete_id, no_color):
+def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
     """Start an interactive chat with the knowledge base."""
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -491,7 +501,7 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color):
     from openkb.agent.chat import run_chat
 
     try:
-        asyncio.run(run_chat(kb_dir, session, no_color=no_color))
+        asyncio.run(run_chat(kb_dir, session, no_color=no_color, raw=raw))
     except Exception as exc:
         click.echo(f"[ERROR] Chat failed: {exc}")
 

@@ -91,7 +91,14 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
     )
 
 
-async def run_query(question: str, kb_dir: Path, model: str, stream: bool = False) -> str:
+async def run_query(
+    question: str,
+    kb_dir: Path,
+    model: str,
+    stream: bool = False,
+    *,
+    raw: bool = False,
+) -> str:
     """Run a Q&A query against the knowledge base.
 
     Args:
@@ -99,6 +106,8 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
         kb_dir: Root of the knowledge base.
         model: LLM model name.
         stream: If True, print response tokens to stdout as they arrive.
+        raw: If True, write raw markdown source instead of rendering it
+            (still keeps tool-call line styling).
 
     Returns:
         The agent's final answer as a string.
@@ -120,25 +129,93 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
         result = await Runner.run(agent, question, max_turns=MAX_TURNS)
         return result.final_output or ""
 
+    import os
+    use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR", "")
+
+    from openkb.agent.chat import (
+        _build_style,
+        _fmt,
+        _format_tool_line,
+        _make_markdown,
+        _make_rich_console,
+    )
+
+    style = _build_style(use_color)
+
+    from rich.live import Live
+
+    if use_color and not raw:
+        console = _make_rich_console()
+    else:
+        console = None  # type: ignore[assignment]
+
+    def _start_live() -> Live | None:
+        if console is None:
+            return None
+        lv = Live(console=console, vertical_overflow="visible")
+        lv.start()
+        return lv
+
+    live: Live | None = None
+    last_was_text = False
+    need_blank_before_text = False
     result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
-    collected = []
-    async for event in result.stream_events():
-        if isinstance(event, RawResponsesStreamEvent):
-            if isinstance(event.data, ResponseTextDeltaEvent):
-                text = event.data.delta
-                if text:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
-                    collected.append(text)
-        elif isinstance(event, RunItemStreamEvent):
-            item = event.item
-            if item.type == "tool_call_item":
-                raw = item.raw_item
-                args = getattr(raw, "arguments", "{}")
-                sys.stdout.write(f"\n[tool call] {raw.name}({args})\n\n")
-                sys.stdout.flush()
-            elif item.type == "tool_call_output_item":
-                pass
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+    collected: list[str] = []
+    segment: list[str] = []
+    try:
+        live = _start_live()
+        async for event in result.stream_events():
+            if isinstance(event, RawResponsesStreamEvent):
+                if isinstance(event.data, ResponseTextDeltaEvent):
+                    text = event.data.delta
+                    if text:
+                        if need_blank_before_text:
+                            if console is not None:
+                                print()
+                                segment = []
+                                live = _start_live()
+                            else:
+                                sys.stdout.write("\n")
+                            need_blank_before_text = False
+                        collected.append(text)
+                        segment.append(text)
+                        last_was_text = True
+                        if live:
+                            if "\n" in text:
+                                joined = "".join(segment)
+                                visible = joined[: joined.rfind("\n") + 1]
+                                if visible:
+                                    live.update(_make_markdown(visible))
+                        else:
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
+            elif isinstance(event, RunItemStreamEvent):
+                item = event.item
+                if item.type == "tool_call_item":
+                    if last_was_text:
+                        if live:
+                            if segment:
+                                live.update(_make_markdown("".join(segment)))
+                            live.stop()
+                            live = None
+                        else:
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
+                        last_was_text = False
+                    raw_item = item.raw_item
+                    name = getattr(raw_item, "name", "?")
+                    args = getattr(raw_item, "arguments", "") or ""
+                    if live:
+                        live.stop()
+                        live = None
+                    _fmt(style, ("class:tool", _format_tool_line(name, args) + "\n"))
+                    need_blank_before_text = True
+                elif item.type == "tool_call_output_item":
+                    pass
+    finally:
+        if live:
+            if segment:
+                live.update(_make_markdown("".join(segment)))
+            live.stop()
+        print()
     return "".join(collected) if collected else result.final_output or ""

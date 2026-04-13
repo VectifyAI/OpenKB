@@ -293,7 +293,22 @@ def _make_prompt_session(session: ChatSession, style: Style, use_color: bool, kb
     )
 
 
-async def _run_turn(agent: Any, session: ChatSession, user_input: str, style: Style) -> None:
+def _make_rich_console() -> Any:
+    from rich.console import Console
+
+    return Console()
+
+
+def _make_markdown(text: str) -> Any:
+    from openkb.agent._markdown import render
+
+    return render(text)
+
+
+async def _run_turn(
+    agent: Any, session: ChatSession, user_input: str, style: Style,
+    *, use_color: bool = True, raw: bool = False,
+) -> None:
     """Run one agent turn with streaming output and persist the new history."""
     from agents import (
         RawResponsesStreamEvent,
@@ -306,11 +321,29 @@ async def _run_turn(agent: Any, session: ChatSession, user_input: str, style: St
 
     result = Runner.run_streamed(agent, new_input, max_turns=MAX_TURNS)
 
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+    print()
     collected: list[str] = []
+    segment: list[str] = []
     last_was_text = False
     need_blank_before_text = False
+
+    if use_color and not raw:
+        from rich.console import Console
+        from rich.live import Live
+
+        console = _make_rich_console()
+    else:
+        console = None  # type: ignore[assignment]
+
+    def _start_live() -> Any:
+        if console is None:
+            return None
+        lv = Live(console=console, vertical_overflow="visible")
+        lv.start()
+        return lv
+
+    live = _start_live()
+
     try:
         async for event in result.stream_events():
             if isinstance(event, RawResponsesStreamEvent):
@@ -318,27 +351,52 @@ async def _run_turn(agent: Any, session: ChatSession, user_input: str, style: St
                     text = event.data.delta
                     if text:
                         if need_blank_before_text:
-                            sys.stdout.write("\n")
+                            if console is not None:
+                                print()
+                                segment = []
+                                live = _start_live()
+                            else:
+                                sys.stdout.write("\n")
                             need_blank_before_text = False
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
                         collected.append(text)
+                        segment.append(text)
                         last_was_text = True
+                        if live:
+                            if "\n" in text:
+                                joined = "".join(segment)
+                                visible = joined[: joined.rfind("\n") + 1]
+                                if visible:
+                                    live.update(_make_markdown(visible))
+                        else:
+                            sys.stdout.write(text)
+                            sys.stdout.flush()
             elif isinstance(event, RunItemStreamEvent):
                 item = event.item
                 if item.type == "tool_call_item":
                     if last_was_text:
-                        sys.stdout.write("\n")
-                        sys.stdout.flush()
+                        if live:
+                            if segment:
+                                live.update(_make_markdown("".join(segment)))
+                            live.stop()
+                            live = None
+                        else:
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
                         last_was_text = False
-                    raw = item.raw_item
-                    name = getattr(raw, "name", "?")
-                    args = getattr(raw, "arguments", "") or ""
+                    raw_item = item.raw_item
+                    name = getattr(raw_item, "name", "?")
+                    args = getattr(raw_item, "arguments", "") or ""
+                    if live:
+                        live.stop()
+                        live = None
                     _fmt(style, ("class:tool", _format_tool_line(name, args) + "\n"))
                     need_blank_before_text = True
     finally:
-        sys.stdout.write("\n\n")
-        sys.stdout.flush()
+        if live:
+            if segment:
+                live.update(_make_markdown("".join(segment)))
+            live.stop()
+        print()
 
     answer = "".join(collected).strip()
     if not answer:
@@ -483,6 +541,7 @@ async def run_chat(
     session: ChatSession,
     *,
     no_color: bool = False,
+    raw: bool = False,
 ) -> None:
     """Run the chat REPL against ``session`` until the user exits."""
     from openkb.config import load_config
@@ -539,7 +598,7 @@ async def run_chat(
 
         append_log(kb_dir / "wiki", "query", user_input)
         try:
-            await _run_turn(agent, session, user_input, style)
+            await _run_turn(agent, session, user_input, style, use_color=use_color, raw=raw)
         except KeyboardInterrupt:
             _fmt(style, ("class:error", "\n[aborted]\n"))
         except Exception as exc:
