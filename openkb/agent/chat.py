@@ -279,9 +279,9 @@ async def _run_turn(
                             sys.stdout.write("\n")
                             sys.stdout.flush()
                         last_was_text = False
-                    raw = item.raw_item
-                    name = getattr(raw, "name", "?")
-                    args = getattr(raw, "arguments", "") or ""
+                    raw_item = item.raw_item
+                    name = getattr(raw_item, "name", "?")
+                    args = getattr(raw_item, "arguments", "") or ""
                     if live:
                         live.stop()
                         live = None
