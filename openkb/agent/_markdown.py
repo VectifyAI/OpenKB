@@ -80,6 +80,8 @@ def _render_block(node: Any) -> RenderableType | None:
         return _render_blockquote(node)
     if t == "table":
         return _render_table(node)
+    if t == "html_block":
+        return Text(node.content.rstrip("\n"))
     return None
 
 
@@ -142,7 +144,7 @@ def _append_inline(node: Any, out: Text) -> None:
         href = node.attrGet("src") or ""
         out.append(href)
     elif t in ("html_inline", "html_block"):
-        return
+        out.append(node.content)
     else:
         content = getattr(node, "content", "")
         if content:
