@@ -11,7 +11,7 @@ from markitdown import MarkItDown
 
 from openkb.config import load_config
 from openkb.images import copy_relative_images, extract_base64_images, convert_pdf_with_images
-from openkb.state import HashRegistry
+from openkb.state import get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +50,13 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     threshold: int = config.get("pageindex_threshold", 20)
-    registry = HashRegistry(openkb_dir / "hashes.json")
+    backend = config.get("storage_backend", "sqlite")
+    registry = get_registry(openkb_dir, backend=backend)
 
     # ------------------------------------------------------------------
     # 1. Hash check
     # ------------------------------------------------------------------
-    file_hash = HashRegistry.hash_file(src)
+    file_hash = registry.hash_file(src)
     if registry.is_known(file_hash):
         logger.info("Skipping already-known file: %s", src.name)
         return ConvertResult(skipped=True)
