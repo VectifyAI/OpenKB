@@ -1,18 +1,22 @@
 import json
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
+from openkb.config import DEFAULT_CONFIG, load_config
 from openkb.cli import cli
 from openkb.schema import AGENTS_MD
+
+
+def invoke_init_with_defaults(runner):
+    return runner.invoke(cli, ["init"], input="\n\n\n")
 
 
 def test_init_creates_structure(tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path), \
          patch("openkb.cli.register_kb"):
-        result = runner.invoke(cli, ["init"])
+        result = invoke_init_with_defaults(runner)
         assert result.exit_code == 0
 
         from pathlib import Path
@@ -36,6 +40,10 @@ def test_init_creates_structure(tmp_path):
         hashes = json.loads((cwd / ".openkb" / "hashes.json").read_text())
         assert hashes == {}
 
+        # Pressing Enter through the prompts accepts the configured defaults.
+        config = load_config(cwd / ".openkb" / "config.yaml")
+        assert config == DEFAULT_CONFIG
+
         # index.md header
         index_content = (cwd / "wiki" / "index.md").read_text()
         assert index_content == "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n"
@@ -45,7 +53,7 @@ def test_init_schema_content(tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path), \
          patch("openkb.cli.register_kb"):
-        result = runner.invoke(cli, ["init"])
+        result = invoke_init_with_defaults(runner)
         assert result.exit_code == 0
 
         from pathlib import Path
@@ -58,7 +66,7 @@ def test_init_already_exists(tmp_path):
     with runner.isolated_filesystem(temp_dir=tmp_path), \
          patch("openkb.cli.register_kb"):
         # First run should succeed
-        result = runner.invoke(cli, ["init"])
+        result = invoke_init_with_defaults(runner)
         assert result.exit_code == 0
 
         # Second run should print already initialized message
