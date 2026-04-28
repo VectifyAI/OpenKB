@@ -87,6 +87,7 @@ _TYPE_DISPLAY_MAP = {
 }
 
 _SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx"}
+DEFAULT_CORRECTION_MODEL = "gpt-5.4"
 
 
 def _display_type(raw_type: str) -> str:
@@ -393,6 +394,109 @@ def query(ctx, question, save):
             f"---\nquery: \"{question}\"\n---\n\n{answer}\n", encoding="utf-8"
         )
         click.echo(f"\nSaved to {explore_path}")
+
+
+def _write_correction_report(
+    kb_dir: Path,
+    page: str,
+    claim: str,
+    note: str | None,
+    applied: bool,
+    model: str,
+    result: str,
+    apply_requested: bool | None = None,
+) -> Path:
+    """Persist a correction run report under wiki/reports/corrections/."""
+    import datetime
+    import re
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    slug_base = Path(page).stem or "correction"
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", slug_base).strip("-")[:60] or "correction"
+    reports_dir = kb_dir / "wiki" / "reports" / "corrections"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / f"{timestamp}_{slug}.md"
+    suffix = 1
+    while report_path.exists():
+        report_path = reports_dir / f"{timestamp}_{slug}_{suffix}.md"
+        suffix += 1
+    note_text = note or ""
+    apply_requested_text = (
+        f"- Apply requested: `{apply_requested}`\n" if apply_requested is not None else ""
+    )
+    report_path.write_text(
+        f"# Correction Report — {timestamp}\n\n"
+        f"- Page: `{page}`\n"
+        f"{apply_requested_text}"
+        f"- Applied: `{applied}`\n"
+        f"- Model: `{model}`\n\n"
+        f"## Challenged Claim\n\n{claim}\n\n"
+        f"## User Note\n\n{note_text}\n\n"
+        f"## Agent Result\n\n{result}\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+@cli.command()
+@click.argument("page")
+@click.argument("claim")
+@click.option("--note", default=None, help="Optional user note explaining the suspected issue.")
+@click.option("--apply", "apply_fix", is_flag=True, default=False, help="Apply the correction if the agent verifies an error.")
+@click.option("--model", "model_override", default=None, help="Override the correction model for this run.")
+@click.pass_context
+def correct(ctx, page, claim, note, apply_fix, model_override):
+    """Challenge a wiki claim and optionally apply a source-grounded correction."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.agent.correction import run_correction
+
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
+    _setup_llm_key(kb_dir)
+    model: str = (
+        model_override
+        or config.get("correction_model")
+        or DEFAULT_CORRECTION_MODEL
+    )
+
+    mode = "apply" if apply_fix else "review"
+    click.echo(f"Running correction in {mode} mode with model: {model}")
+
+    try:
+        correction_result = asyncio.run(
+            run_correction(
+                kb_dir,
+                page,
+                claim,
+                model,
+                note=note,
+                apply=apply_fix,
+            )
+        )
+    except Exception as exc:
+        click.echo(f"[ERROR] Correction failed: {exc}")
+        return
+
+    result = getattr(correction_result, "output", str(correction_result))
+    applied = bool(getattr(correction_result, "applied", False))
+    click.echo(result)
+
+    report_path = _write_correction_report(
+        kb_dir,
+        page,
+        claim,
+        note,
+        applied,
+        model,
+        result,
+        apply_requested=apply_fix,
+    )
+    append_log(kb_dir / "wiki", "correct", f"{page} → {report_path.name}")
+    click.echo(f"\nReport written to {report_path}")
 
 
 @cli.command()
