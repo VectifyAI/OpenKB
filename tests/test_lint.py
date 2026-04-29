@@ -7,6 +7,7 @@ import pytest
 
 from openkb.lint import (
     check_index_sync,
+    collect_structural_issues,
     find_broken_links,
     find_missing_entries,
     find_orphans,
@@ -224,3 +225,17 @@ class TestRunStructuralLint:
         report = run_structural_lint(tmp_path)
 
         assert "missing" in report
+
+
+def test_collect_structural_issues_returns_json_ready_items(tmp_path):
+    wiki = _make_wiki(tmp_path)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (wiki / "summaries" / "doc.md").write_text("See [[concepts/missing]]")
+
+    issues = collect_structural_issues(tmp_path)
+
+    assert issues
+    assert issues[0]["type"] == "structural"
+    assert issues[0]["fixable"] is False
+    assert "message" in issues[0]

@@ -1,50 +1,50 @@
-"""Tests for openkb.agent.correction."""
+"""Tests for openkb.agent.lint_fix."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openkb.agent.correction import (
-    CorrectionRunResult,
-    build_correction_agent,
+from openkb.agent.lint_fix import (
+    LintFixRunResult,
+    build_knowledge_fix_agent,
     collect_related_files,
-    run_correction,
+    run_knowledge_fix,
     _preserve_existing_frontmatter,
 )
 from openkb.schema import SCHEMA_MD
 
 
-class TestBuildCorrectionAgent:
+class TestBuildKnowledgeFixAgent:
     def test_agent_name(self, tmp_path):
-        agent = build_correction_agent(str(tmp_path), "strong-model", "concepts/topic.md")
-        assert agent.name == "wiki-correction"
+        agent = build_knowledge_fix_agent(str(tmp_path), "strong-model", "concepts/topic.md")
+        assert agent.name == "wiki-knowledge-fixer"
 
     def test_review_mode_has_read_only_tools(self, tmp_path):
-        agent = build_correction_agent(str(tmp_path), "strong-model", "concepts/topic.md")
+        agent = build_knowledge_fix_agent(str(tmp_path), "strong-model", "concepts/topic.md")
         names = {t.name for t in agent.tools}
         assert names == {"list_files", "read_file", "get_page_content"}
 
     def test_apply_mode_has_target_write_tool(self, tmp_path):
-        agent = build_correction_agent(
+        agent = build_knowledge_fix_agent(
             str(tmp_path), "strong-model", "concepts/topic.md", apply=True
         )
         names = {t.name for t in agent.tools}
         assert "write_target_file" in names
 
     def test_apply_mode_instructions_preserve_frontmatter(self, tmp_path):
-        agent = build_correction_agent(
+        agent = build_knowledge_fix_agent(
             str(tmp_path), "strong-model", "concepts/topic.md", apply=True
         )
 
         assert "keep all existing YAML frontmatter fields exactly as they are" in agent.instructions
 
     def test_schema_in_instructions(self, tmp_path):
-        agent = build_correction_agent(str(tmp_path), "strong-model", "concepts/topic.md")
+        agent = build_knowledge_fix_agent(str(tmp_path), "strong-model", "concepts/topic.md")
         assert SCHEMA_MD in agent.instructions
 
     def test_agent_model(self, tmp_path):
-        agent = build_correction_agent(str(tmp_path), "custom-model", "concepts/topic.md")
+        agent = build_knowledge_fix_agent(str(tmp_path), "custom-model", "concepts/topic.md")
         assert agent.model == "litellm/custom-model"
 
 
@@ -111,7 +111,7 @@ def test_preserve_existing_frontmatter_replaces_agent_frontmatter():
     assert written.endswith("# New")
 
 
-class TestRunCorrection:
+class TestRunKnowledgeFix:
     @pytest.mark.asyncio
     async def test_returns_final_output_and_passes_prompt_context(self, tmp_path):
         wiki = tmp_path / "wiki"
@@ -127,15 +127,15 @@ class TestRunCorrection:
             captured["kwargs"] = kwargs
             return MagicMock(final_output="## Verdict\n\nIncorrect.")
 
-        with patch("openkb.agent.correction.Runner.run", side_effect=fake_run):
-            result = await run_correction(
+        with patch("openkb.agent.lint_fix.Runner.run", side_effect=fake_run):
+            result = await run_knowledge_fix(
                 tmp_path, "concepts/topic.md", "Bad claim.", "strong-model"
             )
 
-        assert isinstance(result, CorrectionRunResult)
+        assert isinstance(result, LintFixRunResult)
         assert "Incorrect" in result
         assert result.applied is False
-        assert captured["agent"].name == "wiki-correction"
+        assert captured["agent"].name == "wiki-knowledge-fixer"
         assert "Target wiki page: concepts/topic.md" in captured["message"]
         assert "Bad claim." in captured["message"]
         assert captured["kwargs"]["max_turns"] > 0
@@ -148,7 +148,7 @@ class TestRunCorrection:
         (wiki / "sources" / "doc.md").write_text("Evidence.")
 
         with pytest.raises(ValueError):
-            await run_correction(tmp_path, "sources/doc.md", "Claim", "strong-model")
+            await run_knowledge_fix(tmp_path, "sources/doc.md", "Claim", "strong-model")
 
     @pytest.mark.asyncio
     async def test_apply_mode_builds_agent_with_write_tool(self, tmp_path):
@@ -157,9 +157,9 @@ class TestRunCorrection:
         (wiki / "summaries").mkdir(parents=True)
         (wiki / "summaries" / "doc.md").write_text("# Doc\n\nBad claim.")
 
-        with patch("openkb.agent.correction.Runner.run", new_callable=AsyncMock) as mock_run:
+        with patch("openkb.agent.lint_fix.Runner.run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = MagicMock(final_output="## Applied\n\nYes.")
-            await run_correction(
+            await run_knowledge_fix(
                 tmp_path, "summaries/doc.md", "Bad claim.", "strong-model", apply=True
             )
 
@@ -174,11 +174,11 @@ class TestRunCorrection:
         (wiki / "summaries").mkdir(parents=True)
         (wiki / "summaries" / "doc.md").write_text("# Doc\n\nAccurate claim.")
 
-        with patch("openkb.agent.correction.Runner.run", new_callable=AsyncMock) as mock_run:
+        with patch("openkb.agent.lint_fix.Runner.run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = MagicMock(
                 final_output="## Verdict\n\nSupported.\n\n## Applied\n\nNo."
             )
-            result = await run_correction(
+            result = await run_knowledge_fix(
                 tmp_path, "summaries/doc.md", "Accurate claim.", "strong-model", apply=True
             )
 

@@ -1,4 +1,4 @@
-"""User-requested fact correction agent for wiki pages."""
+"""Knowledge issue fixer for OpenKB lint."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ MAX_TURNS = 50
 
 
 @dataclass
-class CorrectionRunResult:
+class LintFixRunResult:
     """Result text plus whether the target page was actually modified."""
 
     output: str
@@ -30,15 +30,15 @@ class CorrectionRunResult:
 
 
 @dataclass
-class _CorrectionWriteState:
+class _LintFixWriteState:
     applied: bool = False
 
 
-_CORRECTION_INSTRUCTIONS_TEMPLATE = """\
-You are OpenKB's wiki correction agent. A user has challenged a specific claim
-in one wiki page. Your job is to verify the challenged claim against the
-available source material and, only when allowed, make the smallest faithful
-correction.
+_KNOWLEDGE_FIX_INSTRUCTIONS_TEMPLATE = """\
+You are OpenKB's knowledge issue fix agent. A lint issue or user feedback has
+challenged a specific claim in one wiki page. Your job is to verify the claim
+against the available source material and, only when allowed, make the smallest
+faithful fix.
 
 {schema_md}
 
@@ -49,7 +49,7 @@ correction.
    challenged claim wrong or right, say that it is uncertain.
 3. Read the target page first. Then inspect the suggested related files and any
    other clearly relevant wiki files.
-4. If applying a correction, preserve the page's frontmatter and overall style.
+4. If applying a fix, preserve the page's frontmatter and overall style.
    Change only the smallest section needed to fix the unsupported or incorrect
    statement.
 5. Never weaken a correct statement simply because the user disagrees with it.
@@ -60,7 +60,7 @@ Return Markdown with these sections:
 - Verdict: Supported, Incorrect, Partially supported, or Uncertain.
 - Evidence checked: concise list of files/pages you inspected.
 - Reasoning: short explanation grounded in the checked files.
-- Proposed correction: the exact replacement or "None".
+- Proposed fix: the exact replacement or "None".
 - Applied: Yes or No.
 """
 
@@ -94,15 +94,15 @@ def _split_frontmatter_block(text: str) -> tuple[str | None, str]:
     return text[:body_start], text[body_start:].lstrip("\n")
 
 
-def _preserve_existing_frontmatter(original: str, corrected: str) -> str:
-    """Keep the target page's metadata when writing corrected Markdown."""
+def _preserve_existing_frontmatter(original: str, fixed: str) -> str:
+    """Keep the target page's metadata when writing fixed Markdown."""
     original_frontmatter, _ = _split_frontmatter_block(original)
     if original_frontmatter is None:
-        return corrected
+        return fixed
 
-    _, corrected_body = _split_frontmatter_block(corrected)
-    corrected_body = corrected_body.lstrip("\n")
-    return f"{original_frontmatter}\n\n{corrected_body}"
+    _, fixed_body = _split_frontmatter_block(fixed)
+    fixed_body = fixed_body.lstrip("\n")
+    return f"{original_frontmatter}\n\n{fixed_body}"
 
 
 def _ensure_md(path: str) -> str:
@@ -133,7 +133,7 @@ def _normalize_wiki_path(path: str, wiki_root: Path) -> str:
     )
     if not allowed:
         raise ValueError(
-            "Corrections can only target index.md, summaries/, concepts/, or explorations/ pages."
+            "Lint fixes can only target index.md, summaries/, concepts/, or explorations/ pages."
         )
     return normalized
 
@@ -149,7 +149,7 @@ def _coerce_source_paths(value: Any) -> list[str]:
 
 
 def collect_related_files(wiki_root: Path, target_path: str) -> list[str]:
-    """Collect likely source/summary files for a correction request.
+    """Collect likely source/summary files for a knowledge fix request.
 
     This intentionally stays lightweight for the MVP. It follows common
     frontmatter fields produced by the compiler instead of building a full
@@ -202,28 +202,28 @@ def collect_related_files(wiki_root: Path, target_path: str) -> list[str]:
     return related[:12]
 
 
-def build_correction_agent(
+def build_knowledge_fix_agent(
     wiki_root: str,
     model: str,
     target_path: str,
     apply: bool = False,
     language: str = "en",
-    write_state: _CorrectionWriteState | None = None,
+    write_state: _LintFixWriteState | None = None,
 ) -> Agent:
-    """Build the fact correction agent.
+    """Build the source-grounded knowledge fix agent.
 
     In review-only mode the agent receives read tools only. In apply mode it
     receives a single write tool that can only overwrite the target page.
     """
     root = Path(wiki_root)
     schema_md = get_agents_md(root)
-    instructions = _CORRECTION_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
-    instructions += f"\n\nIMPORTANT: Write the correction report in {language} language."
+    instructions = _KNOWLEDGE_FIX_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    instructions += f"\n\nIMPORTANT: Write the fix report in {language} language."
     if apply:
         instructions += (
             "\nYou may call write_target_file only after you have verified that the "
             "challenged wiki content is incorrect or unsupported by the evidence. "
-            "When writing corrected Markdown, keep all existing YAML frontmatter "
+            "When writing fixed Markdown, keep all existing YAML frontmatter "
             "fields exactly as they are and change only the Markdown body."
         )
     else:
@@ -250,7 +250,7 @@ def build_correction_agent(
 
         @function_tool
         def write_target_file(content: str) -> str:
-            """Overwrite only the challenged target wiki page with corrected Markdown."""
+            """Overwrite only the challenged target wiki page with fixed Markdown."""
             full_path = (root.resolve() / target_path).resolve()
             if not full_path.is_relative_to(root.resolve()):
                 return "Access denied: target path escapes wiki root."
@@ -266,7 +266,7 @@ def build_correction_agent(
         tools.append(write_target_file)
 
     return Agent(
-        name="wiki-correction",
+        name="wiki-knowledge-fixer",
         instructions=instructions,
         tools=tools,
         model=f"litellm/{model}",
@@ -274,15 +274,15 @@ def build_correction_agent(
     )
 
 
-async def run_correction(
+async def run_knowledge_fix(
     kb_dir: Path,
     target_path: str,
     claim: str,
     model: str,
     note: str | None = None,
     apply: bool = False,
-) -> CorrectionRunResult:
-    """Verify a user challenge and optionally apply a correction."""
+) -> LintFixRunResult:
+    """Verify a knowledge issue and optionally apply a source-grounded fix."""
     from openkb.config import load_config
 
     wiki_root = kb_dir / "wiki"
@@ -293,7 +293,7 @@ async def run_correction(
     related = collect_related_files(wiki_root, normalized_target)
     related_text = "\n".join(f"- {path}" for path in related) or "- None found automatically"
 
-    mode = "apply correction if verified" if apply else "review only"
+    mode = "apply fix if verified" if apply else "review only"
     user_note = note or "None"
     prompt = f"""\
 Mode: {mode}
@@ -315,8 +315,8 @@ other clearly relevant files needed to decide. If PageIndex source content is
 needed, use get_page_content with narrow page ranges based on the summary tree.
 """
 
-    write_state = _CorrectionWriteState()
-    agent = build_correction_agent(
+    write_state = _LintFixWriteState()
+    agent = build_knowledge_fix_agent(
         str(wiki_root),
         model,
         normalized_target,
@@ -325,8 +325,8 @@ needed, use get_page_content with narrow page ranges based on the summary tree.
         write_state=write_state,
     )
     result = await Runner.run(agent, prompt, max_turns=MAX_TURNS)
-    output = result.final_output or "Correction completed. No output produced."
-    return CorrectionRunResult(
+    output = result.final_output or "Knowledge fix completed. No output produced."
+    return LintFixRunResult(
         output=output,
         applied=write_state.applied,
     )

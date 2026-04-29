@@ -87,7 +87,7 @@ _TYPE_DISPLAY_MAP = {
 }
 
 _SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx"}
-DEFAULT_CORRECTION_MODEL = "gpt-5.4"
+DEFAULT_LINT_FIX_MODEL = "gpt-5.4"
 
 
 def _display_type(raw_type: str) -> str:
@@ -396,109 +396,6 @@ def query(ctx, question, save):
         click.echo(f"\nSaved to {explore_path}")
 
 
-def _write_correction_report(
-    kb_dir: Path,
-    page: str,
-    claim: str,
-    note: str | None,
-    applied: bool,
-    model: str,
-    result: str,
-    apply_requested: bool | None = None,
-) -> Path:
-    """Persist a correction run report under wiki/reports/corrections/."""
-    import datetime
-    import re
-
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    slug_base = Path(page).stem or "correction"
-    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", slug_base).strip("-")[:60] or "correction"
-    reports_dir = kb_dir / "wiki" / "reports" / "corrections"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    report_path = reports_dir / f"{timestamp}_{slug}.md"
-    suffix = 1
-    while report_path.exists():
-        report_path = reports_dir / f"{timestamp}_{slug}_{suffix}.md"
-        suffix += 1
-    note_text = note or ""
-    apply_requested_text = (
-        f"- Apply requested: `{apply_requested}`\n" if apply_requested is not None else ""
-    )
-    report_path.write_text(
-        f"# Correction Report — {timestamp}\n\n"
-        f"- Page: `{page}`\n"
-        f"{apply_requested_text}"
-        f"- Applied: `{applied}`\n"
-        f"- Model: `{model}`\n\n"
-        f"## Challenged Claim\n\n{claim}\n\n"
-        f"## User Note\n\n{note_text}\n\n"
-        f"## Agent Result\n\n{result}\n",
-        encoding="utf-8",
-    )
-    return report_path
-
-
-@cli.command()
-@click.argument("page")
-@click.argument("claim")
-@click.option("--note", default=None, help="Optional user note explaining the suspected issue.")
-@click.option("--apply", "apply_fix", is_flag=True, default=False, help="Apply the correction if the agent verifies an error.")
-@click.option("--model", "model_override", default=None, help="Override the correction model for this run.")
-@click.pass_context
-def correct(ctx, page, claim, note, apply_fix, model_override):
-    """Challenge a wiki claim and optionally apply a source-grounded correction."""
-    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
-    if kb_dir is None:
-        click.echo("No knowledge base found. Run `openkb init` first.")
-        return
-
-    from openkb.agent.correction import run_correction
-
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(kb_dir)
-    model: str = (
-        model_override
-        or config.get("correction_model")
-        or DEFAULT_CORRECTION_MODEL
-    )
-
-    mode = "apply" if apply_fix else "review"
-    click.echo(f"Running correction in {mode} mode with model: {model}")
-
-    try:
-        correction_result = asyncio.run(
-            run_correction(
-                kb_dir,
-                page,
-                claim,
-                model,
-                note=note,
-                apply=apply_fix,
-            )
-        )
-    except Exception as exc:
-        click.echo(f"[ERROR] Correction failed: {exc}")
-        return
-
-    result = getattr(correction_result, "output", str(correction_result))
-    applied = bool(getattr(correction_result, "applied", False))
-    click.echo(result)
-
-    report_path = _write_correction_report(
-        kb_dir,
-        page,
-        claim,
-        note,
-        applied,
-        model,
-        result,
-        apply_requested=apply_fix,
-    )
-    append_log(kb_dir / "wiki", "correct", f"{page} → {report_path.name}")
-    click.echo(f"\nReport written to {report_path}")
-
-
 @cli.command()
 @click.option(
     "--resume", "-r", "resume",
@@ -629,17 +526,53 @@ def watch(ctx):
     watch_directory(raw_dir, on_new_files)
 
 
-async def run_lint(kb_dir: Path) -> Path | None:
+def _assign_issue_ids(issues: list[dict]) -> list[dict]:
+    """Return a copy of issues with stable per-report ids."""
+    numbered: list[dict] = []
+    for idx, issue in enumerate(issues, 1):
+        item = dict(issue)
+        item.setdefault("id", f"issue-{idx:03d}")
+        numbered.append(item)
+    return numbered
+
+
+def _format_fix_results(results: list[dict]) -> str:
+    if not results:
+        return "No fixes were attempted."
+
+    lines = ["## Fixes\n"]
+    for result in results:
+        status = result.get("status", "unknown")
+        issue_id = result.get("issue_id", "unknown")
+        lines.append(f"### {issue_id} - {status}")
+        if result.get("page"):
+            lines.append(f"- Page: `{result['page']}`")
+        if result.get("message"):
+            lines.append(f"- Message: {result['message']}")
+        if result.get("output"):
+            lines.append("")
+            lines.append(str(result["output"]))
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+async def run_lint(
+    kb_dir: Path,
+    fix: bool = False,
+    feedback_page: str | None = None,
+    feedback: str | None = None,
+) -> Path | None:
     """Run structural + knowledge lint, write report, return report path.
 
     Returns ``None`` if the KB has no indexed documents (nothing to lint).
     Async because knowledge lint uses an LLM agent. Usable from CLI
     (via ``asyncio.run``) and directly from the chat REPL.
     """
-    from openkb.lint import run_structural_lint
+    from openkb.lint import collect_structural_issues, run_structural_lint
     from openkb.agent.linter import run_knowledge_lint
 
     openkb_dir = kb_dir / ".openkb"
+    has_user_feedback = bool(feedback_page and feedback)
 
     # Skip lint entirely when the KB has no indexed documents
     hashes_file = openkb_dir / "hashes.json"
@@ -647,16 +580,31 @@ async def run_lint(kb_dir: Path) -> Path | None:
         hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
     else:
         hashes = {}
-    if not hashes:
+    if not hashes and not has_user_feedback:
         click.echo("Nothing to lint — no documents indexed yet. Run `openkb add` first.")
         return
 
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
+    lint_fix_model: str = (
+        config.get("lint_fix_model")
+        or DEFAULT_LINT_FIX_MODEL
+    )
 
     click.echo("Running structural lint...")
     structural_report = run_structural_lint(kb_dir)
+    issues = collect_structural_issues(kb_dir)
+    if has_user_feedback:
+        issues.append({
+            "type": "knowledge",
+            "source": "user_feedback",
+            "page": feedback_page,
+            "description": feedback,
+            "message": "User-reported knowledge issue.",
+            "fixable": True,
+        })
+    issues = _assign_issue_ids(issues)
     click.echo(structural_report)
 
     click.echo("Running knowledge lint...")
@@ -666,31 +614,107 @@ async def run_lint(kb_dir: Path) -> Path | None:
         knowledge_report = f"Knowledge lint failed: {exc}"
     click.echo(knowledge_report)
 
-    # Write combined report
+    fix_results: list[dict] = []
+    if fix:
+        feedback_issue = next(
+            (
+                issue for issue in issues
+                if issue.get("type") == "knowledge"
+                and issue.get("source") == "user_feedback"
+                and issue.get("fixable")
+            ),
+            None,
+        )
+        if feedback_issue is None:
+            fix_results.append({
+                "issue_id": "none",
+                "status": "skipped",
+                "message": (
+                    "No fixable user feedback issue was provided. "
+                    "First-version lint --fix does not auto-repair structural or schema issues."
+                ),
+            })
+        else:
+            click.echo("Running knowledge fix for user feedback...")
+            from openkb.agent.lint_fix import run_knowledge_fix
+
+            try:
+                fix_result = await run_knowledge_fix(
+                    kb_dir,
+                    str(feedback_issue["page"]),
+                    str(feedback_issue["description"]),
+                    lint_fix_model,
+                    note="Created from openkb lint --fix user feedback.",
+                    apply=True,
+                )
+                applied = bool(getattr(fix_result, "applied", False))
+                output = getattr(fix_result, "output", str(fix_result))
+                status = "applied" if applied else "not_applied"
+                fix_results.append({
+                    "issue_id": feedback_issue["id"],
+                    "status": status,
+                    "page": feedback_issue["page"],
+                    "message": "Knowledge fix completed.",
+                    "output": output,
+                })
+                click.echo(output)
+            except Exception as exc:
+                fix_results.append({
+                    "issue_id": feedback_issue["id"],
+                    "status": "failed",
+                    "page": feedback_issue["page"],
+                    "message": str(exc),
+                })
+                click.echo(f"[ERROR] Knowledge fix failed: {exc}")
+
+    # Write combined report and machine-readable issue report
     reports_dir = kb_dir / "wiki" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     report_path = reports_dir / f"lint_{timestamp}.md"
-    report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
+    issue_report_path = reports_dir / f"lint_{timestamp}.issues.json"
+    issue_report = {
+        "version": 1,
+        "issue_types": ["structural", "schema", "knowledge"],
+        "issues": issues,
+        "fix_requested": fix,
+        "fix_results": fix_results,
+    }
+    issue_report_path.write_text(
+        json.dumps(issue_report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    fixes_section = f"\n\n{_format_fix_results(fix_results)}" if fix else ""
+    report_content = (
+        f"# Lint Report — {timestamp}\n\n"
+        f"- Issue JSON: `{issue_report_path.name}`\n\n"
+        f"## Structural\n\n{structural_report}\n\n"
+        f"## Semantic\n\n{knowledge_report}"
+        f"{fixes_section}\n"
+    )
     report_path.write_text(report_content, encoding="utf-8")
     append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
     click.echo(f"\nReport written to {report_path}")
+    click.echo(f"Issue JSON written to {issue_report_path}")
     return report_path
 
 
 @cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
+@click.option("--fix", is_flag=True, default=False, help="Apply safe fixes for supported lint issues.")
+@click.option("--page", default=None, help="Wiki page related to user feedback, e.g. concepts/topic.md.")
+@click.option("--feedback", default=None, help="User-described wiki issue to record or fix.")
 @click.pass_context
-def lint(ctx, fix):
+def lint(ctx, fix, page, feedback):
     """Lint the knowledge base for structural and semantic inconsistencies."""
-    if fix:
-        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
+    if bool(page) != bool(feedback):
+        click.echo("Use --page and --feedback together.")
+        return
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
-    asyncio.run(run_lint(kb_dir))
+    asyncio.run(run_lint(kb_dir, fix=fix, feedback_page=page, feedback=feedback))
 
 
 def print_list(kb_dir: Path) -> None:

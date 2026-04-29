@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 # Matches [[wikilink]] or [[subdir/link]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -205,6 +206,42 @@ def check_index_sync(wiki: Path) -> list[str]:
                 issues.append(f"{subdir}/{stem}.md not mentioned in index.md")
 
     return sorted(issues)
+
+
+def collect_structural_issues(kb_dir: Path) -> list[dict[str, Any]]:
+    """Return structural lint findings as machine-readable issues."""
+    wiki = kb_dir / "wiki"
+    raw = kb_dir / "raw"
+
+    issues: list[dict[str, Any]] = []
+    for message in find_broken_links(wiki):
+        issues.append({
+            "type": "structural",
+            "message": message,
+            "fixable": False,
+        })
+    for page in find_orphans(wiki):
+        issues.append({
+            "type": "structural",
+            "page": f"{page}.md",
+            "message": f"Orphaned page: {page}",
+            "fixable": False,
+        })
+    for name in find_missing_entries(raw, wiki):
+        issues.append({
+            "type": "structural",
+            "message": f"Raw file has no wiki entry: {name}",
+            "raw_file": name,
+            "fixable": False,
+        })
+    for message in check_index_sync(wiki):
+        issues.append({
+            "type": "structural",
+            "message": message,
+            "fixable": False,
+        })
+
+    return issues
 
 
 def run_structural_lint(kb_dir: Path) -> str:
