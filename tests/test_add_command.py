@@ -139,7 +139,9 @@ class TestAddCommand:
         mock_result = ConvertResult(
             raw_path=kb_dir / "raw" / "test.md",
             source_path=source_path,
+            doc_name="test-deadbeef00",
             is_long_doc=False,
+            file_hash="deadbeef00" * 8,
         )
 
         runner = CliRunner()
@@ -149,3 +151,9 @@ class TestAddCommand:
             result = runner.invoke(cli, ["add", str(doc)])
             mock_arun.assert_called_once()
             assert "OK" in result.output
+
+        hashes = json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+        assert hashes[mock_result.file_hash]["doc_name"] == "test-deadbeef00"
+        assert hashes[mock_result.file_hash]["path"] == "test.md"
+        assert hashes[mock_result.file_hash]["raw_path"] == "raw/test.md"
+        assert hashes[mock_result.file_hash]["source_path"] == "wiki/sources/test.md"

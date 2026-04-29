@@ -1,9 +1,12 @@
 """Document conversion pipeline for OpenKB."""
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import shutil
-from dataclasses import dataclass, field
+import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
@@ -25,6 +28,29 @@ class ConvertResult:
     is_long_doc: bool = False
     skipped: bool = False
     file_hash: str | None = None  # For deferred hash registration
+    doc_name: str | None = None
+
+
+_SAFE_STEM_RE = re.compile(r"[^\w\-]+")
+_DOC_HASH_LEN = 12
+
+
+def _registry_path(path: Path, kb_dir: Path) -> str:
+    """Return a portable path string for registry lookups."""
+    resolved_path = path.resolve()
+    resolved_kb = kb_dir.resolve()
+    if resolved_path.is_relative_to(resolved_kb):
+        return resolved_path.relative_to(resolved_kb).as_posix()
+    return resolved_path.as_posix()
+
+
+def _make_doc_name(src: Path, kb_dir: Path) -> str:
+    """Return a stable, collision-resistant document name for a path."""
+    stem = unicodedata.normalize("NFKC", src.stem)
+    safe_stem = _SAFE_STEM_RE.sub("-", stem).strip("-") or "document"
+    path_key = _registry_path(src, kb_dir)
+    path_hash = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:_DOC_HASH_LEN]
+    return f"{safe_stem}-{path_hash}"
 
 
 def get_pdf_page_count(path: Path) -> int:
@@ -56,17 +82,27 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     # 1. Hash check
     # ------------------------------------------------------------------
     file_hash = HashRegistry.hash_file(src)
+    path_key = _registry_path(src, kb_dir)
+    path_metadata = registry.get_by_path(path_key) or {}
+    doc_name = path_metadata.get("doc_name") or _make_doc_name(src, kb_dir)
     if registry.is_known(file_hash):
         logger.info("Skipping already-known file: %s", src.name)
-        return ConvertResult(skipped=True)
+        metadata = registry.get(file_hash) or {}
+        return ConvertResult(
+            skipped=True,
+            file_hash=file_hash,
+            doc_name=metadata.get("doc_name") or doc_name,
+        )
 
     # ------------------------------------------------------------------
     # 2. Copy to raw/
     # ------------------------------------------------------------------
     raw_dir = kb_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_dest = raw_dir / src.name
-    if raw_dest.resolve() != src.resolve():
+    if src.resolve().is_relative_to(raw_dir.resolve()):
+        raw_dest = src
+    else:
+        raw_dest = raw_dir / f"{doc_name}{src.suffix.lower()}"
         shutil.copy2(src, raw_dest)
 
     # ------------------------------------------------------------------
@@ -81,17 +117,20 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
                 threshold,
                 src.name,
             )
-            return ConvertResult(raw_path=raw_dest, is_long_doc=True, file_hash=file_hash)
+            return ConvertResult(
+                raw_path=raw_dest,
+                doc_name=doc_name,
+                is_long_doc=True,
+                file_hash=file_hash,
+            )
 
     # ------------------------------------------------------------------
     # 4/5. Convert to Markdown
     # ------------------------------------------------------------------
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = kb_dir / "wiki" / "sources" / "images" / src.stem
+    images_dir = kb_dir / "wiki" / "sources" / "images" / doc_name
     images_dir.mkdir(parents=True, exist_ok=True)
-
-    doc_name = src.stem
 
     if src.suffix.lower() == ".md":
         markdown = src.read_text(encoding="utf-8")
@@ -109,4 +148,9 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     dest_md = sources_dir / f"{doc_name}.md"
     dest_md.write_text(markdown, encoding="utf-8")
 
-    return ConvertResult(raw_path=raw_dest, source_path=dest_md, file_hash=file_hash)
+    return ConvertResult(
+        raw_path=raw_dest,
+        source_path=dest_md,
+        doc_name=doc_name,
+        file_hash=file_hash,
+    )

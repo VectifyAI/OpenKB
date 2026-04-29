@@ -32,6 +32,17 @@ class HashRegistry:
         """Return a shallow copy of all hash -> metadata entries."""
         return dict(self._data)
 
+    def get_by_path(self, path: str) -> dict | None:
+        """Return metadata registered for a source, raw, or wiki path."""
+        for metadata in self._data.values():
+            if path in {
+                metadata.get("path"),
+                metadata.get("raw_path"),
+                metadata.get("source_path"),
+            }:
+                return metadata
+        return None
+
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
@@ -39,6 +50,19 @@ class HashRegistry:
     def add(self, file_hash: str, metadata: dict) -> None:
         """Register file_hash with metadata and persist to disk."""
         self._data[file_hash] = metadata
+        self._persist()
+
+    def remove_by_doc_name(self, doc_name: str) -> None:
+        """Remove older content-hash entries for the same document."""
+        stale_hashes = [
+            file_hash
+            for file_hash, metadata in self._data.items()
+            if metadata.get("doc_name") == doc_name
+        ]
+        if not stale_hashes:
+            return
+        for file_hash in stale_hashes:
+            del self._data[file_hash]
         self._persist()
 
     # ------------------------------------------------------------------

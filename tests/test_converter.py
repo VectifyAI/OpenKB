@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openkb.converter import ConvertResult, convert_document, get_pdf_page_count
+from openkb.converter import ConvertResult, _make_doc_name, convert_document, get_pdf_page_count
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,9 @@ class TestConvertDocumentMarkdown:
 
         assert result.skipped is False
         assert result.is_long_doc is False
+        assert result.doc_name == _make_doc_name(src, kb_dir)
         assert result.source_path is not None
+        assert result.source_path.name == f"{result.doc_name}.md"
         assert result.source_path.exists()
         assert result.source_path.read_text(encoding="utf-8").startswith("# Notes")
 
@@ -72,7 +74,58 @@ class TestConvertDocumentMarkdown:
         result = convert_document(src, kb_dir)
 
         assert result.raw_path is not None
+        assert result.raw_path.name == f"{result.doc_name}.md"
         assert result.raw_path.exists()
+
+    def test_same_filename_different_paths_get_distinct_outputs(self, kb_dir):
+        """Same basename in different folders must not overwrite outputs."""
+        first_dir = kb_dir / "inputs" / "first"
+        second_dir = kb_dir / "inputs" / "second"
+        first_dir.mkdir(parents=True)
+        second_dir.mkdir(parents=True)
+        first = first_dir / "report.md"
+        second = second_dir / "report.md"
+        first.write_text("# First\n\nAlpha content.", encoding="utf-8")
+        second.write_text("# Second\n\nBeta content.", encoding="utf-8")
+
+        first_result = convert_document(first, kb_dir)
+        second_result = convert_document(second, kb_dir)
+
+        assert first_result.doc_name != second_result.doc_name
+        assert first_result.source_path != second_result.source_path
+        assert first_result.raw_path != second_result.raw_path
+        assert first_result.source_path.read_text(encoding="utf-8").startswith("# First")
+        assert second_result.source_path.read_text(encoding="utf-8").startswith("# Second")
+
+    def test_raw_copy_keeps_doc_name_when_content_changes(self, kb_dir):
+        """A watched raw copy keeps the original document identity across edits."""
+        from openkb.state import HashRegistry
+
+        src = kb_dir / "inputs" / "notes.md"
+        src.parent.mkdir(parents=True)
+        src.write_text("# Notes\n\nOld content.", encoding="utf-8")
+
+        first_result = convert_document(src, kb_dir)
+        registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+        registry.add(
+            first_result.file_hash,
+            {
+                "name": src.name,
+                "doc_name": first_result.doc_name,
+                "path": "inputs/notes.md",
+                "raw_path": f"raw/{first_result.doc_name}.md",
+                "source_path": f"wiki/sources/{first_result.doc_name}.md",
+                "type": "md",
+            },
+        )
+
+        first_result.raw_path.write_text("# Notes\n\nNew content.", encoding="utf-8")
+        second_result = convert_document(first_result.raw_path, kb_dir)
+
+        assert second_result.skipped is False
+        assert second_result.doc_name == first_result.doc_name
+        assert second_result.source_path == first_result.source_path
+        assert second_result.source_path.read_text(encoding="utf-8").startswith("# Notes\n\nNew content.")
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +156,29 @@ class TestConvertDocumentPdfShort:
         assert result.is_long_doc is False
         assert result.source_path is not None
         assert result.source_path.exists()
+
+    def test_same_stem_different_extensions_get_distinct_outputs(self, kb_dir, tmp_path):
+        """report.md and report.pdf must not share the same internal name."""
+        md_src = tmp_path / "report.md"
+        pdf_src = tmp_path / "report.pdf"
+        md_src.write_text("# Markdown report", encoding="utf-8")
+        pdf_src.write_bytes(b"%PDF-1.4 fake content")
+
+        md_result = convert_document(md_src, kb_dir)
+        with (
+            patch("openkb.converter.pymupdf.open") as mock_mu,
+            patch("openkb.converter.convert_pdf_with_images", return_value="# PDF report"),
+        ):
+            fake_doc = MagicMock()
+            fake_doc.page_count = 5
+            fake_doc.__enter__ = MagicMock(return_value=fake_doc)
+            fake_doc.__exit__ = MagicMock(return_value=False)
+            mock_mu.return_value = fake_doc
+            pdf_result = convert_document(pdf_src, kb_dir)
+
+        assert md_result.doc_name != pdf_result.doc_name
+        assert md_result.source_path != pdf_result.source_path
+        assert md_result.raw_path != pdf_result.raw_path
 
 
 # ---------------------------------------------------------------------------

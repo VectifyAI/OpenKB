@@ -102,6 +102,25 @@ class TestIndexLongDocument:
         assert "doc_type: pageindex" in content
         assert "Summary:" in content
 
+    def test_explicit_doc_name_controls_output_paths(self, kb_dir, sample_tree, tmp_path):
+        """Long doc outputs should use the converter's collision-safe doc name."""
+        doc_id = "abc-123"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+            index_long_document(pdf_path, kb_dir, doc_name="sample-deadbeef00")
+
+        assert (kb_dir / "wiki" / "sources" / "sample-deadbeef00.json").exists()
+        assert (kb_dir / "wiki" / "summaries" / "sample-deadbeef00.md").exists()
+        assert not (kb_dir / "wiki" / "sources" / "sample.json").exists()
+
     def test_localclient_called_with_index_config(self, kb_dir, sample_tree, tmp_path):
         """LocalClient must be created with the correct IndexConfig flags."""
         doc_id = "xyz-456"
