@@ -589,6 +589,7 @@ async def run_lint(
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     lint_fix_model: str = (
         config.get("lint_fix_model")
+        or model
         or DEFAULT_LINT_FIX_MODEL
     )
 
