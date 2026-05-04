@@ -149,6 +149,39 @@ def _cached_text(text: str) -> list[dict]:
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
 
+def _response_cache_headers(config: dict, model: str) -> dict:
+    """Build OpenRouter Response Caching headers from config.
+
+    Returns an empty dict when the feature is disabled or the active model
+    is not routed through OpenRouter (the headers would have no effect on
+    direct provider calls). When enabled, emits ``X-OpenRouter-Cache: true``
+    and, if a TTL is configured, ``X-OpenRouter-Cache-TTL: <seconds>``.
+    """
+    if not config.get("response_cache", False):
+        return {}
+    if not model.startswith("openrouter/"):
+        return {}
+    headers = {"X-OpenRouter-Cache": "true"}
+    ttl = config.get("response_cache_ttl")
+    if ttl is not None:
+        headers["X-OpenRouter-Cache-TTL"] = str(int(ttl))
+    return headers
+
+
+def _build_llm_kwargs(config: dict, model: str) -> dict:
+    """Compose extra LiteLLM kwargs derived from config (e.g. response cache).
+
+    Currently only emits an ``extra_headers`` entry when OpenRouter Response
+    Caching is enabled. Returns an empty dict when no extras apply, so the
+    caller can splat with ``**`` and fall back to existing behaviour.
+    """
+    extras: dict = {}
+    cache_headers = _response_cache_headers(config, model)
+    if cache_headers:
+        extras["extra_headers"] = cache_headers
+    return extras
+
+
 class _Spinner:
     """Animated dots spinner that runs in a background thread."""
 
@@ -604,13 +637,18 @@ async def _compile_concepts(
     max_concurrency: int,
     doc_brief: str = "",
     doc_type: str = "short",
+    extra_kwargs: dict | None = None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
     Uses ``_CONCEPTS_PLAN_USER`` to get a plan with create/update/related
     actions, then executes each action type accordingly.
+
+    ``extra_kwargs`` is forwarded to every LiteLLM call (e.g. response-cache
+    headers). Defaults to no extras.
     """
     source_file = f"summaries/{doc_name}.md"
+    extra_kwargs = extra_kwargs or {}
 
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
@@ -626,7 +664,7 @@ async def _compile_concepts(
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
         )},
-    ], "concepts-plan", max_tokens=1024)
+    ], "concepts-plan", max_tokens=1024, **extra_kwargs)
 
     try:
         parsed = _parse_json(plan_raw)
@@ -669,7 +707,7 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     update_instruction="",
                 )},
-            ], f"concept: {name}")
+            ], f"concept: {name}", **extra_kwargs)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
@@ -700,7 +738,7 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     existing_content=existing_content,
                 )},
-            ], f"update: {name}")
+            ], f"update: {name}", **extra_kwargs)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
@@ -783,8 +821,10 @@ async def compile_short_doc(
         doc_name=doc_name, content=content,
     ))}
 
+    extra_kwargs = _build_llm_kwargs(config, model)
+
     # --- Step 1: Generate summary ---
-    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary")
+    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary", **extra_kwargs)
     try:
         summary_parsed = _parse_json(summary_raw)
         doc_brief = summary_parsed.get("brief", "")
@@ -798,7 +838,7 @@ async def compile_short_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         summary, doc_name, max_concurrency, doc_brief=doc_brief,
-        doc_type="short",
+        doc_type="short", extra_kwargs=extra_kwargs,
     )
 
 
@@ -835,12 +875,14 @@ async def compile_long_doc(
         doc_name=doc_name, doc_id=doc_id, content=summary_content,
     ))}
 
+    extra_kwargs = _build_llm_kwargs(config, model)
+
     # --- Step 1: Generate overview ---
-    overview = _llm_call(model, [system_msg, doc_msg], "overview")
+    overview = _llm_call(model, [system_msg, doc_msg], "overview", **extra_kwargs)
 
     # --- Steps 2-4: Concept plan → generate/update → index ---
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         overview, doc_name, max_concurrency, doc_brief=doc_description,
-        doc_type="pageindex",
+        doc_type="pageindex", extra_kwargs=extra_kwargs,
     )

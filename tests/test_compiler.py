@@ -21,6 +21,8 @@ from openkb.agent.compiler import (
     _add_related_link,
     _backlink_summary,
     _backlink_concepts,
+    _response_cache_headers,
+    _build_llm_kwargs,
 )
 
 
@@ -774,6 +776,153 @@ class TestCacheControl:
         overview_call = captured[0]
         assert overview_call[1]["role"] == "user"
         assert self._has_cache_breakpoint(overview_call[1])
+
+
+class TestResponseCacheHeaders:
+    """Pure-function unit tests for the OpenRouter response-cache helper."""
+
+    def test_disabled_returns_empty(self):
+        assert _response_cache_headers(
+            {"response_cache": False}, "openrouter/anthropic/claude-sonnet-4.5",
+        ) == {}
+
+    def test_missing_key_treated_as_disabled(self):
+        assert _response_cache_headers({}, "openrouter/anthropic/claude-sonnet-4.5") == {}
+
+    def test_enabled_but_non_openrouter_model_returns_empty(self):
+        assert _response_cache_headers(
+            {"response_cache": True}, "anthropic/claude-sonnet-4.5",
+        ) == {}
+        assert _response_cache_headers(
+            {"response_cache": True}, "gpt-4o-mini",
+        ) == {}
+
+    def test_enabled_openrouter_returns_cache_header(self):
+        headers = _response_cache_headers(
+            {"response_cache": True}, "openrouter/anthropic/claude-sonnet-4.5",
+        )
+        assert headers == {"X-OpenRouter-Cache": "true"}
+
+    def test_ttl_emits_ttl_header(self):
+        headers = _response_cache_headers(
+            {"response_cache": True, "response_cache_ttl": 600},
+            "openrouter/anthropic/claude-sonnet-4.5",
+        )
+        assert headers == {
+            "X-OpenRouter-Cache": "true",
+            "X-OpenRouter-Cache-TTL": "600",
+        }
+
+    def test_ttl_none_omits_ttl_header(self):
+        headers = _response_cache_headers(
+            {"response_cache": True, "response_cache_ttl": None},
+            "openrouter/anthropic/claude-sonnet-4.5",
+        )
+        assert "X-OpenRouter-Cache-TTL" not in headers
+
+    def test_build_llm_kwargs_packs_headers(self):
+        kw = _build_llm_kwargs(
+            {"response_cache": True, "response_cache_ttl": 60},
+            "openrouter/anthropic/claude-sonnet-4.5",
+        )
+        assert kw == {"extra_headers": {
+            "X-OpenRouter-Cache": "true",
+            "X-OpenRouter-Cache-TTL": "60",
+        }}
+
+    def test_build_llm_kwargs_empty_when_disabled(self):
+        assert _build_llm_kwargs({"response_cache": False}, "openrouter/x") == {}
+
+
+class TestResponseCacheIntegration:
+    """End-to-end check that compile_short_doc forwards extra_headers when the
+    response_cache flag is on, and does not when it is off (regression).
+    """
+
+    @pytest.mark.asyncio
+    async def test_flag_on_forwards_extra_headers(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8",
+        )
+        src = wiki / "sources" / "doc.md"
+        src.write_text("Body.", encoding="utf-8")
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        # Per-KB config opts in to response cache.
+        (openkb_dir / "config.yaml").write_text(
+            "response_cache: true\nresponse_cache_ttl: 600\n", encoding="utf-8",
+        )
+
+        summary_resp = json.dumps({"brief": "B", "content": "summary body"})
+        plan_resp = json.dumps({"create": [], "update": [], "related": []})
+        sync_responses = [summary_resp, plan_resp]
+        captured_kwargs: list[dict] = []
+
+        def sync_side_effect(*args, **kwargs):
+            captured_kwargs.append(kwargs)
+            idx = min(len(captured_kwargs) - 1, len(sync_responses) - 1)
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = sync_responses[idx]
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock()
+            await compile_short_doc(
+                "doc", src, tmp_path, "openrouter/anthropic/claude-sonnet-4.5",
+            )
+
+        assert captured_kwargs, "expected at least one sync LLM call"
+        # Every sync call must carry extra_headers with the cache markers.
+        for kw in captured_kwargs:
+            assert "extra_headers" in kw
+            assert kw["extra_headers"].get("X-OpenRouter-Cache") == "true"
+            assert kw["extra_headers"].get("X-OpenRouter-Cache-TTL") == "600"
+
+    @pytest.mark.asyncio
+    async def test_flag_off_no_extra_headers(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8",
+        )
+        src = wiki / "sources" / "doc.md"
+        src.write_text("Body.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()  # no config.yaml → defaults (off)
+
+        summary_resp = json.dumps({"brief": "B", "content": "summary body"})
+        plan_resp = json.dumps({"create": [], "update": [], "related": []})
+        sync_responses = [summary_resp, plan_resp]
+        captured_kwargs: list[dict] = []
+
+        def sync_side_effect(*args, **kwargs):
+            captured_kwargs.append(kwargs)
+            idx = min(len(captured_kwargs) - 1, len(sync_responses) - 1)
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = sync_responses[idx]
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock()
+            await compile_short_doc(
+                "doc", src, tmp_path, "openrouter/anthropic/claude-sonnet-4.5",
+            )
+
+        for kw in captured_kwargs:
+            assert "extra_headers" not in kw, "no headers should leak when flag is off"
 
 
 class TestCompileLongDoc:

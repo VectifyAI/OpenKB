@@ -9,6 +9,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "language": "en",
     "pageindex_threshold": 20,
+    # Opt-in OpenRouter Response Caching for compiler LLM calls.
+    # When enabled and the active model is routed via openrouter/, identical
+    # requests (same model, messages, params) return a cached response with
+    # zero token billing. Default off because responses are stored on
+    # OpenRouter — conflicts with strict zero-data-retention postures.
+    "response_cache": False,
+    # Optional TTL override in seconds (1..86400). When None, OpenRouter's
+    # default of 300s applies.
+    "response_cache_ttl": None,
 }
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
