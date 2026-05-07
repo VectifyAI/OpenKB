@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json as json_mod
 import logging
+import gc
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,21 @@ from openkb.config import load_config
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
+
+
+def _close_pageindex_client(client: PageIndexClient | None) -> None:
+    """Best-effort cleanup for PageIndex local backend resources."""
+    if client is None:
+        return
+    try:
+        backend = getattr(client, "_backend", None)
+        storage = getattr(backend, "_storage", None)
+        close_fn = getattr(storage, "close", None)
+        if callable(close_fn):
+            close_fn()
+    except Exception:
+        # Cleanup failure should never mask indexing errors.
+        pass
 
 
 @dataclass
@@ -40,74 +56,82 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
         if_add_doc_description=True,
     )
 
-    client = PageIndexClient(
-        api_key=pageindex_api_key or None,
-        model=model,
-        storage_path=str(openkb_dir),
-        index_config=index_config,
-    )
-    col = client.collection()
-
     # Add PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
     max_retries = 3
     doc_id = None
+    client: PageIndexClient | None = None
+    col = None
     for attempt in range(1, max_retries + 1):
         try:
+            client = PageIndexClient(
+                api_key=pageindex_api_key or None,
+                model=model,
+                storage_path=str(openkb_dir),
+                index_config=index_config,
+            )
+            col = client.collection()
             doc_id = col.add(str(pdf_path))
             logger.info("PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt)
             break
         except Exception as exc:
             logger.warning("PageIndex attempt %d/%d failed for %s: %s", attempt, max_retries, pdf_path.name, exc)
+            _close_pageindex_client(client)
+            client = None
+            col = None
+            gc.collect()
             if attempt == max_retries:
                 raise RuntimeError(f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}") from exc
 
-    # Fetch complete document (metadata + structure + text)
-    doc = col.get_document(doc_id, include_text=True)
-    doc_name: str = doc.get("doc_name", pdf_path.stem)
-    description: str = doc.get("doc_description", "")
-    structure: list = doc.get("structure", [])
+    try:
+        # Fetch complete document (metadata + structure + text)
+        doc = col.get_document(doc_id, include_text=True)
+        doc_name: str = doc.get("doc_name", pdf_path.stem)
+        description: str = doc.get("doc_description", "")
+        structure: list = doc.get("structure", [])
 
-    # Debug: print doc keys and page_count to diagnose get_page_content range
-    logger.info("Doc keys: %s", list(doc.keys()))
-    logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
+        # Debug: print doc keys and page_count to diagnose get_page_content range
+        logger.info("Doc keys: %s", list(doc.keys()))
+        logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
 
-    tree = {
-        "doc_name": doc_name,
-        "doc_description": description,
-        "structure": structure,
-    }
+        tree = {
+            "doc_name": doc_name,
+            "doc_description": description,
+            "structure": structure,
+        }
 
-    # Write wiki/sources/ — per-page content
-    sources_dir = kb_dir / "wiki" / "sources"
-    sources_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = sources_dir / "images" / pdf_path.stem
+        # Write wiki/sources/ — per-page content
+        sources_dir = kb_dir / "wiki" / "sources"
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        images_dir = sources_dir / "images" / pdf_path.stem
 
-    from openkb.images import convert_pdf_to_pages
+        from openkb.images import convert_pdf_to_pages
 
-    all_pages: list = []
-    if pageindex_api_key:
-        # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
-        # requires a page range, so pass "1-N".
-        from openkb.converter import get_pdf_page_count
-        page_count = get_pdf_page_count(pdf_path)
-        try:
-            all_pages = col.get_page_content(doc_id, f"1-{page_count}")
-        except Exception as exc:
-            logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
-
-    if not all_pages:
+        all_pages: list = []
         if pageindex_api_key:
-            logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
-        all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
+            # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
+            # requires a page range, so pass "1-N".
+            from openkb.converter import get_pdf_page_count
+            page_count = get_pdf_page_count(pdf_path)
+            try:
+                all_pages = col.get_page_content(doc_id, f"1-{page_count}")
+            except Exception as exc:
+                logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
 
-    (sources_dir / f"{pdf_path.stem}.json").write_text(
-        json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
+        if not all_pages:
+            if pageindex_api_key:
+                logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
+            all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
 
-    # Write wiki/summaries/ (no images, just summaries)
-    summaries_dir = kb_dir / "wiki" / "summaries"
-    summaries_dir.mkdir(parents=True, exist_ok=True)
-    summary_md = render_summary_md(tree, pdf_path.stem, doc_id)
-    (summaries_dir / f"{pdf_path.stem}.md").write_text(summary_md, encoding="utf-8")
+        (sources_dir / f"{pdf_path.stem}.json").write_text(
+            json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
 
-    return IndexResult(doc_id=doc_id, description=description, tree=tree)
+        # Write wiki/summaries/ (no images, just summaries)
+        summaries_dir = kb_dir / "wiki" / "summaries"
+        summaries_dir.mkdir(parents=True, exist_ok=True)
+        summary_md = render_summary_md(tree, pdf_path.stem, doc_id)
+        (summaries_dir / f"{pdf_path.stem}.md").write_text(summary_md, encoding="utf-8")
+
+        return IndexResult(doc_id=doc_id, description=description, tree=tree)
+    finally:
+        _close_pageindex_client(client)
