@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pymupdf
 from markitdown import MarkItDown
+from openpyxl import load_workbook
 
 from openkb.config import load_config
 from openkb.images import copy_relative_images, extract_base64_images, convert_pdf_with_images
@@ -31,6 +32,57 @@ def get_pdf_page_count(path: Path) -> int:
     """Return the number of pages in the PDF at *path* using pymupdf."""
     with pymupdf.open(str(path)) as doc:
         return doc.page_count
+
+
+def convert_xlsx_streaming(path: Path, *, max_rows: int = 5000, max_cols: int = 64) -> str:
+    """Convert .xlsx to markdown using a memory-safe streaming reader.
+
+    This avoids large in-memory DataFrames and pathological worksheet ranges
+    that can cause extreme RAM usage in generic converters.
+    """
+    wb = load_workbook(filename=str(path), read_only=True, data_only=True)
+    lines: list[str] = []
+    try:
+        for ws in wb.worksheets:
+            lines.append(f"# Sheet: {ws.title}")
+            lines.append("")
+            rows_written = 0
+            empty_streak = 0
+
+            for row in ws.iter_rows(min_row=1, max_row=max_rows, min_col=1, max_col=max_cols, values_only=True):
+                vals = []
+                non_empty = False
+                for cell in row:
+                    if cell is None:
+                        vals.append("")
+                        continue
+                    text = str(cell).strip()
+                    vals.append(text)
+                    if text:
+                        non_empty = True
+
+                if not non_empty:
+                    empty_streak += 1
+                    if rows_written == 0:
+                        continue
+                    # Stop after sustained empty tail to avoid scanning sparse sheets.
+                    if empty_streak >= 200:
+                        break
+                else:
+                    empty_streak = 0
+
+                if non_empty:
+                    lines.append(" | ".join(vals).rstrip())
+                    rows_written += 1
+
+            if rows_written == 0:
+                lines.append("(No non-empty cells found within scan limits.)")
+
+            lines.append("")
+    finally:
+        wb.close()
+
+    return "\n".join(lines)
 
 
 def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
@@ -99,6 +151,8 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     elif src.suffix.lower() == ".pdf":
         # Use pymupdf dict-mode for PDFs: text + images inline at correct positions
         markdown = convert_pdf_with_images(src, doc_name, images_dir)
+    elif src.suffix.lower() == ".xlsx":
+        markdown = convert_xlsx_streaming(src)
     else:
         # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
         mid = MarkItDown()
