@@ -28,6 +28,13 @@ class ConvertResult:
     file_hash: str | None = None  # For deferred hash registration
 
 
+def _sanitize_filename(name: str) -> str:
+    """Normalize filename quirks that can break downstream indexing/matching."""
+    cleaned = name.strip()
+    cleaned = " ".join(cleaned.split())
+    return cleaned or name
+
+
 def get_pdf_page_count(path: Path) -> int:
     """Return the number of pages in the PDF at *path* using pymupdf."""
     with pymupdf.open(str(path)) as doc:
@@ -117,7 +124,7 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     # ------------------------------------------------------------------
     raw_dir = kb_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_dest = raw_dir / src.name
+    raw_dest = raw_dir / _sanitize_filename(src.name)
     if raw_dest.resolve() != src.resolve():
         shutil.copy2(src, raw_dest)
 
@@ -143,7 +150,7 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     images_dir = kb_dir / "wiki" / "sources" / "images" / src.stem
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    doc_name = src.stem
+    doc_name = raw_dest.stem
 
     if src.suffix.lower() == ".md":
         markdown = src.read_text(encoding="utf-8")

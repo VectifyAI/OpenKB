@@ -74,7 +74,12 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
             logger.info("PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt)
             break
         except Exception as exc:
-            logger.warning("PageIndex attempt %d/%d failed for %s: %s", attempt, max_retries, pdf_path.name, exc)
+            logger.exception(
+                "PageIndex attempt %d/%d failed for %s",
+                attempt,
+                max_retries,
+                pdf_path.name,
+            )
             _close_pageindex_client(client)
             client = None
             col = None

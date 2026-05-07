@@ -163,7 +163,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
         return True
 
-    doc_name = file_path.stem
+    doc_name = result.raw_path.stem if result.raw_path is not None else file_path.stem
 
     # 3/4. Index and compile
     if result.is_long_doc:
@@ -186,13 +186,38 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
             except Exception as exc:
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
-                job["status"] = "index_failed"
+                click.echo("  Falling back to short-document conversion for this PDF...")
+                try:
+                    from openkb.images import convert_pdf_with_images
+                    sources_dir = kb_dir / "wiki" / "sources"
+                    sources_dir.mkdir(parents=True, exist_ok=True)
+                    images_dir = sources_dir / "images" / doc_name
+                    images_dir.mkdir(parents=True, exist_ok=True)
+                    markdown = convert_pdf_with_images(result.raw_path, doc_name, images_dir)
+                    source_md = sources_dir / f"{doc_name}.md"
+                    source_md.write_text(markdown, encoding="utf-8")
+                    asyncio.run(compile_short_doc(doc_name, source_md, kb_dir, model))
+                except Exception as fallback_exc:
+                    click.echo(f"  [ERROR] Fallback short-doc conversion failed: {fallback_exc}")
+                    logger.debug("Fallback conversion traceback:", exc_info=True)
+                    job["status"] = "index_failed"
+                    job["doc_name"] = doc_name
+                    job["updated_at"] = int(time.time())
+                    job["last_error"] = f"{exc} | fallback_failed: {fallback_exc}"
+                    jobs[job_key] = job
+                    _save_long_pdf_jobs(jobs_path, jobs)
+                    return False
+
+                job["status"] = "fallback_short_doc"
                 job["doc_name"] = doc_name
                 job["updated_at"] = int(time.time())
                 job["last_error"] = str(exc)
                 jobs[job_key] = job
                 _save_long_pdf_jobs(jobs_path, jobs)
-                return False
+                click.echo("  [OK] Added via short-doc fallback.")
+                if result.file_hash:
+                    registry.add(result.file_hash, {"name": result.raw_path.name, "type": "pdf"})
+                return True
             index_doc_id = index_result.doc_id
             index_description = index_result.description
             job["status"] = "indexed"
