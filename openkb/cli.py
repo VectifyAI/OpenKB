@@ -128,6 +128,15 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
+def _close_litellm_async_clients() -> None:
+    """Best-effort cleanup of cached LiteLLM async clients."""
+    try:
+        asyncio.run(litellm.close_litellm_async_clients())
+    except Exception:
+        # Cleanup must never break main workflow.
+        pass
+
+
 def add_single_file(file_path: Path, kb_dir: Path) -> bool:
     """Convert, index, and compile a single document into the knowledge base.
 
@@ -196,7 +205,10 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
                     markdown = convert_pdf_with_images(result.raw_path, doc_name, images_dir)
                     source_md = sources_dir / f"{doc_name}.md"
                     source_md.write_text(markdown, encoding="utf-8")
-                    asyncio.run(compile_short_doc(doc_name, source_md, kb_dir, model))
+                    try:
+                        asyncio.run(compile_short_doc(doc_name, source_md, kb_dir, model))
+                    finally:
+                        _close_litellm_async_clients()
                 except Exception as fallback_exc:
                     click.echo(f"  [ERROR] Fallback short-doc conversion failed: {fallback_exc}")
                     logger.debug("Fallback conversion traceback:", exc_info=True)
@@ -233,10 +245,13 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
         click.echo(f"  Compiling long doc (doc_id={index_doc_id})...")
         for attempt in range(2):
             try:
-                asyncio.run(
-                    compile_long_doc(doc_name, summary_path, index_doc_id, kb_dir, model,
-                                     doc_description=index_description)
-                )
+                try:
+                    asyncio.run(
+                        compile_long_doc(doc_name, summary_path, index_doc_id, kb_dir, model,
+                                         doc_description=index_description)
+                    )
+                finally:
+                    _close_litellm_async_clients()
                 break
             except Exception as exc:
                 if attempt == 0:
@@ -260,7 +275,10 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
         click.echo(f"  Compiling short doc...")
         for attempt in range(2):
             try:
-                asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+                try:
+                    asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+                finally:
+                    _close_litellm_async_clients()
                 break
             except Exception as exc:
                 if attempt == 0:
