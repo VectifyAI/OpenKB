@@ -191,7 +191,10 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
             click.echo(f"  Long document detected — indexing with PageIndex...")
             try:
                 from openkb.indexer import index_long_document
-                index_result = index_long_document(result.raw_path, kb_dir)
+                try:
+                    index_result = index_long_document(result.raw_path, kb_dir)
+                finally:
+                    _close_litellm_async_clients()
             except Exception as exc:
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
