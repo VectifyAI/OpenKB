@@ -448,18 +448,7 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
     if is_update and path.exists():
         existing = path.read_text(encoding="utf-8")
         if source_file not in existing:
-            if existing.startswith("---"):
-                end = existing.find("---", 3)
-                if end != -1:
-                    fm = existing[:end + 3]
-                    body = existing[end + 3:]
-                    if "sources:" in fm:
-                        fm = fm.replace("sources: [", f"sources: [{source_file}, ")
-                    else:
-                        fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
-                    existing = fm + body
-            else:
-                existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
+            existing = _prepend_source_to_frontmatter(existing, source_file)
         # Strip frontmatter from LLM content to avoid duplicate blocks
         clean = content
         if clean.startswith("---"):

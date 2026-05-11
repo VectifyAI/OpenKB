@@ -181,6 +181,22 @@ class TestWriteConcept:
         assert "paper1.pdf" in text
         assert "New info from paper2." in text
 
+    def test_update_concept_merges_into_non_canonical_sources(self, tmp_path):
+        """sources:[a] (no space after colon) must still get paper2 prepended,
+        matching the helper's behavior in _add_related_link."""
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources:[paper1.pdf]\n---\n\n# Attention\n\nOld content.",
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New info from paper2.", "paper2.pdf", True)
+        text = (concepts / "attention.md").read_text()
+        assert "paper1.pdf" in text
+        assert "paper2.pdf" in text
+        assert "New info from paper2." in text
+
 
 class TestUpdateIndex:
     def test_appends_entries_with_briefs(self, tmp_path):
