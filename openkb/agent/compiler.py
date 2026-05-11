@@ -326,6 +326,28 @@ def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | Non
     return None
 
 
+def _ensure_h2_section(lines: list[str], heading: str) -> None:
+    """Ensure an H2 section ``heading`` exists in ``lines``; append if missing.
+
+    Recovers from hand-edited or drifted index.md files where the expected
+    section was removed or renamed — without this, downstream inserts would
+    silently no-op and entries would be dropped.
+    """
+    if _get_section_bounds(lines, heading) is not None:
+        return
+    logger.warning(
+        "index.md is missing %r section; appending it. "
+        "Check whether the file was hand-edited away from the canonical layout.",
+        heading,
+    )
+    while lines and lines[-1] == "":
+        lines.pop()
+    if lines:
+        lines.append("")
+    lines.append(heading)
+    lines.append("")
+
+
 def _section_contains_link(lines: list[str], heading: str, link: str) -> bool:
     """Check whether an index entry already exists inside the named section."""
     bounds = _get_section_bounds(lines, heading)
@@ -455,6 +477,42 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
         path.write_text(frontmatter + content, encoding="utf-8")
 
 
+def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
+    """Prepend ``source_file`` to the inline ``sources:`` list in YAML frontmatter.
+
+    Creates the frontmatter or the ``sources:`` line if missing. Returns the
+    text unchanged if ``source_file`` is already present in the list, or if
+    the frontmatter is malformed (no closing ``---``).
+    """
+    if not text.startswith("---"):
+        return f"---\nsources: [{source_file}]\n---\n\n" + text
+
+    fm_end = text.find("---", 3)
+    if fm_end == -1:
+        return text
+
+    fm_block = text[:fm_end]
+    body = text[fm_end:]
+    fm_lines = fm_block.split("\n")
+
+    for i, line in enumerate(fm_lines):
+        if not line.lstrip().startswith("sources:"):
+            continue
+        lb = line.find("[")
+        rb = line.rfind("]")
+        if lb == -1 or rb == -1 or rb < lb:
+            return text
+        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
+        if source_file in items:
+            return text
+        items.insert(0, source_file)
+        fm_lines[i] = f"sources: [{', '.join(items)}]"
+        return "\n".join(fm_lines) + body
+
+    fm_lines.insert(1, f"sources: [{source_file}]")
+    return "\n".join(fm_lines) + body
+
+
 def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_file: str) -> None:
     """Add a cross-reference link to an existing concept page (no LLM call)."""
     concepts_dir = wiki_dir / "concepts"
@@ -467,20 +525,8 @@ def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_f
     if link in text:
         return
 
-    # Update sources in frontmatter
     if source_file not in text:
-        if text.startswith("---"):
-            end = text.find("---", 3)
-            if end != -1:
-                fm = text[:end + 3]
-                body = text[end + 3:]
-                if "sources:" in fm:
-                    fm = fm.replace("sources: [", f"sources: [{source_file}, ")
-                else:
-                    fm = fm.replace("---\n", f"---\nsources: [{source_file}]\n", 1)
-                text = fm + body
-        else:
-            text = f"---\nsources: [{source_file}]\n---\n\n" + text
+        text = _prepend_source_to_frontmatter(text, source_file)
 
     text += f"\n\nSee also: {link}"
     path.write_text(text, encoding="utf-8")
@@ -505,13 +551,11 @@ def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -
     if not missing:
         return
 
-    new_links = "\n".join(f"- [[concepts/{s}]]" for s in missing)
-    if "## Related Concepts" in text:
-        # Append into existing section
-        text = text.replace("## Related Concepts\n", f"## Related Concepts\n{new_links}\n", 1)
-    else:
-        text += f"\n\n## Related Concepts\n{new_links}\n"
-    summary_path.write_text(text, encoding="utf-8")
+    lines = text.split("\n")
+    _ensure_h2_section(lines, "## Related Concepts")
+    for slug in reversed(missing):
+        _insert_section_entry(lines, "## Related Concepts", f"- [[concepts/{slug}]]")
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
@@ -533,11 +577,10 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
         text = path.read_text(encoding="utf-8")
         if link in text:
             continue
-        if "## Related Documents" in text:
-            text = text.replace("## Related Documents\n", f"## Related Documents\n- {link}\n", 1)
-        else:
-            text += f"\n\n## Related Documents\n- {link}\n"
-        path.write_text(text, encoding="utf-8")
+        lines = text.split("\n")
+        _ensure_h2_section(lines, "## Related Documents")
+        _insert_section_entry(lines, "## Related Documents", f"- {link}")
+        path.write_text("\n".join(lines), encoding="utf-8")
 
 def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
@@ -564,6 +607,10 @@ def _update_index(
         )
 
     lines = index_path.read_text(encoding="utf-8").split("\n")
+
+    _ensure_h2_section(lines, "## Documents")
+    if concept_names:
+        _ensure_h2_section(lines, "## Concepts")
 
     doc_link = f"[[summaries/{doc_name}]]"
     if not _section_contains_link(lines, "## Documents", doc_link):
