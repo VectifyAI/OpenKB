@@ -312,21 +312,37 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
+def _iter_h2_headings(lines: list[str]) -> list[tuple[int, str]]:
+    """Return ``[(line_index, normalized_heading), ...]`` for every ATX H2.
+
+    A line counts as H2 when it starts with ``"## "`` (two hashes + space).
+    ``normalized_heading`` is the line with trailing whitespace stripped, so
+    ``"## Documents "`` normalizes to ``"## Documents"`` — letting callers
+    use exact-string comparison without tripping on stray whitespace.
+
+    Used by ``_get_section_bounds`` so heading lookup and the next-section
+    boundary share one scan and one normalization rule.
+    """
+    return [
+        (i, line.rstrip())
+        for i, line in enumerate(lines)
+        if line.startswith("## ")
+    ]
+
+
 def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
     """Return the [start, end) bounds for a Markdown H2 section.
 
-    Heading lookup tolerates trailing whitespace on the file's heading line
-    so a drifted ``## Documents `` still matches ``## Documents`` — otherwise
-    callers would treat the section as missing and append a duplicate H2.
+    Uses ``_iter_h2_headings`` so the same H2 detection that finds the
+    target heading also determines the section's end (the next H2). A
+    drifted ``"## Documents "`` matches ``"## Documents"`` because both
+    sides are normalized.
     """
-    for i, line in enumerate(lines):
-        if line.rstrip() == heading:
-            start = i + 1
-            end = len(lines)
-            for j in range(start, len(lines)):
-                if lines[j].startswith("## "):
-                    end = j
-                    break
+    headings = _iter_h2_headings(lines)
+    for k, (idx, normalized) in enumerate(headings):
+        if normalized == heading:
+            start = idx + 1
+            end = headings[k + 1][0] if k + 1 < len(headings) else len(lines)
             return start, end
     return None
 
