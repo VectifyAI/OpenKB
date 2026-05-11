@@ -651,6 +651,131 @@ class TestCompileShortDoc:
         assert (wiki / "summaries" / "doc.md").exists()
 
 
+class TestCacheControl:
+    """Verify cache_control breakpoints are emitted on the right messages
+    so Anthropic prompt caching can hit on every reuse of the base context.
+    """
+
+    @staticmethod
+    def _has_cache_breakpoint(message: dict) -> bool:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+        return any(
+            isinstance(b, dict) and b.get("cache_control", {}).get("type") == "ephemeral"
+            for b in content
+        )
+
+    @pytest.mark.asyncio
+    async def test_short_doc_marks_doc_and_summary(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8",
+        )
+        src = wiki / "sources" / "doc.md"
+        src.write_text("Body text about caching.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+
+        summary_response = json.dumps({"brief": "B", "content": "summary body"})
+        plan_response = json.dumps({
+            "create": [{"name": "topic", "title": "Topic"}],
+            "update": [], "related": [],
+        })
+        concept_response = json.dumps({"brief": "C", "content": "page body"})
+
+        captured_sync_calls: list[list[dict]] = []
+        captured_async_calls: list[list[dict]] = []
+
+        sync_responses = [summary_response, plan_response]
+
+        def sync_side_effect(*args, **kwargs):
+            captured_sync_calls.append(kwargs["messages"])
+            idx = min(len(captured_sync_calls) - 1, len(sync_responses) - 1)
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = sync_responses[idx]
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        async def async_side_effect(*args, **kwargs):
+            captured_async_calls.append(kwargs["messages"])
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = concept_response
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock(side_effect=async_side_effect)
+            await compile_short_doc("doc", src, tmp_path, "anthropic/claude-sonnet-4-5")
+
+        # Step 1 (summary): doc_msg carries the breakpoint.
+        summary_call = captured_sync_calls[0]
+        assert summary_call[0]["role"] == "system"
+        assert summary_call[1]["role"] == "user"
+        assert self._has_cache_breakpoint(summary_call[1]), (
+            "doc_msg in summary call must carry an ephemeral cache_control marker"
+        )
+
+        # Step 2 (plan): doc_msg AND assistant summary both carry breakpoints.
+        plan_call = captured_sync_calls[1]
+        assert self._has_cache_breakpoint(plan_call[1])
+        assert plan_call[2]["role"] == "assistant"
+        assert self._has_cache_breakpoint(plan_call[2]), (
+            "assistant summary in plan call must carry a cache_control marker"
+        )
+
+        # Step 3 (concept generation): same two breakpoints reused.
+        assert captured_async_calls, "expected at least one async concept call"
+        concept_call = captured_async_calls[0]
+        assert self._has_cache_breakpoint(concept_call[1])
+        assert self._has_cache_breakpoint(concept_call[2])
+
+    @pytest.mark.asyncio
+    async def test_long_doc_marks_doc_message(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8",
+        )
+        sp = wiki / "summaries" / "big.md"
+        sp.write_text("PageIndex tree summary.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+
+        captured: list[list[dict]] = []
+        plan_response = json.dumps({"create": [], "update": [], "related": []})
+
+        def sync_side_effect(*args, **kwargs):
+            captured.append(kwargs["messages"])
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            # First call: overview (plain text); second: plan (JSON).
+            mock_resp.choices[0].message.content = (
+                "Overview text" if len(captured) == 1 else plan_response
+            )
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock()
+            await compile_long_doc(
+                "big", sp, "doc-id-1", tmp_path, "anthropic/claude-sonnet-4-5",
+            )
+
+        overview_call = captured[0]
+        assert overview_call[1]["role"] == "user"
+        assert self._has_cache_breakpoint(overview_call[1])
+
+
 class TestCompileLongDoc:
     @pytest.mark.asyncio
     async def test_full_pipeline(self, tmp_path):
