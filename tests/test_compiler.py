@@ -482,7 +482,8 @@ class TestBacklinkSummary:
         assert text.count("[[concepts/attention]]") == 1
 
     def test_section_with_trailing_whitespace_still_merges(self, tmp_path):
-        """Heading with trailing space must not cause silent drop of new links."""
+        """Heading with trailing space must merge into the existing section,
+        not append a duplicate H2."""
         wiki = tmp_path / "wiki"
         summaries = wiki / "summaries"
         summaries.mkdir(parents=True)
@@ -493,6 +494,7 @@ class TestBacklinkSummary:
         _backlink_summary(wiki, "paper", ["attention", "transformer"])
         text = (summaries / "paper.md").read_text()
         assert "[[concepts/transformer]]" in text
+        assert text.count("## Related Concepts") == 1
 
 
 class TestBacklinkConcepts:
@@ -543,7 +545,8 @@ class TestBacklinkConcepts:
         _backlink_concepts(wiki, "paper", ["nonexistent"])
 
     def test_section_with_trailing_whitespace_still_merges(self, tmp_path):
-        """Heading with trailing space must not cause silent drop of new link."""
+        """Heading with trailing space must merge into the existing section,
+        not append a duplicate H2."""
         wiki = tmp_path / "wiki"
         concepts = wiki / "concepts"
         concepts.mkdir(parents=True)
@@ -555,6 +558,7 @@ class TestBacklinkConcepts:
         text = (concepts / "attention.md").read_text()
         assert "[[summaries/new-paper]]" in text
         assert "[[summaries/old-paper]]" in text
+        assert text.count("## Related Documents") == 1
 
 
 class TestAddRelatedLink:

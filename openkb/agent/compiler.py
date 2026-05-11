@@ -313,9 +313,14 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
 
 
 def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
-    """Return the [start, end) bounds for a Markdown H2 section."""
+    """Return the [start, end) bounds for a Markdown H2 section.
+
+    Heading lookup tolerates trailing whitespace on the file's heading line
+    so a drifted ``## Documents `` still matches ``## Documents`` — otherwise
+    callers would treat the section as missing and append a duplicate H2.
+    """
     for i, line in enumerate(lines):
-        if line == heading:
+        if line.rstrip() == heading:
             start = i + 1
             end = len(lines)
             for j in range(start, len(lines)):
@@ -336,7 +341,7 @@ def _ensure_h2_section(lines: list[str], heading: str) -> None:
     if _get_section_bounds(lines, heading) is not None:
         return
     logger.warning(
-        "index.md is missing %r section; appending it. "
+        "Wiki page is missing %r section; appending it. "
         "Check whether the file was hand-edited away from the canonical layout.",
         heading,
     )
