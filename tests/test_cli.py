@@ -66,3 +66,33 @@ def test_init_already_exists(tmp_path):
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
         assert "already initialized" in result.output
+
+
+def test_run_lint_reads_from_registry_not_json(tmp_path):
+    """run_lint should use registry.all_entries() instead of hashes.json directly."""
+    import asyncio
+
+    from openkb.cli import run_lint
+    from openkb.config import DEFAULT_CONFIG
+    from openkb.state import get_registry
+
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    wiki_dir = tmp_path / "wiki"
+    (wiki_dir / "sources").mkdir(parents=True)
+    (wiki_dir / "summaries").mkdir(parents=True)
+    (wiki_dir / "concepts").mkdir(parents=True)
+    (wiki_dir / "reports").mkdir(parents=True)
+
+    config_path = openkb_dir / "config.yaml"
+    config_path.write_text(yaml.safe_dump(DEFAULT_CONFIG, allow_unicode=True), encoding="utf-8")
+
+    registry = get_registry(openkb_dir, backend="sqlite")
+    registry.add("hash123", {"name": "doc.pdf"})
+
+    with patch("openkb.cli._setup_llm_key"), \
+         patch("openkb.lint.run_structural_lint", return_value="structural ok"), \
+         patch("openkb.agent.linter.run_knowledge_lint", return_value="knowledge ok"):
+        result = asyncio.run(run_lint(tmp_path))
+
+    assert result is not None

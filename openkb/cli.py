@@ -546,20 +546,16 @@ async def run_lint(kb_dir: Path) -> Path | None:
     """
     from openkb.lint import run_structural_lint
     from openkb.agent.linter import run_knowledge_lint
+    from openkb.state import get_registry
 
     openkb_dir = kb_dir / ".openkb"
-
-    # Skip lint entirely when the KB has no indexed documents
-    hashes_file = openkb_dir / "hashes.json"
-    if hashes_file.exists():
-        hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
-    else:
-        hashes = {}
+    config = load_config(openkb_dir / "config.yaml")
+    backend: str = config.get("storage_backend", "sqlite")
+    registry = get_registry(openkb_dir, backend=backend)
+    hashes = registry.all_entries()
     if not hashes:
         click.echo("Nothing to lint — no documents indexed yet. Run `openkb add` first.")
         return
-
-    config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
