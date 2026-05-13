@@ -84,6 +84,24 @@ def test_load_existing_json(tmp_path):
     assert registry.get("existinghash") == {"file": "pre.pdf"}
 
 
+def test_get_by_path(tmp_path):
+    registry = HashRegistry(tmp_path / "hashes.json")
+    registry.add("h1", {"name": "doc.pdf", "path": "/raw/doc.pdf"})
+    assert registry.get_by_path("doc.pdf") == {"name": "doc.pdf", "path": "/raw/doc.pdf"}
+    assert registry.get_by_path("/raw/doc.pdf") == {"name": "doc.pdf", "path": "/raw/doc.pdf"}
+    assert registry.get_by_path("missing") is None
+
+
+def test_remove_by_doc_name(tmp_path):
+    registry = HashRegistry(tmp_path / "hashes.json")
+    registry.add("h1", {"name": "doc1.pdf"})
+    registry.add("h2", {"name": "doc2.pdf"})
+    assert registry.remove_by_doc_name("doc1.pdf") is True
+    assert not registry.is_known("h1")
+    assert registry.is_known("h2")
+    assert registry.remove_by_doc_name("missing") is False
+
+
 # ---------------------------------------------------------------------------
 # Factory function tests
 # ---------------------------------------------------------------------------

@@ -53,6 +53,25 @@ class HashRegistry:
         self._data[file_hash] = metadata
         self._persist()
 
+    def get_by_path(self, path: str) -> dict | None:
+        """Return metadata for the first entry whose 'path' or 'name' matches."""
+        for metadata in self._data.values():
+            if metadata.get("path") == path or metadata.get("name") == path:
+                return metadata
+        return None
+
+    def remove_by_doc_name(self, doc_name: str) -> bool:
+        """Remove the first entry whose metadata 'name' matches doc_name.
+
+        Returns True if an entry was removed, False otherwise.
+        """
+        for file_hash, metadata in list(self._data.items()):
+            if metadata.get("name") == doc_name:
+                del self._data[file_hash]
+                self._persist()
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -81,26 +100,28 @@ class DbRegistry:
 
     def __init__(self, path: Path, migrate_from: Path | None = None) -> None:
         """Initialize DbRegistry.
-        
+
         Args:
             path: Path to SQLite database file.
             migrate_from: Optional path to JSON file to migrate from.
-                          Migration only happens if DB doesn't exist yet.
+                          Migration is retried if not previously completed
+                          and the registry table is empty.
         """
         self._path = path
-        should_migrate = migrate_from is not None and not path.exists()
         self._init_db()
-        if should_migrate:
-            self._migrate_from_json(migrate_from)
+        if migrate_from is not None and migrate_from.exists():
+            if not self._is_migration_complete() and self._is_empty():
+                self._migrate_from_json(migrate_from)
+                self._mark_migration_complete()
 
     def _migrate_from_json(self, json_path: Path) -> None:
         """Migrate data from JSON file to SQLite database."""
         if not json_path.exists():
             return
-        
+
         with json_path.open("r", encoding="utf-8") as fh:
             data: dict[str, dict] = json.load(fh)
-        
+
         with self._connect() as conn:
             for file_hash, metadata in data.items():
                 metadata_json = json.dumps(metadata, ensure_ascii=False)
@@ -109,10 +130,32 @@ class DbRegistry:
                     VALUES (?, ?)
                 """, (file_hash, metadata_json))
 
+    def _is_migration_complete(self) -> bool:
+        """Return True if a previous JSON migration was successfully finished."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'migrated_from_json'"
+            )
+            return cursor.fetchone() is not None
+
+    def _mark_migration_complete(self) -> None:
+        """Record that JSON migration has finished."""
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO schema_meta (key, value)
+                VALUES ('migrated_from_json', '1')
+            """)
+
+    def _is_empty(self) -> bool:
+        """Return True if the registry table contains no rows."""
+        with self._connect() as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM registry")
+            return cursor.fetchone()[0] == 0
+
     def _init_db(self) -> None:
         """Initialize database schema if not exists."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
@@ -126,6 +169,12 @@ class DbRegistry:
             """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_created_at ON registry(created_at)
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
             """)
 
     @contextmanager
@@ -185,6 +234,35 @@ class DbRegistry:
                     updated_at = CURRENT_TIMESTAMP
             """, (file_hash, metadata_json))
 
+    def get_by_path(self, path: str) -> dict | None:
+        """Return metadata for the first entry whose 'path' or 'name' matches."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT metadata_json FROM registry").fetchall()
+            for (metadata_json,) in rows:
+                metadata = json.loads(metadata_json)
+                if metadata.get("path") == path or metadata.get("name") == path:
+                    return metadata
+        return None
+
+    def remove_by_doc_name(self, doc_name: str) -> bool:
+        """Remove the first entry whose metadata 'name' matches doc_name.
+
+        Returns True if an entry was removed, False otherwise.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT file_hash, metadata_json FROM registry"
+            ).fetchall()
+            for file_hash, metadata_json in rows:
+                metadata = json.loads(metadata_json)
+                if metadata.get("name") == doc_name:
+                    conn.execute(
+                        "DELETE FROM registry WHERE file_hash = ?",
+                        (file_hash,),
+                    )
+                    return True
+        return False
+
     @staticmethod
     def hash_file(path: Path) -> str:
         """Return the SHA-256 hex digest (64 chars) of the file at path."""
@@ -216,7 +294,5 @@ def get_registry(
     db_path = openkb_dir / "hashes.db"
     json_path = openkb_dir / "hashes.json"
     
-    if json_path.exists() and not db_path.exists():
-        return DbRegistry(db_path, migrate_from=json_path)
-    
-    return DbRegistry(db_path)
+    migrate_from = json_path if json_path.exists() else None
+    return DbRegistry(db_path, migrate_from=migrate_from)

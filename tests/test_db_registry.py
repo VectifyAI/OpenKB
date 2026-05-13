@@ -170,3 +170,47 @@ def test_migrate_optional(tmp_path):
     registry = DbRegistry(db_path)
     registry.add("hash1", {"name": "doc.pdf"})
     assert registry.is_known("hash1")
+
+
+def test_migration_resumes_after_interrupt(tmp_path):
+    """If DB exists but migration was interrupted, retry on next init."""
+    json_path = tmp_path / "hashes.json"
+    json_path.write_text(json.dumps({"hash1": {"name": "doc1.pdf"}}), encoding="utf-8")
+
+    db_path = tmp_path / "hashes.db"
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE registry (
+            file_hash TEXT PRIMARY KEY,
+            metadata_json TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE INDEX idx_created_at ON registry(created_at)")
+    conn.commit()
+    conn.close()
+
+    registry = DbRegistry(db_path, migrate_from=json_path)
+    assert registry.is_known("hash1")
+
+
+def test_get_by_path(tmp_path):
+    """get_by_path should match 'name' or 'path' metadata keys."""
+    registry = DbRegistry(tmp_path / "hashes.db")
+    registry.add("h1", {"name": "doc.pdf", "path": "/raw/doc.pdf"})
+    assert registry.get_by_path("doc.pdf") == {"name": "doc.pdf", "path": "/raw/doc.pdf"}
+    assert registry.get_by_path("/raw/doc.pdf") == {"name": "doc.pdf", "path": "/raw/doc.pdf"}
+    assert registry.get_by_path("missing") is None
+
+
+def test_remove_by_doc_name(tmp_path):
+    """remove_by_doc_name should delete entry by metadata 'name'."""
+    registry = DbRegistry(tmp_path / "hashes.db")
+    registry.add("h1", {"name": "doc1.pdf"})
+    registry.add("h2", {"name": "doc2.pdf"})
+    assert registry.remove_by_doc_name("doc1.pdf") is True
+    assert not registry.is_known("h1")
+    assert registry.is_known("h2")
+    assert registry.remove_by_doc_name("missing") is False
