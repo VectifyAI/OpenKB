@@ -28,7 +28,7 @@ from pathlib import Path
 
 import litellm
 
-from openkb.lint import strip_ghost_wikilinks
+from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import get_agents_md
 
 logger = logging.getLogger(__name__)
@@ -693,25 +693,6 @@ def _update_index(
 DEFAULT_COMPILE_CONCURRENCY = 5
 
 
-def _list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
-    """Return the set of currently-existing wikilink targets on disk.
-
-    Includes every ``concepts/{stem}`` and ``summaries/{stem}`` for .md files
-    actually present in the wiki, plus ``index``. Used to seed the whitelist
-    we pass into LLM prompts and strip_ghost_wikilinks.
-    """
-    targets: set[str] = set()
-    concepts_dir = wiki_dir / "concepts"
-    summaries_dir = wiki_dir / "summaries"
-    if concepts_dir.is_dir():
-        targets.update(f"concepts/{p.stem}" for p in concepts_dir.glob("*.md"))
-    if summaries_dir.is_dir():
-        targets.update(f"summaries/{p.stem}" for p in summaries_dir.glob("*.md"))
-    if (wiki_dir / "index.md").exists():
-        targets.add("index")
-    return targets
-
-
 def _format_known_targets(targets: set[str]) -> str:
     """Format the whitelist as a bulleted Markdown list for prompt injection."""
     if not targets:
@@ -768,7 +749,7 @@ async def _compile_concepts(
         ``plan.create`` slugs are unknown at this point, so the whitelist
         is just what physically exists.
         """
-        fallback_targets = _list_existing_wiki_targets(wiki_dir)
+        fallback_targets = list_existing_wiki_targets(wiki_dir)
         fallback_targets.add(f"summaries/{doc_name}")
         cleaned, ghosts = strip_ghost_wikilinks(summary, fallback_targets)
         if ghosts:
@@ -818,7 +799,7 @@ async def _compile_concepts(
         _sanitize_concept_name(s) for s in related_items
     }
     known_targets: set[str] = (
-        _list_existing_wiki_targets(wiki_dir)
+        list_existing_wiki_targets(wiki_dir)
         | {f"concepts/{s}" for s in planned_slugs}
         | {f"summaries/{doc_name}"}
     )

@@ -134,6 +134,27 @@ def _extract_wikilinks(text: str) -> list[str]:
     return [link.split("|")[0].strip() for link in raw]
 
 
+def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
+    """Return the set of currently-existing wikilink targets on disk.
+
+    Includes every ``concepts/{stem}`` and ``summaries/{stem}`` for .md files
+    actually present in the wiki, plus ``index`` when ``index.md`` exists.
+    Used to seed the whitelist passed to :func:`strip_ghost_wikilinks` from
+    both the compile pipeline and any other code path that writes
+    LLM-generated content to the wiki (e.g. ``openkb query --save``).
+    """
+    targets: set[str] = set()
+    concepts_dir = wiki_dir / "concepts"
+    summaries_dir = wiki_dir / "summaries"
+    if concepts_dir.is_dir():
+        targets.update(f"concepts/{p.stem}" for p in concepts_dir.glob("*.md"))
+    if summaries_dir.is_dir():
+        targets.update(f"summaries/{p.stem}" for p in summaries_dir.glob("*.md"))
+    if (wiki_dir / "index.md").exists():
+        targets.add("index")
+    return targets
+
+
 def fix_broken_links(wiki: Path) -> tuple[int, int]:
     """Rewrite or strip broken [[wikilinks]] across the wiki in place.
 

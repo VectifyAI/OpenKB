@@ -405,12 +405,20 @@ def query(ctx, question, save, raw):
 
     if save and answer:
         import re
+        from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
         slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
         explore_dir = kb_dir / "wiki" / "explorations"
         explore_dir.mkdir(parents=True, exist_ok=True)
         explore_path = explore_dir / f"{slug}.md"
+        # Strip ghost wikilinks the agent may have emitted to non-existent
+        # concept/summary pages — the schema_md in the agent's instructions
+        # encourages [[wikilinks]] but the agent's view of "which pages
+        # exist" can drift from disk reality.
+        known = list_existing_wiki_targets(kb_dir / "wiki")
+        cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
         explore_path.write_text(
-            f"---\nquery: \"{question}\"\n---\n\n{answer}\n", encoding="utf-8"
+            f"---\nquery: \"{question}\"\n---\n\n{cleaned_answer}\n",
+            encoding="utf-8",
         )
         click.echo(f"\nSaved to {explore_path}")
 
