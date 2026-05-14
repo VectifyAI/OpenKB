@@ -759,13 +759,32 @@ async def _compile_concepts(
         )},
     ], "concepts-plan", max_tokens=1024)
 
+    def _write_v1_summary_stripped() -> None:
+        """Fallback writer for the v1 summary on early-return paths.
+
+        Strips against the set of wikilink targets currently on disk before
+        writing, so the v1 summary's LLM-hallucinated links don't slip past
+        the ghost-link defense when plan parsing fails or the plan is empty.
+        ``plan.create`` slugs are unknown at this point, so the whitelist
+        is just what physically exists.
+        """
+        fallback_targets = _list_existing_wiki_targets(wiki_dir)
+        fallback_targets.add(f"summaries/{doc_name}")
+        cleaned, ghosts = strip_ghost_wikilinks(summary, fallback_targets)
+        if ghosts:
+            logger.info(
+                "stripped %d ghost wikilink(s) from fallback v1 summary %s: %s",
+                len(ghosts), doc_name, ghosts[:5],
+            )
+        _write_summary(wiki_dir, doc_name, cleaned)
+
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse concepts plan: %s", exc)
         logger.debug("Raw: %s", plan_raw)
         if rewrite_summary:
-            _write_summary(wiki_dir, doc_name, summary)
+            _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
@@ -785,7 +804,7 @@ async def _compile_concepts(
 
     if not create_items and not update_items and not related_items:
         if rewrite_summary:
-            _write_summary(wiki_dir, doc_name, summary)
+            _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
@@ -903,33 +922,65 @@ async def _compile_concepts(
     # --- Optional Step 3a: LLM rewrite the summary with full whitelist ---
     # Only for the short-doc path. The long-doc path leaves the indexer-
     # written summary untouched.
-    final_summary = summary
+    #
+    # The rewrite call is best-effort: on any failure (API error, empty
+    # response, exception) we fall back to the v1 summary stripped against
+    # the full whitelist, so the summary is always written and never wiped.
     if rewrite_summary:
-        rewrite_raw = _llm_call(model, [
-            system_msg,
-            doc_msg,            # cached (BP1)
-            summary_msg,        # cached (BP2) — contains the v1 summary text
-            {"role": "user", "content": _SUMMARY_REWRITE_USER.format(
-                known_targets=known_targets_str,
-            )},
-        ], "summary-rewrite", max_tokens=2048)
-        # The rewrite prompt asks for raw Markdown (no JSON wrapper).
-        final_summary = rewrite_raw.strip()
-        # Strip frontmatter if the model added one anyway.
-        if final_summary.startswith("---"):
-            end = final_summary.find("---", 3)
-            if end != -1:
-                final_summary = final_summary[end + 3:].lstrip("\n")
-        # Safety net: strip any wikilink the rewrite still emitted that
-        # is not in the whitelist.
-        final_summary, summary_ghosts = strip_ghost_wikilinks(
-            final_summary, known_targets
-        )
-        if summary_ghosts:
-            logger.info(
-                "stripped %d ghost wikilink(s) from summary %s: %s",
-                len(summary_ghosts), doc_name, summary_ghosts[:5],
+        candidate: str | None = None
+        try:
+            # No max_tokens cap — matches the v1 summary call. The rewrite
+            # prompt asks the model to keep length within ±20% of the v1.
+            rewrite_raw = _llm_call(model, [
+                system_msg,
+                doc_msg,            # cached (BP1)
+                summary_msg,        # cached (BP2) — contains the v1 summary text
+                {"role": "user", "content": _SUMMARY_REWRITE_USER.format(
+                    known_targets=known_targets_str,
+                )},
+            ], "summary-rewrite")
+            candidate = rewrite_raw.strip()
+            # Strip frontmatter if the model added one anyway.
+            if candidate.startswith("---"):
+                end = candidate.find("---", 3)
+                if end != -1:
+                    candidate = candidate[end + 3:].lstrip("\n")
+            # Safety net: strip any wikilink the rewrite emitted that is
+            # not in the whitelist.
+            candidate, summary_ghosts = strip_ghost_wikilinks(
+                candidate, known_targets
             )
+            if summary_ghosts:
+                logger.info(
+                    "stripped %d ghost wikilink(s) from summary %s: %s",
+                    len(summary_ghosts), doc_name, summary_ghosts[:5],
+                )
+        except Exception as exc:
+            logger.warning(
+                "summary-rewrite failed for %s: %s. Falling back to v1.",
+                doc_name, exc,
+            )
+            candidate = None
+
+        if candidate:
+            final_summary = candidate
+        else:
+            # Rewrite produced no content (empty response or exception).
+            # Strip the v1 summary against the same whitelist so the
+            # fallback doesn't reintroduce ghost links.
+            if candidate is not None:
+                logger.warning(
+                    "summary-rewrite returned empty for %s; using v1 fallback.",
+                    doc_name,
+                )
+            final_summary, fallback_ghosts = strip_ghost_wikilinks(
+                summary, known_targets,
+            )
+            if fallback_ghosts:
+                logger.info(
+                    "stripped %d ghost wikilink(s) from v1 fallback summary %s: %s",
+                    len(fallback_ghosts), doc_name, fallback_ghosts[:5],
+                )
         _write_summary(wiki_dir, doc_name, final_summary)
 
     # --- Write concept pages to disk ---
