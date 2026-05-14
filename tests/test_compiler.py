@@ -181,6 +181,22 @@ class TestWriteConcept:
         assert "paper1.pdf" in text
         assert "New info from paper2." in text
 
+    def test_update_concept_merges_into_non_canonical_sources(self, tmp_path):
+        """sources:[a] (no space after colon) must still get paper2 prepended,
+        matching the helper's behavior in _add_related_link."""
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources:[paper1.pdf]\n---\n\n# Attention\n\nOld content.",
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New info from paper2.", "paper2.pdf", True)
+        text = (concepts / "attention.md").read_text()
+        assert "paper1.pdf" in text
+        assert "paper2.pdf" in text
+        assert "New info from paper2." in text
+
 
 class TestUpdateIndex:
     def test_appends_entries_with_briefs(self, tmp_path):
@@ -288,6 +304,32 @@ class TestUpdateIndex:
         text = (wiki / "index.md").read_text()
         assert "- [[summaries/my-doc]] (short) — Mentions [[concepts/attention]] here" in text
         assert "- [[concepts/attention]] — New brief" in text
+
+    def test_recovers_when_documents_section_missing(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", [], doc_brief="Brief")
+        text = (wiki / "index.md").read_text()
+        assert "## Documents" in text
+        assert "[[summaries/my-doc]] (short) — Brief" in text
+
+    def test_recovers_when_concepts_section_missing(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(wiki, "my-doc", ["attention"],
+                       concept_briefs={"attention": "Focus"})
+        text = (wiki / "index.md").read_text()
+        assert "## Concepts" in text
+        assert "[[concepts/attention]] — Focus" in text
+        assert "[[summaries/my-doc]]" in text
 
 
 class TestReadWikiContext:
@@ -455,6 +497,21 @@ class TestBacklinkSummary:
         assert "[[concepts/transformer]]" in text
         assert text.count("[[concepts/attention]]") == 1
 
+    def test_section_with_trailing_whitespace_still_merges(self, tmp_path):
+        """Heading with trailing space must merge into the existing section,
+        not append a duplicate H2."""
+        wiki = tmp_path / "wiki"
+        summaries = wiki / "summaries"
+        summaries.mkdir(parents=True)
+        (summaries / "paper.md").write_text(
+            "# Summary\n\nContent.\n\n## Related Concepts \n- [[concepts/attention]]\n",
+            encoding="utf-8",
+        )
+        _backlink_summary(wiki, "paper", ["attention", "transformer"])
+        text = (summaries / "paper.md").read_text()
+        assert "[[concepts/transformer]]" in text
+        assert text.count("## Related Concepts") == 1
+
 
 class TestBacklinkConcepts:
     def test_adds_summary_link_to_concept(self, tmp_path):
@@ -503,6 +560,22 @@ class TestBacklinkConcepts:
         # Should not raise
         _backlink_concepts(wiki, "paper", ["nonexistent"])
 
+    def test_section_with_trailing_whitespace_still_merges(self, tmp_path):
+        """Heading with trailing space must merge into the existing section,
+        not append a duplicate H2."""
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "# Attention\n\n## Related Documents \n- [[summaries/old-paper]]\n",
+            encoding="utf-8",
+        )
+        _backlink_concepts(wiki, "new-paper", ["attention"])
+        text = (concepts / "attention.md").read_text()
+        assert "[[summaries/new-paper]]" in text
+        assert "[[summaries/old-paper]]" in text
+        assert text.count("## Related Documents") == 1
+
 
 class TestAddRelatedLink:
     def test_adds_see_also_link(self, tmp_path):
@@ -535,6 +608,35 @@ class TestAddRelatedLink:
         wiki.mkdir()
         # Should not raise
         _add_related_link(wiki, "nonexistent", "doc", "file.pdf")
+
+    def test_frontmatter_without_space_after_colon_still_merges(self, tmp_path):
+        """sources:[a] (no space after colon) must still prepend new source."""
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nsources:[paper1.pdf]\n---\n\n# Attention\n",
+            encoding="utf-8",
+        )
+        _add_related_link(wiki, "attention", "new-doc", "paper2.pdf")
+        text = (concepts / "attention.md").read_text()
+        assert "paper2.pdf" in text
+        assert "paper1.pdf" in text
+        assert "[[summaries/new-doc]]" in text
+
+    def test_frontmatter_without_sources_line_gets_one_inserted(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            "---\nbrief: Focus mechanism\n---\n\n# Attention\n",
+            encoding="utf-8",
+        )
+        _add_related_link(wiki, "attention", "new-doc", "paper.pdf")
+        text = (concepts / "attention.md").read_text()
+        assert "sources: [paper.pdf]" in text
+        assert "brief: Focus mechanism" in text
+        assert "[[summaries/new-doc]]" in text
 
 
 def _mock_completion(responses: list[str]):
