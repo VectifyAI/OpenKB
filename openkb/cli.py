@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore")
 import asyncio
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 
@@ -357,6 +358,17 @@ def add(ctx, path):
         add_single_file(target, kb_dir)
 
 
+def _stream_to_tty() -> bool:
+    """Return True when stdout is a real terminal.
+
+    Used to auto-disable streaming output when ``openkb query`` is piped,
+    redirected to a file, or run as a subprocess — streaming output emits
+    interleaved tool-call lines that are noisy for non-interactive callers,
+    and the non-streaming branch returns just the final answer string.
+    """
+    return sys.stdout.isatty()
+
+
 @cli.command()
 @click.argument("question")
 @click.option("--save", is_flag=True, default=False, help="Save the answer to wiki/explorations/.")
@@ -380,8 +392,11 @@ def query(ctx, question, save, raw):
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
+    stream = _stream_to_tty()
     try:
-        answer = asyncio.run(run_query(question, kb_dir, model, stream=True, raw=raw))
+        answer = asyncio.run(run_query(question, kb_dir, model, stream=stream, raw=raw))
+        if not stream and answer:
+            click.echo(answer)
     except Exception as exc:
         click.echo(f"[ERROR] Query failed: {exc}")
         return

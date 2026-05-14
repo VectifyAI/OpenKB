@@ -80,6 +80,16 @@ def _build_style(use_color: bool) -> Style:
 
 
 def _fmt(style: Style, *fragments: tuple[str, str]) -> None:
+    # prompt_toolkit's print_formatted_text constructs a Win32Output on
+    # Windows that requires a real console handle, raising
+    # NoConsoleScreenBufferError when stdout is a pipe, file, or captured
+    # subprocess stream. Fall back to plain text when the output isn't a
+    # usable console.
+    if not _use_color(force_off=False):
+        for _, text in fragments:
+            sys.stdout.write(text)
+        sys.stdout.flush()
+        return
     print_formatted_text(FormattedText(list(fragments)), style=style, end="")
 
 
