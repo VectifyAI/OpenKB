@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 
 from openkb.lint import (
+    _normalize_target,
     check_index_sync,
     find_broken_links,
     find_missing_entries,
     find_orphans,
     run_structural_lint,
+    strip_ghost_wikilinks,
 )
 
 
@@ -224,3 +226,134 @@ class TestRunStructuralLint:
         report = run_structural_lint(tmp_path)
 
         assert "missing" in report
+
+
+class TestNormalizeTarget:
+    def test_lowercases(self):
+        assert _normalize_target("concepts/AI-Agents") == "concepts/ai-agents"
+
+    def test_underscore_to_hyphen(self):
+        assert _normalize_target("concepts/gist_memory") == "concepts/gist-memory"
+
+    def test_nfkc_fullwidth_paren(self):
+        # Full-width ） normalizes to ASCII ) via NFKC
+        assert _normalize_target("summaries/A（B)") == _normalize_target("summaries/A(B)")
+
+    def test_collapses_repeated_hyphens(self):
+        assert _normalize_target("concepts/foo--bar") == "concepts/foo-bar"
+
+    def test_preserves_path_separator(self):
+        assert _normalize_target("concepts/Foo") == "concepts/foo"
+        # Does not collapse the slash
+        assert "/" in _normalize_target("concepts/Foo")
+
+    def test_strips_trailing_hyphens_per_segment(self):
+        assert _normalize_target("concepts/-foo-") == "concepts/foo"
+
+
+class TestStripGhostWikilinks:
+    def test_keeps_direct_match(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/attention]] for details.",
+            {"concepts/attention"},
+        )
+        assert out == "See [[concepts/attention]] for details."
+        assert ghosts == []
+
+    def test_strips_unknown_target(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/missing]] for details.",
+            {"concepts/attention"},
+        )
+        assert out == "See missing for details."
+        assert ghosts == ["concepts/missing"]
+
+    def test_rewrites_fuzzy_match_underscore_to_hyphen(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/gist_memory]] now.",
+            {"concepts/gist-memory"},
+        )
+        assert out == "See [[concepts/gist-memory]] now."
+        assert ghosts == []
+
+    def test_rewrites_fuzzy_match_case(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/AI-Agents]] now.",
+            {"concepts/ai-agents"},
+        )
+        assert out == "See [[concepts/ai-agents]] now."
+        assert ghosts == []
+
+    def test_rewrites_fuzzy_match_unicode(self):
+        # File on disk has full-width ）
+        known = {"summaries/Agent 对接说明文档（已修订）"}
+        # LLM wrote ASCII )
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[summaries/Agent 对接说明文档（已修订)]].",
+            known,
+        )
+        assert "[[summaries/Agent 对接说明文档（已修订）]]" in out
+        assert ghosts == []
+
+    def test_preserves_alias_on_direct_match(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/attention|the attention mechanism]].",
+            {"concepts/attention"},
+        )
+        assert "[[concepts/attention|the attention mechanism]]" in out
+        assert ghosts == []
+
+    def test_preserves_alias_on_fuzzy_match(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/gist_memory|gist memory]].",
+            {"concepts/gist-memory"},
+        )
+        assert "[[concepts/gist-memory|gist memory]]" in out
+
+    def test_uses_alias_as_display_when_stripped(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/missing|my term]] now.",
+            set(),
+        )
+        assert out == "See my term now."
+        assert ghosts == ["concepts/missing"]
+
+    def test_strips_bare_link_to_readable_text(self):
+        # "concepts/multi_head_attention" → "multi head attention"
+        out, ghosts = strip_ghost_wikilinks(
+            "Uses [[concepts/multi_head_attention]] heavily.",
+            set(),
+        )
+        assert out == "Uses multi head attention heavily."
+
+    def test_handles_multiple_links_mixed(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "[[concepts/a]] and [[concepts/b]] and [[concepts/c]]",
+            {"concepts/a", "concepts/c"},
+        )
+        assert "[[concepts/a]]" in out
+        assert "[[concepts/c]]" in out
+        assert "[[concepts/b]]" not in out
+        assert ghosts == ["concepts/b"]
+
+    def test_no_wikilinks_returns_unchanged(self):
+        text = "Plain markdown with no wikilinks at all."
+        out, ghosts = strip_ghost_wikilinks(text, {"concepts/foo"})
+        assert out == text
+        assert ghosts == []
+
+    def test_empty_known_set_strips_all(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "[[a]] [[b/c]] [[d]]",
+            set(),
+        )
+        assert "[[" not in out
+        assert len(ghosts) == 3
+
+    def test_same_ghost_appearing_multiple_times(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "[[concepts/x]] and [[concepts/x]] again",
+            set(),
+        )
+        # Each occurrence is recorded separately so callers can count
+        assert ghosts == ["concepts/x", "concepts/x"]

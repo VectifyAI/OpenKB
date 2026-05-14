@@ -601,16 +601,25 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
 
 @cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
+@click.option("--fix", is_flag=True, default=False,
+              help="Rewrite broken [[wikilinks]] in place (fuzzy match) or "
+                   "strip to plain text when no match. Runs before the report.")
 @click.pass_context
 def lint(ctx, fix):
     """Lint the knowledge base for structural and semantic inconsistencies."""
-    if fix:
-        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
+    if fix:
+        from openkb.lint import fix_broken_links
+        files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
+        if files_changed:
+            click.echo(
+                f"Fixed {ghosts} wikilink(s) across {files_changed} file(s)."
+            )
+        else:
+            click.echo("Nothing to fix — all wikilinks resolve.")
     asyncio.run(run_lint(kb_dir))
 
 
