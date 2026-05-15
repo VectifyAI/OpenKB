@@ -405,12 +405,20 @@ def query(ctx, question, save, raw):
 
     if save and answer:
         import re
+        from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
         slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
         explore_dir = kb_dir / "wiki" / "explorations"
         explore_dir.mkdir(parents=True, exist_ok=True)
         explore_path = explore_dir / f"{slug}.md"
+        # Strip ghost wikilinks the agent may have emitted to non-existent
+        # concept/summary pages — the schema_md in the agent's instructions
+        # encourages [[wikilinks]] but the agent's view of "which pages
+        # exist" can drift from disk reality.
+        known = list_existing_wiki_targets(kb_dir / "wiki")
+        cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
         explore_path.write_text(
-            f"---\nquery: \"{question}\"\n---\n\n{answer}\n", encoding="utf-8"
+            f"---\nquery: \"{question}\"\n---\n\n{cleaned_answer}\n",
+            encoding="utf-8",
         )
         click.echo(f"\nSaved to {explore_path}")
 
@@ -601,16 +609,25 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
 
 @cli.command()
-@click.option("--fix", is_flag=True, default=False, help="Automatically fix lint issues (not yet implemented).")
+@click.option("--fix", is_flag=True, default=False,
+              help="Rewrite broken [[wikilinks]] in place (fuzzy match) or "
+                   "strip to plain text when no match. Runs before the report.")
 @click.pass_context
 def lint(ctx, fix):
     """Lint the knowledge base for structural and semantic inconsistencies."""
-    if fix:
-        click.echo("Warning: --fix is not yet implemented. Running lint in report-only mode.")
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
+    if fix:
+        from openkb.lint import fix_broken_links
+        files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
+        if files_changed:
+            click.echo(
+                f"Fixed {ghosts} wikilink(s) across {files_changed} file(s)."
+            )
+        else:
+            click.echo("Nothing to fix — all wikilinks resolve.")
     asyncio.run(run_lint(kb_dir))
 
 

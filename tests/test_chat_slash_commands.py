@@ -216,3 +216,41 @@ async def test_slash_clear(tmp_path):
     with p:
         result = await _handle_slash("/clear", kb_dir, session, _STYLE)
     assert result == "new_session"
+
+
+def test_save_transcript_strips_ghost_wikilinks(tmp_path):
+    """`/save` writes the chat transcript to wiki/explorations/. Assistant
+    responses may contain [[wikilinks]] to pages that don't exist on disk
+    (the agent's instructions encourage wikilinks but its view of which
+    pages exist can drift). The save path strips them before writing so
+    `openkb lint` doesn't surface them as broken links on the next run.
+    """
+    from openkb.agent.chat import _save_transcript
+
+    kb_dir = _setup_kb(tmp_path)
+    # A real concept page on disk → valid wikilink target.
+    (kb_dir / "wiki" / "concepts" / "attention.md").write_text(
+        "# Attention\n", encoding="utf-8",
+    )
+
+    session = _make_session(kb_dir)
+    session.user_turns = ["What is a transformer?"]
+    session.assistant_texts = [
+        "A transformer uses [[concepts/attention]] to model relationships. "
+        "Unlike [[concepts/rnn]], it processes tokens in parallel and relies "
+        "on [[concepts/positional-encoding]] for order."
+    ]
+    session.title = "transformer-q"
+
+    path = _save_transcript(kb_dir, session, name=None)
+
+    text = path.read_text(encoding="utf-8")
+    # Valid link preserved
+    assert "[[concepts/attention]]" in text
+    # Ghost links stripped to plain text
+    assert "[[concepts/rnn]]" not in text
+    assert "rnn" in text
+    assert "[[concepts/positional-encoding]]" not in text
+    assert "positional encoding" in text
+    # User turn preserved verbatim (not stripped)
+    assert "What is a transformer?" in text

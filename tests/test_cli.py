@@ -113,3 +113,48 @@ class TestQueryStreamGate:
         # Stream branch should NOT echo the answer again — run_query already
         # wrote tokens to stdout as they arrived.
         assert "the answer" not in result.output
+
+
+class TestQuerySaveGhostStrip:
+    """`openkb query --save` writes the LLM answer to wiki/explorations/.
+    The agent's instructions encourage [[wikilinks]], but its view of which
+    pages exist can drift from disk. Ghost wikilinks in the saved file
+    would then surface as broken links the next time `openkb lint` runs.
+    The save path strips them before writing.
+    """
+
+    def test_save_strips_ghost_wikilinks(self, kb_dir):
+        # A real concept page exists on disk → valid wikilink target.
+        (kb_dir / "wiki" / "concepts" / "attention.md").write_text(
+            "# Attention\n", encoding="utf-8",
+        )
+
+        # The agent's answer includes one valid + two ghost wikilinks.
+        answer = (
+            "Transformers rely on [[concepts/attention]] over the input. "
+            "They differ from [[concepts/rnn]] which processes sequentially, "
+            "and use [[concepts/multi-head-attention]] as a key building block."
+        )
+
+        async def fake_run_query(*_args, **_kwargs):
+            return answer
+
+        with patch("openkb.cli._stream_to_tty", return_value=False), \
+             patch("openkb.agent.query.run_query", side_effect=fake_run_query), \
+             patch("openkb.cli._setup_llm_key"), \
+             patch("openkb.cli.append_log"):
+            result = CliRunner().invoke(
+                cli, ["--kb-dir", str(kb_dir), "query", "transformers?", "--save"]
+            )
+
+        assert result.exit_code == 0, result.output
+        explore_files = list((kb_dir / "wiki" / "explorations").glob("*.md"))
+        assert len(explore_files) == 1
+        saved = explore_files[0].read_text()
+        # Valid link preserved
+        assert "[[concepts/attention]]" in saved
+        # Ghost links stripped to plain text
+        assert "[[concepts/rnn]]" not in saved
+        assert "rnn" in saved
+        assert "[[concepts/multi-head-attention]]" not in saved
+        assert "multi head attention" in saved

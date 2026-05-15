@@ -9,6 +9,7 @@ Checks for:
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 # Matches [[wikilink]] or [[subdir/link]]
@@ -16,6 +17,106 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 # Files to exclude from lint scanning (schema, logs, etc.)
 _EXCLUDED_FILES = {"AGENTS.md", "SCHEMA.md", "log.md"}
+
+
+def _normalize_target(target: str) -> str:
+    """Normalize a wikilink target for fuzzy comparison.
+
+    Applies, in order:
+    - NFKC unicode normalization (e.g. full-width '）' → ASCII ')')
+    - Lowercase
+    - Underscore → hyphen
+    - Collapse repeated hyphens
+    - Strip leading/trailing hyphens (per segment when path-like)
+
+    Path separators are preserved so ``concepts/Gist_Memory`` normalizes to
+    ``concepts/gist-memory``.
+    """
+    s = unicodedata.normalize("NFKC", target)
+    s = s.lower().replace("_", "-")
+    # Normalize each path segment independently to avoid collapsing the '/'
+    parts = [re.sub(r"-+", "-", p).strip("-") for p in s.split("/")]
+    return "/".join(parts)
+
+
+def build_norm_index(known_targets: set[str]) -> dict[str, str]:
+    """Build the normalized-form → canonical-target index used by
+    :func:`strip_ghost_wikilinks`.
+
+    Useful when calling ``strip_ghost_wikilinks`` repeatedly with the same
+    ``known_targets`` (e.g. ``fix_broken_links`` scanning N wiki files, or
+    ``_save_transcript`` stripping N assistant turns) — build the index
+    once and pass it via the ``norm_index`` parameter to avoid O(N·M)
+    redundant rebuilds.
+    """
+    return {_normalize_target(t): t for t in known_targets}
+
+
+def strip_ghost_wikilinks(
+    content: str,
+    known_targets: set[str],
+    *,
+    norm_index: dict[str, str] | None = None,
+) -> tuple[str, list[str]]:
+    """Strip [[wikilinks]] whose targets do not exist in ``known_targets``.
+
+    For each ``[[X]]`` or ``[[X|alias]]`` in ``content``:
+
+    - If ``X`` is in ``known_targets`` exactly, the link is kept as-is.
+    - Otherwise, ``X`` is normalized (see :func:`_normalize_target`) and
+      matched against the normalized form of each known target. On a hit,
+      the link is rewritten to the canonical target form.
+    - Otherwise, the brackets are removed and the link becomes plain text
+      (the alias if provided, otherwise the slug rendered as words).
+
+    Args:
+        content: Markdown text containing zero or more ``[[wikilinks]]``.
+        known_targets: Valid link targets, e.g.
+            ``{"concepts/attention", "summaries/paper"}``.
+        norm_index: Optional pre-built normalized index from
+            :func:`build_norm_index`. Pass this when calling in a loop
+            with the same ``known_targets`` to skip redundant rebuilds.
+
+    Returns:
+        Tuple of ``(rewritten_content, ghost_targets)`` where
+        ``ghost_targets`` is the list of unresolved targets that were
+        stripped (one entry per occurrence, in document order).
+    """
+    if norm_index is None:
+        norm_index = build_norm_index(known_targets)
+
+    ghosts: list[str] = []
+
+    def _repl(m: re.Match) -> str:
+        raw = m.group(1)
+        if "|" in raw:
+            target, alias = raw.split("|", 1)
+            target = target.strip()
+            alias = alias.strip()
+        else:
+            target = raw.strip()
+            alias = None
+
+        # Direct hit
+        if target in known_targets:
+            return m.group(0)
+
+        # Fuzzy normalized hit → rewrite to canonical
+        canonical = norm_index.get(_normalize_target(target))
+        if canonical is not None:
+            if alias:
+                return f"[[{canonical}|{alias}]]"
+            return f"[[{canonical}]]"
+
+        # Ghost — strip brackets, leave readable display
+        ghosts.append(target)
+        if alias:
+            return alias
+        stem = target.rsplit("/", 1)[-1]
+        return stem.replace("-", " ").replace("_", " ")
+
+    cleaned = _WIKILINK_RE.sub(_repl, content)
+    return cleaned, ghosts
 
 
 def _read_md(path: Path) -> str:
@@ -49,6 +150,73 @@ def _extract_wikilinks(text: str) -> list[str]:
     """
     raw = _WIKILINK_RE.findall(text)
     return [link.split("|")[0].strip() for link in raw]
+
+
+def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
+    """Return the set of currently-existing wikilink targets on disk.
+
+    Includes every ``concepts/{stem}`` and ``summaries/{stem}`` for .md files
+    actually present in the wiki, plus ``index`` when ``index.md`` exists.
+    Used to seed the whitelist passed to :func:`strip_ghost_wikilinks` from
+    both the compile pipeline and any other code path that writes
+    LLM-generated content to the wiki (e.g. ``openkb query --save``).
+    """
+    targets: set[str] = set()
+    concepts_dir = wiki_dir / "concepts"
+    summaries_dir = wiki_dir / "summaries"
+    if concepts_dir.is_dir():
+        targets.update(f"concepts/{p.stem}" for p in concepts_dir.glob("*.md"))
+    if summaries_dir.is_dir():
+        targets.update(f"summaries/{p.stem}" for p in summaries_dir.glob("*.md"))
+    if (wiki_dir / "index.md").exists():
+        targets.add("index")
+    return targets
+
+
+def fix_broken_links(wiki: Path) -> tuple[int, int]:
+    """Rewrite or strip broken [[wikilinks]] across the wiki in place.
+
+    For each Markdown page under ``wiki`` (excluding ``reports/`` and
+    ``sources/`` and excluded files), runs :func:`strip_ghost_wikilinks`
+    against the set of valid targets currently on disk. Targets that match
+    fuzzily (case, ``_`` vs ``-``, NFKC) are rewritten to canonical form;
+    targets that have no match are demoted to plain text.
+
+    Args:
+        wiki: Path to the wiki root directory.
+
+    Returns:
+        Tuple of ``(files_changed, ghosts_stripped)``.
+    """
+    pages = _all_wiki_pages(wiki)
+    # The same fuzzy normalization _all_wiki_pages stores both the full
+    # relative path (e.g. ``concepts/attention``) and the bare stem
+    # (``attention``). Use the full-path keys so that links like
+    # ``[[concepts/foo]]`` resolve against ``concepts/`` files only.
+    known_targets: set[str] = {
+        key for key in pages if "/" in key or key == "index"
+    }
+    # Build the normalized index once and reuse across every file —
+    # otherwise strip_ghost_wikilinks would rebuild it per file (O(F·M)).
+    norm_index = build_norm_index(known_targets)
+
+    files_changed = 0
+    ghosts_stripped = 0
+    for md in wiki.rglob("*.md"):
+        if md.name in _EXCLUDED_FILES:
+            continue
+        rel_parts = md.relative_to(wiki).parts
+        if rel_parts and rel_parts[0] in ("reports", "sources"):
+            continue
+        text = _read_md(md)
+        cleaned, ghosts = strip_ghost_wikilinks(
+            text, known_targets, norm_index=norm_index,
+        )
+        if cleaned != text:
+            md.write_text(cleaned, encoding="utf-8")
+            files_changed += 1
+            ghosts_stripped += len(ghosts)
+    return files_changed, ghosts_stripped
 
 
 def find_broken_links(wiki: Path) -> list[str]:

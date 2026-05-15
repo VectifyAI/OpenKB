@@ -415,6 +415,12 @@ async def _run_turn(
 
 
 def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Path:
+    from openkb.lint import (
+        build_norm_index,
+        list_existing_wiki_targets,
+        strip_ghost_wikilinks,
+    )
+
     explore_dir = kb_dir / "wiki" / "explorations"
     explore_dir.mkdir(parents=True, exist_ok=True)
 
@@ -422,6 +428,15 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
     slug = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")[:60] or session.id
     date = session.created_at[:10].replace("-", "")
     path = explore_dir / f"{slug}-{date}.md"
+
+    # Strip ghost wikilinks from assistant responses (the agent's
+    # instructions encourage [[wikilinks]] but it can reference pages
+    # that don't exist on disk). User turns are written verbatim — they
+    # represent intentional user input, not LLM hallucination.
+    # Build the normalized index once and reuse for every turn — the
+    # whitelist is the same across the whole session.
+    known = list_existing_wiki_targets(kb_dir / "wiki")
+    norm_index = build_norm_index(known)
 
     lines: list[str] = [
         "---",
@@ -436,7 +451,11 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
     for i, (u, a) in enumerate(zip(session.user_turns, session.assistant_texts), 1):
         lines.append(f"## [{i}] {u}")
         lines.append("")
-        lines.append(a or "_(no response recorded)_")
+        if a:
+            cleaned_a, _ = strip_ghost_wikilinks(a, known, norm_index=norm_index)
+            lines.append(cleaned_a)
+        else:
+            lines.append("_(no response recorded)_")
         lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")

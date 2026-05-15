@@ -700,6 +700,10 @@ class TestCompileShortDoc:
             "update": [],
             "related": [],
         })
+        # The rewrite step (third sync call) returns raw Markdown.
+        summary_rewrite_response = (
+            "# Summary\n\nThis document discusses [[concepts/transformer]]."
+        )
         concept_page_response = json.dumps({
             "brief": "NN architecture using self-attention",
             "content": "# Transformer\n\nA neural network architecture.",
@@ -707,7 +711,11 @@ class TestCompileShortDoc:
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
-                side_effect=_mock_completion([summary_response, concepts_list_response])
+                side_effect=_mock_completion([
+                    summary_response,
+                    concepts_list_response,
+                    summary_rewrite_response,
+                ])
             )
             mock_litellm.acompletion = AsyncMock(
                 side_effect=_mock_acompletion([concept_page_response])
@@ -717,7 +725,10 @@ class TestCompileShortDoc:
         # Verify summary written
         summary_path = wiki / "summaries" / "test-doc.md"
         assert summary_path.exists()
-        assert "full_text: sources/test-doc.md" in summary_path.read_text()
+        summary_text = summary_path.read_text()
+        assert "full_text: sources/test-doc.md" in summary_text
+        # Summary body comes from the rewrite step
+        assert "[[concepts/transformer]]" in summary_text
 
         # Verify concept written
         concept_path = wiki / "concepts" / "transformer.md"
@@ -753,6 +764,169 @@ class TestCompileShortDoc:
         assert (wiki / "summaries" / "doc.md").exists()
 
 
+class TestCompileShortDocFallbacks:
+    """Regression tests for the summary-rewrite resilience path.
+
+    The rewrite call can fail (API error, empty response, parse error).
+    In every failure mode the v1 summary should be written to disk —
+    stripped against the current whitelist so it doesn't reintroduce
+    ghost wikilinks — never an empty file or missing file.
+    """
+
+    @staticmethod
+    def _setup_kb(tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        (tmp_path / ".openkb").mkdir()
+        source_path = wiki / "sources" / "doc.md"
+        source_path.write_text("Body.", encoding="utf-8")
+        return wiki, source_path
+
+    @pytest.mark.asyncio
+    async def test_rewrite_empty_response_falls_back_to_v1(self, tmp_path):
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        v1_summary_content = (
+            "# Summary\n\nDiscusses [[concepts/transformer]] and [[concepts/ghost]]."
+        )
+        summary_response = json.dumps({
+            "brief": "B", "content": v1_summary_content,
+        })
+        plan_response = json.dumps({
+            "create": [{"name": "transformer", "title": "Transformer"}],
+            "update": [], "related": [],
+        })
+        # Rewrite returns an empty string → must fall back to v1
+        rewrite_response = ""
+        concept_response = json.dumps({"brief": "C", "content": "# T\n\nBody."})
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([
+                    summary_response, plan_response, rewrite_response,
+                ])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_response])
+            )
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        # The v1 content should be on disk (fallback) — stripped of ghosts.
+        assert "Discusses" in text
+        assert "[[concepts/transformer]]" in text       # valid link kept
+        assert "[[concepts/ghost]]" not in text         # ghost stripped
+        assert "ghost" in text                          # but plain text remains
+
+    @pytest.mark.asyncio
+    async def test_rewrite_exception_falls_back_to_v1(self, tmp_path):
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        v1_summary_content = (
+            "# Summary\n\nUses [[concepts/transformer]] mechanism."
+        )
+        summary_response = json.dumps({
+            "brief": "B", "content": v1_summary_content,
+        })
+        plan_response = json.dumps({
+            "create": [{"name": "transformer", "title": "Transformer"}],
+            "update": [], "related": [],
+        })
+        concept_response = json.dumps({"brief": "C", "content": "# T\n\nBody."})
+
+        # Third sync call (rewrite) raises a simulated API error.
+        sync_call_count = {"n": 0}
+
+        def sync_side_effect(*args, **kwargs):
+            idx = sync_call_count["n"]
+            sync_call_count["n"] += 1
+            if idx == 2:  # the summary-rewrite call
+                raise RuntimeError("simulated API failure")
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = [
+                summary_response, plan_response,
+            ][idx]
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_acompletion([concept_response])
+            )
+            # Must NOT raise out of compile_short_doc
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        assert "Uses" in text
+        assert "[[concepts/transformer]]" in text
+
+    @pytest.mark.asyncio
+    async def test_plan_parse_failure_strips_v1_summary_ghosts(self, tmp_path):
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        v1_summary_content = (
+            "# Summary\n\nReferences [[concepts/nonexistent]] heavily."
+        )
+        summary_response = json.dumps({
+            "brief": "B", "content": v1_summary_content,
+        })
+        # Plan call returns non-JSON garbage → triggers early return
+        plan_response = "not valid json at all"
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, plan_response])
+            )
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        # Ghost link should be stripped to plain text on fallback path
+        assert "[[concepts/nonexistent]]" not in text
+        assert "nonexistent" in text  # display text preserved
+        assert "References" in text
+
+    @pytest.mark.asyncio
+    async def test_empty_plan_strips_v1_summary_ghosts(self, tmp_path):
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        v1_summary_content = (
+            "# Summary\n\nMentions [[concepts/imaginary]] briefly."
+        )
+        summary_response = json.dumps({
+            "brief": "B", "content": v1_summary_content,
+        })
+        empty_plan_response = json.dumps({
+            "create": [], "update": [], "related": [],
+        })
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, empty_plan_response])
+            )
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        assert "[[concepts/imaginary]]" not in text
+        assert "imaginary" in text  # plain text preserved
+
+
 class TestCacheControl:
     """Verify cache_control breakpoints are emitted on the right messages
     so Anthropic prompt caching can hit on every reuse of the base context.
@@ -786,12 +960,18 @@ class TestCacheControl:
             "create": [{"name": "topic", "title": "Topic"}],
             "update": [], "related": [],
         })
+        # 3rd sync call is the summary-rewrite (raw Markdown, not JSON).
+        summary_rewrite_response = "# Summary\n\nrewritten body"
         concept_response = json.dumps({"brief": "C", "content": "page body"})
 
         captured_sync_calls: list[list[dict]] = []
         captured_async_calls: list[list[dict]] = []
 
-        sync_responses = [summary_response, plan_response]
+        sync_responses = [
+            summary_response,
+            plan_response,
+            summary_rewrite_response,
+        ]
 
         def sync_side_effect(*args, **kwargs):
             captured_sync_calls.append(kwargs["messages"])
@@ -817,7 +997,7 @@ class TestCacheControl:
             mock_litellm.acompletion = AsyncMock(side_effect=async_side_effect)
             await compile_short_doc("doc", src, tmp_path, "anthropic/claude-sonnet-4-5")
 
-        # Step 1 (summary): doc_msg carries the breakpoint.
+        # Step 1 (summary): doc_msg carries the breakpoint (BP1).
         summary_call = captured_sync_calls[0]
         assert summary_call[0]["role"] == "system"
         assert summary_call[1]["role"] == "user"
@@ -825,7 +1005,8 @@ class TestCacheControl:
             "doc_msg in summary call must carry an ephemeral cache_control marker"
         )
 
-        # Step 2 (plan): doc_msg AND assistant summary both carry breakpoints.
+        # Step 2 (plan): doc_msg AND assistant summary both carry breakpoints
+        # (BP1 + BP2). Plan does NOT include the known_targets message.
         plan_call = captured_sync_calls[1]
         assert self._has_cache_breakpoint(plan_call[1])
         assert plan_call[2]["role"] == "assistant"
@@ -833,11 +1014,29 @@ class TestCacheControl:
             "assistant summary in plan call must carry a cache_control marker"
         )
 
-        # Step 3 (concept generation): same two breakpoints reused.
+        # Step 3 (concept generation): BP1 + BP2 + new BP3 (known_targets msg).
         assert captured_async_calls, "expected at least one async concept call"
         concept_call = captured_async_calls[0]
         assert self._has_cache_breakpoint(concept_call[1])
         assert self._has_cache_breakpoint(concept_call[2])
+        # New: BP3 is the known_targets user message at index 3, sitting
+        # between summary_msg and the per-concept user prompt.
+        assert concept_call[3]["role"] == "user"
+        assert self._has_cache_breakpoint(concept_call[3]), (
+            "known_targets message in concept call must carry a cache_control marker"
+        )
+
+        # Step 4 (summary rewrite): same three breakpoints reused — this is
+        # the whole point of the BP3 design, the whitelist is cached not
+        # re-billed per call.
+        rewrite_call = captured_sync_calls[2]
+        assert self._has_cache_breakpoint(rewrite_call[1])  # BP1
+        assert self._has_cache_breakpoint(rewrite_call[2])  # BP2
+        assert rewrite_call[3]["role"] == "user"
+        assert self._has_cache_breakpoint(rewrite_call[3]), (  # BP3
+            "known_targets message in summary-rewrite call must carry "
+            "a cache_control marker"
+        )
 
     @pytest.mark.asyncio
     async def test_long_doc_marks_doc_message(self, tmp_path):

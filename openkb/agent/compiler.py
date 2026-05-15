@@ -28,6 +28,7 @@ from pathlib import Path
 
 import litellm
 
+from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import get_agents_md
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,19 @@ Rules:
 Return ONLY valid JSON, no fences, no explanation.
 """
 
+_KNOWN_TARGETS_USER = """\
+The wiki currently contains these pages, and they are the COMPLETE list of \
+valid [[wikilink]] targets you may use in the responses that follow:
+
+{known_targets}
+
+Rules for [[wikilinks]] in all subsequent responses:
+- For [[concepts/X]]: X must appear in the whitelist above.
+- For [[summaries/Y]]: Y must appear in the whitelist above.
+- Do NOT invent new wikilink targets. If you want to mention a concept \
+that is not in the whitelist, write it as plain text without brackets.
+"""
+
 _CONCEPT_PAGE_USER = """\
 Write the concept page for: {title}
 
@@ -99,7 +113,8 @@ Return a JSON object with two keys:
 - "brief": A single sentence (under 100 chars) defining this concept
 - "content": The full concept page in Markdown. Include clear explanation, \
 key details from the source document, and [[wikilinks]] to related concepts \
-and [[summaries/{doc_name}]]
+and [[summaries/{doc_name}]] — subject to the wikilink rules from the \
+whitelist message above.
 
 Return ONLY valid JSON, no fences.
 """
@@ -112,14 +127,38 @@ Current content of this page:
 
 New information from document "{doc_name}" (summarized above) should be \
 integrated into this page. Rewrite the full page incorporating the new \
-information naturally — do not just append. Maintain existing \
-[[wikilinks]] and add new ones where appropriate.
+information naturally — do not just append. Preserve the existing structure \
+and intent of the page.
+
+For [[wikilinks]] in the rewrite, follow the whitelist rules from the \
+message above: keep links whose target is in the whitelist, convert any \
+existing links whose target is NOT in the whitelist to plain text, and do \
+not invent new wikilink targets.
 
 Return a JSON object with two keys:
 - "brief": A single sentence (under 100 chars) defining this concept (may differ from before)
 - "content": The rewritten full concept page in Markdown
 
 Return ONLY valid JSON, no fences.
+"""
+
+_SUMMARY_REWRITE_USER = """\
+Task: Rewrite the summary you wrote above into a final version that is \
+consistent with the concept pages now in the wiki (per the whitelist message \
+above).
+
+STRICT rules:
+- Preserve every factual claim, finding, and detail from your draft. Do \
+NOT add or remove technical content, examples, or claims.
+- For [[wikilinks]], follow the whitelist message above: keep valid links, \
+replace targets not in the whitelist with plain text, do not invent new \
+wikilink targets.
+- You MAY upgrade plain-text mentions to [[wikilinks]] when the concept \
+appears in the whitelist — this is encouraged.
+- Keep the headings, paragraph structure, and approximately the same length \
+as the draft.
+
+Return ONLY the rewritten Markdown content (no JSON, no fences, no frontmatter).
 """
 
 _LONG_DOC_SUMMARY_USER = """\
@@ -650,6 +689,13 @@ def _update_index(
 DEFAULT_COMPILE_CONCURRENCY = 5
 
 
+def _format_known_targets(targets: set[str]) -> str:
+    """Format the whitelist as a bulleted Markdown list for prompt injection."""
+    if not targets:
+        return "(none yet — do not use any [[wikilinks]] in your output)"
+    return "\n".join(f"- {t}" for t in sorted(targets))
+
+
 async def _compile_concepts(
     wiki_dir: Path,
     kb_dir: Path,
@@ -661,11 +707,16 @@ async def _compile_concepts(
     max_concurrency: int,
     doc_brief: str = "",
     doc_type: str = "short",
+    rewrite_summary: bool = False,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
     Uses ``_CONCEPTS_PLAN_USER`` to get a plan with create/update/related
-    actions, then executes each action type accordingly.
+    actions, then executes each action type accordingly. Concept bodies are
+    generated in memory, scrubbed of unresolved wikilinks, and only then
+    written to disk. When ``rewrite_summary=True`` (short-doc path), the
+    summary is rewritten by the LLM after concepts are finalized so its
+    wikilinks reflect the actual concept pages on disk.
     """
     source_file = f"summaries/{doc_name}.md"
 
@@ -685,11 +736,32 @@ async def _compile_concepts(
         )},
     ], "concepts-plan", max_tokens=1024)
 
+    def _write_v1_summary_stripped() -> None:
+        """Fallback writer for the v1 summary on early-return paths.
+
+        Strips against the set of wikilink targets currently on disk before
+        writing, so the v1 summary's LLM-hallucinated links don't slip past
+        the ghost-link defense when plan parsing fails or the plan is empty.
+        ``plan.create`` slugs are unknown at this point, so the whitelist
+        is just what physically exists.
+        """
+        fallback_targets = list_existing_wiki_targets(wiki_dir)
+        fallback_targets.add(f"summaries/{doc_name}")
+        cleaned, ghosts = strip_ghost_wikilinks(summary, fallback_targets)
+        if ghosts:
+            logger.info(
+                "stripped %d ghost wikilink(s) from fallback v1 summary %s: %s",
+                len(ghosts), doc_name, ghosts[:5],
+            )
+        _write_summary(wiki_dir, doc_name, cleaned)
+
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse concepts plan: %s", exc)
         logger.debug("Raw: %s", plan_raw)
+        if rewrite_summary:
+            _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
@@ -708,8 +780,42 @@ async def _compile_concepts(
     related_items = plan["related"]
 
     if not create_items and not update_items and not related_items:
+        if rewrite_summary:
+            _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
+
+    # Build the whitelist of valid wikilink targets the LLM may emit. It
+    # combines what already exists on disk with what *this* round will
+    # produce (plan.create + plan.update + plan.related), plus the
+    # summary about to be written for this document.
+    planned_slugs = {
+        _sanitize_concept_name(c["name"]) for c in create_items + update_items
+    } | {
+        _sanitize_concept_name(s) for s in related_items
+    }
+    known_targets: set[str] = (
+        list_existing_wiki_targets(wiki_dir)
+        | {f"concepts/{s}" for s in planned_slugs}
+        | {f"summaries/{doc_name}"}
+    )
+    known_targets_str = _format_known_targets(known_targets)
+
+    # Third cache breakpoint: the whitelist of valid wikilink targets. By
+    # carrying this list in its own cached user message — placed between
+    # summary_msg (BP2) and each per-concept user turn — every concept
+    # generation call and the summary-rewrite call reuses the whitelist
+    # tokens from cache instead of re-billing them on every request. This
+    # matters as the KB grows (the list can reach 5-10k tokens for a
+    # 500-concept wiki). Plan call deliberately omits this message — at
+    # plan time the whitelist isn't known yet, and plan uses concept_briefs
+    # via _CONCEPTS_PLAN_USER instead.
+    known_targets_msg = {
+        "role": "user",
+        "content": _cached_text(_KNOWN_TARGETS_USER.format(
+            known_targets=known_targets_str,
+        )),
+    }
 
     # --- Step 3: Generate/update concept pages concurrently (A cached) ---
     semaphore = asyncio.Semaphore(max_concurrency)
@@ -720,8 +826,9 @@ async def _compile_concepts(
         async with semaphore:
             raw = await _llm_call_async(model, [
                 system_msg,
-                doc_msg,
-                summary_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
                 {"role": "user", "content": _CONCEPT_PAGE_USER.format(
                     title=title, doc_name=doc_name,
                     update_instruction="",
@@ -751,8 +858,9 @@ async def _compile_concepts(
         async with semaphore:
             raw = await _llm_call_async(model, [
                 system_msg,
-                doc_msg,
-                summary_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
                 {"role": "user", "content": _CONCEPT_UPDATE_USER.format(
                     title=title, doc_name=doc_name,
                     existing_content=existing_content,
@@ -772,6 +880,7 @@ async def _compile_concepts(
 
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
+    pending_writes: list[tuple[str, str, bool, str]] = []
 
     if tasks:
         total = len(tasks)
@@ -785,11 +894,92 @@ async def _compile_concepts(
                 logger.warning("Concept generation failed: %s", r)
                 continue
             name, page_content, is_update, brief = r
-            _write_concept(wiki_dir, name, page_content, source_file, is_update, brief=brief)
+            pending_writes.append((name, page_content, is_update, brief))
             safe_name = _sanitize_concept_name(name)
             concept_names.append(safe_name)
             if brief:
                 concept_briefs_map[safe_name] = brief
+
+    # Strip unresolved wikilinks from concept bodies before writing. The
+    # whitelist includes existing files + this round's planned slugs +
+    # the summary for this document.
+    for i, (name, page_content, is_update, brief) in enumerate(pending_writes):
+        cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
+        if ghosts:
+            logger.info(
+                "stripped %d ghost wikilink(s) from concept %s: %s",
+                len(ghosts), name, ghosts[:5],
+            )
+        pending_writes[i] = (name, cleaned, is_update, brief)
+
+    # --- Optional Step 3a: LLM rewrite the summary with full whitelist ---
+    # Only for the short-doc path. The long-doc path leaves the indexer-
+    # written summary untouched.
+    #
+    # The rewrite call is best-effort: on any failure (API error, empty
+    # response, exception) we fall back to the v1 summary stripped against
+    # the full whitelist, so the summary is always written and never wiped.
+    if rewrite_summary:
+        candidate: str | None = None
+        try:
+            # No max_tokens cap — matches the v1 summary call. The rewrite
+            # prompt asks the model to keep length within ±20% of the v1.
+            rewrite_raw = _llm_call(model, [
+                system_msg,
+                doc_msg,            # cached (BP1)
+                summary_msg,        # cached (BP2) — contains the v1 summary text
+                known_targets_msg,  # cached (BP3) — whitelist
+                {"role": "user", "content": _SUMMARY_REWRITE_USER},
+            ], "summary-rewrite")
+            candidate = rewrite_raw.strip()
+            # Strip frontmatter if the model added one anyway.
+            if candidate.startswith("---"):
+                end = candidate.find("---", 3)
+                if end != -1:
+                    candidate = candidate[end + 3:].lstrip("\n")
+            # Safety net: strip any wikilink the rewrite emitted that is
+            # not in the whitelist.
+            candidate, summary_ghosts = strip_ghost_wikilinks(
+                candidate, known_targets
+            )
+            if summary_ghosts:
+                logger.info(
+                    "stripped %d ghost wikilink(s) from summary %s: %s",
+                    len(summary_ghosts), doc_name, summary_ghosts[:5],
+                )
+        except Exception as exc:
+            logger.warning(
+                "summary-rewrite failed for %s: %s. Falling back to v1.",
+                doc_name, exc,
+            )
+            candidate = None
+
+        if candidate:
+            final_summary = candidate
+        else:
+            # Rewrite produced no content (empty response or exception).
+            # Strip the v1 summary against the same whitelist so the
+            # fallback doesn't reintroduce ghost links.
+            if candidate is not None:
+                logger.warning(
+                    "summary-rewrite returned empty for %s; using v1 fallback.",
+                    doc_name,
+                )
+            final_summary, fallback_ghosts = strip_ghost_wikilinks(
+                summary, known_targets,
+            )
+            if fallback_ghosts:
+                logger.info(
+                    "stripped %d ghost wikilink(s) from v1 fallback summary %s: %s",
+                    len(fallback_ghosts), doc_name, fallback_ghosts[:5],
+                )
+        _write_summary(wiki_dir, doc_name, final_summary)
+
+    # --- Write concept pages to disk ---
+    for name, page_content, is_update, brief in pending_writes:
+        _write_concept(
+            wiki_dir, name, page_content, source_file, is_update, brief=brief,
+        )
 
     # --- Step 3b: Process related items (code only, no LLM) ---
     sanitized_related = [_sanitize_concept_name(s) for s in related_items]
@@ -840,7 +1030,11 @@ async def compile_short_doc(
         doc_name=doc_name, content=content,
     ))}
 
-    # --- Step 1: Generate summary ---
+    # --- Step 1: Generate summary (v1, held in memory) ---
+    # The summary is NOT written to disk yet — it's used as cache context
+    # for the plan + concept-generation calls, then rewritten into a final
+    # v2 (with a whitelist of known wikilink targets) inside
+    # _compile_concepts before being written to disk.
     summary_raw = _llm_call(model, [system_msg, doc_msg], "summary")
     try:
         summary_parsed = _parse_json(summary_raw)
@@ -849,13 +1043,12 @@ async def compile_short_doc(
     except (json.JSONDecodeError, ValueError):
         doc_brief = ""
         summary = summary_raw
-    _write_summary(wiki_dir, doc_name, summary)
 
-    # --- Steps 2-4: Concept plan → generate/update → index ---
+    # --- Steps 2-4: Concept plan → generate/update → summary rewrite → index ---
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         summary, doc_name, max_concurrency, doc_brief=doc_brief,
-        doc_type="short",
+        doc_type="short", rewrite_summary=True,
     )
 
 
