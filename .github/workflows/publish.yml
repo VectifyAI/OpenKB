@@ -1,5 +1,17 @@
 name: Publish to PyPI
 
+# Release flow:
+#   1. Bump `version` in pyproject.toml on main.
+#   2. `git tag -a vX.Y.Z -m "Release X.Y.Z" && git push origin vX.Y.Z`
+#      The tag MUST match pyproject.toml's version exactly (with the `v` prefix).
+#   3. This workflow builds the package, publishes to PyPI via OIDC trusted
+#      publishing, and creates a GitHub Release with auto-generated notes.
+#
+# Do not run `python -m build && twine upload` locally — that bypasses the
+# version check and leaves no GitHub Release. PyPI rejects duplicate
+# version uploads, so if the workflow fails after PyPI publish succeeded,
+# manually create the missing GitHub Release with `gh release create vX.Y.Z`.
+
 on:
   push:
     tags:
