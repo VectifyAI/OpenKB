@@ -7,6 +7,7 @@ import pytest
 
 from openkb.lint import (
     _normalize_target,
+    build_norm_index,
     check_index_sync,
     find_broken_links,
     find_missing_entries,
@@ -357,3 +358,38 @@ class TestStripGhostWikilinks:
         )
         # Each occurrence is recorded separately so callers can count
         assert ghosts == ["concepts/x", "concepts/x"]
+
+    def test_accepts_prebuilt_norm_index_with_identical_result(self):
+        """Passing a pre-built ``norm_index`` should produce the same
+        result as letting the function build it internally — this is the
+        contract that lets ``fix_broken_links`` and ``_save_transcript``
+        amortize the index build across many calls.
+        """
+        known = {"concepts/gist-memory", "concepts/attention"}
+        text = (
+            "See [[concepts/gist_memory]] and [[concepts/attention]] and "
+            "[[concepts/missing]]."
+        )
+
+        # Default (no norm_index passed)
+        out_a, ghosts_a = strip_ghost_wikilinks(text, known)
+
+        # With pre-built norm_index
+        idx = build_norm_index(known)
+        out_b, ghosts_b = strip_ghost_wikilinks(text, known, norm_index=idx)
+
+        assert out_a == out_b
+        assert ghosts_a == ghosts_b
+        # Sanity: fuzzy rewrite, plus one ghost
+        assert "[[concepts/gist-memory]]" in out_b
+        assert "[[concepts/missing]]" not in out_b
+
+
+class TestBuildNormIndex:
+    def test_returns_normalized_to_canonical_map(self):
+        idx = build_norm_index({"concepts/Gist_Memory", "summaries/Paper"})
+        assert idx["concepts/gist-memory"] == "concepts/Gist_Memory"
+        assert idx["summaries/paper"] == "summaries/Paper"
+
+    def test_empty_set_returns_empty_dict(self):
+        assert build_norm_index(set()) == {}

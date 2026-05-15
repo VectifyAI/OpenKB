@@ -39,8 +39,24 @@ def _normalize_target(target: str) -> str:
     return "/".join(parts)
 
 
+def build_norm_index(known_targets: set[str]) -> dict[str, str]:
+    """Build the normalized-form → canonical-target index used by
+    :func:`strip_ghost_wikilinks`.
+
+    Useful when calling ``strip_ghost_wikilinks`` repeatedly with the same
+    ``known_targets`` (e.g. ``fix_broken_links`` scanning N wiki files, or
+    ``_save_transcript`` stripping N assistant turns) — build the index
+    once and pass it via the ``norm_index`` parameter to avoid O(N·M)
+    redundant rebuilds.
+    """
+    return {_normalize_target(t): t for t in known_targets}
+
+
 def strip_ghost_wikilinks(
-    content: str, known_targets: set[str]
+    content: str,
+    known_targets: set[str],
+    *,
+    norm_index: dict[str, str] | None = None,
 ) -> tuple[str, list[str]]:
     """Strip [[wikilinks]] whose targets do not exist in ``known_targets``.
 
@@ -57,15 +73,17 @@ def strip_ghost_wikilinks(
         content: Markdown text containing zero or more ``[[wikilinks]]``.
         known_targets: Valid link targets, e.g.
             ``{"concepts/attention", "summaries/paper"}``.
+        norm_index: Optional pre-built normalized index from
+            :func:`build_norm_index`. Pass this when calling in a loop
+            with the same ``known_targets`` to skip redundant rebuilds.
 
     Returns:
         Tuple of ``(rewritten_content, ghost_targets)`` where
         ``ghost_targets`` is the list of unresolved targets that were
         stripped (one entry per occurrence, in document order).
     """
-    norm_index: dict[str, str] = {
-        _normalize_target(t): t for t in known_targets
-    }
+    if norm_index is None:
+        norm_index = build_norm_index(known_targets)
 
     ghosts: list[str] = []
 
@@ -178,6 +196,9 @@ def fix_broken_links(wiki: Path) -> tuple[int, int]:
     known_targets: set[str] = {
         key for key in pages if "/" in key or key == "index"
     }
+    # Build the normalized index once and reuse across every file —
+    # otherwise strip_ghost_wikilinks would rebuild it per file (O(F·M)).
+    norm_index = build_norm_index(known_targets)
 
     files_changed = 0
     ghosts_stripped = 0
@@ -188,7 +209,9 @@ def fix_broken_links(wiki: Path) -> tuple[int, int]:
         if rel_parts and rel_parts[0] in ("reports", "sources"):
             continue
         text = _read_md(md)
-        cleaned, ghosts = strip_ghost_wikilinks(text, known_targets)
+        cleaned, ghosts = strip_ghost_wikilinks(
+            text, known_targets, norm_index=norm_index,
+        )
         if cleaned != text:
             md.write_text(cleaned, encoding="utf-8")
             files_changed += 1

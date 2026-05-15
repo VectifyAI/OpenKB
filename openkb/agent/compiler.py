@@ -90,27 +90,31 @@ Rules:
 Return ONLY valid JSON, no fences, no explanation.
 """
 
+_KNOWN_TARGETS_USER = """\
+The wiki currently contains these pages, and they are the COMPLETE list of \
+valid [[wikilink]] targets you may use in the responses that follow:
+
+{known_targets}
+
+Rules for [[wikilinks]] in all subsequent responses:
+- For [[concepts/X]]: X must appear in the whitelist above.
+- For [[summaries/Y]]: Y must appear in the whitelist above.
+- Do NOT invent new wikilink targets. If you want to mention a concept \
+that is not in the whitelist, write it as plain text without brackets.
+"""
+
 _CONCEPT_PAGE_USER = """\
 Write the concept page for: {title}
 
 This concept relates to the document "{doc_name}" summarized above.
 {update_instruction}
 
-When using [[wikilinks]] in the content, you MUST link only to targets in \
-this whitelist:
-{known_targets}
-
-Rules for wikilinks:
-- For [[concepts/X]]: X must appear in the whitelist above.
-- For [[summaries/Y]]: Y must appear in the whitelist above.
-- Do NOT invent new wikilink targets. If you want to reference a concept \
-that is not in the whitelist, mention it as plain text without brackets.
-
 Return a JSON object with two keys:
 - "brief": A single sentence (under 100 chars) defining this concept
 - "content": The full concept page in Markdown. Include clear explanation, \
 key details from the source document, and [[wikilinks]] to related concepts \
-and [[summaries/{doc_name}]] — subject to the whitelist rules above.
+and [[summaries/{doc_name}]] — subject to the wikilink rules from the \
+whitelist message above.
 
 Return ONLY valid JSON, no fences.
 """
@@ -123,18 +127,13 @@ Current content of this page:
 
 New information from document "{doc_name}" (summarized above) should be \
 integrated into this page. Rewrite the full page incorporating the new \
-information naturally — do not just append. Maintain existing \
-[[wikilinks]] and add new ones where appropriate.
+information naturally — do not just append. Preserve the existing structure \
+and intent of the page.
 
-When using [[wikilinks]] in the content, you MUST link only to targets in \
-this whitelist:
-{known_targets}
-
-Rules for wikilinks:
-- For [[concepts/X]]: X must appear in the whitelist above.
-- For [[summaries/Y]]: Y must appear in the whitelist above.
-- Do NOT invent new wikilink targets. If you want to reference a concept \
-that is not in the whitelist, mention it as plain text without brackets.
+For [[wikilinks]] in the rewrite, follow the whitelist rules from the \
+message above: keep links whose target is in the whitelist, convert any \
+existing links whose target is NOT in the whitelist to plain text, and do \
+not invent new wikilink targets.
 
 Return a JSON object with two keys:
 - "brief": A single sentence (under 100 chars) defining this concept (may differ from before)
@@ -144,23 +143,20 @@ Return ONLY valid JSON, no fences.
 """
 
 _SUMMARY_REWRITE_USER = """\
-The wiki now contains these pages, all of which are valid [[wikilink]] \
-targets:
-{known_targets}
-
 Task: Rewrite the summary you wrote above into a final version that is \
-consistent with the concept pages now in the wiki.
+consistent with the concept pages now in the wiki (per the whitelist message \
+above).
 
 STRICT rules:
-- Preserve EVERY factual claim, finding, and detail from your draft. Do \
-NOT add new technical content, examples, or claims not in the draft.
-- Only change [[wikilinks]]: keep links whose target is in the list above, \
-and replace links whose target is NOT in the list with plain text.
+- Preserve every factual claim, finding, and detail from your draft. Do \
+NOT add or remove technical content, examples, or claims.
+- For [[wikilinks]], follow the whitelist message above: keep valid links, \
+replace targets not in the whitelist with plain text, do not invent new \
+wikilink targets.
 - You MAY upgrade plain-text mentions to [[wikilinks]] when the concept \
-appears in the list above — this is encouraged.
-- Do NOT invent new wikilink targets.
-- Keep the headings, paragraph structure, and overall length within ±20% \
-of the draft.
+appears in the whitelist — this is encouraged.
+- Keep the headings, paragraph structure, and approximately the same length \
+as the draft.
 
 Return ONLY the rewritten Markdown content (no JSON, no fences, no frontmatter).
 """
@@ -805,6 +801,22 @@ async def _compile_concepts(
     )
     known_targets_str = _format_known_targets(known_targets)
 
+    # Third cache breakpoint: the whitelist of valid wikilink targets. By
+    # carrying this list in its own cached user message — placed between
+    # summary_msg (BP2) and each per-concept user turn — every concept
+    # generation call and the summary-rewrite call reuses the whitelist
+    # tokens from cache instead of re-billing them on every request. This
+    # matters as the KB grows (the list can reach 5-10k tokens for a
+    # 500-concept wiki). Plan call deliberately omits this message — at
+    # plan time the whitelist isn't known yet, and plan uses concept_briefs
+    # via _CONCEPTS_PLAN_USER instead.
+    known_targets_msg = {
+        "role": "user",
+        "content": _cached_text(_KNOWN_TARGETS_USER.format(
+            known_targets=known_targets_str,
+        )),
+    }
+
     # --- Step 3: Generate/update concept pages concurrently (A cached) ---
     semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -814,12 +826,12 @@ async def _compile_concepts(
         async with semaphore:
             raw = await _llm_call_async(model, [
                 system_msg,
-                doc_msg,
-                summary_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
                 {"role": "user", "content": _CONCEPT_PAGE_USER.format(
                     title=title, doc_name=doc_name,
                     update_instruction="",
-                    known_targets=known_targets_str,
                 )},
             ], f"concept: {name}")
         try:
@@ -846,12 +858,12 @@ async def _compile_concepts(
         async with semaphore:
             raw = await _llm_call_async(model, [
                 system_msg,
-                doc_msg,
-                summary_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
                 {"role": "user", "content": _CONCEPT_UPDATE_USER.format(
                     title=title, doc_name=doc_name,
                     existing_content=existing_content,
-                    known_targets=known_targets_str,
                 )},
             ], f"update: {name}")
         try:
@@ -916,9 +928,8 @@ async def _compile_concepts(
                 system_msg,
                 doc_msg,            # cached (BP1)
                 summary_msg,        # cached (BP2) — contains the v1 summary text
-                {"role": "user", "content": _SUMMARY_REWRITE_USER.format(
-                    known_targets=known_targets_str,
-                )},
+                known_targets_msg,  # cached (BP3) — whitelist
+                {"role": "user", "content": _SUMMARY_REWRITE_USER},
             ], "summary-rewrite")
             candidate = rewrite_raw.strip()
             # Strip frontmatter if the model added one anyway.

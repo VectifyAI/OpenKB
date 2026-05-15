@@ -960,12 +960,18 @@ class TestCacheControl:
             "create": [{"name": "topic", "title": "Topic"}],
             "update": [], "related": [],
         })
+        # 3rd sync call is the summary-rewrite (raw Markdown, not JSON).
+        summary_rewrite_response = "# Summary\n\nrewritten body"
         concept_response = json.dumps({"brief": "C", "content": "page body"})
 
         captured_sync_calls: list[list[dict]] = []
         captured_async_calls: list[list[dict]] = []
 
-        sync_responses = [summary_response, plan_response]
+        sync_responses = [
+            summary_response,
+            plan_response,
+            summary_rewrite_response,
+        ]
 
         def sync_side_effect(*args, **kwargs):
             captured_sync_calls.append(kwargs["messages"])
@@ -991,7 +997,7 @@ class TestCacheControl:
             mock_litellm.acompletion = AsyncMock(side_effect=async_side_effect)
             await compile_short_doc("doc", src, tmp_path, "anthropic/claude-sonnet-4-5")
 
-        # Step 1 (summary): doc_msg carries the breakpoint.
+        # Step 1 (summary): doc_msg carries the breakpoint (BP1).
         summary_call = captured_sync_calls[0]
         assert summary_call[0]["role"] == "system"
         assert summary_call[1]["role"] == "user"
@@ -999,7 +1005,8 @@ class TestCacheControl:
             "doc_msg in summary call must carry an ephemeral cache_control marker"
         )
 
-        # Step 2 (plan): doc_msg AND assistant summary both carry breakpoints.
+        # Step 2 (plan): doc_msg AND assistant summary both carry breakpoints
+        # (BP1 + BP2). Plan does NOT include the known_targets message.
         plan_call = captured_sync_calls[1]
         assert self._has_cache_breakpoint(plan_call[1])
         assert plan_call[2]["role"] == "assistant"
@@ -1007,11 +1014,29 @@ class TestCacheControl:
             "assistant summary in plan call must carry a cache_control marker"
         )
 
-        # Step 3 (concept generation): same two breakpoints reused.
+        # Step 3 (concept generation): BP1 + BP2 + new BP3 (known_targets msg).
         assert captured_async_calls, "expected at least one async concept call"
         concept_call = captured_async_calls[0]
         assert self._has_cache_breakpoint(concept_call[1])
         assert self._has_cache_breakpoint(concept_call[2])
+        # New: BP3 is the known_targets user message at index 3, sitting
+        # between summary_msg and the per-concept user prompt.
+        assert concept_call[3]["role"] == "user"
+        assert self._has_cache_breakpoint(concept_call[3]), (
+            "known_targets message in concept call must carry a cache_control marker"
+        )
+
+        # Step 4 (summary rewrite): same three breakpoints reused — this is
+        # the whole point of the BP3 design, the whitelist is cached not
+        # re-billed per call.
+        rewrite_call = captured_sync_calls[2]
+        assert self._has_cache_breakpoint(rewrite_call[1])  # BP1
+        assert self._has_cache_breakpoint(rewrite_call[2])  # BP2
+        assert rewrite_call[3]["role"] == "user"
+        assert self._has_cache_breakpoint(rewrite_call[3]), (  # BP3
+            "known_targets message in summary-rewrite call must carry "
+            "a cache_control marker"
+        )
 
     @pytest.mark.asyncio
     async def test_long_doc_marks_doc_message(self, tmp_path):
