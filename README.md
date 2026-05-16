@@ -236,6 +236,23 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 3. Use graph view to see knowledge connections
 4. Use Obsidian Web Clipper to add web articles to `raw/`
 
+### Using with Claude Code / Codex / Gemini CLI
+
+OpenKB ships a [SKILL.md](https://agentskills.io/) so any agent CLI can read your compiled wiki — no extra runtime, no MCP setup, just install the skill once.
+
+```bash
+# Claude Code
+/plugin marketplace add VectifyAI/OpenKB
+/plugin install openkb@openkb
+
+# Cross-tool (works for Codex / Cursor / Cline / Gemini CLI too)
+npx skills@latest add VectifyAI/OpenKB
+```
+
+After install, when the agent's working directory contains a `.openkb/` folder and `wiki/` tree, the skill activates automatically — the agent will use `openkb list`, `openkb status`, and `openkb query` for catalog and synthesis, and read concept/summary pages directly from `wiki/` for raw content.
+
+The skill is read-only: it won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set the agent receives.
+
 # 🧭 Learn More
 
 ### Compared to Karpathy's Approach
