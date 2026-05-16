@@ -1,8 +1,8 @@
 {
   "name": "vectify",
   "owner": {
-    "name": "VectifyAI",
-    "email": "team@vectify.ai"
+    "name": "Kylin",
+    "email": "quanqi@pageindex.ai"
   },
   "metadata": {
     "description": "Skills for navigating an OpenKB-compiled knowledge base from agent CLIs (Claude Code, Codex, Gemini CLI).",
@@ -16,8 +16,8 @@
       "strict": false,
       "version": "0.1.0",
       "author": {
-        "name": "VectifyAI",
-        "email": "team@vectify.ai"
+        "name": "Kylin",
+        "email": "quanqi@pageindex.ai"
       },
       "homepage": "https://github.com/VectifyAI/OpenKB",
       "repository": "https://github.com/VectifyAI/OpenKB",
