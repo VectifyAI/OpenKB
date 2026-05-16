@@ -1019,6 +1019,10 @@ def print_status(kb_dir: Path) -> None:
     wiki_dir = kb_dir / "wiki"
     subdirs = ["sources", "summaries", "concepts", "reports"]
 
+    # Print the active KB path as the first line. Agents and scripts
+    # parse this to locate the wiki without assuming cwd == KB root.
+    click.echo(f"Knowledge base: {kb_dir}")
+    click.echo("")
     click.echo("Knowledge Base Status:")
     click.echo(f"  {'Directory':<20} {'Files':<10}")
     click.echo(f"  {'-'*20} {'-'*10}")
@@ -1068,7 +1072,11 @@ def print_status(kb_dir: Path) -> None:
 @cli.command()
 @click.pass_context
 def status(ctx):
-    """Show the current status of the knowledge base."""
+    """Show the current status of the knowledge base.
+
+    Output starts with a ``Knowledge base: <path>`` line so agents and
+    scripts can locate the wiki without assuming cwd == KB root.
+    """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")

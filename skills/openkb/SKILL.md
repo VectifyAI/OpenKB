@@ -24,32 +24,62 @@ The wiki holds three kinds of pages:
 - **Source files** at `wiki/sources/*.{md,json}` — full text for short
   docs (`.md`) or a paginated content array for long PDFs (`.json`).
 
+## First: find where the KB lives
+
+The user may invoke you from anywhere — the active knowledge base is
+not necessarily in your current working directory. Run `openkb status`
+to discover the KB root and a summary in one call:
+
+```
+$ openkb status
+Knowledge base: /Users/.../my-kb
+
+Knowledge Base Status:
+  Directory            Files
+  -------------------- ----------
+  sources              5
+  summaries            5
+  concepts             12
+  ...
+```
+
+The first line — `Knowledge base: <path>` — is the absolute path you
+should use for every `Read` / `Grep` / `jq` call below. The same
+resolution rules `openkb` itself uses apply: walks up from cwd looking
+for `.openkb/`, then falls back to the global default set by
+`openkb use`.
+
+If `openkb status` says "No knowledge base found", tell the user to
+`cd` into their KB or run `openkb init` to create one — don't proceed.
+
 ## See what's available
 
-Use any of these to discover the catalog before drilling in:
+After capturing the KB path from `openkb status`, drill in via:
 
 - `openkb list` — table of ingested documents (name, type, page count)
   plus the concept list.
-- `openkb status` — overall stats (doc count, concept count).
-- `Read wiki/index.md` — the compiled table of contents. Every
+- `Read <kb>/wiki/index.md` — the compiled table of contents. Every
   document and concept has a one-line `brief`. Scan this and pick the
   slugs that semantically match the user's question.
 
 ## Read content
 
+(Paths shown relative to the KB root from `openkb where`. Prepend it
+in real calls.)
+
 | Goal | How |
 |---|---|
-| Read a concept page | `Read wiki/concepts/<slug>.md` |
-| Read a document's summary | `Read wiki/summaries/<doc>.md` |
-| Read a short doc's full text | `Read wiki/sources/<doc>.md` |
-| Read a long doc's specific page | `jq '.[N]' wiki/sources/<doc>.json` (page N, 0-indexed) |
+| Read a concept page | `Read <kb>/wiki/concepts/<slug>.md` |
+| Read a document's summary | `Read <kb>/wiki/summaries/<doc>.md` |
+| Read a short doc's full text | `Read <kb>/wiki/sources/<doc>.md` |
+| Read a long doc's specific page | `jq '.[N]' <kb>/wiki/sources/<doc>.json` (page N, 0-indexed) |
 | Get a synthesized answer across sources | `openkb query "<question>"` |
-| Find an exact phrase | `Grep -r "<phrase>" wiki/` |
-| Follow a `[[wikilink]]` | `Read` the linked path |
+| Find an exact phrase | `Grep -r "<phrase>" <kb>/wiki/` |
+| Follow a `[[wikilink]]` | `Read` the linked path under `<kb>/wiki/` |
 
 Concept and summary bodies use `[[concepts/<slug>]]` and
-`[[summaries/<doc>]]` wikilinks. They are relative paths — follow them
-by Reading the corresponding file.
+`[[summaries/<doc>]]` wikilinks. They are wiki-relative paths — follow
+them by Reading `<kb>/wiki/<target>.md`.
 
 ## Frontmatter
 

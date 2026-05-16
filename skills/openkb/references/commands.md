@@ -37,18 +37,35 @@ Concepts (5):
 
 ## `openkb status`
 
-Knowledge base overview (run from inside a KB directory).
+Knowledge base overview. **Always run this first** when working with
+an OpenKB KB — its first line tells you where the KB lives, which is
+what you need for every `Read` / `Grep` / `jq` call afterwards.
 
 ```
 $ openkb status
-Knowledge base at /path/to/kb
-  Documents:   2  (long_pdf: 1, short: 1)
-  Concepts:    5
-  Last ingest: 2026-05-16 12:14:12  (paper.pdf)
+Knowledge base: /path/to/kb
+
+Knowledge Base Status:
+  Directory            Files
+  -------------------- ----------
+  sources              5
+  summaries            5
+  concepts             12
+  reports              2
+  raw                  5
+
+  Total indexed: 5 document(s)
+  Last compile:  2026-05-16 12:14:12
+  Last lint:     2026-05-16 12:16:31
 ```
 
-Use this as a first read when the user asks "what does your KB look
-like?" or "how big is the KB?".
+- The `Knowledge base: <path>` line is parseable: it's the absolute
+  path of the active KB. The user may have invoked you from anywhere
+  — never assume cwd is the KB root; use this path.
+- Resolution: walks up from cwd looking for `.openkb/`, then falls
+  back to the global default set by `openkb use`.
+- Empty case: prints "No knowledge base found. Run `openkb init`
+  first." Tell the user this and stop — don't try to read files.
 
 ## `openkb query "<question>"`
 
