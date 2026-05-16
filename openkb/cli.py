@@ -266,8 +266,59 @@ def use(path):
     click.echo(f"Default KB set to: {target}")
 
 
+_LANGUAGE_MAX_LEN = 50
+
+
+def _coerce_language(value: str | None) -> str | None:
+    """Strip a language string; treat blanks as unset; reject unsafe values.
+
+    The language string is interpolated into LLM system prompts (see
+    ``_SYSTEM_TEMPLATE`` in ``openkb/agent/compiler.py`` and the query agent's
+    instructions), so values with newlines or excessive length would let an
+    external caller smuggle instructions into the prompt. Capping at
+    ``_LANGUAGE_MAX_LEN`` and rejecting control characters is enough to close
+    that vector while still allowing common forms ("en", "ko", "Korean",
+    "Simplified Chinese").
+
+    Returns the cleaned string, or ``None`` if the input was missing or blank
+    after stripping. Raises ``click.BadParameter`` on unsafe input.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > _LANGUAGE_MAX_LEN or any(c in value for c in "\n\r\t"):
+        raise click.BadParameter(
+            f"language must be {_LANGUAGE_MAX_LEN} characters or fewer "
+            "with no control characters",
+            param_hint="'--language'",
+        )
+    return value
+
+
+def _language_option_callback(_ctx, _param, value):
+    return _coerce_language(value)
+
+
+def _stdin_is_tty() -> bool:
+    """Return True when stdin is a real terminal.
+
+    Used to skip optional ``openkb init`` prompts when input is piped or
+    redirected, so existing automation (e.g. ``printf '\\n\\n' | openkb init``)
+    keeps working as new prompts are added. Mirrors ``_stream_to_tty`` from #45.
+    """
+    return sys.stdin.isatty()
+
+
 @cli.command()
-def init():
+@click.option(
+    "--language", "-l", "language",
+    default=None, metavar="LANG",
+    callback=_language_option_callback,
+    help="Wiki output language (e.g. 'en', 'ko'). Skips the interactive prompt when set.",
+)
+def init(language):
     """Initialise a new knowledge base in the current directory."""
     openkb_dir = Path(".openkb")
     if openkb_dir.exists():
@@ -292,6 +343,14 @@ def init():
         hide_input=True,
         show_default=False,
     ).strip()
+    if language is None and _stdin_is_tty():
+        language = _coerce_language(click.prompt(
+            f"Wiki language (enter for default {DEFAULT_CONFIG['language']})",
+            default=DEFAULT_CONFIG["language"],
+            show_default=False,
+        ))
+    if not language:
+        language = DEFAULT_CONFIG["language"]
     # Create directory structure
     Path("raw").mkdir(exist_ok=True)
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
@@ -310,7 +369,7 @@ def init():
     openkb_dir.mkdir()
     config = {
         "model": model,
-        "language": DEFAULT_CONFIG["language"],
+        "language": language,
         "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
     }
     save_config(openkb_dir / "config.yaml", config)
