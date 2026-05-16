@@ -244,7 +244,7 @@ OpenKB ships a [SKILL.md](https://agentskills.io/) so any agent CLI can read you
 
 ```
 /plugin marketplace add VectifyAI/OpenKB
-/plugin install openkb@openkb-marketplace
+/plugin install openkb@vectify
 ```
 
 **Gemini CLI** (native skills installer):
