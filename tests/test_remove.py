@@ -911,3 +911,77 @@ def test_cli_remove_skips_pageindex_when_no_state_file(kb_dir):
     assert result.exit_code == 0, result.output
     mock_cls.assert_not_called()
     assert "PageIndex" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Consistency-fix regression: PageIndex failure must NOT clear the registry,
+# so the user can retry. The previous order removed the registry entry first
+# and then attempted PageIndex cleanup — leaving an orphan SQLite row that
+# silently re-bound on the next `openkb add` via PageIndex's SHA-256 dedup.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_remove_pageindex_failure_preserves_registry_for_retry(kb_dir):
+    """When `_cleanup_pageindex` raises, the registry entry (and its
+    `doc_id`) must survive so a subsequent `openkb remove` invocation
+    has the handle needed to retry. Wiki-side cleanup still happens
+    because every step is idempotent across retries.
+    """
+    _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
+
+    fake_client = MagicMock()
+    fake_client.collection.side_effect = RuntimeError("LLM key missing")
+
+    with patch("pageindex.PageIndexClient", return_value=fake_client), \
+         patch("openkb.cli._setup_llm_key"):
+        result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
+
+    # Command exits cleanly with a WARN — not an error code — because the
+    # user has a clear path forward (re-run).
+    assert result.exit_code == 0, result.output
+    assert "[WARN]" in result.output
+    assert "re-run" in result.output
+
+    # Registry entry is intact for retry.
+    hashes = json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+    assert "h_paper" in hashes
+    assert hashes["h_paper"]["doc_id"] == "pi-doc-xyz"
+
+    # Wiki side was cleaned (idempotent on retry).
+    assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()
+    assert not (kb_dir / "wiki" / "sources" / "paper.json").exists()
+
+
+def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
+    """First attempt fails at PageIndex; second attempt with a working
+    PageIndex completes the removal. Validates that the post-failure
+    state is fully retryable.
+    """
+    _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
+
+    # First attempt: PageIndex raises.
+    failing_client = MagicMock()
+    failing_client.collection.side_effect = RuntimeError("transient")
+    with patch("pageindex.PageIndexClient", return_value=failing_client), \
+         patch("openkb.cli._setup_llm_key"):
+        first = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
+    assert first.exit_code == 0
+    assert "[WARN]" in first.output
+    # Registry entry survived for retry.
+    assert "h_paper" in json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+
+    # Second attempt: PageIndex succeeds. Same doc_id must drive the
+    # delete since it's still in the registry.
+    working_col = MagicMock()
+    working_client = MagicMock()
+    working_client.collection.return_value = working_col
+    with patch("pageindex.PageIndexClient", return_value=working_client), \
+         patch("openkb.cli._setup_llm_key"):
+        second = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
+
+    assert second.exit_code == 0, second.output
+    working_col.delete_document.assert_called_once_with("pi-doc-xyz")
+
+    # Registry now empty; wiki cleanup remains complete.
+    assert json.loads((kb_dir / ".openkb" / "hashes.json").read_text()) == {}
+    assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()

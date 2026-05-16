@@ -681,6 +681,15 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
             return
 
     # ----- Execute -----
+    # Ordering rationale: every step before the registry write is
+    # idempotent (``unlink(missing_ok=True)``, ``shutil.rmtree(
+    # ignore_errors=True)``, concept/index helpers that no-op on
+    # already-clean state, and PageIndex's own delete-by-doc_id which
+    # uses ``missing_ok`` + ``if dir.exists()`` internally). The
+    # registry write is therefore the *commit point*: if anything
+    # before it raises (including PageIndex), the entry plus its
+    # ``doc_id`` survive and the user can simply re-run ``openkb
+    # remove`` to retry from a clean slate.
     summary_path.unlink(missing_ok=True)
     source_md.unlink(missing_ok=True)
     source_json.unlink(missing_ok=True)
@@ -693,14 +702,19 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
 
     remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"])
 
-    registry.remove_by_doc_name(doc_name)
+    # Strip dangling wikilinks now so a retry (after a PageIndex
+    # failure below) finds a clean wiki — no point in re-running this
+    # on every attempt.
+    files_changed, ghosts = fix_broken_links(wiki_dir)
+    if files_changed:
+        click.echo(f"  lint --fix cleaned {ghosts} dangling wikilink(s) in {files_changed} file(s)")
 
-    if raw_path is not None:
-        raw_path.unlink(missing_ok=True)
-
-    # Free PageIndex's local managed state for long PDFs. We do this last
-    # because the wiki side is now clean and we want a partial failure
-    # here to leave only PageIndex bloat, not a half-removed wiki.
+    # Free PageIndex's local managed state for long PDFs *before* the
+    # registry write so the user can retry on failure — leaving the
+    # entry intact preserves the ``doc_id`` we need for the second
+    # attempt. PageIndex's local dedup is SHA-256 based, so a stale row
+    # left behind here would silently re-bind on the next ``openkb
+    # add`` and the user would get the old parse back without warning.
     if cleanup_pageindex:
         try:
             cleaned, msg = _cleanup_pageindex(
@@ -710,17 +724,18 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         except Exception as exc:
             click.echo(
                 f"  [WARN] PageIndex cleanup failed: {exc} "
-                f"— .openkb/pageindex.db row and .openkb/files/ may still hold this doc"
+                f"— registry entry kept; re-run `openkb remove {name}` to retry"
             )
             logging.getLogger(__name__).debug(
                 "PageIndex cleanup traceback:", exc_info=True,
             )
+            return
 
-    # Tidy up any dangling wikilinks now pointing at the removed doc or
-    # deleted concept pages.
-    files_changed, ghosts = fix_broken_links(wiki_dir)
-    if files_changed:
-        click.echo(f"  lint --fix cleaned {ghosts} dangling wikilink(s) in {files_changed} file(s)")
+    # ----- Commit point -----
+    registry.remove_by_doc_name(doc_name)
+
+    if raw_path is not None:
+        raw_path.unlink(missing_ok=True)
 
     append_log(wiki_dir, "remove", name)
     click.echo(f"  [OK] {name} removed from knowledge base.")
