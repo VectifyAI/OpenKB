@@ -423,6 +423,204 @@ def query(ctx, question, save, raw):
         click.echo(f"\nSaved to {explore_path}")
 
 
+def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]:
+    """Find registry entries matching ``identifier``.
+
+    Match precedence (returns immediately on the first non-empty bucket):
+      1. Exact match on ``metadata['name']`` (the original filename).
+      2. Exact match on ``metadata['doc_name']`` (the slug).
+      3. Case-insensitive substring match on either field.
+
+    Returns ``[(file_hash, metadata), ...]``. Callers handle the empty,
+    single, and multi-match cases.
+    """
+    entries = registry.all_entries()
+
+    exact_name = [(h, m) for h, m in entries.items() if m.get("name") == identifier]
+    if exact_name:
+        return exact_name
+
+    exact_slug = [(h, m) for h, m in entries.items() if m.get("doc_name") == identifier]
+    if exact_slug:
+        return exact_slug
+
+    needle = identifier.lower()
+    fuzzy = [
+        (h, m) for h, m in entries.items()
+        if needle in (m.get("name") or "").lower()
+        or needle in (m.get("doc_name") or "").lower()
+    ]
+    return fuzzy
+
+
+@cli.command()
+@click.argument("identifier")
+@click.option("--keep-raw", is_flag=True, default=False,
+              help="Don't delete the original file from raw/.")
+@click.option("--keep-empty-concepts", is_flag=True, default=False,
+              help="Keep concept pages whose only source was the removed doc "
+                   "(with empty sources frontmatter). Useful when replacing "
+                   "the doc with a newer version.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Print what would be done without modifying anything.")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip the confirmation prompt.")
+@click.pass_context
+def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
+    """Remove a document from the knowledge base.
+
+    IDENTIFIER may be the original filename ("paper.pdf"), the doc_name
+    slug ("paper-a1b2c3d4e5f6"), or a substring that uniquely matches one.
+
+    Deletes the doc's summary and source files, prunes the doc from
+    concept-page frontmatter and Related Documents sections, drops the
+    Documents entry from index.md, removes the hash entry, and finally
+    runs `lint --fix` to clean any dangling wikilinks.
+
+    Concept pages whose only source was this doc are deleted by default;
+    use --keep-empty-concepts to retain them.
+    """
+    from openkb.agent.compiler import (
+        remove_doc_from_concept_pages,
+        remove_doc_from_index,
+    )
+    from openkb.lint import fix_broken_links
+    from openkb.state import HashRegistry
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    openkb_dir = kb_dir / ".openkb"
+    registry = HashRegistry(openkb_dir / "hashes.json")
+
+    matches = _resolve_doc_identifier(registry, identifier)
+    if not matches:
+        click.echo(f"No document matching '{identifier}' found in the KB.")
+        click.echo("Try `openkb list` to see indexed documents.")
+        return
+    if len(matches) > 1:
+        click.echo(f"'{identifier}' matches multiple documents:")
+        for _, m in matches:
+            click.echo(f"  - {m.get('name', '?')}  (doc_name: {m.get('doc_name', '?')})")
+        click.echo("Use a more specific name or the exact doc_name slug.")
+        return
+
+    file_hash, meta = matches[0]
+    name = meta.get("name", "?")
+    doc_name = meta.get("doc_name") or Path(name).stem
+    doc_type = meta.get("type", "")
+    wiki_dir = kb_dir / "wiki"
+
+    # ----- Build the plan (no side effects) -----
+    actions: list[tuple[str, str]] = []
+
+    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
+    if summary_path.exists():
+        actions.append(("DELETE", str(summary_path.relative_to(kb_dir))))
+
+    source_md = wiki_dir / "sources" / f"{doc_name}.md"
+    source_json = wiki_dir / "sources" / f"{doc_name}.json"
+    if source_md.exists():
+        actions.append(("DELETE", str(source_md.relative_to(kb_dir))))
+    if source_json.exists():
+        actions.append(("DELETE", str(source_json.relative_to(kb_dir))))
+
+    # Scan concept pages to predict which will be edited vs. deleted.
+    source_file_marker = f"summaries/{doc_name}.md"
+    bare_source = f"summaries/{doc_name}"
+    affected_concepts: list[tuple[str, int]] = []  # (slug, remaining_sources)
+    concepts_dir = wiki_dir / "concepts"
+    if concepts_dir.is_dir():
+        for path in sorted(concepts_dir.glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            if source_file_marker not in text and bare_source not in text:
+                continue
+            # Quick parse of sources list
+            sources_count = 0
+            if text.startswith("---"):
+                fm_end = text.find("---", 3)
+                if fm_end != -1:
+                    for line in text[:fm_end].split("\n"):
+                        if line.lstrip().startswith("sources:"):
+                            lb = line.find("[")
+                            rb = line.rfind("]")
+                            if lb != -1 and rb != -1 and rb > lb:
+                                items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
+                                sources_count = len(items)
+                            break
+            remaining = max(sources_count - 1, 0)
+            affected_concepts.append((path.stem, remaining))
+
+    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty_concepts]
+    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty_concepts]
+    for slug in concept_deletes:
+        actions.append(("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
+    for slug in concept_edits:
+        actions.append(("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
+
+    if (wiki_dir / "index.md").exists():
+        actions.append(("MODIFY", "wiki/index.md  (remove Documents entry)"))
+
+    actions.append(("REGISTRY", f"remove hash entry  ({file_hash[:12]}…)"))
+
+    raw_path = None
+    if not keep_raw:
+        raw_dir = kb_dir / "raw"
+        candidate = raw_dir / name
+        if candidate.exists():
+            raw_path = candidate
+            actions.append(("DELETE", str(candidate.relative_to(kb_dir))))
+
+    # ----- Print the plan -----
+    click.echo(f"Removing '{name}' (doc_name: {doc_name}, type: {doc_type or '?'}).")
+    click.echo("")
+    for tag, target in actions:
+        click.echo(f"  {tag:<8} {target}")
+    if concept_deletes:
+        click.echo("")
+        click.echo(
+            f"  {len(concept_deletes)} concept(s) will be DELETED because this is their only source."
+        )
+        click.echo("  Pass --keep-empty-concepts to retain them instead.")
+    click.echo("")
+
+    if dry_run:
+        click.echo("(dry-run — nothing modified)")
+        return
+
+    if not yes:
+        if not click.confirm("Proceed?", default=False):
+            click.echo("Aborted.")
+            return
+
+    # ----- Execute -----
+    summary_path.unlink(missing_ok=True)
+    source_md.unlink(missing_ok=True)
+    source_json.unlink(missing_ok=True)
+
+    concept_result = remove_doc_from_concept_pages(
+        wiki_dir, doc_name, keep_empty=keep_empty_concepts,
+    )
+
+    remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"])
+
+    registry.remove_by_doc_name(doc_name)
+
+    if raw_path is not None:
+        raw_path.unlink(missing_ok=True)
+
+    # Tidy up any dangling wikilinks now pointing at the removed doc or
+    # deleted concept pages.
+    files_changed, ghosts = fix_broken_links(wiki_dir)
+    if files_changed:
+        click.echo(f"  lint --fix cleaned {ghosts} dangling wikilink(s) in {files_changed} file(s)")
+
+    append_log(wiki_dir, "remove", name)
+    click.echo(f"  [OK] {name} removed from knowledge base.")
+
+
 @cli.command()
 @click.option(
     "--resume", "-r", "resume",

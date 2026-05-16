@@ -41,6 +41,15 @@ class HashRegistry:
         self._data[file_hash] = metadata
         self._persist()
 
+    def remove_by_doc_name(self, doc_name: str) -> bool:
+        """Remove the entry whose metadata['doc_name'] matches. Returns True if removed."""
+        for file_hash, meta in list(self._data.items()):
+            if meta.get("doc_name") == doc_name:
+                del self._data[file_hash]
+                self._persist()
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
