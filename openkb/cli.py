@@ -209,7 +209,11 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     # Register hash only after successful compilation
     if result.file_hash:
         doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
-        registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
+        registry.add(result.file_hash, {
+            "name": file_path.name,
+            "doc_name": doc_name,
+            "type": doc_type,
+        })
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
@@ -528,28 +532,35 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         actions.append(("DELETE", str(source_json.relative_to(kb_dir))))
 
     # Scan concept pages to predict which will be edited vs. deleted.
+    # Only frontmatter ``sources:`` membership drives the plan — body-only
+    # references (e.g. a stray ``See also:`` line a user added by hand
+    # without updating sources) are cleaned by the executor but don't
+    # affect the delete/edit classification, so the plan reflects what
+    # the executor will actually do.
     source_file_marker = f"summaries/{doc_name}.md"
-    bare_source = f"summaries/{doc_name}"
     affected_concepts: list[tuple[str, int]] = []  # (slug, remaining_sources)
     concepts_dir = wiki_dir / "concepts"
     if concepts_dir.is_dir():
         for path in sorted(concepts_dir.glob("*.md")):
             text = path.read_text(encoding="utf-8")
-            if source_file_marker not in text and bare_source not in text:
+            if not text.startswith("---"):
                 continue
-            # Quick parse of sources list
+            fm_end = text.find("---", 3)
+            if fm_end == -1:
+                continue
             sources_count = 0
-            if text.startswith("---"):
-                fm_end = text.find("---", 3)
-                if fm_end != -1:
-                    for line in text[:fm_end].split("\n"):
-                        if line.lstrip().startswith("sources:"):
-                            lb = line.find("[")
-                            rb = line.rfind("]")
-                            if lb != -1 and rb != -1 and rb > lb:
-                                items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
-                                sources_count = len(items)
-                            break
+            source_in_frontmatter = False
+            for line in text[:fm_end].split("\n"):
+                if line.lstrip().startswith("sources:"):
+                    lb = line.find("[")
+                    rb = line.rfind("]")
+                    if lb != -1 and rb != -1 and rb > lb:
+                        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
+                        sources_count = len(items)
+                        source_in_frontmatter = source_file_marker in items
+                    break
+            if not source_in_frontmatter:
+                continue
             remaining = max(sources_count - 1, 0)
             affected_concepts.append((path.stem, remaining))
 

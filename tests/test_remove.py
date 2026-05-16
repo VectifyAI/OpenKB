@@ -19,6 +19,7 @@ import pytest
 from click.testing import CliRunner
 
 from openkb.agent.compiler import (
+    _remove_section_entry,
     _remove_source_from_frontmatter,
     remove_doc_from_concept_pages,
     remove_doc_from_index,
@@ -477,3 +478,207 @@ def test_cli_remove_lint_cleans_dangling_links(kb_dir):
     assert result.exit_code == 0, result.output
     cleaned = llm_path.read_text()
     assert "[[summaries/attention-h_a]]" not in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Regression: code-review issue #1
+# `openkb add` must persist `doc_name` so `remove_by_doc_name` can prune
+# the registry entry. Earlier add_single_file only stored `name` + `type`,
+# so the new remove flow silently no-op'd on the registry write.
+# ---------------------------------------------------------------------------
+
+
+def test_add_persists_doc_name_for_later_remove(tmp_path):
+    """End-to-end: `openkb add` writes a registry entry with `doc_name`,
+    and a subsequent `openkb remove` actually prunes that entry.
+    """
+    from openkb.converter import ConvertResult
+
+    # Minimal KB scaffolding (mirrors conftest.kb_dir but localised so we
+    # can fully control the add pipeline via mocks below).
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+    (tmp_path / "wiki" / "sources" / "images").mkdir(parents=True)
+    (tmp_path / "wiki" / "concepts").mkdir(parents=True)
+    (tmp_path / "wiki" / "explorations").mkdir(parents=True)
+    (tmp_path / "wiki" / "reports").mkdir(parents=True)
+    (tmp_path / "wiki" / "index.md").write_text(
+        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "wiki" / "log.md").write_text("# Log\n", encoding="utf-8")
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (openkb_dir / "hashes.json").write_text("{}")
+
+    doc = tmp_path / "paper.md"
+    doc.write_text("# Hello", encoding="utf-8")
+    raw_path = tmp_path / "raw" / "paper.md"
+    raw_path.write_text("# Hello", encoding="utf-8")
+    source_path = tmp_path / "wiki" / "sources" / "paper.md"
+    source_path.write_text("# Hello converted", encoding="utf-8")
+    summary_path = tmp_path / "wiki" / "summaries" / "paper.md"
+    summary_path.write_text(
+        "---\nsources: [raw/paper.md]\nbrief: x\n---\n# Paper\n",
+        encoding="utf-8",
+    )
+
+    mock_result = ConvertResult(
+        raw_path=raw_path,
+        source_path=source_path,
+        is_long_doc=False,
+        file_hash="deadbeef" * 8,  # 64 hex chars
+    )
+
+    runner = CliRunner()
+    # Mock convert_document + asyncio.run to skip the LLM-driven compile.
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("openkb.cli.convert_document", return_value=mock_result), \
+         patch("openkb.cli.asyncio.run"):
+        add_res = runner.invoke(cli, ["add", str(doc)])
+    assert add_res.exit_code == 0, add_res.output
+
+    # The registry write contract: doc_name must be present.
+    hashes = json.loads((openkb_dir / "hashes.json").read_text())
+    assert len(hashes) == 1
+    (_, meta), = hashes.items()
+    assert meta["name"] == "paper.md"
+    assert meta["doc_name"] == "paper"
+    assert meta["type"] == "md"
+
+    # And the remove command must actually drop that entry — not silently no-op.
+    rm_res = runner.invoke(
+        cli, ["--kb-dir", str(tmp_path), "remove", "paper.md", "--keep-raw", "--yes"],
+    )
+    assert rm_res.exit_code == 0, rm_res.output
+    assert json.loads((openkb_dir / "hashes.json").read_text()) == {}
+
+
+# ---------------------------------------------------------------------------
+# Regression: code-review issue #2
+# `_remove_section_entry` must match the canonical `- {link}` bullet form
+# strictly; a substring fallback wrongly deleted sibling entries whose
+# brief text referenced the removed link.
+# ---------------------------------------------------------------------------
+
+
+def test_remove_section_entry_strict_prefix_no_sibling_overdelete():
+    lines = [
+        "## Documents",
+        "- [[summaries/attn-x]] (short) - The attn paper",
+        "- [[summaries/survey-y]] (short) - supersedes [[summaries/attn-x]]",
+        "- [[summaries/other-z]] (short) - unrelated",
+        "",
+        "## Concepts",
+    ]
+    removed = _remove_section_entry(lines, "## Documents", "[[summaries/attn-x]]")
+
+    assert removed is True
+    # Only the actual attn-x bullet is gone; the survey-y entry that
+    # *mentions* attn-x in its brief survives intact.
+    joined = "\n".join(lines)
+    assert "- [[summaries/attn-x]]" not in joined
+    assert "- [[summaries/survey-y]]" in joined
+    assert "supersedes [[summaries/attn-x]]" in joined
+    assert "- [[summaries/other-z]]" in joined
+
+
+def test_remove_section_entry_skips_non_bullet_mentions():
+    """A wikilink embedded in a paragraph (no bullet prefix) must not
+    be deleted — the helper only manages canonical bullet entries.
+    """
+    lines = [
+        "## Related Documents",
+        "This concept is mostly covered by [[summaries/attn-x]] in spirit.",
+        "- [[summaries/survey-y]]",
+        "",
+    ]
+    removed = _remove_section_entry(lines, "## Related Documents", "[[summaries/attn-x]]")
+
+    assert removed is False  # No `- [[summaries/attn-x]]` bullet in section.
+    assert any("This concept is mostly covered by [[summaries/attn-x]]" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# Regression: code-review issue #3
+# CLI plan-builder must classify concept pages by frontmatter `sources:`
+# membership only — body-only references (e.g. a stray "See also:" or an
+# unrelated wikilink in the body) should not flip the page into DELETE.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_remove_ignores_body_only_reference_in_plan(kb_dir):
+    """A concept whose frontmatter sources do NOT include the removed doc
+    but whose body has a `See also:` line should not appear in the DELETE
+    or MODIFY action list for that doc.
+    """
+    _seed_two_doc_kb(kb_dir)
+
+    # Plant a concept whose frontmatter source is llm-h_l only, but whose
+    # body mentions attention-h_a via "See also:". When we remove
+    # attention.pdf, this page should NOT be reported as affected.
+    stray = kb_dir / "wiki" / "concepts" / "stray.md"
+    stray.write_text(
+        "---\nsources: [summaries/llm-h_l.md]\nbrief: stray\n---\n"
+        "# Stray\n\nbody text\n\nSee also: [[summaries/attention-h_a]]\n",
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    # Plan must not announce any action on `stray` for this removal.
+    assert "concepts/stray.md" not in result.output
+    # Sanity: the regular affected concepts are still listed.
+    assert "concepts/transformer.md" in result.output
+    assert "concepts/attention.md" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Regression: code-review issue #4
+# `See also:` stripping must preserve surrounding paragraph spacing — the
+# earlier `\s*` greediness collapsed blank lines and left orphan blank
+# lines at end-of-file.
+# ---------------------------------------------------------------------------
+
+
+def test_remove_doc_strips_see_also_without_collapsing_paragraphs(kb_dir):
+    wiki = kb_dir / "wiki"
+    path = wiki / "concepts" / "c.md"
+    path.write_text(
+        "---\nsources: [summaries/a.md, summaries/b.md]\n---\n"
+        "# c\n\npara1\n\nSee also: [[summaries/a]]\n\npara2\n",
+        encoding="utf-8",
+    )
+
+    remove_doc_from_concept_pages(wiki, "a")
+
+    out = path.read_text(encoding="utf-8")
+    # The See also line is gone.
+    assert "See also: [[summaries/a]]" not in out
+    # And the surrounding blank-line separator between para1 and para2
+    # is preserved (markdown paragraph break still intact).
+    assert "para1\n\npara2" in out
+
+
+def test_remove_doc_strips_trailing_see_also_cleanly(kb_dir):
+    """When `_add_related_link` appends `\\n\\nSee also: link` and removal
+    is requested, the trailing See also block should disappear cleanly
+    without leaving a dangling double-blank line at end-of-file.
+    """
+    wiki = kb_dir / "wiki"
+    path = wiki / "concepts" / "c.md"
+    path.write_text(
+        "---\nsources: [summaries/a.md, summaries/b.md]\n---\n"
+        "# c\n\nbody\n\nSee also: [[summaries/a]]",
+        encoding="utf-8",
+    )
+
+    remove_doc_from_concept_pages(wiki, "a")
+
+    out = path.read_text(encoding="utf-8")
+    assert "See also" not in out
+    # Body content survives; the file does not end with two consecutive
+    # newlines from a leftover blank line.
+    assert out.rstrip().endswith("body")

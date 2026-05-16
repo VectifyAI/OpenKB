@@ -446,11 +446,13 @@ def _insert_section_entry(lines: list[str], heading: str, entry: str) -> bool:
 
 
 def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
-    """Remove the first entry whose ``link`` appears in the named section.
+    """Remove the first entry whose line starts with ``- {link}`` in the named
+    section. Returns True if an entry was removed.
 
-    Returns True if an entry was removed. The match uses ``- {link}`` as
-    the prefix (the canonical bullet form that the other section helpers
-    produce); a fallback substring match catches custom bullet text.
+    Matching is intentionally strict (prefix-only, matching the canonical
+    bullet form written by ``_insert_section_entry`` and friends). An earlier
+    substring fallback could wrongly delete sibling bullets whose brief text
+    referenced the removed link.
     """
     bounds = _get_section_bounds(lines, heading)
     if bounds is None:
@@ -459,7 +461,7 @@ def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
     start, end = bounds
     entry_prefix = f"- {link}"
     for i in range(start, end):
-        if lines[i].startswith(entry_prefix) or link in lines[i]:
+        if lines[i].startswith(entry_prefix):
             del lines[i]
             return True
     return False
@@ -750,8 +752,21 @@ def remove_doc_from_concept_pages(
             new_text = "\n".join(lines)
 
         # Drop standalone "See also: [[summaries/{doc_name}]]" lines.
+        # The dominant form (written by ``_add_related_link``) is a
+        # paragraph: preceded by a blank line and trailed by either a
+        # newline or end-of-string. The first regex matches that shape
+        # exactly, preserving one trailing newline so paragraph spacing
+        # in surrounding content survives.
         new_text = re.sub(
-            rf"^\s*See also:\s*\[\[{re.escape(bare_source)}\]\]\s*\n?",
+            rf"\n\n[ \t]*See also:[ \t]*\[\[{re.escape(bare_source)}\]\][ \t]*(\n|\Z)",
+            r"\1",
+            new_text,
+        )
+        # Fallback for hand-edited inline "See also:" lines that lack the
+        # paragraph-break separator above. Bounded to a single line via
+        # `[ \t]` and an optional trailing newline.
+        new_text = re.sub(
+            rf"^[ \t]*See also:[ \t]*\[\[{re.escape(bare_source)}\]\][ \t]*\n?",
             "",
             new_text,
             flags=re.MULTILINE,
