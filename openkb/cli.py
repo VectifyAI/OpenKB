@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore")
 import asyncio
 import json
 import logging
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -162,6 +163,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
         return
 
     doc_name = file_path.stem
+    index_result = None  # populated only on the long-doc branch
 
     # 3/4. Index and compile
     if result.is_long_doc:
@@ -209,11 +211,17 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     # Register hash only after successful compilation
     if result.file_hash:
         doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
-        registry.add(result.file_hash, {
+        meta = {
             "name": file_path.name,
             "doc_name": doc_name,
             "type": doc_type,
-        })
+        }
+        # For long PDFs we also persist the PageIndex doc_id so `openkb
+        # remove` can later call ``Collection.delete_document(doc_id)``
+        # to free the managed PDF copy + SQLite row.
+        if index_result is not None:
+            meta["doc_id"] = index_result.doc_id
+        registry.add(result.file_hash, meta)
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
@@ -427,6 +435,45 @@ def query(ctx, question, save, raw):
         click.echo(f"\nSaved to {explore_path}")
 
 
+def _cleanup_pageindex(
+    openkb_dir: Path, kb_dir: Path, doc_name: str, doc_id: str | None,
+) -> tuple[bool, str]:
+    """Drop a long-doc entry from PageIndex's local SQLite + remove its
+    managed files. Returns ``(did_cleanup, message)``.
+
+    No-op (returns ``(False, "no PageIndex state")``) when no
+    ``pageindex.db`` exists — short-doc-only KBs never created any.
+
+    Falls back to matching by ``doc_name`` via ``list_documents()`` when
+    the registry entry pre-dates PR #51's ``doc_id`` field. Ambiguous
+    multi-match cases are skipped with a warning rather than guessed.
+    """
+    if not (openkb_dir / "pageindex.db").exists():
+        return False, "no PageIndex state"
+
+    from pageindex import PageIndexClient
+
+    _setup_llm_key(kb_dir)
+    config = load_config(openkb_dir / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-4o-mini"))
+    client = PageIndexClient(model=model, storage_path=str(openkb_dir))
+    col = client.collection()
+
+    if doc_id is None:
+        candidates = [d for d in col.list_documents() if d.get("doc_name") == doc_name]
+        if not candidates:
+            return False, "no PageIndex doc to delete"
+        if len(candidates) > 1:
+            return False, (
+                f"{len(candidates)} PageIndex docs match doc_name='{doc_name}'; "
+                "skipping (re-add to refresh)"
+            )
+        doc_id = candidates[0]["doc_id"]
+
+    col.delete_document(doc_id)
+    return True, f"deleted PageIndex doc ({doc_id[:12]}…)"
+
+
 def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]:
     """Find registry entries matching ``identifier``.
 
@@ -531,6 +578,16 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     if source_json.exists():
         actions.append(("DELETE", str(source_json.relative_to(kb_dir))))
 
+    # Per-doc extracted-images directory (PDF page images + base64 images
+    # from docx/pptx + copied relative refs from .md inputs). Created by
+    # openkb.images during ingest, keyed by doc_name.
+    images_dir = wiki_dir / "sources" / "images" / doc_name
+    if images_dir.is_dir():
+        actions.append((
+            "DELETE",
+            f"{images_dir.relative_to(kb_dir)}/  (images directory)",
+        ))
+
     # Scan concept pages to predict which will be edited vs. deleted.
     # Only frontmatter ``sources:`` membership drives the plan — body-only
     # references (e.g. a stray ``See also:`` line a user added by hand
@@ -576,6 +633,23 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
 
     actions.append(("REGISTRY", f"remove hash entry  ({file_hash[:12]}…)"))
 
+    # Long PDFs leave state in PageIndex's local store (`.openkb/pageindex.db`
+    # row + `.openkb/files/<collection>/<doc_id>.pdf` + extracted images).
+    # Only flag this when both the registry says long_pdf and PageIndex
+    # state exists on disk — short-doc-only KBs never created any.
+    pageindex_doc_id = meta.get("doc_id")
+    pageindex_state_exists = (openkb_dir / "pageindex.db").exists()
+    cleanup_pageindex = doc_type == "long_pdf" and pageindex_state_exists
+    if cleanup_pageindex:
+        if pageindex_doc_id:
+            actions.append((
+                "PAGEINDEX", f"delete document ({pageindex_doc_id[:12]}…)",
+            ))
+        else:
+            actions.append((
+                "PAGEINDEX", f"delete document (lookup by doc_name; legacy entry)",
+            ))
+
     raw_path = None
     if not keep_raw:
         raw_dir = kb_dir / "raw"
@@ -610,6 +684,8 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     summary_path.unlink(missing_ok=True)
     source_md.unlink(missing_ok=True)
     source_json.unlink(missing_ok=True)
+    if images_dir.is_dir():
+        shutil.rmtree(images_dir, ignore_errors=True)
 
     concept_result = remove_doc_from_concept_pages(
         wiki_dir, doc_name, keep_empty=keep_empty_concepts,
@@ -621,6 +697,24 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
 
     if raw_path is not None:
         raw_path.unlink(missing_ok=True)
+
+    # Free PageIndex's local managed state for long PDFs. We do this last
+    # because the wiki side is now clean and we want a partial failure
+    # here to leave only PageIndex bloat, not a half-removed wiki.
+    if cleanup_pageindex:
+        try:
+            cleaned, msg = _cleanup_pageindex(
+                openkb_dir, kb_dir, doc_name, pageindex_doc_id,
+            )
+            click.echo(f"  PageIndex: {msg}")
+        except Exception as exc:
+            click.echo(
+                f"  [WARN] PageIndex cleanup failed: {exc} "
+                f"— .openkb/pageindex.db row and .openkb/files/ may still hold this doc"
+            )
+            logging.getLogger(__name__).debug(
+                "PageIndex cleanup traceback:", exc_info=True,
+            )
 
     # Tidy up any dangling wikilinks now pointing at the removed doc or
     # deleted concept pages.

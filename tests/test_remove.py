@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -682,3 +682,232 @@ def test_remove_doc_strips_trailing_see_also_cleanly(kb_dir):
     # Body content survives; the file does not end with two consecutive
     # newlines from a leftover blank line.
     assert out.rstrip().endswith("body")
+
+
+# ---------------------------------------------------------------------------
+# Functional-completeness fix: per-doc images directory cleanup
+# `openkb add` writes images into wiki/sources/images/<doc_name>/. Remove
+# must take that whole tree with it — otherwise image-heavy docs leak
+# tens to hundreds of MB per add → remove cycle.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_remove_deletes_per_doc_images_directory(kb_dir):
+    _seed_two_doc_kb(kb_dir)
+
+    # Plant a populated images directory for attention.pdf.
+    images_dir = kb_dir / "wiki" / "sources" / "images" / "attention-h_a"
+    images_dir.mkdir(parents=True)
+    (images_dir / "p1_img1.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    (images_dir / "p2_img1.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    # Unrelated doc's images dir must survive.
+    other_images = kb_dir / "wiki" / "sources" / "images" / "llm-h_l"
+    other_images.mkdir(parents=True)
+    (other_images / "p1_img1.png").write_bytes(b"\x89PNG")
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "images directory" in result.output  # mentioned in plan
+    assert not images_dir.exists()
+    # Sibling doc's image dir is untouched.
+    assert other_images.exists()
+    assert (other_images / "p1_img1.png").exists()
+
+
+def test_cli_remove_dry_run_does_not_touch_images(kb_dir):
+    _seed_two_doc_kb(kb_dir)
+    images_dir = kb_dir / "wiki" / "sources" / "images" / "attention-h_a"
+    images_dir.mkdir(parents=True)
+    (images_dir / "p1_img1.png").write_bytes(b"\x89PNG")
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "images directory" in result.output
+    # Directory still on disk after dry-run.
+    assert images_dir.exists()
+    assert (images_dir / "p1_img1.png").exists()
+
+
+# ---------------------------------------------------------------------------
+# Functional-completeness fix: `doc_id` is persisted for long PDFs so a
+# later `openkb remove` can call PageIndex's delete_document API.
+# ---------------------------------------------------------------------------
+
+
+def test_add_long_pdf_persists_doc_id_to_registry(tmp_path):
+    """Long-doc ingest must record `doc_id` in the registry. Without it,
+    the remove path has no handle to feed `Collection.delete_document`.
+    """
+    from openkb.converter import ConvertResult
+    from openkb.indexer import IndexResult
+
+    # Minimal KB
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+    (tmp_path / "wiki" / "sources" / "images").mkdir(parents=True)
+    (tmp_path / "wiki" / "concepts").mkdir(parents=True)
+    (tmp_path / "wiki" / "explorations").mkdir(parents=True)
+    (tmp_path / "wiki" / "reports").mkdir(parents=True)
+    (tmp_path / "wiki" / "index.md").write_text(
+        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "wiki" / "log.md").write_text("# Log\n", encoding="utf-8")
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (openkb_dir / "hashes.json").write_text("{}")
+
+    pdf = tmp_path / "long.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n" + b"\x00" * 200)
+    raw_path = tmp_path / "raw" / "long.pdf"
+    raw_path.write_bytes(pdf.read_bytes())
+
+    convert_mock = ConvertResult(
+        raw_path=raw_path,
+        source_path=None,
+        is_long_doc=True,
+        file_hash="cafebabe" * 8,
+    )
+    index_mock = IndexResult(
+        doc_id="pi-doc-abc123", description="A long PDF", tree={},
+    )
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("openkb.cli.convert_document", return_value=convert_mock), \
+         patch("openkb.indexer.index_long_document", return_value=index_mock), \
+         patch("openkb.cli.asyncio.run"):
+        result = runner.invoke(cli, ["add", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    hashes = json.loads((openkb_dir / "hashes.json").read_text())
+    (_, meta), = hashes.items()
+    assert meta["type"] == "long_pdf"
+    assert meta["doc_id"] == "pi-doc-abc123"
+
+
+# ---------------------------------------------------------------------------
+# Functional-completeness fix: PageIndex local state cleanup on remove.
+# ---------------------------------------------------------------------------
+
+
+def _seed_long_pdf_kb(kb_dir: Path, doc_id: str | None = "pi-doc-xyz") -> None:
+    """Seed a KB with a single long-PDF entry plus a stub pageindex.db
+    file so the remove command treats the doc as PageIndex-backed.
+    """
+    meta = {
+        "name": "paper.pdf",
+        "doc_name": "paper",
+        "type": "long_pdf",
+        "path": "raw/paper.pdf",
+    }
+    if doc_id is not None:
+        meta["doc_id"] = doc_id
+    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({"h_paper": meta}))
+    (kb_dir / "raw" / "paper.pdf").write_bytes(b"%PDF-fake")
+    (kb_dir / "wiki" / "summaries" / "paper.md").write_text(
+        "---\nsources: [raw/paper.pdf]\nbrief: x\n---\n# Paper\n", encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "sources" / "paper.json").write_text("[]", encoding="utf-8")
+    (kb_dir / "wiki" / "index.md").write_text(
+        "# Knowledge Base Index\n\n## Documents\n- [[summaries/paper]] (long_pdf) - x\n\n"
+        "## Concepts\n\n## Explorations\n",
+        encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "log.md").write_text("# Log\n", encoding="utf-8")
+    # Stub PageIndex state — its mere existence flips the cleanup path on.
+    (kb_dir / ".openkb" / "pageindex.db").write_bytes(b"SQLite format 3\x00")
+
+
+def test_cli_remove_calls_pageindex_delete_with_stored_doc_id(kb_dir):
+    """When the registry entry has a `doc_id`, remove must call
+    `Collection.delete_document(doc_id)` directly — no list_documents
+    lookup needed.
+    """
+    _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
+
+    fake_col = MagicMock()
+    fake_client = MagicMock()
+    fake_client.collection.return_value = fake_col
+
+    with patch("pageindex.PageIndexClient", return_value=fake_client) as mock_cls, \
+         patch("openkb.cli._setup_llm_key"):
+        result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    mock_cls.assert_called_once()
+    # Storage path must point at the KB's .openkb directory.
+    _, kwargs = mock_cls.call_args
+    assert kwargs.get("storage_path") == str(kb_dir / ".openkb")
+    fake_col.delete_document.assert_called_once_with("pi-doc-xyz")
+    fake_col.list_documents.assert_not_called()  # No fallback needed
+    assert "PageIndex" in result.output
+
+
+def test_cli_remove_pageindex_fallback_lookup_by_doc_name(kb_dir):
+    """Legacy registry entries (added before PR #51) have no `doc_id`.
+    The remove path must fall back to matching by doc_name via
+    list_documents() so existing KBs aren't permanently leaking.
+    """
+    _seed_long_pdf_kb(kb_dir, doc_id=None)
+
+    fake_col = MagicMock()
+    fake_col.list_documents.return_value = [
+        {"doc_id": "pi-found-id", "doc_name": "paper", "doc_type": "pdf"},
+        {"doc_id": "pi-other-id", "doc_name": "other", "doc_type": "pdf"},
+    ]
+    fake_client = MagicMock()
+    fake_client.collection.return_value = fake_col
+
+    with patch("pageindex.PageIndexClient", return_value=fake_client), \
+         patch("openkb.cli._setup_llm_key"):
+        result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    fake_col.list_documents.assert_called_once()
+    fake_col.delete_document.assert_called_once_with("pi-found-id")
+
+
+def test_cli_remove_pageindex_fallback_skips_on_ambiguous_match(kb_dir):
+    """Two PageIndex docs share doc_name='paper' (different ingests). The
+    fallback must refuse to guess; the rest of the remove flow still
+    completes and the WARN is surfaced.
+    """
+    _seed_long_pdf_kb(kb_dir, doc_id=None)
+
+    fake_col = MagicMock()
+    fake_col.list_documents.return_value = [
+        {"doc_id": "pi-a", "doc_name": "paper"},
+        {"doc_id": "pi-b", "doc_name": "paper"},
+    ]
+    fake_client = MagicMock()
+    fake_client.collection.return_value = fake_col
+
+    with patch("pageindex.PageIndexClient", return_value=fake_client), \
+         patch("openkb.cli._setup_llm_key"):
+        result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    fake_col.delete_document.assert_not_called()
+    assert "skipping" in result.output
+    # The wiki-side cleanup still ran.
+    assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()
+
+
+def test_cli_remove_skips_pageindex_when_no_state_file(kb_dir):
+    """Short-doc-only KBs never created `.openkb/pageindex.db`. The
+    remove flow must not import or instantiate PageIndexClient in that
+    case — opening it would unnecessarily require an LLM key.
+    """
+    _seed_two_doc_kb(kb_dir)
+    assert not (kb_dir / ".openkb" / "pageindex.db").exists()
+
+    with patch("pageindex.PageIndexClient") as mock_cls:
+        result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    mock_cls.assert_not_called()
+    assert "PageIndex" not in result.output
