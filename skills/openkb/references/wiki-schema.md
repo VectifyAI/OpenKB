@@ -46,8 +46,8 @@ Plain Markdown with three top-level sections:
 # Knowledge Base Index
 
 ## Documents
-- [[summaries/paper]] (long_pdf) — Brief from the summary frontmatter.
-- [[summaries/notes]] (md) — ...
+- [[summaries/paper]] (pageindex) — Brief from the summary frontmatter.
+- [[summaries/notes]] (short) — ...
 
 ## Concepts
 - [[concepts/attention]] — Brief from the concept frontmatter.
@@ -56,6 +56,11 @@ Plain Markdown with three top-level sections:
 ## Explorations
 - [[explorations/some-saved-query]] — User's saved query answer.
 ```
+
+The type tag in parentheses is always either `(short)` or
+`(pageindex)` — never the file extension. Short = anything the
+markitdown path can convert (md, docx, html, txt, short PDFs);
+pageindex = a long PDF indexed by PageIndex.
 
 Section headings are kept even when empty (e.g. after removing all
 documents the `## Documents` heading stays). Entry order is roughly
@@ -70,9 +75,14 @@ Per-document summary. Frontmatter:
 sources: [raw/paper.pdf]        # The original ingested file
 brief: One-line description.
 doc_type: short                  # short | pageindex
-full_text: sources/paper.md      # short docs only — link to the source
+full_text: sources/paper.md      # short docs: .md ; long PDFs: .json
 ---
 ```
+
+`full_text` always points at the converted source file: short docs
+get `sources/<name>.md` (markitdown output); long PDFs get
+`sources/<name>.json` (per-page content array — see the long-doc
+section below for how to read it).
 
 Body is the LLM-synthesized summary plus a `## Related Concepts`
 section linking to the concepts this doc touches.

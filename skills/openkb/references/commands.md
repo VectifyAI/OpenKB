@@ -13,7 +13,7 @@ $ openkb list
 Documents (2):
   Name                                     Type         Pages
   ---------------------------------------- ------------ --------
-  paper.pdf                                long_pdf     42
+  paper.pdf                                pageindex    42
   notes.md                                 short
 
 Summaries (2):
@@ -28,9 +28,15 @@ Concepts (5):
   - multi-head-attention
 ```
 
-- `Type` shows the registry's `type` field: `long_pdf` for
-  PageIndex-indexed PDFs, otherwise the file extension (`md`,
-  `docx`, `pdf`, …).
+- `Type` is the *display* form of the registry's `type` field, mapped
+  through `_TYPE_DISPLAY_MAP`:
+    - PageIndex-indexed long PDFs (registry `type: long_pdf`) display
+      as `pageindex`.
+    - Every other format (`md`, `docx`, `pdf` short, `txt`, …) displays
+      as `short`.
+  The raw registry value lives in `.openkb/hashes.json`; the displayed
+  value is what surfaces in `openkb list` and in `index.md` type tags
+  (`(short)` / `(pageindex)`).
 - `Pages` only populated for long PDFs.
 - The Summaries and Concepts lists are simply directory listings of
   `wiki/summaries/` and `wiki/concepts/` minus their `.md` suffix.

@@ -64,15 +64,15 @@ After capturing the KB path from `openkb status`, drill in via:
 
 ## Read content
 
-(Paths shown relative to the KB root from `openkb where`. Prepend it
-in real calls.)
+(Paths shown relative to the KB root captured from `openkb status`'s
+first line. Prepend it in real calls.)
 
 | Goal | How |
 |---|---|
 | Read a concept page | `Read <kb>/wiki/concepts/<slug>.md` |
 | Read a document's summary | `Read <kb>/wiki/summaries/<doc>.md` |
 | Read a short doc's full text | `Read <kb>/wiki/sources/<doc>.md` |
-| Read a long doc's specific page | `jq '.[N]' <kb>/wiki/sources/<doc>.json` (page N, 0-indexed) |
+| Read a long doc's specific page | `jq '.[N-1]' <kb>/wiki/sources/<doc>.json` (where N is the 1-indexed PDF page number; `.[0]` is page 1) |
 | Get a synthesized answer across sources | `openkb query "<question>"` |
 | Find an exact phrase | `Grep -r "<phrase>" <kb>/wiki/` |
 | Follow a `[[wikilink]]` | `Read` the linked path under `<kb>/wiki/` |
