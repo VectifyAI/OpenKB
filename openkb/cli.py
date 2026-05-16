@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore")
 import asyncio
 import json
 import logging
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -162,6 +163,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
         return
 
     doc_name = file_path.stem
+    index_result = None  # populated only on the long-doc branch
 
     # 3/4. Index and compile
     if result.is_long_doc:
@@ -209,7 +211,17 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     # Register hash only after successful compilation
     if result.file_hash:
         doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
-        registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
+        meta = {
+            "name": file_path.name,
+            "doc_name": doc_name,
+            "type": doc_type,
+        }
+        # For long PDFs we also persist the PageIndex doc_id so `openkb
+        # remove` can later call ``Collection.delete_document(doc_id)``
+        # to free the managed PDF copy + SQLite row.
+        if index_result is not None:
+            meta["doc_id"] = index_result.doc_id
+        registry.add(result.file_hash, meta)
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
@@ -421,6 +433,312 @@ def query(ctx, question, save, raw):
             encoding="utf-8",
         )
         click.echo(f"\nSaved to {explore_path}")
+
+
+def _cleanup_pageindex(
+    openkb_dir: Path, kb_dir: Path, doc_name: str, doc_id: str | None,
+) -> tuple[bool, str]:
+    """Drop a long-doc entry from PageIndex's local SQLite + remove its
+    managed files. Returns ``(did_cleanup, message)``.
+
+    No-op (returns ``(False, "no PageIndex state")``) when no
+    ``pageindex.db`` exists — short-doc-only KBs never created any.
+
+    Falls back to matching by ``doc_name`` via ``list_documents()`` when
+    the registry entry pre-dates PR #51's ``doc_id`` field. Ambiguous
+    multi-match cases are skipped with a warning rather than guessed.
+    """
+    if not (openkb_dir / "pageindex.db").exists():
+        return False, "no PageIndex state"
+
+    from pageindex import PageIndexClient
+
+    _setup_llm_key(kb_dir)
+    config = load_config(openkb_dir / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-4o-mini"))
+    client = PageIndexClient(model=model, storage_path=str(openkb_dir))
+    col = client.collection()
+
+    if doc_id is None:
+        candidates = [d for d in col.list_documents() if d.get("doc_name") == doc_name]
+        if not candidates:
+            return False, "no PageIndex doc to delete"
+        if len(candidates) > 1:
+            return False, (
+                f"{len(candidates)} PageIndex docs match doc_name='{doc_name}'; "
+                "skipping (re-add to refresh)"
+            )
+        doc_id = candidates[0]["doc_id"]
+
+    col.delete_document(doc_id)
+    return True, f"deleted PageIndex doc ({doc_id[:12]}…)"
+
+
+def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]:
+    """Find registry entries matching ``identifier``.
+
+    Match precedence (returns immediately on the first non-empty bucket):
+      1. Exact match on ``metadata['name']`` (the original filename).
+      2. Exact match on ``metadata['doc_name']`` (the slug).
+      3. Case-insensitive substring match on either field.
+
+    Returns ``[(file_hash, metadata), ...]``. Callers handle the empty,
+    single, and multi-match cases.
+    """
+    entries = registry.all_entries()
+
+    exact_name = [(h, m) for h, m in entries.items() if m.get("name") == identifier]
+    if exact_name:
+        return exact_name
+
+    exact_slug = [(h, m) for h, m in entries.items() if m.get("doc_name") == identifier]
+    if exact_slug:
+        return exact_slug
+
+    needle = identifier.lower()
+    fuzzy = [
+        (h, m) for h, m in entries.items()
+        if needle in (m.get("name") or "").lower()
+        or needle in (m.get("doc_name") or "").lower()
+    ]
+    return fuzzy
+
+
+@cli.command()
+@click.argument("identifier")
+@click.option("--keep-raw", is_flag=True, default=False,
+              help="Don't delete the original file from raw/.")
+@click.option("--keep-empty-concepts", is_flag=True, default=False,
+              help="Keep concept pages whose only source was the removed doc "
+                   "(with empty sources frontmatter). Useful when replacing "
+                   "the doc with a newer version.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Print what would be done without modifying anything.")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip the confirmation prompt.")
+@click.pass_context
+def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
+    """Remove a document from the knowledge base.
+
+    IDENTIFIER may be the original filename ("paper.pdf"), the doc_name
+    slug ("paper-a1b2c3d4e5f6"), or a substring that uniquely matches one.
+
+    Deletes the doc's summary and source files, prunes the doc from
+    concept-page frontmatter and Related Documents sections, drops the
+    Documents entry from index.md, removes the hash entry, and finally
+    runs `lint --fix` to clean any dangling wikilinks.
+
+    Concept pages whose only source was this doc are deleted by default;
+    use --keep-empty-concepts to retain them.
+    """
+    from openkb.agent.compiler import (
+        remove_doc_from_concept_pages,
+        remove_doc_from_index,
+    )
+    from openkb.lint import fix_broken_links
+    from openkb.state import HashRegistry
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    openkb_dir = kb_dir / ".openkb"
+    registry = HashRegistry(openkb_dir / "hashes.json")
+
+    matches = _resolve_doc_identifier(registry, identifier)
+    if not matches:
+        click.echo(f"No document matching '{identifier}' found in the KB.")
+        click.echo("Try `openkb list` to see indexed documents.")
+        return
+    if len(matches) > 1:
+        click.echo(f"'{identifier}' matches multiple documents:")
+        for _, m in matches:
+            click.echo(f"  - {m.get('name', '?')}  (doc_name: {m.get('doc_name', '?')})")
+        click.echo("Use a more specific name or the exact doc_name slug.")
+        return
+
+    file_hash, meta = matches[0]
+    name = meta.get("name", "?")
+    doc_name = meta.get("doc_name") or Path(name).stem
+    doc_type = meta.get("type", "")
+    wiki_dir = kb_dir / "wiki"
+
+    # ----- Build the plan (no side effects) -----
+    actions: list[tuple[str, str]] = []
+
+    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
+    if summary_path.exists():
+        actions.append(("DELETE", str(summary_path.relative_to(kb_dir))))
+
+    source_md = wiki_dir / "sources" / f"{doc_name}.md"
+    source_json = wiki_dir / "sources" / f"{doc_name}.json"
+    if source_md.exists():
+        actions.append(("DELETE", str(source_md.relative_to(kb_dir))))
+    if source_json.exists():
+        actions.append(("DELETE", str(source_json.relative_to(kb_dir))))
+
+    # Per-doc extracted-images directory (PDF page images + base64 images
+    # from docx/pptx + copied relative refs from .md inputs). Created by
+    # openkb.images during ingest, keyed by doc_name.
+    images_dir = wiki_dir / "sources" / "images" / doc_name
+    if images_dir.is_dir():
+        actions.append((
+            "DELETE",
+            f"{images_dir.relative_to(kb_dir)}/  (images directory)",
+        ))
+
+    # Scan concept pages to predict which will be edited vs. deleted.
+    # Only frontmatter ``sources:`` membership drives the plan — body-only
+    # references (e.g. a stray ``See also:`` line a user added by hand
+    # without updating sources) are cleaned by the executor but don't
+    # affect the delete/edit classification, so the plan reflects what
+    # the executor will actually do.
+    source_file_marker = f"summaries/{doc_name}.md"
+    affected_concepts: list[tuple[str, int]] = []  # (slug, remaining_sources)
+    concepts_dir = wiki_dir / "concepts"
+    if concepts_dir.is_dir():
+        for path in sorted(concepts_dir.glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            if not text.startswith("---"):
+                continue
+            fm_end = text.find("---", 3)
+            if fm_end == -1:
+                continue
+            sources_count = 0
+            source_in_frontmatter = False
+            for line in text[:fm_end].split("\n"):
+                if line.lstrip().startswith("sources:"):
+                    lb = line.find("[")
+                    rb = line.rfind("]")
+                    if lb != -1 and rb != -1 and rb > lb:
+                        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
+                        sources_count = len(items)
+                        source_in_frontmatter = source_file_marker in items
+                    break
+            if not source_in_frontmatter:
+                continue
+            remaining = max(sources_count - 1, 0)
+            affected_concepts.append((path.stem, remaining))
+
+    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty_concepts]
+    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty_concepts]
+    for slug in concept_deletes:
+        actions.append(("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
+    for slug in concept_edits:
+        actions.append(("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
+
+    if (wiki_dir / "index.md").exists():
+        actions.append(("MODIFY", "wiki/index.md  (remove Documents entry)"))
+
+    actions.append(("REGISTRY", f"remove hash entry  ({file_hash[:12]}…)"))
+
+    # Long PDFs leave state in PageIndex's local store (`.openkb/pageindex.db`
+    # row + `.openkb/files/<collection>/<doc_id>.pdf` + extracted images).
+    # Only flag this when both the registry says long_pdf and PageIndex
+    # state exists on disk — short-doc-only KBs never created any.
+    pageindex_doc_id = meta.get("doc_id")
+    pageindex_state_exists = (openkb_dir / "pageindex.db").exists()
+    cleanup_pageindex = doc_type == "long_pdf" and pageindex_state_exists
+    if cleanup_pageindex:
+        if pageindex_doc_id:
+            actions.append((
+                "PAGEINDEX", f"delete document ({pageindex_doc_id[:12]}…)",
+            ))
+        else:
+            actions.append((
+                "PAGEINDEX", f"delete document (lookup by doc_name; legacy entry)",
+            ))
+
+    raw_path = None
+    if not keep_raw:
+        raw_dir = kb_dir / "raw"
+        candidate = raw_dir / name
+        if candidate.exists():
+            raw_path = candidate
+            actions.append(("DELETE", str(candidate.relative_to(kb_dir))))
+
+    # ----- Print the plan -----
+    click.echo(f"Removing '{name}' (doc_name: {doc_name}, type: {doc_type or '?'}).")
+    click.echo("")
+    for tag, target in actions:
+        click.echo(f"  {tag:<8} {target}")
+    if concept_deletes:
+        click.echo("")
+        click.echo(
+            f"  {len(concept_deletes)} concept(s) will be DELETED because this is their only source."
+        )
+        click.echo("  Pass --keep-empty-concepts to retain them instead.")
+    click.echo("")
+
+    if dry_run:
+        click.echo("(dry-run — nothing modified)")
+        return
+
+    if not yes:
+        if not click.confirm("Proceed?", default=False):
+            click.echo("Aborted.")
+            return
+
+    # ----- Execute -----
+    # Ordering rationale: every step before the registry write is
+    # idempotent (``unlink(missing_ok=True)``, ``shutil.rmtree(
+    # ignore_errors=True)``, concept/index helpers that no-op on
+    # already-clean state, and PageIndex's own delete-by-doc_id which
+    # uses ``missing_ok`` + ``if dir.exists()`` internally). The
+    # registry write is therefore the *commit point*: if anything
+    # before it raises (including PageIndex), the entry plus its
+    # ``doc_id`` survive and the user can simply re-run ``openkb
+    # remove`` to retry from a clean slate.
+    summary_path.unlink(missing_ok=True)
+    source_md.unlink(missing_ok=True)
+    source_json.unlink(missing_ok=True)
+    if images_dir.is_dir():
+        shutil.rmtree(images_dir, ignore_errors=True)
+
+    concept_result = remove_doc_from_concept_pages(
+        wiki_dir, doc_name, keep_empty=keep_empty_concepts,
+    )
+
+    remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"])
+
+    # Strip dangling wikilinks now so a retry (after a PageIndex
+    # failure below) finds a clean wiki — no point in re-running this
+    # on every attempt.
+    files_changed, ghosts = fix_broken_links(wiki_dir)
+    if files_changed:
+        click.echo(f"  lint --fix cleaned {ghosts} dangling wikilink(s) in {files_changed} file(s)")
+
+    # Free PageIndex's local managed state for long PDFs *before* the
+    # registry write so the user can retry on failure — leaving the
+    # entry intact preserves the ``doc_id`` we need for the second
+    # attempt. PageIndex's local dedup is SHA-256 based, so a stale row
+    # left behind here would silently re-bind on the next ``openkb
+    # add`` and the user would get the old parse back without warning.
+    if cleanup_pageindex:
+        try:
+            cleaned, msg = _cleanup_pageindex(
+                openkb_dir, kb_dir, doc_name, pageindex_doc_id,
+            )
+            click.echo(f"  PageIndex: {msg}")
+        except Exception as exc:
+            click.echo(
+                f"  [WARN] PageIndex cleanup failed: {exc} "
+                f"— registry entry kept; re-run `openkb remove {name}` to retry"
+            )
+            logging.getLogger(__name__).debug(
+                "PageIndex cleanup traceback:", exc_info=True,
+            )
+            return
+
+    # ----- Commit point -----
+    registry.remove_by_doc_name(doc_name)
+
+    if raw_path is not None:
+        raw_path.unlink(missing_ok=True)
+
+    append_log(wiki_dir, "remove", name)
+    click.echo(f"  [OK] {name} removed from knowledge base.")
 
 
 @cli.command()

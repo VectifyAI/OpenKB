@@ -445,6 +445,28 @@ def _insert_section_entry(lines: list[str], heading: str, entry: str) -> bool:
     return True
 
 
+def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
+    """Remove the first entry whose line starts with ``- {link}`` in the named
+    section. Returns True if an entry was removed.
+
+    Matching is intentionally strict (prefix-only, matching the canonical
+    bullet form written by ``_insert_section_entry`` and friends). An earlier
+    substring fallback could wrongly delete sibling bullets whose brief text
+    referenced the removed link.
+    """
+    bounds = _get_section_bounds(lines, heading)
+    if bounds is None:
+        return False
+
+    start, end = bounds
+    entry_prefix = f"- {link}"
+    for i in range(start, end):
+        if lines[i].startswith(entry_prefix):
+            del lines[i]
+            return True
+    return False
+
+
 
 def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
                     doc_type: str = "short") -> None:
@@ -562,6 +584,44 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     return "\n".join(fm_lines) + body
 
 
+def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, bool]:
+    """Remove ``source_file`` from the inline ``sources:`` list in YAML frontmatter.
+
+    Returns ``(rewritten_text, sources_now_empty)``. ``sources_now_empty`` is
+    True when ``source_file`` was the only remaining item in the list (callers
+    can use this to decide whether to delete the page entirely).
+
+    If the frontmatter is missing, malformed, has no ``sources:`` line, or
+    the source is not present in the list, returns ``(text, False)``.
+    """
+    if not text.startswith("---"):
+        return text, False
+
+    fm_end = text.find("---", 3)
+    if fm_end == -1:
+        return text, False
+
+    fm_block = text[:fm_end]
+    body = text[fm_end:]
+    fm_lines = fm_block.split("\n")
+
+    for i, line in enumerate(fm_lines):
+        if not line.lstrip().startswith("sources:"):
+            continue
+        lb = line.find("[")
+        rb = line.rfind("]")
+        if lb == -1 or rb == -1 or rb < lb:
+            return text, False
+        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
+        if source_file not in items:
+            return text, False
+        items.remove(source_file)
+        fm_lines[i] = f"sources: [{', '.join(items)}]"
+        return "\n".join(fm_lines) + body, len(items) == 0
+
+    return text, False
+
+
 def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_file: str) -> None:
     """Add a cross-reference link to an existing concept page (no LLM call)."""
     concepts_dir = wiki_dir / "concepts"
@@ -630,6 +690,123 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
         _ensure_h2_section(lines, "## Related Documents")
         _insert_section_entry(lines, "## Related Documents", f"- {link}")
         path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def remove_doc_from_concept_pages(
+    wiki_dir: Path,
+    doc_name: str,
+    *,
+    keep_empty: bool = False,
+) -> dict[str, list[str]]:
+    """Update or delete concept pages affected by removing a document.
+
+    For each ``concepts/*.md`` whose frontmatter ``sources:`` lists
+    ``summaries/{doc_name}``:
+
+    - Remove that source from the frontmatter list.
+    - Remove any ``- [[summaries/{doc_name}]]`` entries from the
+      ``## Related Documents`` section.
+    - Remove any standalone ``See also: [[summaries/{doc_name}]]`` lines
+      (left by ``_add_related_link``).
+    - If the ``sources:`` list becomes empty AND ``keep_empty`` is False,
+      delete the concept page entirely.
+
+    Args:
+        wiki_dir: Path to the wiki root directory.
+        doc_name: The summary slug being removed (e.g.
+            ``"attention-is-all-you-need"``).
+        keep_empty: When True, retains concept pages whose only source
+            was the removed doc — leaves their frontmatter with an empty
+            ``sources: []`` list. Useful when the doc is being replaced
+            by a newer version that will repopulate the source on the
+            next ``openkb add``.
+
+    Returns:
+        ``{"modified": [slugs...], "deleted": [slugs...]}`` — concept
+        slugs whose pages were edited vs. deleted.
+    """
+    concepts_dir = wiki_dir / "concepts"
+    if not concepts_dir.is_dir():
+        return {"modified": [], "deleted": []}
+
+    source_file = f"summaries/{doc_name}.md"
+    bare_source = f"summaries/{doc_name}"
+    link = f"[[{bare_source}]]"
+
+    modified: list[str] = []
+    deleted: list[str] = []
+
+    for path in sorted(concepts_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        # Cheap filter: skip pages that don't reference the doc at all.
+        if source_file not in text and bare_source not in text:
+            continue
+
+        new_text, sources_empty = _remove_source_from_frontmatter(text, source_file)
+
+        # Drop the doc's entry from the "## Related Documents" section.
+        if link in new_text:
+            lines = new_text.split("\n")
+            while _remove_section_entry(lines, "## Related Documents", link):
+                pass
+            new_text = "\n".join(lines)
+
+        # Drop standalone "See also: [[summaries/{doc_name}]]" lines.
+        # The dominant form (written by ``_add_related_link``) is a
+        # paragraph: preceded by a blank line and trailed by either a
+        # newline or end-of-string. The first regex matches that shape
+        # exactly, preserving one trailing newline so paragraph spacing
+        # in surrounding content survives.
+        new_text = re.sub(
+            rf"\n\n[ \t]*See also:[ \t]*\[\[{re.escape(bare_source)}\]\][ \t]*(\n|\Z)",
+            r"\1",
+            new_text,
+        )
+        # Fallback for hand-edited inline "See also:" lines that lack the
+        # paragraph-break separator above. Bounded to a single line via
+        # `[ \t]` and an optional trailing newline.
+        new_text = re.sub(
+            rf"^[ \t]*See also:[ \t]*\[\[{re.escape(bare_source)}\]\][ \t]*\n?",
+            "",
+            new_text,
+            flags=re.MULTILINE,
+        )
+
+        if sources_empty and not keep_empty:
+            path.unlink()
+            deleted.append(path.stem)
+        elif new_text != text:
+            path.write_text(new_text, encoding="utf-8")
+            modified.append(path.stem)
+
+    return {"modified": modified, "deleted": deleted}
+
+
+def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str]) -> None:
+    """Remove the document's entry from ``index.md`` along with any concept
+    entries for concepts that were deleted as a side effect.
+
+    No-op when ``index.md`` doesn't exist. Section headings are kept even
+    when their last entry is removed — adding a new doc later repopulates
+    them.
+    """
+    index_path = wiki_dir / "index.md"
+    if not index_path.exists():
+        return
+
+    lines = index_path.read_text(encoding="utf-8").split("\n")
+
+    doc_link = f"[[summaries/{doc_name}]]"
+    while _remove_section_entry(lines, "## Documents", doc_link):
+        pass
+
+    for slug in concept_slugs_deleted:
+        concept_link = f"[[concepts/{slug}]]"
+        while _remove_section_entry(lines, "## Concepts", concept_link):
+            pass
+
+    index_path.write_text("\n".join(lines), encoding="utf-8")
+
 
 def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
