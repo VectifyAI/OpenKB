@@ -195,7 +195,8 @@ def test_feedback_no_diagnostics_strips_block_from_body():
 def test_feedback_prompts_for_type_when_not_given_via_flag():
     """If --type isn't on the command line, prompt the user."""
     runner = CliRunner()
-    with patch("webbrowser.open") as mock_open:
+    with patch("webbrowser.open") as mock_open, \
+         patch("openkb.cli._stdin_is_tty", return_value=True):
         result = runner.invoke(
             cli, ["feedback", "--print-url", "missing-type prompt test"],
             input="feature\n",
@@ -205,3 +206,65 @@ def test_feedback_prompts_for_type_when_not_given_via_flag():
     # The URL should be tagged with the chosen type (mapped to 'enhancement').
     url_line = [ln for ln in result.output.splitlines() if "issues/new" in ln][-1]
     assert "labels=enhancement" in url_line
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the self-review on PR #53
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_skips_type_prompt_when_stdin_is_not_a_tty():
+    """In CI / piped contexts the second prompt would hang or abort
+    confusingly — the command must fall through to a default."""
+    runner = CliRunner()
+    with patch("webbrowser.open"), \
+         patch("openkb.cli._stdin_is_tty", return_value=False):
+        result = runner.invoke(
+            cli, ["feedback", "--print-url", "non-tty feedback"],
+        )
+
+    assert result.exit_code == 0, result.output
+    # Non-TTY → falls back to "other", which has no label param
+    url_line = [ln for ln in result.output.splitlines() if "issues/new" in ln][-1]
+    assert "labels=" not in url_line
+    # And the title should NOT have a type prefix
+    assert "%5Bother%5D" not in url_line  # urlencoded "[other]"
+
+
+def test_feedback_warns_when_webbrowser_open_returns_false():
+    """`webbrowser.open` returns False on headless boxes without raising —
+    the command must surface that to the user, not silently pretend
+    success."""
+    runner = CliRunner()
+    with patch("webbrowser.open", return_value=False) as mock_open:
+        result = runner.invoke(
+            cli, ["feedback", "--type", "bug", "headless test"],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_open.assert_called_once()
+    # The success-confirmation message must NOT appear
+    assert "Opened GitHub in your browser" not in result.output
+    # The user must see a clear "no browser available" indication
+    assert "no browser available" in result.output
+
+
+def test_feedback_confirms_when_webbrowser_open_succeeds():
+    runner = CliRunner()
+    with patch("webbrowser.open", return_value=True):
+        result = runner.invoke(
+            cli, ["feedback", "--type", "bug", "happy path"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Opened GitHub in your browser" in result.output
+
+
+def test_openkb_version_helper_matches_package_version():
+    """`_openkb_version` in cli.py must delegate to `openkb.__version__`
+    so the chat REPL and the feedback issue body never disagree on the
+    fallback string."""
+    from openkb import __version__
+    from openkb.cli import _openkb_version
+
+    assert _openkb_version() == __version__

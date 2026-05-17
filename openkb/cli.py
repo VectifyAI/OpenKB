@@ -1150,15 +1150,15 @@ _FEEDBACK_LABEL_MAP = {
 
 
 def _openkb_version() -> str:
-    """Return the installed openkb package version, or 'unknown' if it
-    can't be resolved (e.g. running from an editable checkout that isn't
-    on PYTHONPATH as a distribution).
+    """Return the installed openkb package version.
+
+    Delegates to ``openkb.__version__`` so the chat REPL, feedback issue
+    body, and any future caller all surface the same fallback string
+    (``0.0.0+unknown`` from ``openkb/__init__.py``). Mirrors
+    ``openkb.agent.chat._openkb_version``.
     """
-    try:
-        from importlib.metadata import version
-        return version("openkb")
-    except Exception:
-        return "unknown"
+    from openkb import __version__
+    return __version__
 
 
 def _collect_feedback_diagnostics(ctx) -> dict[str, str]:
@@ -1253,13 +1253,20 @@ def feedback(ctx, message, feedback_type, print_url, no_diagnostics):
         return
 
     if feedback_type is None:
-        feedback_type = click.prompt(
-            "Type",
-            default="other",
-            type=click.Choice(_FEEDBACK_TYPES),
-            show_default=True,
-            show_choices=True,
-        )
+        # Skip the prompt in non-TTY contexts (CI / piped stdin) so
+        # ``echo "msg" | openkb feedback`` doesn't hang on the second
+        # prompt after consuming all piped input for the message body.
+        # Mirrors the ``_stdin_is_tty()`` gate added in PR #48.
+        if _stdin_is_tty():
+            feedback_type = click.prompt(
+                "Type",
+                default="other",
+                type=click.Choice(_FEEDBACK_TYPES),
+                show_default=True,
+                show_choices=True,
+            )
+        else:
+            feedback_type = "other"
 
     diagnostics = {} if no_diagnostics else _collect_feedback_diagnostics(ctx)
     url = _build_feedback_url(message, feedback_type, diagnostics)
@@ -1268,14 +1275,25 @@ def feedback(ctx, message, feedback_type, print_url, no_diagnostics):
         click.echo(url)
         return
 
-    click.echo("Opening GitHub in your browser to file the issue.")
-    click.echo("If nothing happens, copy this URL into a browser yourself:")
+    click.echo("Copy this URL into a browser if the auto-open below fails:")
     click.echo(f"  {url}")
 
     import webbrowser
     try:
-        webbrowser.open(url)
+        opened = webbrowser.open(url)
     except Exception as exc:
         # webbrowser.open rarely raises but be defensive — the printed URL
         # above is the fallback path.
         click.echo(f"  (browser auto-open failed: {exc})", err=True)
+        return
+
+    # ``webbrowser.open`` returns False on headless boxes (no GUI, no
+    # ``BROWSER`` env) without raising. Without this check we'd silently
+    # print "Opened" and the user would think the issue was filed.
+    if opened:
+        click.echo("Opened GitHub in your browser.")
+    else:
+        click.echo(
+            "  (no browser available — copy the URL above to file the issue)",
+            err=True,
+        )
