@@ -240,20 +240,33 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 
 OpenKB ships a [SKILL.md](https://agentskills.io/) so any agent CLI can read your compiled wiki — no extra runtime, no MCP setup, just install the skill once.
 
-**Claude Code** (via the plugin marketplace):
+#### Claude Code
+
+Two commands — first register OpenKB as a plugin marketplace, then install the skill from it:
 
 ```
 /plugin marketplace add VectifyAI/OpenKB
 /plugin install openkb@vectify
 ```
 
-**Gemini CLI** (native skills installer):
+- `/plugin marketplace add VectifyAI/OpenKB` reads `.claude-plugin/marketplace.json` from the repo's default branch and registers `vectify` as a known marketplace.
+- `/plugin install openkb@vectify` installs the `openkb` plugin from that marketplace. The `@vectify` suffix names the marketplace, not the package.
+
+Alternative — `/plugin` (interactive UI) lets you browse registered marketplaces and install with one click, but you still need to `marketplace add` first to register the source.
+
+To remove later: `/plugin uninstall openkb` then `/plugin marketplace remove VectifyAI/OpenKB`.
+
+#### Gemini CLI
+
+Native skills installer fetches a single skill folder from a Git repo:
 
 ```bash
 gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/openkb --consent
 ```
 
-**OpenAI Codex CLI** (no marketplace yet — manual install):
+#### OpenAI Codex CLI
+
+Codex has no marketplace command yet — install by cloning the repo and symlinking the skill folder into one of its discovery paths:
 
 ```bash
 git clone https://github.com/VectifyAI/OpenKB.git ~/openkb-src
@@ -261,9 +274,24 @@ mkdir -p ~/.agents/skills
 ln -s ~/openkb-src/skills/openkb ~/.agents/skills/openkb
 ```
 
-(Codex discovers skills under `.agents/skills/` walking up from cwd, or `~/.agents/skills/` for user-scope.)
+Codex discovers skills under `.agents/skills/` walking up from cwd, or `~/.agents/skills/` for user-scope. To update later: `cd ~/openkb-src && git pull`.
 
-After install, when the user asks about content in their OpenKB knowledge base, the skill activates and points the agent at `openkb status` to discover the KB, `openkb list` for the catalog, and direct Markdown reads for concept/summary content. The skill is read-only: it won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set the agent receives.
+#### Manual install (any agent)
+
+If you don't want to use any installer, just drop the skill folder into the agent's user-scope skills directory:
+
+```bash
+# Claude Code
+ln -s "$(pwd)/skills/openkb" ~/.claude/skills/openkb
+# Gemini CLI
+ln -s "$(pwd)/skills/openkb" ~/.gemini/skills/openkb
+# Codex
+ln -s "$(pwd)/skills/openkb" ~/.agents/skills/openkb
+```
+
+#### After install
+
+When you ask about content in an OpenKB knowledge base, the skill activates and points the agent at `openkb status` to discover the KB root, `openkb list` for the document catalog, and direct Markdown reads for concept and summary content. The skill is read-only: it won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set the agent receives.
 
 # 🧭 Learn More
 
