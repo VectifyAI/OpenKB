@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from openkb.lint import (
     _normalize_target,
@@ -195,7 +194,7 @@ class TestCheckIndexSync:
 
 class TestRunStructuralLint:
     def test_returns_markdown_report(self, tmp_path):
-        wiki = _make_wiki(tmp_path)
+        _make_wiki(tmp_path)
         raw = tmp_path / "raw"
         raw.mkdir()
 
@@ -208,7 +207,7 @@ class TestRunStructuralLint:
         assert "Index Sync" in report
 
     def test_clean_kb_shows_no_issues(self, tmp_path):
-        wiki = _make_wiki(tmp_path)
+        _make_wiki(tmp_path)
         raw = tmp_path / "raw"
         raw.mkdir()
 

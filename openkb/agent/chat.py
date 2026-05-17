@@ -338,7 +338,6 @@ async def _run_turn(
     need_blank_before_text = False
 
     if use_color and not raw:
-        from rich.console import Console
         from rich.live import Live
 
         console = _make_rich_console()

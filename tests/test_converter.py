@@ -1,13 +1,10 @@
 """Tests for openkb.converter."""
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-from openkb.converter import ConvertResult, convert_document, get_pdf_page_count
+from openkb.converter import convert_document, get_pdf_page_count
 
 
 # ---------------------------------------------------------------------------

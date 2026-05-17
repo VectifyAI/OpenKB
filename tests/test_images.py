@@ -2,10 +2,7 @@
 from __future__ import annotations
 
 import base64
-import shutil
-from pathlib import Path
 
-import pytest
 
 from openkb.images import copy_relative_images, extract_base64_images
 

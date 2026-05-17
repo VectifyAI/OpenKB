@@ -113,7 +113,7 @@ async def run_query(
         The agent's final answer as a string.
     """
     import sys
-    from agents import RawResponsesStreamEvent, RunItemStreamEvent, ItemHelpers
+    from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
     from openkb.config import load_config
 

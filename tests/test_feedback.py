@@ -4,7 +4,6 @@ from __future__ import annotations
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
-import pytest
 from click.testing import CliRunner
 
 from openkb.cli import (
