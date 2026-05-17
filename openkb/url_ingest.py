@@ -126,6 +126,28 @@ def _pdf_filename(url: str, content_disposition: str | None) -> str:
     return _sanitize_filename(last or "document", ".pdf")
 
 
+def _unique_path(target: Path) -> Path:
+    """Return ``target`` if it doesn't exist yet, otherwise append ``_2``,
+    ``_3``, … to the stem until an unused name is found.
+
+    Prevents silent overwrites in ``raw/`` when two different URLs
+    sanitize to the same filename (e.g. two blog posts both titled
+    "Introduction" → both ``Introduction.md``).
+    """
+    if not target.exists():
+        return target
+    stem = target.stem
+    suffix = target.suffix
+    parent = target.parent
+    for i in range(2, 10_000):
+        candidate = parent / f"{stem}_{i}{suffix}"
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(
+        f"Could not find a free filename for {target} after 10k attempts"
+    )
+
+
 def _download_pdf_chunked(response, head_bytes: bytes, target: Path) -> None:
     """Write the already-read ``head_bytes`` plus the remaining streamed
     body to ``target``. Chunked so very large PDFs (50+ MB) don't sit in
@@ -179,7 +201,10 @@ def _extract_html(url: str, raw_dir: Path) -> Path | None:
     metadata = trafilatura.extract_metadata(raw_html)
     title = (metadata.title if metadata else None) or url
     filename = _sanitize_filename(title, ".md")
-    target = raw_dir / filename
+    # Pick a non-colliding name — two blog posts titled "Introduction"
+    # would otherwise overwrite each other in raw/ and leave the hash
+    # registry pointing at stale bytes.
+    target = _unique_path(raw_dir / filename)
     target.write_text(markdown, encoding="utf-8")
     click.echo(
         f"  Extracted: {title!r}\n"
@@ -228,13 +253,20 @@ def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
         actual = _sniff_content_type(head_bytes, declared)
 
         if actual == "pdf":
+            # Derive the filename from the *post-redirect* URL — urllib
+            # follows redirects by default, so the user-typed URL may
+            # not be the URL that actually served the bytes (DOI / short
+            # link resolvers, mirror redirects, etc.). Falls back to the
+            # original input when the response doesn't expose a final
+            # URL.
+            final_url = response.geturl() or url
             filename = _pdf_filename(
-                url, response.headers.get("Content-Disposition"),
+                final_url, response.headers.get("Content-Disposition"),
             )
-            target = raw_dir / filename
+            target = _unique_path(raw_dir / filename)
             _download_pdf_chunked(response, head_bytes, target)
             size_mb = target.stat().st_size / (1024 * 1024)
-            click.echo(f"  Saved: raw/{filename} ({size_mb:.1f} MB PDF)")
+            click.echo(f"  Saved: raw/{target.name} ({size_mb:.1f} MB PDF)")
             return target
 
     if actual == "html":

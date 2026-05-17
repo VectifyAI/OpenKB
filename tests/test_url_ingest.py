@@ -10,6 +10,7 @@ from openkb.url_ingest import (
     _pdf_filename,
     _sanitize_filename,
     _sniff_content_type,
+    _unique_path,
     fetch_url_to_raw,
     looks_like_url,
 )
@@ -182,6 +183,9 @@ def _fake_response(*, body: bytes, headers: dict[str, str]):
     # read(N) returns chunks; read() with no arg returns rest
     stream = io.BytesIO(body)
     resp.read = stream.read
+    # urllib's HTTPResponse exposes geturl(); default to empty string so
+    # callers using `response.geturl() or url` fall through to the input URL.
+    resp.geturl = lambda: ""
     resp.__enter__ = lambda self: resp
     resp.__exit__ = lambda *a: None
     return resp
@@ -359,3 +363,181 @@ def test_fetch_network_error_returns_none(tmp_path, capsys):
     assert result is None
     err = capsys.readouterr().err
     assert "Network error" in err
+
+
+# ---------------------------------------------------------------------------
+# Self-review fixes from PR #55 review pass
+# ---------------------------------------------------------------------------
+
+
+def test_unique_path_returns_target_when_free(tmp_path):
+    p = tmp_path / "foo.pdf"
+    assert _unique_path(p) == p
+
+
+def test_unique_path_finds_next_free_slot(tmp_path):
+    """_2 / _3 / … must be appended to the stem (not the suffix) and
+    must keep probing until a free name is found."""
+    (tmp_path / "foo.pdf").write_bytes(b"a")
+    (tmp_path / "foo_2.pdf").write_bytes(b"b")
+
+    result = _unique_path(tmp_path / "foo.pdf")
+    assert result == tmp_path / "foo_3.pdf"
+
+
+def test_unique_path_handles_no_suffix(tmp_path):
+    """Files without an extension still get a usable suffix."""
+    (tmp_path / "README").write_text("x")
+    result = _unique_path(tmp_path / "README")
+    assert result.name == "README_2"
+
+
+def test_fetch_pdf_picks_unique_name_when_target_exists(tmp_path):
+    """Two URLs that sanitize to the same filename must NOT silently
+    overwrite — the second one gets `_2` appended."""
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "paper.pdf").write_bytes(b"%PDF-existing\nfirst")
+
+    body = b"%PDF-1.7\nsecond URL content"
+    resp = _fake_response(body=body, headers={"Content-Type": "application/pdf"})
+    # Make response.geturl mimic real urllib (returns the input URL when
+    # there's no redirect). The fake response builder doesn't set this.
+    resp.geturl = lambda: "https://mirror.example.com/paper.pdf"
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://mirror.example.com/paper.pdf", tmp_path)
+
+    # First file is untouched, second went to paper_2.pdf
+    assert (raw_dir / "paper.pdf").read_bytes() == b"%PDF-existing\nfirst"
+    assert result == raw_dir / "paper_2.pdf"
+    assert result.read_bytes() == body
+
+
+def test_fetch_html_picks_unique_name_when_target_exists(tmp_path):
+    """Two blog posts both titled 'Introduction' must NOT collide."""
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "Introduction.md").write_text("first blog post body")
+
+    resp = _fake_response(body=b"<html>", headers={"Content-Type": "text/html"})
+
+    second_md = "# Introduction\n\nA completely different second blog post body. " * 10
+    fake_meta = MagicMock()
+    fake_meta.title = "Introduction"
+
+    with patch("urllib.request.urlopen", return_value=resp), \
+         patch("trafilatura.fetch_url", return_value="<html>...</html>"), \
+         patch("trafilatura.extract", return_value=second_md), \
+         patch("trafilatura.extract_metadata", return_value=fake_meta):
+        result = fetch_url_to_raw("https://blog2.example.com/post", tmp_path)
+
+    assert (raw_dir / "Introduction.md").read_text() == "first blog post body"
+    assert result == raw_dir / "Introduction_2.md"
+    assert result.read_text() == second_md
+
+
+def test_fetch_pdf_uses_post_redirect_url_for_filename(tmp_path):
+    """When urllib follows a redirect (DOI → publisher CDN, short URLs,
+    etc.), the filename must be derived from the final URL — not the
+    user's original input — when the response has no Content-Disposition
+    to override either."""
+    body = b"%PDF-1.7\n..."
+    resp = _fake_response(
+        body=body,
+        headers={"Content-Type": "application/pdf"},  # NO Content-Disposition
+    )
+    # urllib's HTTPResponse.geturl() returns the post-redirect URL
+    resp.geturl = lambda: "https://publisher.example.com/articles/2024/great-paper.pdf"
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://doi.org/10.1234/abc", tmp_path)
+
+    # Filename comes from the redirected URL's basename, not "abc"
+    assert result is not None
+    assert result.name == "great-paper.pdf"
+
+
+def test_add_single_file_returns_true_on_success(tmp_path):
+    """The new bool return contract: True when the file was actually
+    indexed. Used by the URL-ingest cleanup path to decide whether the
+    just-downloaded file in raw/ should be unlinked."""
+    from openkb.cli import add_single_file
+    from openkb.converter import ConvertResult
+
+    # Build a minimal KB scaffold
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+    (tmp_path / "wiki" / "sources").mkdir(parents=True)
+    (tmp_path / "wiki" / "concepts").mkdir(parents=True)
+    (tmp_path / "wiki" / "log.md").write_text("")
+
+    doc = tmp_path / "raw" / "x.md"
+    doc.write_text("# Hello")
+    source_path = tmp_path / "wiki" / "sources" / "x.md"
+    source_path.write_text("# Hello converted")
+
+    mock_result = ConvertResult(
+        raw_path=doc, source_path=source_path,
+        is_long_doc=False, file_hash="cafe" * 16,
+    )
+
+    with patch("openkb.cli.convert_document", return_value=mock_result), \
+         patch("openkb.cli.asyncio.run"):
+        added = add_single_file(doc, tmp_path)
+
+    assert added is True
+
+
+def test_add_single_file_returns_false_on_skip(tmp_path):
+    from openkb.cli import add_single_file
+    from openkb.converter import ConvertResult
+
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+    doc = tmp_path / "raw" / "x.md"
+    doc.write_text("# Hello")
+
+    skipped = ConvertResult(skipped=True)
+    with patch("openkb.cli.convert_document", return_value=skipped):
+        added = add_single_file(doc, tmp_path)
+
+    assert added is False
+
+
+def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
+    """End-to-end: when the URL-fetched file is already in the registry,
+    add_single_file returns False and the CLI must unlink it from raw/
+    so the user doesn't accumulate untracked duplicates."""
+    from click.testing import CliRunner
+    from openkb.cli import cli
+    from openkb.converter import ConvertResult
+
+    # Minimal KB
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+
+    # Fake the URL fetch — write directly to where url_ingest would
+    fetched_path = tmp_path / "raw" / "paper.pdf"
+    fetched_path.write_bytes(b"%PDF-fake")
+
+    runner = CliRunner()
+    # fetch_url_to_raw is lazy-imported inside `add`, so patch it at the
+    # source module — that's where the `from ... import` resolves.
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
+         patch("openkb.cli.convert_document",
+               return_value=ConvertResult(skipped=True)):
+        result = runner.invoke(cli, ["add", "https://example.com/paper.pdf"])
+
+    assert result.exit_code == 0, result.output
+    assert "[SKIP]" in result.output
+    # Orphan cleanup: the URL-fetched file must be gone from raw/.
+    assert not fetched_path.exists()

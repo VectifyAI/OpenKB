@@ -130,7 +130,7 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> None:
+def add_single_file(file_path: Path, kb_dir: Path) -> bool:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -138,6 +138,13 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     2. Convert the document (hash-check; skip if already known).
     3. If long doc: run PageIndex then compile_long_doc.
     4. Else: compile_short_doc.
+
+    Returns:
+        True if the file was newly indexed and compiled. False when the
+        file was skipped as a duplicate (hash already registered) or
+        when any pipeline stage failed — callers that need to clean up
+        the source file (URL-ingest path, for example) can act on a
+        ``False`` return.
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
@@ -156,11 +163,11 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
         logger.debug("Conversion traceback:", exc_info=True)
-        return
+        return False
 
     if result.skipped:
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
-        return
+        return False
 
     doc_name = file_path.stem
     index_result = None  # populated only on the long-doc branch
@@ -174,7 +181,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
             logger.debug("Indexing traceback:", exc_info=True)
-            return
+            return False
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
         click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
@@ -192,7 +199,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
-                    return
+                    return False
     else:
         click.echo(f"  Compiling short doc...")
         for attempt in range(2):
@@ -206,7 +213,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
-                    return
+                    return False
 
     # Register hash only after successful compilation
     if result.file_hash:
@@ -225,6 +232,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -408,15 +416,22 @@ def add(ctx, path):
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
 
-    # URL ingest: download into raw/ first, then fall through to the
-    # normal file-path branch below. fetch_url_to_raw returns the
-    # local path it wrote, or None on failure.
+    # URL ingest: download into raw/ first, then call add_single_file
+    # explicitly so we can clean up the just-downloaded file if it
+    # turns out to be a duplicate (registry already has its hash).
+    # Without this, re-adding the same URL leaves an orphan in raw/
+    # that the registry can't reach via openkb remove.
     from openkb.url_ingest import looks_like_url, fetch_url_to_raw
     if looks_like_url(path):
         fetched = fetch_url_to_raw(path, kb_dir)
         if fetched is None:
             return
-        path = str(fetched)
+        added = add_single_file(fetched, kb_dir)
+        if not added:
+            # Duplicate (or failed mid-pipeline) — drop the just-fetched
+            # file so raw/ doesn't accumulate orphans across retries.
+            fetched.unlink(missing_ok=True)
+        return
 
     target = Path(path)
     if not target.exists():
