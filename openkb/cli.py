@@ -1216,16 +1216,8 @@ def _build_feedback_url(
     default=None,
     help="Feedback type — sets the GitHub issue label.",
 )
-@click.option(
-    "--print-url", is_flag=True, default=False,
-    help="Print the prefilled GitHub issue URL instead of opening a browser.",
-)
-@click.option(
-    "--no-diagnostics", is_flag=True, default=False,
-    help="Don't attach the diagnostics block (openkb version, Python, OS, KB present).",
-)
 @click.pass_context
-def feedback(ctx, message, feedback_type, print_url, no_diagnostics):
+def feedback(ctx, message, feedback_type):
     """Submit feedback by opening a prefilled GitHub issue.
 
     Examples:
@@ -1234,7 +1226,6 @@ def feedback(ctx, message, feedback_type, print_url, no_diagnostics):
       openkb feedback                              # interactive
       openkb feedback "openkb add hangs on .docx"  # one-line bug report
       openkb feedback --type feature "..."         # tags the issue 'enhancement'
-      openkb feedback --print-url "..."            # SSH / sandbox-friendly
 
     The command does not send anything to OpenKB maintainers directly —
     it opens GitHub in your browser with title, body, and label prefilled.
@@ -1268,12 +1259,8 @@ def feedback(ctx, message, feedback_type, print_url, no_diagnostics):
         else:
             feedback_type = "other"
 
-    diagnostics = {} if no_diagnostics else _collect_feedback_diagnostics(ctx)
+    diagnostics = _collect_feedback_diagnostics(ctx)
     url = _build_feedback_url(message, feedback_type, diagnostics)
-
-    if print_url:
-        click.echo(url)
-        return
 
     click.echo("Copy this URL into a browser if the auto-open below fails:")
     click.echo(f"  {url}")

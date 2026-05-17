@@ -96,7 +96,9 @@ def test_build_url_diagnostics_attached_when_provided():
 
 
 def test_build_url_no_diagnostics_block_when_empty():
-    """Empty dict means user passed --no-diagnostics; body is just the message."""
+    """When called with an empty dict the function omits the details block.
+    Defensive: the CLI always passes a populated dict, but keeping the
+    branch tested guards against accidental regression."""
     url = _build_feedback_url("just the message", "bug", {})
     params = _parse(url)
     assert params["body"] == "just the message"
@@ -141,20 +143,8 @@ def test_collect_diagnostics_flags_kb_present(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_feedback_one_liner_print_url_does_not_open_browser():
-    """--print-url is the SSH / sandbox path: it must NOT call webbrowser.open."""
-    runner = CliRunner()
-    with patch("webbrowser.open") as mock_open:
-        result = runner.invoke(
-            cli, ["feedback", "--type", "bug", "--print-url", "openkb crashes on .ppt"],
-        )
-
-    assert result.exit_code == 0, result.output
-    assert "https://github.com/VectifyAI/OpenKB/issues/new" in result.output
-    mock_open.assert_not_called()
-
-
-def test_feedback_one_liner_default_opens_browser_with_url():
+def test_feedback_one_liner_opens_browser_with_url():
+    """Default path: build URL, print it for copy-fallback, and open browser."""
     runner = CliRunner()
     with patch("webbrowser.open") as mock_open:
         result = runner.invoke(cli, ["feedback", "--type", "bug", "test message"])
@@ -163,8 +153,7 @@ def test_feedback_one_liner_default_opens_browser_with_url():
     mock_open.assert_called_once()
     called_url = mock_open.call_args[0][0]
     assert called_url.startswith("https://github.com/VectifyAI/OpenKB/issues/new?")
-    # The fallback URL should also be printed so the user has a copy if the
-    # auto-open fails.
+    # The URL is also printed so the user has a copy if auto-open fails.
     assert called_url in result.output
 
 
@@ -177,33 +166,18 @@ def test_feedback_empty_message_aborts_with_exit_1():
     assert "No feedback provided" in result.output
 
 
-def test_feedback_no_diagnostics_strips_block_from_body():
-    runner = CliRunner()
-    with patch("webbrowser.open") as mock_open:
-        result = runner.invoke(
-            cli,
-            ["feedback", "--type", "bug", "--print-url", "--no-diagnostics", "just this"],
-        )
-
-    assert result.exit_code == 0
-    url = result.output.strip().splitlines()[-1]
-    assert "Diagnostics" not in url
-    assert "details" not in url  # no <details> block
-    mock_open.assert_not_called()
-
-
 def test_feedback_prompts_for_type_when_not_given_via_flag():
-    """If --type isn't on the command line, prompt the user."""
+    """If --type isn't on the command line and stdin is a TTY, prompt the user."""
     runner = CliRunner()
-    with patch("webbrowser.open") as mock_open, \
+    with patch("webbrowser.open"), \
          patch("openkb.cli._stdin_is_tty", return_value=True):
         result = runner.invoke(
-            cli, ["feedback", "--print-url", "missing-type prompt test"],
+            cli, ["feedback", "missing-type prompt test"],
             input="feature\n",
         )
 
     assert result.exit_code == 0
-    # The URL should be tagged with the chosen type (mapped to 'enhancement').
+    # The URL printed for fallback-copy carries the chosen type's label.
     url_line = [ln for ln in result.output.splitlines() if "issues/new" in ln][-1]
     assert "labels=enhancement" in url_line
 
@@ -219,9 +193,7 @@ def test_feedback_skips_type_prompt_when_stdin_is_not_a_tty():
     runner = CliRunner()
     with patch("webbrowser.open"), \
          patch("openkb.cli._stdin_is_tty", return_value=False):
-        result = runner.invoke(
-            cli, ["feedback", "--print-url", "non-tty feedback"],
-        )
+        result = runner.invoke(cli, ["feedback", "non-tty feedback"])
 
     assert result.exit_code == 0, result.output
     # Non-TTY → falls back to "other", which has no label param
