@@ -258,7 +258,7 @@ To remove later: `/plugin uninstall openkb` then `/plugin marketplace remove Vec
 
 #### Gemini CLI
 
-Native skills installer fetches a single skill folder from a Git repo:
+Native [skills installer](https://geminicli.com/docs/cli/skills/) fetches the skill folder from this repo. `--path skills/openkb` points it at the sub-directory containing `SKILL.md` (the rest of the repo is the openkb codebase, not skill content):
 
 ```bash
 gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/openkb --consent
@@ -275,19 +275,6 @@ ln -s ~/openkb-src/skills/openkb ~/.agents/skills/openkb
 ```
 
 Codex discovers skills under `.agents/skills/` walking up from cwd, or `~/.agents/skills/` for user-scope. To update later: `cd ~/openkb-src && git pull`.
-
-#### Manual install (any agent)
-
-If you don't want to use any installer, just drop the skill folder into the agent's user-scope skills directory:
-
-```bash
-# Claude Code
-ln -s "$(pwd)/skills/openkb" ~/.claude/skills/openkb
-# Gemini CLI
-ln -s "$(pwd)/skills/openkb" ~/.gemini/skills/openkb
-# Codex
-ln -s "$(pwd)/skills/openkb" ~/.agents/skills/openkb
-```
 
 #### After install
 
