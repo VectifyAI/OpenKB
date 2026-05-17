@@ -1133,3 +1133,154 @@ def status(ctx):
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
     print_status(kb_dir)
+
+
+# ---------------------------------------------------------------------------
+# feedback
+# ---------------------------------------------------------------------------
+
+_FEEDBACK_REPO = "VectifyAI/OpenKB"
+_FEEDBACK_TYPES = ("bug", "feature", "question", "other")
+_FEEDBACK_LABEL_MAP = {
+    "bug": "bug",
+    "feature": "enhancement",
+    "question": "question",
+    "other": "",
+}
+
+
+def _openkb_version() -> str:
+    """Return the installed openkb package version.
+
+    Delegates to ``openkb.__version__`` so the chat REPL, feedback issue
+    body, and any future caller all surface the same fallback string
+    (``0.0.0+unknown`` from ``openkb/__init__.py``). Mirrors
+    ``openkb.agent.chat._openkb_version``.
+    """
+    from openkb import __version__
+    return __version__
+
+
+def _collect_feedback_diagnostics(ctx) -> dict[str, str]:
+    """Auto-collect non-sensitive environment info to attach to a feedback
+    issue. Kept deliberately small — no paths, no API keys, no usernames.
+    """
+    import platform
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override") if ctx.obj else None)
+    return {
+        "openkb": _openkb_version(),
+        "python": platform.python_version(),
+        "platform": f"{platform.system()} {platform.release()}",
+        "kb_initialised": "yes" if kb_dir else "no",
+    }
+
+
+def _build_feedback_url(
+    message: str, feedback_type: str, diagnostics: dict[str, str],
+) -> str:
+    """Build a GitHub issue URL with title / body / labels prefilled."""
+    from urllib.parse import urlencode
+
+    first_line = message.splitlines()[0] if message else ""
+    truncated = first_line[:60] + ("…" if len(first_line) > 60 else "")
+    title_prefix = f"[{feedback_type}] " if feedback_type != "other" else ""
+    title = f"{title_prefix}{truncated}" if truncated else f"{title_prefix}Feedback from CLI"
+
+    if diagnostics:
+        diag_block = "\n".join(f"- **{k}**: {v}" for k, v in diagnostics.items())
+        body = (
+            f"{message}\n\n"
+            "---\n\n"
+            "<details>\n"
+            "<summary>Diagnostics (auto-collected by <code>openkb feedback</code>)</summary>\n\n"
+            f"{diag_block}\n"
+            "</details>\n"
+        )
+    else:
+        body = message
+
+    params = {"title": title, "body": body}
+    label = _FEEDBACK_LABEL_MAP.get(feedback_type, "")
+    if label:
+        params["labels"] = label
+
+    return f"https://github.com/{_FEEDBACK_REPO}/issues/new?{urlencode(params)}"
+
+
+@cli.command()
+@click.argument("message", required=False)
+@click.option(
+    "--type", "feedback_type",
+    type=click.Choice(_FEEDBACK_TYPES),
+    default=None,
+    help="Feedback type — sets the GitHub issue label.",
+)
+@click.pass_context
+def feedback(ctx, message, feedback_type):
+    """Submit feedback by opening a prefilled GitHub issue.
+
+    Examples:
+
+      \b
+      openkb feedback                              # interactive
+      openkb feedback "openkb add hangs on .docx"  # one-line bug report
+      openkb feedback --type feature "..."         # tags the issue 'enhancement'
+
+    The command does not send anything to OpenKB maintainers directly —
+    it opens GitHub in your browser with title, body, and label prefilled.
+    You log in with your own GitHub account and submit the issue.
+    """
+    if not message:
+        click.echo(
+            "What's your feedback? End with an empty line + Ctrl-D "
+            "(Unix) or Ctrl-Z+Enter (Windows). Ctrl-C cancels."
+        )
+        message = sys.stdin.read().strip()
+
+    if not message:
+        click.echo("No feedback provided. Aborted.")
+        ctx.exit(1)
+        return
+
+    if feedback_type is None:
+        # Skip the prompt in non-TTY contexts (CI / piped stdin) so
+        # ``echo "msg" | openkb feedback`` doesn't hang on the second
+        # prompt after consuming all piped input for the message body.
+        # Mirrors the ``_stdin_is_tty()`` gate added in PR #48.
+        if _stdin_is_tty():
+            feedback_type = click.prompt(
+                "Type",
+                default="other",
+                type=click.Choice(_FEEDBACK_TYPES),
+                show_default=True,
+                show_choices=True,
+            )
+        else:
+            feedback_type = "other"
+
+    diagnostics = _collect_feedback_diagnostics(ctx)
+    url = _build_feedback_url(message, feedback_type, diagnostics)
+
+    click.echo("Copy this URL into a browser if the auto-open below fails:")
+    click.echo(f"  {url}")
+
+    import webbrowser
+    try:
+        opened = webbrowser.open(url)
+    except Exception as exc:
+        # webbrowser.open rarely raises but be defensive — the printed URL
+        # above is the fallback path.
+        click.echo(f"  (browser auto-open failed: {exc})", err=True)
+        return
+
+    # ``webbrowser.open`` returns False on headless boxes (no GUI, no
+    # ``BROWSER`` env) without raising. Without this check we'd silently
+    # print "Opened" and the user would think the issue was filed.
+    if opened:
+        click.echo("Opened GitHub in your browser.")
+    else:
+        click.echo(
+            "  (no browser available — copy the URL above to file the issue)",
+            err=True,
+        )

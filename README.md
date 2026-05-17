@@ -156,6 +156,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
 | `openkb status` | Show knowledge base stats |
+| <code>openkb&nbsp;feedback&nbsp;["msg"]</code> | File feedback by opening a prefilled GitHub issue (use `--type bug/feature/question` to tag the issue) |
 
 <!-- | `openkb lint --fix` | Auto-fix what it can | -->
 
