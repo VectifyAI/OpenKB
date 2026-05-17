@@ -1,0 +1,207 @@
+"""Tests for `openkb feedback` — the prefilled-GitHub-issue feedback flow."""
+from __future__ import annotations
+
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+from click.testing import CliRunner
+
+from openkb.cli import (
+    _build_feedback_url,
+    _collect_feedback_diagnostics,
+    _FEEDBACK_REPO,
+    cli,
+)
+
+
+# ---------------------------------------------------------------------------
+# _build_feedback_url
+# ---------------------------------------------------------------------------
+
+
+def _parse(url: str) -> dict:
+    """Parse a prefilled-issue URL into its query-param dict (single values)."""
+    parts = urlparse(url)
+    qs = parse_qs(parts.query)
+    # parse_qs yields lists; flatten the singletons we care about.
+    return {k: v[0] for k, v in qs.items()}
+
+
+def test_build_url_points_at_correct_repo_issue_new():
+    url = _build_feedback_url("hello", "bug", {})
+    parts = urlparse(url)
+    assert parts.scheme == "https"
+    assert parts.netloc == "github.com"
+    assert parts.path == f"/{_FEEDBACK_REPO}/issues/new"
+
+
+def test_build_url_title_includes_type_prefix():
+    url = _build_feedback_url("attach fails on docx", "bug", {})
+    params = _parse(url)
+    assert params["title"] == "[bug] attach fails on docx"
+
+
+def test_build_url_title_omits_prefix_for_other_type():
+    """'other' is the catch-all; don't pollute the title with [other]."""
+    url = _build_feedback_url("just a comment", "other", {})
+    params = _parse(url)
+    assert params["title"] == "just a comment"
+
+
+def test_build_url_title_truncated_at_60_chars():
+    long_msg = "a" * 200
+    url = _build_feedback_url(long_msg, "bug", {})
+    params = _parse(url)
+    # 60 chars + ellipsis + prefix
+    assert params["title"] == "[bug] " + ("a" * 60) + "…"
+
+
+def test_build_url_title_uses_first_line_only():
+    """A multi-line message should only use line 1 for the title."""
+    url = _build_feedback_url("short title\n\ndetailed body here", "feature", {})
+    params = _parse(url)
+    assert params["title"] == "[feature] short title"
+
+
+def test_build_url_label_set_for_bug():
+    url = _build_feedback_url("x", "bug", {})
+    params = _parse(url)
+    assert params["labels"] == "bug"
+
+
+def test_build_url_label_mapped_for_feature():
+    """Feature → 'enhancement' (GitHub's conventional label)."""
+    url = _build_feedback_url("x", "feature", {})
+    params = _parse(url)
+    assert params["labels"] == "enhancement"
+
+
+def test_build_url_no_label_for_other():
+    url = _build_feedback_url("x", "other", {})
+    params = _parse(url)
+    assert "labels" not in params
+
+
+def test_build_url_diagnostics_attached_when_provided():
+    url = _build_feedback_url(
+        "x", "bug",
+        {"openkb": "1.2.3", "python": "3.12.0", "platform": "Linux 6.0"},
+    )
+    params = _parse(url)
+    assert "Diagnostics" in params["body"]
+    assert "**openkb**: 1.2.3" in params["body"]
+    assert "**python**: 3.12.0" in params["body"]
+    assert "**platform**: Linux 6.0" in params["body"]
+
+
+def test_build_url_no_diagnostics_block_when_empty():
+    """Empty dict means user passed --no-diagnostics; body is just the message."""
+    url = _build_feedback_url("just the message", "bug", {})
+    params = _parse(url)
+    assert params["body"] == "just the message"
+    assert "Diagnostics" not in params["body"]
+    assert "<details>" not in params["body"]
+
+
+# ---------------------------------------------------------------------------
+# _collect_feedback_diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_collect_diagnostics_returns_minimal_non_sensitive_set(tmp_path):
+    """Diagnostics should be the small known set — no paths, no env vars."""
+
+    class _Ctx:
+        obj = None
+
+    with patch("openkb.cli._find_kb_dir", return_value=None):
+        info = _collect_feedback_diagnostics(_Ctx())
+
+    assert set(info.keys()) == {"openkb", "python", "platform", "kb_initialised"}
+    assert info["kb_initialised"] == "no"
+    # Defensive: no path-like values that would leak the user's home dir.
+    for v in info.values():
+        assert "/Users/" not in v
+        assert "/home/" not in v
+
+
+def test_collect_diagnostics_flags_kb_present(tmp_path):
+    class _Ctx:
+        obj = None
+
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path):
+        info = _collect_feedback_diagnostics(_Ctx())
+
+    assert info["kb_initialised"] == "yes"
+
+
+# ---------------------------------------------------------------------------
+# CLI: openkb feedback
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_one_liner_print_url_does_not_open_browser():
+    """--print-url is the SSH / sandbox path: it must NOT call webbrowser.open."""
+    runner = CliRunner()
+    with patch("webbrowser.open") as mock_open:
+        result = runner.invoke(
+            cli, ["feedback", "--type", "bug", "--print-url", "openkb crashes on .ppt"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "https://github.com/VectifyAI/OpenKB/issues/new" in result.output
+    mock_open.assert_not_called()
+
+
+def test_feedback_one_liner_default_opens_browser_with_url():
+    runner = CliRunner()
+    with patch("webbrowser.open") as mock_open:
+        result = runner.invoke(cli, ["feedback", "--type", "bug", "test message"])
+
+    assert result.exit_code == 0, result.output
+    mock_open.assert_called_once()
+    called_url = mock_open.call_args[0][0]
+    assert called_url.startswith("https://github.com/VectifyAI/OpenKB/issues/new?")
+    # The fallback URL should also be printed so the user has a copy if the
+    # auto-open fails.
+    assert called_url in result.output
+
+
+def test_feedback_empty_message_aborts_with_exit_1():
+    """Interactive mode: if user submits nothing, abort cleanly (no issue URL)."""
+    runner = CliRunner()
+    # input="" simulates Ctrl-D on an empty stdin.
+    result = runner.invoke(cli, ["feedback", "--type", "bug"], input="")
+    assert result.exit_code == 1
+    assert "No feedback provided" in result.output
+
+
+def test_feedback_no_diagnostics_strips_block_from_body():
+    runner = CliRunner()
+    with patch("webbrowser.open") as mock_open:
+        result = runner.invoke(
+            cli,
+            ["feedback", "--type", "bug", "--print-url", "--no-diagnostics", "just this"],
+        )
+
+    assert result.exit_code == 0
+    url = result.output.strip().splitlines()[-1]
+    assert "Diagnostics" not in url
+    assert "details" not in url  # no <details> block
+    mock_open.assert_not_called()
+
+
+def test_feedback_prompts_for_type_when_not_given_via_flag():
+    """If --type isn't on the command line, prompt the user."""
+    runner = CliRunner()
+    with patch("webbrowser.open") as mock_open:
+        result = runner.invoke(
+            cli, ["feedback", "--print-url", "missing-type prompt test"],
+            input="feature\n",
+        )
+
+    assert result.exit_code == 0
+    # The URL should be tagged with the chosen type (mapped to 'enhancement').
+    url_line = [ln for ln in result.output.splitlines() if "issues/new" in ln][-1]
+    assert "labels=enhancement" in url_line

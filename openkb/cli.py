@@ -1133,3 +1133,149 @@ def status(ctx):
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
     print_status(kb_dir)
+
+
+# ---------------------------------------------------------------------------
+# feedback
+# ---------------------------------------------------------------------------
+
+_FEEDBACK_REPO = "VectifyAI/OpenKB"
+_FEEDBACK_TYPES = ("bug", "feature", "question", "other")
+_FEEDBACK_LABEL_MAP = {
+    "bug": "bug",
+    "feature": "enhancement",
+    "question": "question",
+    "other": "",
+}
+
+
+def _openkb_version() -> str:
+    """Return the installed openkb package version, or 'unknown' if it
+    can't be resolved (e.g. running from an editable checkout that isn't
+    on PYTHONPATH as a distribution).
+    """
+    try:
+        from importlib.metadata import version
+        return version("openkb")
+    except Exception:
+        return "unknown"
+
+
+def _collect_feedback_diagnostics(ctx) -> dict[str, str]:
+    """Auto-collect non-sensitive environment info to attach to a feedback
+    issue. Kept deliberately small — no paths, no API keys, no usernames.
+    """
+    import platform
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override") if ctx.obj else None)
+    return {
+        "openkb": _openkb_version(),
+        "python": platform.python_version(),
+        "platform": f"{platform.system()} {platform.release()}",
+        "kb_initialised": "yes" if kb_dir else "no",
+    }
+
+
+def _build_feedback_url(
+    message: str, feedback_type: str, diagnostics: dict[str, str],
+) -> str:
+    """Build a GitHub issue URL with title / body / labels prefilled."""
+    from urllib.parse import urlencode
+
+    first_line = message.splitlines()[0] if message else ""
+    truncated = first_line[:60] + ("…" if len(first_line) > 60 else "")
+    title_prefix = f"[{feedback_type}] " if feedback_type != "other" else ""
+    title = f"{title_prefix}{truncated}" if truncated else f"{title_prefix}Feedback from CLI"
+
+    if diagnostics:
+        diag_block = "\n".join(f"- **{k}**: {v}" for k, v in diagnostics.items())
+        body = (
+            f"{message}\n\n"
+            "---\n\n"
+            "<details>\n"
+            "<summary>Diagnostics (auto-collected by <code>openkb feedback</code>)</summary>\n\n"
+            f"{diag_block}\n"
+            "</details>\n"
+        )
+    else:
+        body = message
+
+    params = {"title": title, "body": body}
+    label = _FEEDBACK_LABEL_MAP.get(feedback_type, "")
+    if label:
+        params["labels"] = label
+
+    return f"https://github.com/{_FEEDBACK_REPO}/issues/new?{urlencode(params)}"
+
+
+@cli.command()
+@click.argument("message", required=False)
+@click.option(
+    "--type", "feedback_type",
+    type=click.Choice(_FEEDBACK_TYPES),
+    default=None,
+    help="Feedback type — sets the GitHub issue label.",
+)
+@click.option(
+    "--print-url", is_flag=True, default=False,
+    help="Print the prefilled GitHub issue URL instead of opening a browser.",
+)
+@click.option(
+    "--no-diagnostics", is_flag=True, default=False,
+    help="Don't attach the diagnostics block (openkb version, Python, OS, KB present).",
+)
+@click.pass_context
+def feedback(ctx, message, feedback_type, print_url, no_diagnostics):
+    """Submit feedback by opening a prefilled GitHub issue.
+
+    Examples:
+
+      \b
+      openkb feedback                              # interactive
+      openkb feedback "openkb add hangs on .docx"  # one-line bug report
+      openkb feedback --type feature "..."         # tags the issue 'enhancement'
+      openkb feedback --print-url "..."            # SSH / sandbox-friendly
+
+    The command does not send anything to OpenKB maintainers directly —
+    it opens GitHub in your browser with title, body, and label prefilled.
+    You log in with your own GitHub account and submit the issue.
+    """
+    if not message:
+        click.echo(
+            "What's your feedback? End with an empty line + Ctrl-D "
+            "(Unix) or Ctrl-Z+Enter (Windows). Ctrl-C cancels."
+        )
+        message = sys.stdin.read().strip()
+
+    if not message:
+        click.echo("No feedback provided. Aborted.")
+        ctx.exit(1)
+        return
+
+    if feedback_type is None:
+        feedback_type = click.prompt(
+            "Type",
+            default="other",
+            type=click.Choice(_FEEDBACK_TYPES),
+            show_default=True,
+            show_choices=True,
+        )
+
+    diagnostics = {} if no_diagnostics else _collect_feedback_diagnostics(ctx)
+    url = _build_feedback_url(message, feedback_type, diagnostics)
+
+    if print_url:
+        click.echo(url)
+        return
+
+    click.echo("Opening GitHub in your browser to file the issue.")
+    click.echo("If nothing happens, copy this URL into a browser yourself:")
+    click.echo(f"  {url}")
+
+    import webbrowser
+    try:
+        webbrowser.open(url)
+    except Exception as exc:
+        # webbrowser.open rarely raises but be defensive — the printed URL
+        # above is the fallback path.
+        click.echo(f"  (browser auto-open failed: {exc})", err=True)
