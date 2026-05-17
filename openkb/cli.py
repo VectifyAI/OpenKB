@@ -395,11 +395,28 @@ def init(language):
 @click.argument("path")
 @click.pass_context
 def add(ctx, path):
-    """Add a document or directory of documents at PATH to the knowledge base."""
+    """Add a document or directory of documents at PATH to the knowledge base.
+
+    PATH may be a local file, a local directory (which is walked
+    recursively for supported extensions), or an http(s) URL. URLs are
+    fetched into ``raw/`` first: PDF responses (by Content-Type and
+    magic-byte sniff) are saved as ``.pdf``; HTML responses are run
+    through trafilatura's main-content extractor and saved as ``.md``.
+    """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
+
+    # URL ingest: download into raw/ first, then fall through to the
+    # normal file-path branch below. fetch_url_to_raw returns the
+    # local path it wrote, or None on failure.
+    from openkb.url_ingest import looks_like_url, fetch_url_to_raw
+    if looks_like_url(path):
+        fetched = fetch_url_to_raw(path, kb_dir)
+        if fetched is None:
+            return
+        path = str(fetched)
 
     target = Path(path)
     if not target.exists():

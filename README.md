@@ -72,7 +72,8 @@ openkb init
 
 # 3. Add documents
 openkb add paper.pdf
-openkb add ~/papers/  # Add a whole directory
+openkb add ~/papers/                            # Add a whole directory
+openkb add https://arxiv.org/pdf/2509.11420     # Or fetch from a URL
 
 # 4. Ask a question
 openkb query "What are the main findings?"
@@ -148,7 +149,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 | Command | Description |
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
-| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir&gt;</code> | Add documents and compile to wiki |
+| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add documents and compile to wiki. URL ingest auto-detects PDF (saved as `.pdf` → PageIndex / markitdown) vs HTML (trafilatura main-content extract → `.md`) |
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty-concepts` to retain artifacts) |
 | <code>openkb&nbsp;query&nbsp;"question"</code> | Ask a question over the knowledge base (use `--save` to save the answer to `wiki/explorations/`) |
 | `openkb chat` | Start an interactive multi-turn chat (use `--resume`, `--list`, `--delete` to manage sessions) |

@@ -1,0 +1,361 @@
+"""Tests for `openkb.url_ingest` — the URL → raw/ input-acquisition layer."""
+from __future__ import annotations
+
+import io
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from openkb.url_ingest import (
+    _parse_content_disposition_filename,
+    _pdf_filename,
+    _sanitize_filename,
+    _sniff_content_type,
+    fetch_url_to_raw,
+    looks_like_url,
+)
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (no I/O)
+# ---------------------------------------------------------------------------
+
+
+def test_looks_like_url_accepts_http_and_https():
+    assert looks_like_url("http://example.com") is True
+    assert looks_like_url("https://example.com/foo") is True
+
+
+def test_looks_like_url_rejects_paths_and_filenames():
+    assert looks_like_url("/tmp/foo.pdf") is False
+    assert looks_like_url("./relative") is False
+    assert looks_like_url("foo.pdf") is False
+    assert looks_like_url("") is False
+
+
+# Content-type sniffing — magic bytes override declared header
+
+
+def test_sniff_pdf_magic_wins_over_octet_stream():
+    """Some CDNs mislabel PDFs as application/octet-stream — magic bytes save us."""
+    assert _sniff_content_type(b"%PDF-1.4\n...", "application/octet-stream") == "pdf"
+
+
+def test_sniff_html_magic_wins_over_pdf_header():
+    """Some servers serve an HTML interstitial 'click to download' page with
+    Content-Type: application/pdf. Magic bytes must override."""
+    assert _sniff_content_type(b"<!doctype html>", "application/pdf") == "html"
+
+
+def test_sniff_html_magic_handles_bom_and_whitespace():
+    assert _sniff_content_type(b"\xef\xbb\xbf<html>", "") == "html"
+    assert _sniff_content_type(b"  \n<html>", "") == "html"
+
+
+def test_sniff_falls_back_to_declared_when_no_magic_match():
+    assert _sniff_content_type(b"\x00\x00", "application/pdf") == "pdf"
+    assert _sniff_content_type(b"random", "text/html; charset=utf-8") == "html"
+    assert _sniff_content_type(b"random", "application/xhtml+xml") == "html"
+
+
+def test_sniff_returns_unknown_for_unsupported_types():
+    assert _sniff_content_type(b"binary", "image/jpeg") == "unknown"
+    assert _sniff_content_type(b"binary", "application/json") == "unknown"
+    assert _sniff_content_type(b"binary", "") == "unknown"
+
+
+# Filename sanitization
+
+
+def test_sanitize_preserves_arxiv_id_with_dot():
+    """The dot in arxiv's `2509.11420` is part of the identifier, not an
+    extension. `_sanitize_filename` must not strip it when re-adding `.pdf`."""
+    assert _sanitize_filename("2509.11420", ".pdf") == "2509.11420.pdf"
+
+
+def test_sanitize_strips_matching_extension_then_re_adds_it():
+    assert _sanitize_filename("paper.pdf", ".pdf") == "paper.pdf"
+    assert _sanitize_filename("paper.PDF", ".pdf") == "paper.pdf"
+
+
+def test_sanitize_replaces_shell_unsafe_chars():
+    assert _sanitize_filename("hello world (1).pdf", ".pdf") == "hello-world-1.pdf"
+    assert _sanitize_filename("a:b/c\\d?e*f", ".md") == "a-b-c-d-e-f.md"
+
+
+def test_sanitize_collapses_repeated_dashes_and_trims():
+    # Underscores are allowed (part of [a-zA-Z0-9._-]) so they pass through;
+    # only sequences of non-allowed chars become dashes, and repeated dashes
+    # collapse to one. Leading/trailing dashes/dots/underscores are stripped.
+    assert _sanitize_filename("a___b---c", ".pdf") == "a___b-c.pdf"
+    assert _sanitize_filename("---trim---", ".md") == "trim.md"
+    assert _sanitize_filename("a b c d", ".md") == "a-b-c-d.md"
+
+
+def test_sanitize_caps_stem_at_80_chars():
+    name = "a" * 200
+    assert _sanitize_filename(name, ".pdf") == ("a" * 80) + ".pdf"
+
+
+def test_sanitize_falls_back_to_document_when_empty():
+    assert _sanitize_filename("", ".md") == "document.md"
+    assert _sanitize_filename("...", ".md") == "document.md"
+    assert _sanitize_filename("///", ".pdf") == "document.pdf"
+
+
+# Content-Disposition parsing
+
+
+def test_content_disposition_quoted_with_spaces():
+    """Quoted form must capture filenames with spaces / parens / commas."""
+    cd = 'attachment; filename="My Paper, v3 (final).pdf"'
+    assert _parse_content_disposition_filename(cd) == "My Paper, v3 (final).pdf"
+
+
+def test_content_disposition_unquoted_simple():
+    assert _parse_content_disposition_filename("attachment; filename=foo.pdf") == "foo.pdf"
+
+
+def test_content_disposition_rfc5987_extended():
+    """filename*=UTF-8''<percent-encoded> is the modern form for non-ASCII."""
+    cd = "attachment; filename*=UTF-8''My%20Paper%20%C3%A9.pdf"
+    assert _parse_content_disposition_filename(cd) == "My Paper é.pdf"
+
+
+def test_content_disposition_none_or_missing_filename():
+    assert _parse_content_disposition_filename(None) is None
+    assert _parse_content_disposition_filename("attachment") is None
+    assert _parse_content_disposition_filename("inline") is None
+
+
+# _pdf_filename: header → URL basename fallback chain
+
+
+def test_pdf_filename_prefers_content_disposition():
+    name = _pdf_filename(
+        "https://x.com/dl?id=123",
+        'attachment; filename="My Paper.pdf"',
+    )
+    assert name == "My-Paper.pdf"
+
+
+def test_pdf_filename_falls_back_to_url_basename():
+    name = _pdf_filename(
+        "https://cdn.example.com/abc/69fe2a55_The-Founders-Playbook-05062026_v3%20(1).pdf",
+        None,
+    )
+    assert name == "69fe2a55_The-Founders-Playbook-05062026_v3-1.pdf"
+
+
+def test_pdf_filename_handles_arxiv_pdf_url_without_extension():
+    """arxiv's PDF URL `arxiv.org/pdf/2509.11420` ends without `.pdf` — the
+    content-type tells us it's a PDF and `_sanitize_filename` must keep
+    the dot in the arxiv ID rather than treating it as an extension."""
+    name = _pdf_filename("https://arxiv.org/pdf/2509.11420", None)
+    assert name == "2509.11420.pdf"
+
+
+def test_pdf_filename_falls_back_to_host_when_path_empty():
+    name = _pdf_filename("https://example.com/", None)
+    assert name == "example.com.pdf"
+
+
+# ---------------------------------------------------------------------------
+# fetch_url_to_raw — integration with urllib + trafilatura mocked
+# ---------------------------------------------------------------------------
+
+
+def _fake_response(*, body: bytes, headers: dict[str, str]):
+    """Build a fake urllib response with the given body + headers.
+
+    Headers are case-insensitive in real responses; mimicking that here
+    so the test doesn't depend on which case `_fetch_url_to_raw` looks up.
+    """
+    class _Headers:
+        def __init__(self, d):
+            self._d = {k.lower(): v for k, v in d.items()}
+
+        def get(self, key, default=None):
+            return self._d.get(key.lower(), default)
+
+    resp = MagicMock()
+    resp.headers = _Headers(headers)
+    # read(N) returns chunks; read() with no arg returns rest
+    stream = io.BytesIO(body)
+    resp.read = stream.read
+    resp.__enter__ = lambda self: resp
+    resp.__exit__ = lambda *a: None
+    return resp
+
+
+def test_fetch_pdf_writes_chunked_to_raw_dir(tmp_path):
+    """End-to-end PDF path: urlopen → magic-byte sniff → chunked write →
+    filename comes from URL basename."""
+    body = b"%PDF-1.4\n" + b"x" * 100_000  # 100 KB PDF
+    resp = _fake_response(
+        body=body,
+        headers={"Content-Type": "application/pdf"},
+    )
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://arxiv.org/pdf/2509.11420", tmp_path)
+
+    assert result is not None
+    assert result.name == "2509.11420.pdf"
+    assert result.exists()
+    assert result.read_bytes() == body
+
+
+def test_fetch_pdf_with_lying_octet_stream_header(tmp_path):
+    """Server says octet-stream but the body starts with %PDF — magic bytes
+    must win and the file gets the .pdf extension."""
+    body = b"%PDF-1.7\n" + b"\x00" * 1000
+    resp = _fake_response(
+        body=body,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://cdn.example.com/a/b/file", tmp_path)
+
+    assert result is not None
+    assert result.suffix == ".pdf"
+    assert result.read_bytes() == body
+
+
+def test_fetch_pdf_chunks_a_very_large_body(tmp_path):
+    """A 1 MB synthetic body still writes correctly via chunked reads."""
+    body = b"%PDF-1.4\n" + b"a" * (1024 * 1024)
+    resp = _fake_response(body=body, headers={"Content-Type": "application/pdf"})
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://x.com/big.pdf", tmp_path)
+
+    assert result is not None
+    assert result.stat().st_size == len(body)
+
+
+def test_fetch_pdf_uses_content_disposition_filename(tmp_path):
+    body = b"%PDF-1.4\n..."
+    resp = _fake_response(
+        body=body,
+        headers={
+            "Content-Type": "application/pdf",
+            "Content-Disposition": 'attachment; filename="My Paper, v3.pdf"',
+        },
+    )
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://x.com/dl?id=1", tmp_path)
+
+    # comma sanitized to dash
+    assert result.name == "My-Paper-v3.pdf"
+
+
+def test_fetch_html_routes_to_trafilatura(tmp_path):
+    """HTML responses skip urllib's body (we already consumed the sniff
+    head) and hand the URL to trafilatura.fetch_url for proper anti-scrape
+    handling. trafilatura.extract gives clean markdown which we save as .md."""
+    sniff_head = b"<!doctype html>\n<html><head>..."
+    resp = _fake_response(
+        body=sniff_head + b"<body>nav nav nav</body>",
+        headers={"Content-Type": "text/html; charset=utf-8"},
+    )
+
+    fake_md = "# Real Article Title\n\nThis is the body content. " * 20  # ~1 KB
+    fake_meta = MagicMock()
+    fake_meta.title = "Real Article Title"
+
+    with patch("urllib.request.urlopen", return_value=resp), \
+         patch("trafilatura.fetch_url", return_value="<html>...the real HTML...</html>"), \
+         patch("trafilatura.extract", return_value=fake_md), \
+         patch("trafilatura.extract_metadata", return_value=fake_meta):
+        result = fetch_url_to_raw("https://blog.example.com/post", tmp_path)
+
+    assert result is not None
+    assert result.name == "Real-Article-Title.md"
+    assert result.read_text(encoding="utf-8") == fake_md
+
+
+def test_fetch_html_warns_on_short_extraction(tmp_path, capsys):
+    """JS-rendered pages produce near-empty extractions. The save still
+    happens (so the user can inspect what we got) but a stderr warning
+    surfaces the suspicion."""
+    sniff_head = b"<html>"
+    resp = _fake_response(body=sniff_head, headers={"Content-Type": "text/html"})
+
+    short_md = "# Title only"  # 11 chars, well under 300
+    fake_meta = MagicMock()
+    fake_meta.title = "Title only"
+
+    with patch("urllib.request.urlopen", return_value=resp), \
+         patch("trafilatura.fetch_url", return_value="<html>shell</html>"), \
+         patch("trafilatura.extract", return_value=short_md), \
+         patch("trafilatura.extract_metadata", return_value=fake_meta):
+        result = fetch_url_to_raw("https://spa.example.com/page", tmp_path)
+
+    assert result is not None
+    assert result.read_text() == short_md
+    err = capsys.readouterr().err
+    assert "[WARN]" in err
+    assert f"{len(short_md)} chars extracted" in err
+
+
+def test_fetch_html_aborts_when_trafilatura_extracts_nothing(tmp_path):
+    """trafilatura.extract returning None means the page is essentially
+    empty (JS-only, paywall HTML, etc.). We error out rather than save
+    an empty .md."""
+    sniff_head = b"<html>"
+    resp = _fake_response(body=sniff_head, headers={"Content-Type": "text/html"})
+
+    with patch("urllib.request.urlopen", return_value=resp), \
+         patch("trafilatura.fetch_url", return_value="<html>empty</html>"), \
+         patch("trafilatura.extract", return_value=None):
+        result = fetch_url_to_raw("https://js-only.example.com", tmp_path)
+
+    assert result is None
+
+
+def test_fetch_unsupported_content_type_rejected(tmp_path, capsys):
+    """JSON / image / etc. — refuse with a clear message rather than
+    saving binary garbage as `.html` or `.pdf`."""
+    resp = _fake_response(
+        body=b'{"foo": "bar"}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_raw("https://api.example.com/data.json", tmp_path)
+
+    assert result is None
+    err = capsys.readouterr().err
+    assert "Unsupported content type" in err
+
+
+def test_fetch_http_404_returns_none(tmp_path, capsys):
+    """Server errors don't crash — graceful failure with stderr message."""
+    import urllib.error
+    err_resp = urllib.error.HTTPError(
+        "https://x.com/missing", 404, "Not Found", {}, None,
+    )
+
+    with patch("urllib.request.urlopen", side_effect=err_resp):
+        result = fetch_url_to_raw("https://x.com/missing", tmp_path)
+
+    assert result is None
+    err = capsys.readouterr().err
+    assert "HTTP 404" in err
+
+
+def test_fetch_network_error_returns_none(tmp_path, capsys):
+    """DNS failure / connection refused — graceful with clear message."""
+    import urllib.error
+
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=urllib.error.URLError("nodename nor servname provided"),
+    ):
+        result = fetch_url_to_raw("https://no-such-host.invalid/foo", tmp_path)
+
+    assert result is None
+    err = capsys.readouterr().err
+    assert "Network error" in err
