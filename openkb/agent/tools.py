@@ -6,6 +6,7 @@ tested in isolation without requiring the openai-agents runtime.
 """
 from __future__ import annotations
 
+import contextlib
 import json as _json
 from pathlib import Path
 
@@ -71,7 +72,9 @@ def parse_pages(pages: str) -> list[int]:
             segments = part.split("-")
             # Re-join to handle leading negatives: segments[0] may be empty
             # if part starts with "-".  We just try to parse start/end.
-            try:
+            # Silently skip malformed segments — parse_pages is a tolerant
+            # parser by design (user-supplied page specs may contain typos).
+            with contextlib.suppress(ValueError):
                 if len(segments) == 2:
                     start, end = int(segments[0]), int(segments[1])
                     result.update(range(start, end + 1))
@@ -79,13 +82,9 @@ def parse_pages(pages: str) -> list[int]:
                     # e.g. "-1" split gives ['', '1']
                     result.add(-int(segments[1]))
                 # More complex cases (e.g. negative range) are ignored.
-            except ValueError:
-                pass
         else:
-            try:
+            with contextlib.suppress(ValueError):
                 result.add(int(part))
-            except ValueError:
-                pass
     return sorted(n for n in result if n > 0)
 
 

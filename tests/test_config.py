@@ -1,5 +1,3 @@
-import pytest
-from pathlib import Path
 from openkb.config import DEFAULT_CONFIG, load_config, save_config
 
 
