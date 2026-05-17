@@ -23,6 +23,18 @@ set_tracing_disabled(True)
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import click
+
+# Silence LiteLLM's "could not pre-load <aws-service> response stream
+# shape" warnings — they fire at import time when ``botocore`` isn't
+# installed, but botocore is only needed for AWS Bedrock / SageMaker
+# users. Filter must be attached before ``import litellm`` runs.
+class _SuppressLiteLLMPreloadWarnings(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "could not pre-load" not in record.getMessage()
+
+
+logging.getLogger("LiteLLM").addFilter(_SuppressLiteLLMPreloadWarnings())
+
 import litellm
 litellm.suppress_debug_info = True
 from dotenv import load_dotenv
