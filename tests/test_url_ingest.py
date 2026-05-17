@@ -414,8 +414,10 @@ def test_fetch_pdf_picks_unique_name_when_target_exists(tmp_path):
     assert result.read_bytes() == body
 
 
-def test_fetch_html_picks_unique_name_when_target_exists(tmp_path):
-    """Two blog posts both titled 'Introduction' must NOT collide."""
+def test_fetch_html_picks_unique_name_when_target_exists(tmp_path, capsys):
+    """Two blog posts both titled 'Introduction' must NOT collide. The
+    user-facing 'Saved: ...' echo must also reflect the renamed path —
+    otherwise the message lies about where the file actually went."""
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
     (raw_dir / "Introduction.md").write_text("first blog post body")
@@ -435,6 +437,8 @@ def test_fetch_html_picks_unique_name_when_target_exists(tmp_path):
     assert (raw_dir / "Introduction.md").read_text() == "first blog post body"
     assert result == raw_dir / "Introduction_2.md"
     assert result.read_text() == second_md
+    out = capsys.readouterr().out
+    assert "Saved: raw/Introduction_2.md" in out
 
 
 def test_fetch_pdf_uses_post_redirect_url_for_filename(tmp_path):
@@ -458,10 +462,10 @@ def test_fetch_pdf_uses_post_redirect_url_for_filename(tmp_path):
     assert result.name == "great-paper.pdf"
 
 
-def test_add_single_file_returns_true_on_success(tmp_path):
-    """The new bool return contract: True when the file was actually
-    indexed. Used by the URL-ingest cleanup path to decide whether the
-    just-downloaded file in raw/ should be unlinked."""
+def test_add_single_file_returns_added_on_success(tmp_path):
+    """Tri-state return contract: ``"added"`` when the file was newly
+    indexed. URL-ingest uses this to decide whether to keep / unlink
+    the just-downloaded file."""
     from openkb.cli import add_single_file
     from openkb.converter import ConvertResult
 
@@ -487,12 +491,12 @@ def test_add_single_file_returns_true_on_success(tmp_path):
 
     with patch("openkb.cli.convert_document", return_value=mock_result), \
          patch("openkb.cli.asyncio.run"):
-        added = add_single_file(doc, tmp_path)
+        outcome = add_single_file(doc, tmp_path)
 
-    assert added is True
+    assert outcome == "added"
 
 
-def test_add_single_file_returns_false_on_skip(tmp_path):
+def test_add_single_file_returns_skipped_on_dedup(tmp_path):
     from openkb.cli import add_single_file
     from openkb.converter import ConvertResult
 
@@ -505,14 +509,48 @@ def test_add_single_file_returns_false_on_skip(tmp_path):
 
     skipped = ConvertResult(skipped=True)
     with patch("openkb.cli.convert_document", return_value=skipped):
-        added = add_single_file(doc, tmp_path)
+        outcome = add_single_file(doc, tmp_path)
 
-    assert added is False
+    assert outcome == "skipped"
+
+
+def test_add_single_file_returns_failed_on_pipeline_error(tmp_path):
+    """A pipeline failure (e.g. transient LLM error during compilation)
+    must be distinguishable from dedup-skip, so URL-ingest can preserve
+    the raw file for retry instead of deleting it."""
+    from openkb.cli import add_single_file
+    from openkb.converter import ConvertResult
+
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+    (tmp_path / "wiki" / "sources").mkdir(parents=True)
+    (tmp_path / "wiki" / "log.md").write_text("")
+
+    doc = tmp_path / "raw" / "x.md"
+    doc.write_text("# Hello")
+    source_path = tmp_path / "wiki" / "sources" / "x.md"
+    source_path.write_text("# Hello")
+
+    mock_result = ConvertResult(
+        raw_path=doc, source_path=source_path,
+        is_long_doc=False, file_hash="cafe" * 16,
+    )
+
+    # Make both compile attempts raise to drive the failure path.
+    with patch("openkb.cli.convert_document", return_value=mock_result), \
+         patch("openkb.cli.asyncio.run", side_effect=RuntimeError("LLM 503")), \
+         patch("openkb.cli.time.sleep"):
+        outcome = add_single_file(doc, tmp_path)
+
+    assert outcome == "failed"
 
 
 def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
     """End-to-end: when the URL-fetched file is already in the registry,
-    add_single_file returns False and the CLI must unlink it from raw/
+    add_single_file returns "skipped" and the CLI unlinks it from raw/
     so the user doesn't accumulate untracked duplicates."""
     from click.testing import CliRunner
     from openkb.cli import cli
@@ -541,3 +579,44 @@ def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
     assert "[SKIP]" in result.output
     # Orphan cleanup: the URL-fetched file must be gone from raw/.
     assert not fetched_path.exists()
+
+
+def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
+    """The point of the tri-state return: a pipeline failure (e.g. LLM
+    timeout during compilation) must NOT delete the downloaded file —
+    the user can retry without re-downloading, and we don't lose data
+    when indexing has already succeeded but compilation hasn't."""
+    from click.testing import CliRunner
+    from openkb.cli import cli
+    from openkb.converter import ConvertResult
+
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+    (tmp_path / "wiki" / "sources").mkdir(parents=True)
+    (tmp_path / "wiki" / "log.md").write_text("")
+
+    fetched_path = tmp_path / "raw" / "paper.pdf"
+    fetched_path.write_bytes(b"%PDF-fake")
+    source_path = tmp_path / "wiki" / "sources" / "paper.md"
+    source_path.write_text("# fake")
+
+    mock_result = ConvertResult(
+        raw_path=fetched_path, source_path=source_path,
+        is_long_doc=False, file_hash="cafe" * 16,
+    )
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
+         patch("openkb.cli.convert_document", return_value=mock_result), \
+         patch("openkb.cli.asyncio.run", side_effect=RuntimeError("LLM 503")), \
+         patch("openkb.cli.time.sleep"):
+        result = runner.invoke(cli, ["add", "https://example.com/paper.pdf"])
+
+    assert result.exit_code == 0, result.output
+    assert "[ERROR] Compilation failed" in result.output
+    # The raw file must be preserved so the user can retry.
+    assert fetched_path.exists()

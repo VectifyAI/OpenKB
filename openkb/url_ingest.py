@@ -208,7 +208,7 @@ def _extract_html(url: str, raw_dir: Path) -> Path | None:
     target.write_text(markdown, encoding="utf-8")
     click.echo(
         f"  Extracted: {title!r}\n"
-        f"  Saved: raw/{filename} ({len(markdown) // 1024 or 1} KB clean markdown)"
+        f"  Saved: raw/{target.name} ({len(markdown) // 1024 or 1} KB clean markdown)"
     )
     return target
 

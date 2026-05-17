@@ -14,6 +14,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Literal
 
 import os
 
@@ -130,7 +131,7 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> bool:
+def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -140,11 +141,12 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
     4. Else: compile_short_doc.
 
     Returns:
-        True if the file was newly indexed and compiled. False when the
-        file was skipped as a duplicate (hash already registered) or
-        when any pipeline stage failed — callers that need to clean up
-        the source file (URL-ingest path, for example) can act on a
-        ``False`` return.
+        ``"added"`` on full success, ``"skipped"`` when the file's hash
+        is already in the registry (dedup), or ``"failed"`` when any
+        pipeline stage raised. URL-ingest distinguishes these so it can
+        unlink the just-downloaded raw file on dedup (it would otherwise
+        be an orphan) while preserving it on failure so the user can
+        retry without re-downloading.
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
@@ -163,11 +165,11 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
         logger.debug("Conversion traceback:", exc_info=True)
-        return False
+        return "failed"
 
     if result.skipped:
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
-        return False
+        return "skipped"
 
     doc_name = file_path.stem
     index_result = None  # populated only on the long-doc branch
@@ -181,7 +183,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
             logger.debug("Indexing traceback:", exc_info=True)
-            return False
+            return "failed"
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
         click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
@@ -199,7 +201,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
-                    return False
+                    return "failed"
     else:
         click.echo(f"  Compiling short doc...")
         for attempt in range(2):
@@ -213,7 +215,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
-                    return False
+                    return "failed"
 
     # Register hash only after successful compilation
     if result.file_hash:
@@ -232,7 +234,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> bool:
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
-    return True
+    return "added"
 
 
 # ---------------------------------------------------------------------------
@@ -426,10 +428,12 @@ def add(ctx, path):
         fetched = fetch_url_to_raw(path, kb_dir)
         if fetched is None:
             return
-        added = add_single_file(fetched, kb_dir)
-        if not added:
-            # Duplicate (or failed mid-pipeline) — drop the just-fetched
-            # file so raw/ doesn't accumulate orphans across retries.
+        outcome = add_single_file(fetched, kb_dir)
+        # Only clean up on dedup-skip. On "failed" we keep the file so
+        # the user can retry (e.g. transient LLM error during compile)
+        # without re-downloading — and so they don't lose data when
+        # indexing has already succeeded but compilation didn't.
+        if outcome == "skipped":
             fetched.unlink(missing_ok=True)
         return
 
