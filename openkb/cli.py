@@ -1720,3 +1720,77 @@ def skill_validate(ctx, name, strict):
 
     if any_failed:
         ctx.exit(1)
+
+
+@skill.command("eval")
+@click.argument("name")
+@click.option(
+    "--save", "save_flag", is_flag=True, default=False,
+    help="Persist the generated eval set to .openkb/eval-sets/<name>.json",
+)
+@click.option(
+    "--eval-set", "eval_set_path", default=None, type=click.Path(),
+    help="Use a saved eval set instead of generating fresh prompts.",
+)
+@click.option(
+    "--count", default=10, type=int,
+    help="Number of should-trigger + should-not prompts (each).",
+)
+@click.pass_context
+def skill_eval(ctx, name, save_flag, eval_set_path, count):
+    """Measure how accurately a compiled skill's description fires.
+
+    Generates trigger-eval prompts via LLM, then asks a grader LLM whether
+    the description should activate the skill for each prompt. Prints pass
+    rate + miss list.
+    """
+    import asyncio
+    from openkb.skill_evaluator import (
+        run_eval, save_eval_set, load_eval_set, EvalPrompt,
+    )
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found.", err=True)
+        ctx.exit(1)
+
+    skill_dir = kb_dir / "output" / "skills" / name
+    if not skill_dir.is_dir():
+        click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
+        ctx.exit(1)
+
+    _setup_llm_key(kb_dir)
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    eval_set: list[EvalPrompt] | None = None
+    if eval_set_path:
+        eval_set = load_eval_set(Path(eval_set_path))
+        click.echo(f"Loaded eval set from {eval_set_path} ({len(eval_set)} prompts).")
+    else:
+        click.echo(f"Generating eval set for '{name}' (count={count} per side)...")
+
+    try:
+        result = asyncio.run(run_eval(
+            skill_dir, model=model, eval_set=eval_set, count=count,
+        ))
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    click.echo(f"\nEval set: {result.total} prompts")
+    click.echo(
+        f"Pass rate: {result.passed}/{result.total} "
+        f"({result.pass_rate * 100:.0f}%)"
+    )
+
+    if result.misses:
+        click.echo(f"\nMisses ({len(result.misses)}):")
+        for miss in result.misses:
+            click.echo(f"  - {miss.label} {miss.prompt.question}")
+    else:
+        click.echo("\nAll prompts graded correctly.")
+
+    if save_flag and eval_set is None:
+        path = save_eval_set(kb_dir, name, result.prompts)
+        click.echo(f"\nEval set persisted to {path}")

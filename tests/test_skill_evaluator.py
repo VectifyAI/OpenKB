@@ -1,0 +1,232 @@
+"""Tests for openkb.skill_evaluator.
+
+The Runner.run call is mocked everywhere — no real LLM tokens spent.
+What we DO verify:
+  * Description extraction from SKILL.md frontmatter
+  * Generator output parsing (with + without code fences)
+  * Grader response handling (uppercase / lowercase / ambiguous)
+  * End-to-end run_eval with mocked grading
+  * Save/load round-trip for persisted eval sets
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from openkb.skill_evaluator import (
+    EvalMiss,
+    EvalPrompt,
+    EvalResult,
+    _read_description,
+    generate_eval_set,
+    grade_one,
+    load_eval_set,
+    run_eval,
+    save_eval_set,
+)
+
+
+def _make_skill(tmp_path: Path, *, description: str | None = "Triggers for foo questions.") -> Path:
+    """Create a minimal SKILL.md and return the skill directory."""
+    skill_dir = tmp_path / "output" / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    if description is None:
+        body = "---\nname: demo\n---\n\n# demo\n"
+    else:
+        body = f"---\nname: demo\ndescription: {description}\n---\n\n# demo\n"
+    (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+    return skill_dir
+
+
+# -------- _read_description ---------------------------------------------------
+
+
+def test_read_description_extracts_field(tmp_path):
+    skill_dir = _make_skill(tmp_path, description="Distill thoughts about transformers.")
+    assert _read_description(skill_dir) == "Distill thoughts about transformers."
+
+
+def test_read_description_raises_on_missing_frontmatter(tmp_path):
+    skill_dir = tmp_path / "output" / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# demo\n\nNo frontmatter at all.\n")
+    with pytest.raises(RuntimeError, match="frontmatter"):
+        _read_description(skill_dir)
+
+
+def test_read_description_raises_on_missing_description_field(tmp_path):
+    skill_dir = _make_skill(tmp_path, description=None)
+    with pytest.raises(RuntimeError, match="description"):
+        _read_description(skill_dir)
+
+
+# -------- generate_eval_set ---------------------------------------------------
+
+
+def _fake_generator_payload(count: int = 10) -> str:
+    trig = [f"trigger question {i}" for i in range(count)]
+    no = [f"unrelated question {i}" for i in range(count)]
+    return json.dumps({"should_trigger": trig, "should_not": no})
+
+
+@pytest.mark.asyncio
+async def test_generate_eval_set_parses_plain_json(tmp_path):
+    skill_dir = _make_skill(tmp_path)
+
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output=_fake_generator_payload(10))
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        prompts = await generate_eval_set(skill_dir, model="gpt-4o-mini", count=10)
+
+    assert len(prompts) == 20
+    assert sum(1 for p in prompts if p.expected == "trigger") == 10
+    assert sum(1 for p in prompts if p.expected == "no-trigger") == 10
+    assert prompts[0].question == "trigger question 0"
+    assert prompts[10].question == "unrelated question 0"
+
+
+@pytest.mark.asyncio
+async def test_generate_eval_set_strips_code_fences(tmp_path):
+    skill_dir = _make_skill(tmp_path)
+    fenced = "```json\n" + _fake_generator_payload(3) + "\n```"
+
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output=fenced)
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        prompts = await generate_eval_set(skill_dir, model="gpt-4o-mini", count=3)
+
+    assert len(prompts) == 6
+
+
+# -------- grade_one -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grade_one_returns_trigger_for_trigger_response():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="TRIGGER")
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        out = await grade_one("desc", "question?", model="gpt-4o-mini")
+    assert out == "trigger"
+
+
+@pytest.mark.asyncio
+async def test_grade_one_returns_no_trigger_for_negative_response():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="NO-TRIGGER")
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        out = await grade_one("desc", "question?", model="gpt-4o-mini")
+    assert out == "no-trigger"
+
+
+@pytest.mark.asyncio
+async def test_grade_one_handles_mixed_case():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="trigger")
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        out = await grade_one("desc", "question?", model="gpt-4o-mini")
+    assert out == "trigger"
+
+
+@pytest.mark.asyncio
+async def test_grade_one_handles_space_variant():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="No Trigger")
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        out = await grade_one("desc", "question?", model="gpt-4o-mini")
+    assert out == "no-trigger"
+
+
+@pytest.mark.asyncio
+async def test_grade_one_defaults_to_no_trigger_on_ambiguous_output():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="hmm not sure")
+
+    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        out = await grade_one("desc", "question?", model="gpt-4o-mini")
+    assert out == "no-trigger"
+
+
+# -------- run_eval ------------------------------------------------------------
+
+
+def _build_eval_set(n_trig: int = 3, n_no: int = 3) -> list[EvalPrompt]:
+    prompts: list[EvalPrompt] = []
+    for i in range(n_trig):
+        prompts.append(EvalPrompt(question=f"trig {i}", expected="trigger"))
+    for i in range(n_no):
+        prompts.append(EvalPrompt(question=f"no {i}", expected="no-trigger"))
+    return prompts
+
+
+@pytest.mark.asyncio
+async def test_run_eval_happy_path_all_correct(tmp_path):
+    skill_dir = _make_skill(tmp_path)
+    eval_set = _build_eval_set(3, 3)
+
+    async def fake_grade(description, question, *, model):
+        # Return the ground truth label — perfect grader.
+        match = next(p for p in eval_set if p.question == question)
+        return match.expected
+
+    with patch("openkb.skill_evaluator.grade_one", side_effect=fake_grade):
+        result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
+
+    assert isinstance(result, EvalResult)
+    assert result.total == 6
+    assert result.passed == 6
+    assert result.pass_rate == 1.0
+    assert result.misses == []
+
+
+@pytest.mark.asyncio
+async def test_run_eval_reports_misses(tmp_path):
+    skill_dir = _make_skill(tmp_path)
+    eval_set = _build_eval_set(3, 3)
+
+    # Grader always says "trigger" — so the 3 no-trigger prompts will miss.
+    async def fake_grade(description, question, *, model):
+        return "trigger"
+
+    with patch("openkb.skill_evaluator.grade_one", side_effect=fake_grade):
+        result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
+
+    assert result.total == 6
+    assert result.passed == 3
+    assert len(result.misses) == 3
+    assert all(m.prompt.expected == "no-trigger" for m in result.misses)
+    assert all(m.graded == "trigger" for m in result.misses)
+    assert result.pass_rate == pytest.approx(0.5)
+    # EvalMiss.label sanity check
+    assert "no-trigger" in result.misses[0].label
+    assert "trigger" in result.misses[0].label
+
+
+# -------- save/load round-trip ------------------------------------------------
+
+
+def test_save_and_load_eval_set_round_trip(tmp_path):
+    prompts = _build_eval_set(2, 2)
+    path = save_eval_set(tmp_path, "demo", prompts)
+
+    assert path == tmp_path / ".openkb" / "eval-sets" / "demo.json"
+    assert path.is_file()
+
+    data = json.loads(path.read_text())
+    assert data["should_trigger"] == ["trig 0", "trig 1"]
+    assert data["should_not"] == ["no 0", "no 1"]
+
+    loaded = load_eval_set(path)
+    assert len(loaded) == 4
+    assert [p.question for p in loaded if p.expected == "trigger"] == ["trig 0", "trig 1"]
+    assert [p.question for p in loaded if p.expected == "no-trigger"] == ["no 0", "no 1"]

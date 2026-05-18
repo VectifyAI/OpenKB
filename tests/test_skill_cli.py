@@ -306,3 +306,83 @@ def test_skill_new_keeps_existing_skill_when_key_setup_fails(tmp_path):
     assert result.exit_code != 0
     # Old skill must still be there
     assert (target / "stale.txt").read_text() == "priceless"
+
+
+# --------------------------------------------------------------------------
+# `openkb skill eval` — trigger-accuracy evaluator
+# --------------------------------------------------------------------------
+
+def _make_skill_dir(kb_dir, name="demo", description="Triggers for demo questions."):
+    """Create a minimal compiled skill on disk under <kb>/output/skills/<name>."""
+    skill_dir = kb_dir / "output" / "skills" / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
+def test_skill_eval_runs_with_provided_eval_set(tmp_path):
+    """Pass a pre-saved eval set + a perfect-grader mock — expect 100% pass."""
+    kb = _make_kb(tmp_path)
+    _make_skill_dir(kb, "demo")
+
+    # Save an eval set we can point --eval-set at.
+    eval_dir = kb / ".openkb" / "eval-sets"
+    eval_dir.mkdir(parents=True)
+    eval_path = eval_dir / "demo.json"
+    eval_path.write_text(json.dumps({
+        "should_trigger": ["t0", "t1"],
+        "should_not": ["n0", "n1"],
+    }))
+
+    async def perfect_grader(description, question, *, model):
+        return "trigger" if question.startswith("t") else "no-trigger"
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb), \
+         patch("openkb.cli._setup_llm_key", return_value=None), \
+         patch("openkb.skill_evaluator.grade_one", side_effect=perfect_grader):
+        result = runner.invoke(cli, [
+            "skill", "eval", "demo", "--eval-set", str(eval_path),
+        ])
+
+    assert result.exit_code == 0, result.output
+    assert "Pass rate" in result.output
+    assert "4/4" in result.output
+    assert "100%" in result.output
+    assert "All prompts graded correctly" in result.output
+
+
+def test_skill_eval_reports_misses(tmp_path):
+    """Grader always returns 'trigger' — the no-trigger half must show as misses."""
+    kb = _make_kb(tmp_path)
+    _make_skill_dir(kb, "demo")
+
+    eval_dir = kb / ".openkb" / "eval-sets"
+    eval_dir.mkdir(parents=True)
+    eval_path = eval_dir / "demo.json"
+    eval_path.write_text(json.dumps({
+        "should_trigger": ["t0", "t1"],
+        "should_not": ["n0", "n1"],
+    }))
+
+    async def biased_grader(description, question, *, model):
+        return "trigger"
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb), \
+         patch("openkb.cli._setup_llm_key", return_value=None), \
+         patch("openkb.skill_evaluator.grade_one", side_effect=biased_grader):
+        result = runner.invoke(cli, [
+            "skill", "eval", "demo", "--eval-set", str(eval_path),
+        ])
+
+    assert result.exit_code == 0, result.output
+    assert "Pass rate" in result.output
+    assert "2/4" in result.output
+    assert "Misses (2)" in result.output
+    # Each missed prompt must be listed in the output
+    assert "n0" in result.output
+    assert "n1" in result.output
