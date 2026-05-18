@@ -1,17 +1,22 @@
 """Regenerate the per-KB Claude Code plugin marketplace manifest.
 
-After every `openkb skill new` (and after any chat-side edit to a SKILL.md
-frontmatter), this module scans ``<kb>/output/skills/*/SKILL.md`` and
-rewrites ``<kb>/.claude-plugin/marketplace.json`` listing all currently
+After every successful skill generation (CLI ``openkb skill new`` or
+chat ``/skill new``, both via ``Generator.run``), this module scans
+``<kb>/output/skills/*/SKILL.md`` and rewrites
+``<kb>/.claude-plugin/marketplace.json`` listing all currently
 compiled skills.
 
 The schema is a subset compatible with the OpenKB repo's own
 ``.claude-plugin/marketplace.json``: one plugin entry per KB, with a
-``skills`` array of relative paths. ``owner`` is derived from git config
-so Claude Code's ``/plugin marketplace add`` accepts the manifest. Other
-agent CLIs (``npx skills add``) install from the same file.
+``skills`` array of relative paths. ``owner`` is derived from git
+config (run with cwd=kb_dir) so Claude Code's ``/plugin marketplace
+add`` accepts the manifest. Other agent CLIs (``npx skills add``)
+install from the same file.
 
-This is a deterministic step — no LLM calls.
+This is a deterministic step — no LLM calls. If a chat-session edit
+to a SKILL.md changes the description after compile, the manifest is
+NOT auto-regenerated; re-run ``openkb skill new`` or
+``/skill new`` to refresh it.
 """
 from __future__ import annotations
 

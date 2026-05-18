@@ -95,11 +95,13 @@ def test_regenerate_reads_description_from_frontmatter(tmp_path):
     regenerate_marketplace(kb)
 
     manifest = json.loads((kb / ".claude-plugin" / "marketplace.json").read_text())
-    # Manifest's metadata.description should at minimum mention the KB context;
-    # the per-skill description lives in the SKILL.md itself (the manifest just
-    # points at the skill directories).
-    assert "marketplace.json" in str(kb / ".claude-plugin" / "marketplace.json")
-    # Reload SKILL.md to confirm description preserved
+    # Per-skill descriptions live in the SKILL.md frontmatter, NOT in the
+    # marketplace manifest. The manifest just points at skill directories;
+    # the loading agent (Claude Code, npx skills) reads each SKILL.md to
+    # discover the per-skill description. Locking this in: the description
+    # must NOT leak into the top-level manifest metadata.
+    assert "the specific description goes here" not in manifest["metadata"]["description"]
+    # And the description IS preserved on disk in SKILL.md
     skill_md = (kb / "output" / "skills" / "demo" / "SKILL.md").read_text()
     assert "the specific description goes here" in skill_md
 

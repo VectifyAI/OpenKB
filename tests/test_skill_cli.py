@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from openkb.cli import cli
@@ -27,7 +26,7 @@ def _make_kb(tmp_path):
 
 
 def _fake_compile(kb_dir, skill_name, **_kw):
-    """Side-effect for the patched run_skill_compile: write a minimal SKILL.md."""
+    """Side-effect for the patched run_skill_create: write a minimal SKILL.md."""
     target = kb_dir / "output" / "skills" / skill_name
     target.mkdir(parents=True, exist_ok=True)
     (target / "SKILL.md").write_text(
@@ -43,7 +42,7 @@ def test_skill_new_succeeds_and_writes_files(tmp_path):
         _fake_compile(kb_dir, skill_name)
 
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.generator.run_skill_compile", new=AsyncMock(side_effect=fake_run)):
+         patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
         result = runner.invoke(cli, ["skill", "new", "demo", "test intent"])
 
     assert result.exit_code == 0, result.output
@@ -124,9 +123,28 @@ def test_skill_new_overwrites_with_yes_flag(tmp_path):
         _fake_compile(kb_dir, skill_name)
 
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.generator.run_skill_compile", new=AsyncMock(side_effect=fake_run)):
+         patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
         result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
 
     assert result.exit_code == 0, result.output
     assert not (kb / "output" / "skills" / "demo" / "stale.txt").exists()
     assert (kb / "output" / "skills" / "demo" / "SKILL.md").exists()
+
+
+def test_skill_new_keeps_existing_skill_when_key_setup_fails(tmp_path):
+    """If LLM key setup raises (e.g. no API key), the old skill output
+    must be preserved — don't rmtree before key setup is verified."""
+    kb = _make_kb(tmp_path)
+    target = kb / "output" / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "stale.txt").write_text("priceless")
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb), \
+         patch("openkb.cli._setup_llm_key",
+               side_effect=RuntimeError("no API key configured")):
+        result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
+
+    assert result.exit_code != 0
+    # Old skill must still be there
+    assert (target / "stale.txt").read_text() == "priceless"

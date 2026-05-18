@@ -1,4 +1,4 @@
-"""Tests for openkb.agent.skill_compiler.
+"""Tests for openkb.agent.skill_creator.
 
 The agent itself is mocked (we don't want to spend tokens in unit tests).
 What we DO test:
@@ -6,15 +6,18 @@ What we DO test:
   * System prompt gets the intent and skill_name interpolated
   * The skill output dir is created before the agent starts
   * If the agent finishes without writing SKILL.md, we surface an error
+  * If the SDK hits its max-turns cap, we translate to RuntimeError so
+    the CLI/chat call sites (which only catch RuntimeError) print a
+    friendly message instead of leaking a traceback.
 """
 from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from openkb.agent.skill_compiler import (
-    build_skill_compile_agent,
-    run_skill_compile,
+from openkb.agent.skill_creator import (
+    build_skill_create_agent,
+    run_skill_create,
 )
 
 
@@ -29,7 +32,7 @@ def _make_kb(tmp_path):
 
 def test_build_agent_interpolates_intent_and_name(tmp_path):
     kb = _make_kb(tmp_path)
-    agent = build_skill_compile_agent(
+    agent = build_skill_create_agent(
         wiki_root=str(kb / "wiki"),
         skill_root=str(kb / "output" / "skills" / "demo"),
         skill_name="demo",
@@ -41,7 +44,7 @@ def test_build_agent_interpolates_intent_and_name(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_skill_compile_creates_output_dir(tmp_path):
+async def test_run_skill_create_creates_output_dir(tmp_path):
     kb = _make_kb(tmp_path)
     target = kb / "output" / "skills" / "demo"
     # Fake the agent run: just write a minimal SKILL.md to simulate success.
@@ -53,8 +56,8 @@ async def test_run_skill_compile_creates_output_dir(tmp_path):
         from types import SimpleNamespace
         return SimpleNamespace(final_output="done")
 
-    with patch("openkb.agent.skill_compiler.Runner.run", new=AsyncMock(side_effect=fake_runner)):
-        await run_skill_compile(
+    with patch("openkb.agent.skill_creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        await run_skill_create(
             kb_dir=kb,
             skill_name="demo",
             intent="test intent",
@@ -65,7 +68,7 @@ async def test_run_skill_compile_creates_output_dir(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_skill_compile_raises_when_no_skill_md_written(tmp_path):
+async def test_run_skill_create_raises_when_no_skill_md_written(tmp_path):
     kb = _make_kb(tmp_path)
     target = kb / "output" / "skills" / "demo"
     target.mkdir(parents=True, exist_ok=True)
@@ -74,11 +77,33 @@ async def test_run_skill_compile_raises_when_no_skill_md_written(tmp_path):
         from types import SimpleNamespace
         return SimpleNamespace(final_output="done")
 
-    with patch("openkb.agent.skill_compiler.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="did not write SKILL.md"):
-            await run_skill_compile(
+            await run_skill_create(
                 kb_dir=kb,
                 skill_name="demo",
                 intent="test intent",
+                model="gpt-4o-mini",
+            )
+
+
+@pytest.mark.asyncio
+async def test_run_skill_create_translates_max_turns_to_runtime_error(tmp_path):
+    """MaxTurnsExceeded from the SDK should be re-raised as a RuntimeError
+    with a user-friendly message — otherwise both CLI and chat call sites
+    (which only catch RuntimeError) leak a Python traceback."""
+    from agents.exceptions import MaxTurnsExceeded
+    kb = _make_kb(tmp_path)
+
+    async def fake_runner(*args, **kwargs):
+        raise MaxTurnsExceeded("agent ran out of turns")
+
+    with patch("openkb.agent.skill_creator.Runner.run",
+               new=AsyncMock(side_effect=fake_runner)):
+        with pytest.raises(RuntimeError, match="step cap"):
+            await run_skill_create(
+                kb_dir=kb,
+                skill_name="demo",
+                intent="x",
                 model="gpt-4o-mini",
             )

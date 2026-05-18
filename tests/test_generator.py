@@ -44,7 +44,7 @@ def test_generator_skill_target_constructs_ok(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generator_run_delegates_to_skill_compiler(tmp_path):
+async def test_generator_run_delegates_to_skill_creator(tmp_path):
     kb = _make_kb(tmp_path)
     g = Generator(
         target_type="skill",
@@ -53,7 +53,7 @@ async def test_generator_run_delegates_to_skill_compiler(tmp_path):
         kb_dir=kb,
         model="gpt-4o-mini",
     )
-    with patch("openkb.generator.run_skill_compile", new=AsyncMock()) as runner, \
+    with patch("openkb.generator.run_skill_create", new=AsyncMock()) as runner, \
          patch("openkb.generator.regenerate_marketplace") as regen:
         await g.run()
     runner.assert_awaited_once()

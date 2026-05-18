@@ -1,7 +1,5 @@
-"""Tests for openkb.agent.skill_tools — path-scoped IO for the skill compile agent."""
+"""Tests for openkb.agent.skill_tools — path-scoped IO for the skill-create agent."""
 from __future__ import annotations
-
-import pytest
 
 from openkb.agent.skill_tools import (
     list_wiki_dir,

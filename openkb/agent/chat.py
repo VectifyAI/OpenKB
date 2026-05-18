@@ -525,7 +525,7 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
     # wiki content). Chat doesn't have a -y flag, so existing skills
     # block with a clear instruction to delete first.
     from openkb.cli import _preflight_skill_new
-    err = _preflight_skill_new(kb_dir, name, yes_flag=False)
+    err = _preflight_skill_new(kb_dir, name)
     if err:
         _fmt(style, ("class:error", f"[ERROR] {err}\n"))
         return

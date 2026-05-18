@@ -1,9 +1,9 @@
-"""The skill-compile agent.
+"""The skill-create agent.
 
 Builds on the same openai-agents-SDK + LiteLLM stack as the query agent
 in ``openkb.agent.query``. The differences:
 
-* System prompt comes from ``openkb/prompts/skill_compile.md`` and is
+* System prompt comes from ``openkb/prompts/skill_create.md`` and is
   interpolated with the user's intent and the target skill name.
 * Tools are scoped: read the wiki, query the wiki, write only within
   the target skill directory.
@@ -29,7 +29,7 @@ from openkb.schema import get_agents_md
 MAX_TURNS = 80  # higher than query (50) because compile can write multiple files
 
 
-def build_skill_compile_agent(
+def build_skill_create_agent(
     *,
     wiki_root: str,
     skill_root: str,
@@ -51,7 +51,7 @@ def build_skill_compile_agent(
     Path(skill_root).mkdir(parents=True, exist_ok=True)
 
     wiki_schema = get_agents_md(Path(wiki_root))
-    instructions = load_prompt("skill_compile").format(
+    instructions = load_prompt("skill_create").format(
         intent=intent,
         skill_name=skill_name,
         wiki_schema=wiki_schema,
@@ -90,7 +90,7 @@ def build_skill_compile_agent(
         return f"Compilation marked done: {summary}"
 
     return Agent(
-        name="skill-compiler",
+        name="skill-creator",
         instructions=instructions,
         tools=[list_wiki_dir, read_wiki_file, query_wiki, write_skill_file, done],
         model=f"litellm/{model}",
@@ -98,7 +98,7 @@ def build_skill_compile_agent(
     )
 
 
-async def run_skill_compile(
+async def run_skill_create(
     *,
     kb_dir: Path,
     skill_name: str,
@@ -108,12 +108,13 @@ async def run_skill_compile(
     """Compile a single skill from the KB's wiki.
 
     Returns the path to the produced skill directory. Raises
-    ``RuntimeError`` if the agent finishes without writing ``SKILL.md``.
+    ``RuntimeError`` if the agent finishes without writing ``SKILL.md``,
+    or if the SDK hits its turn cap before the agent declares done.
     """
     wiki_root = str(kb_dir / "wiki")
     skill_root = kb_dir / "output" / "skills" / skill_name
 
-    agent = build_skill_compile_agent(
+    agent = build_skill_create_agent(
         wiki_root=wiki_root,
         skill_root=str(skill_root),
         skill_name=skill_name,
@@ -128,7 +129,19 @@ async def run_skill_compile(
         f"working method. Read the wiki, then write the skill files."
     )
 
-    await Runner.run(agent, seed, max_turns=MAX_TURNS)
+    # Lazy import: keeps the top of this module independent of the SDK's
+    # internal exception layout in case its export path moves.
+    from agents.exceptions import MaxTurnsExceeded
+
+    try:
+        await Runner.run(agent, seed, max_turns=MAX_TURNS)
+    except MaxTurnsExceeded as exc:
+        raise RuntimeError(
+            f"Skill compilation hit the {MAX_TURNS}-step cap before finishing. "
+            f"The wiki may be too large for a single skill, or the intent may "
+            f"be too broad. Try splitting into multiple skills with narrower "
+            f"intents, or pass a smaller wiki subset."
+        ) from exc
 
     if not (skill_root / "SKILL.md").exists():
         raise RuntimeError(

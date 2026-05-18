@@ -165,21 +165,20 @@ def _validate_skill_name(name: str) -> str | None:
     return None
 
 
-def _preflight_skill_new(
-    kb_dir: Path, name: str, yes_flag: bool,
-) -> str | None:
-    """Run all the safety gates for ``openkb skill new`` / ``/skill new``.
+def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
+    """Run shared safety gates for ``openkb skill new`` / ``/skill new``.
 
-    Returns ``None`` if it's safe to proceed (caller will then either
-    proceed or, for the overwrite case, call ``_clear_existing_skill_dir``
-    after confirming with the user). Returns an error message string if
-    one of the gates trips.
+    Checks (in order):
+      * skill name is a valid kebab-case slug
+      * ``<kb>/wiki`` exists
+      * ``<kb>/wiki/concepts`` or ``<kb>/wiki/summaries`` has at least
+        one file (i.e. some document has been ingested + compiled)
 
-    NOTE: This intentionally does NOT handle the overwrite confirmation
-    itself — that's caller-specific (TTY-based ``click.confirm`` in CLI;
-    explicit ``--force``-style flag in chat). It only returns an error if
-    the target dir exists AND ``yes_flag`` is False, and the caller is
-    expected to detect that error message and prompt as appropriate.
+    Returns ``None`` if all gates pass, else a single-line error message
+    suitable to print to the user.
+
+    Overwrite handling is NOT done here — the CLI handles it with
+    ``-y`` + ``click.confirm``; chat refuses overwrite outright.
     """
     err = _validate_skill_name(name)
     if err:
@@ -207,7 +206,6 @@ def _preflight_skill_new(
 
 def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
     """Delete an existing ``<kb>/output/skills/<name>/`` directory."""
-    import shutil
     target = kb_dir / "output" / "skills" / name
     if target.exists():
         shutil.rmtree(target)
@@ -1440,20 +1438,29 @@ def skill_new(ctx, name, intent, yes_flag):
 
       openkb skill new karpathy-thinking "Reason about transformers like Karpathy"
     """
-    import asyncio
-    import sys
-
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.", err=True)
         ctx.exit(1)
 
-    err = _preflight_skill_new(kb_dir, name, yes_flag)
+    err = _preflight_skill_new(kb_dir, name)
     if err:
         click.echo(f"[ERROR] {err}", err=True)
         ctx.exit(1)
 
-    # Overwrite handling (CLI-specific)
+    # Verify LLM key + load config BEFORE touching existing output. Any
+    # failure here (missing API key, malformed config) must leave the old
+    # skill directory intact — we can't replace it if we can't proceed.
+    try:
+        _setup_llm_key(kb_dir)
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Overwrite handling (CLI-specific). Done AFTER key/config so a
+    # missing key doesn't wipe the user's existing skill output.
     target = kb_dir / "output" / "skills" / name
     if target.exists():
         if yes_flag:
@@ -1473,11 +1480,6 @@ def skill_new(ctx, name, intent, yes_flag):
                 err=True,
             )
             ctx.exit(1)
-
-    # Load config + key
-    _setup_llm_key(kb_dir)
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
-    model = config.get("model", DEFAULT_CONFIG["model"])
 
     # Run the generator
     from openkb.generator import Generator

@@ -9,14 +9,14 @@ same:
   distribution mechanic as skills)
 
 Each target plugs in its own `run` coroutine. v0.1's only entry calls into
-``openkb.agent.skill_compiler.run_skill_compile``.
+``openkb.agent.skill_creator.run_skill_create``.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
 
-from openkb.agent.skill_compiler import run_skill_compile
+from openkb.agent.skill_creator import run_skill_create
 from openkb.marketplace import regenerate_marketplace
 
 
@@ -56,7 +56,7 @@ class Generator:
 
     async def run(self) -> Path:
         """Execute the generator. Returns the path to the produced artifact."""
-        await run_skill_compile(
+        await run_skill_create(
             kb_dir=self.kb_dir,
             skill_name=self.name,
             intent=self.intent,
