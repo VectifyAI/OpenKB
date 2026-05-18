@@ -150,6 +150,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
 | <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add documents and compile to wiki. URL ingest auto-detects PDF (saved as `.pdf` → PageIndex / markitdown) vs HTML (trafilatura main-content extract → `.md`) |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Compile a skill from this KB's wiki into `output/skills/<name>/` and update the marketplace manifest |
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty-concepts` to retain artifacts) |
 | <code>openkb&nbsp;query&nbsp;"question"</code> | Ask a question over the knowledge base (use `--save` to save the answer to `wiki/explorations/`) |
 | `openkb chat` | Start an interactive multi-turn chat (use `--resume`, `--list`, `--delete` to manage sessions) |
@@ -160,6 +161,46 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 | <code>openkb&nbsp;feedback&nbsp;["msg"]</code> | File feedback by opening a prefilled GitHub issue (use `--type bug/feature/question` to tag the issue) |
 
 <!-- | `openkb lint --fix` | Auto-fix what it can | -->
+
+### Skills — compile your wiki into a redistributable skill
+
+Once you have a populated wiki, you can compile a subset of it into an
+**Anthropic Skill** — a portable folder that Claude Code, Codex CLI,
+Gemini CLI, and Cursor all know how to load.
+
+```bash
+openkb skill new karpathy-thinking \
+  "Reason about transformers and attention in Karpathy's style"
+```
+
+This produces `output/skills/karpathy-thinking/` with `SKILL.md`,
+optional `references/`, and an auto-updated
+`.claude-plugin/marketplace.json` for distribution.
+
+**Install locally:**
+
+```bash
+cp -r output/skills/karpathy-thinking ~/.claude/skills/
+```
+
+**Share with others:**
+
+Push your KB directory to GitHub, then anyone can install all your skills with one command:
+
+```bash
+npx skills@latest add <your-org>/<your-repo>
+```
+
+You can also iterate inside chat:
+
+```
+/skill new karpathy-thinking "Reason about transformers like Karpathy"
+[generation streams]
+> description is too generic, make it about transformer implementations specifically
+[agent edits SKILL.md frontmatter in place]
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit your compiled skill back to the OpenKB community registry.
 
 ### Interactive Chat
 
