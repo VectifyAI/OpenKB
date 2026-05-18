@@ -28,6 +28,7 @@ keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "age
 dependencies = [
     "pageindex==0.3.0.dev1",
     "markitdown[all]",
+    "trafilatura>=2.0",
     "click>=8.0",
     "watchdog>=3.0",
     "litellm",

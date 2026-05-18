@@ -14,6 +14,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Literal
 
 import os
 
@@ -130,7 +131,7 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> None:
+def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -138,6 +139,14 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     2. Convert the document (hash-check; skip if already known).
     3. If long doc: run PageIndex then compile_long_doc.
     4. Else: compile_short_doc.
+
+    Returns:
+        ``"added"`` on full success, ``"skipped"`` when the file's hash
+        is already in the registry (dedup), or ``"failed"`` when any
+        pipeline stage raised. URL-ingest distinguishes these so it can
+        unlink the just-downloaded raw file on dedup (it would otherwise
+        be an orphan) while preserving it on failure so the user can
+        retry without re-downloading.
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
@@ -156,11 +165,11 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
         logger.debug("Conversion traceback:", exc_info=True)
-        return
+        return "failed"
 
     if result.skipped:
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
-        return
+        return "skipped"
 
     doc_name = file_path.stem
     index_result = None  # populated only on the long-doc branch
@@ -174,7 +183,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
             logger.debug("Indexing traceback:", exc_info=True)
-            return
+            return "failed"
 
         summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
         click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
@@ -192,7 +201,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
-                    return
+                    return "failed"
     else:
         click.echo(f"  Compiling short doc...")
         for attempt in range(2):
@@ -206,7 +215,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
                 else:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
-                    return
+                    return "failed"
 
     # Register hash only after successful compilation
     if result.file_hash:
@@ -225,6 +234,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
+    return "added"
 
 
 # ---------------------------------------------------------------------------
@@ -395,10 +405,36 @@ def init(language):
 @click.argument("path")
 @click.pass_context
 def add(ctx, path):
-    """Add a document or directory of documents at PATH to the knowledge base."""
+    """Add a document or directory of documents at PATH to the knowledge base.
+
+    PATH may be a local file, a local directory (which is walked
+    recursively for supported extensions), or an http(s) URL. URLs are
+    fetched into ``raw/`` first: PDF responses (by Content-Type and
+    magic-byte sniff) are saved as ``.pdf``; HTML responses are run
+    through trafilatura's main-content extractor and saved as ``.md``.
+    """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    # URL ingest: download into raw/ first, then call add_single_file
+    # explicitly so we can clean up the just-downloaded file if it
+    # turns out to be a duplicate (registry already has its hash).
+    # Without this, re-adding the same URL leaves an orphan in raw/
+    # that the registry can't reach via openkb remove.
+    from openkb.url_ingest import looks_like_url, fetch_url_to_raw
+    if looks_like_url(path):
+        fetched = fetch_url_to_raw(path, kb_dir)
+        if fetched is None:
+            return
+        outcome = add_single_file(fetched, kb_dir)
+        # Only clean up on dedup-skip. On "failed" we keep the file so
+        # the user can retry (e.g. transient LLM error during compile)
+        # without re-downloading — and so they don't lose data when
+        # indexing has already succeeded but compilation didn't.
+        if outcome == "skipped":
+            fetched.unlink(missing_ok=True)
         return
 
     target = Path(path)
