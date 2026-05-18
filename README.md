@@ -22,23 +22,7 @@ The idea is based on a [concept](https://x.com/karpathy/status/20398056595256445
 
 Traditional RAG rediscovers knowledge from scratch on every query. Nothing accumulates. OpenKB compiles knowledge once into a persistent wiki, then keeps it current. Cross-references already exist. Contradictions are flagged. Synthesis reflects everything consumed.
 
-### Features
-
-OpenKB has two layers: a **wiki foundation** that compiles and maintains your knowledge, and **generators** that turn that wiki into useful artifacts.
-
-**Wiki foundation** — compile and maintain
-- **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, text, and more via markitdown
-- **Scale to long documents** — Handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless long-context retrieval
-- **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
-- **Compiled Wiki** — LLM compiles documents into summaries, concept pages, and cross-links, all kept in sync
-- **Lint** — Health checks find contradictions, gaps, orphans, and stale content
-- **Watch mode** — Drop files into `raw/`, wiki updates automatically
-- **Obsidian compatible** — Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
-
-**Generators** — turn the wiki into something useful
-- **Query** — Ask questions (one-off) against your wiki. The LLM navigates compiled knowledge to answer
-- **Chat** — Multi-turn conversations with persisted sessions you can resume across runs
-- **Skill Factory** — *Drop in a book. Out comes a digital expert.* Compile any subset of your wiki into a redistributable [Anthropic Skill](https://docs.claude.com/en/docs/build-with-claude/skills) installable in Claude Code / Codex / Gemini CLI / Cursor
+OpenKB has two layers: a **wiki foundation** that compiles and maintains your knowledge, and **generators** (query / chat / Skill Factory) that turn it into useful output. See [Usage](#️-usage) for the full command list.
 
 # 🚀 Getting Started
 
