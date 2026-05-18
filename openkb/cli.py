@@ -1362,3 +1362,114 @@ def feedback(ctx, message, feedback_type):
             "  (no browser available — copy the URL above to file the issue)",
             err=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# `openkb skill ...` — skill factory (v0.1)
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def skill():
+    """Compile knowledge into a redistributable Anthropic Skill."""
+
+
+@skill.command("new")
+@click.argument("name")
+@click.argument("intent")
+@click.option(
+    "-y", "--yes", "yes_flag",
+    is_flag=True, default=False,
+    help="Overwrite existing output/skills/<name>/ without prompting.",
+)
+@click.pass_context
+def skill_new(ctx, name, intent, yes_flag):
+    """Compile a new skill from this KB's wiki.
+
+    NAME is a kebab-case slug used for the output directory and skill name.
+    INTENT is a natural-language description of what this skill should do.
+
+    Example:
+
+      openkb skill new karpathy-thinking "Reason about transformers like Karpathy"
+    """
+    import asyncio
+    import shutil
+    import sys
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    # Validate name
+    err = _validate_skill_name(name)
+    if err:
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(2)
+
+    # Validate wiki exists and has content
+    wiki = kb_dir / "wiki"
+    if not wiki.is_dir():
+        click.echo(
+            "[ERROR] No wiki found in this KB. Run `openkb add <source>` "
+            "to ingest documents first.",
+            err=True,
+        )
+        ctx.exit(1)
+    has_content = any(wiki.iterdir())
+    if not has_content:
+        click.echo(
+            "[ERROR] Wiki has no compiled content yet. Ingest at least one "
+            "document with `openkb add` first.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    # Overwrite handling
+    target = kb_dir / "output" / "skills" / name
+    if target.exists():
+        if yes_flag:
+            shutil.rmtree(target)
+        elif sys.stdin.isatty():
+            if not click.confirm(
+                f"output/skills/{name}/ already exists. Overwrite?",
+                default=False,
+            ):
+                click.echo("Aborted.")
+                ctx.exit(1)
+            shutil.rmtree(target)
+        else:
+            click.echo(
+                f"[ERROR] output/skills/{name}/ exists. Pass -y to overwrite "
+                f"in non-interactive contexts.",
+                err=True,
+            )
+            ctx.exit(1)
+
+    # Load config + key
+    _setup_llm_key(kb_dir)
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Run the generator
+    from openkb.generator import Generator
+    click.echo(f"Compiling skill '{name}'...")
+    try:
+        gen = Generator(
+            target_type="skill",
+            name=name,
+            intent=intent,
+            kb_dir=kb_dir,
+            model=model,
+        )
+        asyncio.run(gen.run())
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    click.echo(f"\nSaved: output/skills/{name}/")
+    click.echo(f"Manifest: .claude-plugin/marketplace.json updated")
+    click.echo(f"\nInstall locally:")
+    click.echo(f"  cp -r output/skills/{name} ~/.claude/skills/")
+    click.echo(f"\nShare (push KB to GitHub, then):")
+    click.echo(f"  npx skills@latest add <owner>/<repo>")
