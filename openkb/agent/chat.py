@@ -23,7 +23,7 @@ from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
-from openkb.agent.query import MAX_TURNS, build_query_agent
+from openkb.agent.query import MAX_TURNS, build_chat_agent, build_query_agent
 from openkb.log import append_log
 
 
@@ -59,6 +59,7 @@ _HELP_TEXT = (
     "  /list          List all documents in the knowledge base\n"
     "  /lint          Lint the knowledge base\n"
     "  /add <path>    Add a document or directory to the knowledge base\n"
+    '  /skill new <name> "<intent>"   Compile a skill from the wiki\n'
     "  /help          Show this"
 )
 
@@ -214,6 +215,7 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/list",   "List all documents"),
     ("/lint",   "Lint the knowledge base"),
     ("/add",    "Add a document or directory"),
+    ("/skill",  "compile a skill (try `/skill new <name> \"intent\"`)"),
 ]
 
 
@@ -494,6 +496,59 @@ async def _run_add(arg: str, kb_dir: Path, style: Style) -> None:
         await asyncio.to_thread(add_single_file, target, kb_dir)
 
 
+async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
+    """Dispatch ``/skill new <name> "<intent>"`` and any future skill subcommands."""
+    import shlex
+
+    parts = shlex.split(arg) if arg else []
+    if not parts:
+        _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
+        return
+
+    sub = parts[0].lower()
+    if sub != "new":
+        _fmt(style, ("class:error", f"Unknown skill subcommand: {sub}. Try /skill new.\n"))
+        return
+
+    if len(parts) < 3:
+        _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
+        return
+
+    name = parts[1]
+    intent = " ".join(parts[2:])
+
+    from openkb.cli import _validate_skill_name
+    err = _validate_skill_name(name)
+    if err:
+        _fmt(style, ("class:error", f"[ERROR] {err}\n"))
+        return
+
+    # Load model from KB config
+    from openkb.config import load_config, DEFAULT_CONFIG
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    from openkb.generator import Generator
+    _fmt(style, ("class:slash.help", f"Compiling skill '{name}'...\n"))
+    try:
+        gen = Generator(
+            target_type="skill",
+            name=name,
+            intent=intent,
+            kb_dir=kb_dir,
+            model=model,
+        )
+        await gen.run()
+    except RuntimeError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+
+    _fmt(style, ("class:slash.ok", f"Saved: output/skills/{name}/\n"))
+    _fmt(style, ("class:slash.help",
+        f"Iterate: ask follow-up questions in this chat and the agent can "
+        f"edit files under output/skills/{name}/ directly.\n"))
+
+
 async def _handle_slash(
     cmd: str,
     kb_dir: Path,
@@ -557,6 +612,10 @@ async def _handle_slash(
         await _run_add(arg, kb_dir, style)
         return None
 
+    if head == "/skill":
+        await _handle_slash_skill(arg, kb_dir, style)
+        return None
+
     _fmt(
         style,
         ("class:error", f"Unknown command: {head}. Try /help.\n"),
@@ -579,8 +638,7 @@ async def run_chat(
 
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     language = session.language or config.get("language", "en")
-    wiki_root = str(kb_dir / "wiki")
-    agent = build_query_agent(wiki_root, session.model, language=language)
+    agent = build_chat_agent(kb_dir, session.model, language=language)
 
     _print_header(session, kb_dir, style)
     if session.turn_count > 0:
@@ -620,7 +678,7 @@ async def run_chat(
                 return
             if action == "new_session":
                 session = ChatSession.new(kb_dir, session.model, session.language)
-                agent = build_query_agent(wiki_root, session.model, language=language)
+                agent = build_chat_agent(kb_dir, session.model, language=language)
                 prompt_session = _make_prompt_session(session, style, use_color, kb_dir)
             continue
 

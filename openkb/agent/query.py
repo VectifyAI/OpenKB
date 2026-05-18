@@ -6,7 +6,12 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 
 from agents import ToolOutputImage, ToolOutputText
-from openkb.agent.tools import get_wiki_page_content, read_wiki_file, read_wiki_image
+from openkb.agent.tools import (
+    get_wiki_page_content,
+    read_wiki_file,
+    read_wiki_image,
+    write_kb_file,
+)
 
 MAX_TURNS = 50
 from openkb.schema import get_agents_md
@@ -89,6 +94,43 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
+
+
+def build_chat_agent(
+    kb_dir: Path,
+    model: str,
+    language: str = "en",
+) -> Agent:
+    """Build the chat agent: query agent + a write tool restricted to
+    ``<kb>/wiki/explorations/**`` and ``<kb>/output/**``.
+
+    This is the variant used by the interactive ``openkb chat`` REPL so users
+    can iterate on generated artifacts (e.g. ``output/skills/<name>/``) via
+    natural-language follow-ups without giving the agent unrestricted write
+    access to the wiki.
+    """
+    wiki_root = str(kb_dir / "wiki")
+    kb_root = str(kb_dir)
+    base = build_query_agent(wiki_root, model, language=language)
+
+    @function_tool
+    def write_file(path: str, content: str) -> str:
+        """Write a text file under the KB.
+
+        Allowed paths (relative to KB root):
+          * ``wiki/explorations/**`` — chat-derived notes.
+          * ``output/**``            — generator artifacts (skills, etc.).
+
+        Any other path is rejected. Parent directories are created.
+
+        Args:
+            path: File path relative to KB root
+                (e.g. ``"output/skills/demo/SKILL.md"``).
+            content: Full text content to write (overwrites if file exists).
+        """
+        return write_kb_file(path, content, kb_root)
+
+    return base.clone(tools=[*base.tools, write_file])
 
 
 async def run_query(
