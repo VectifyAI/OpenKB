@@ -131,6 +131,127 @@ def test_skill_new_overwrites_with_yes_flag(tmp_path):
     assert (kb / "output" / "skills" / "demo" / "SKILL.md").exists()
 
 
+def test_skill_new_saves_iteration_when_overwriting(tmp_path):
+    """Overwriting with -y must copy the old skill into the workspace
+    under iteration-1/ before the generator runs."""
+    kb = _make_kb(tmp_path)
+    target = kb / "output" / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: original description\n---\n\n# demo\n"
+    )
+
+    runner = CliRunner()
+
+    async def fake_run(kb_dir, skill_name, intent, model):
+        _fake_compile(kb_dir, skill_name)
+
+    with patch("openkb.cli._find_kb_dir", return_value=kb), \
+         patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+        result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
+
+    assert result.exit_code == 0, result.output
+    iter1 = kb / "output" / "skills" / "demo-workspace" / "iteration-1"
+    assert iter1.is_dir()
+    assert (iter1 / "SKILL.md").exists()
+    assert "original description" in (iter1 / "SKILL.md").read_text()
+    # And a diff.md is dropped against the previous version
+    assert (iter1 / "diff.md").exists()
+
+
+def test_skill_history_command_lists_iterations(tmp_path):
+    """`openkb skill history <name>` lists existing iteration directories."""
+    kb = _make_kb(tmp_path)
+    ws = kb / "output" / "skills" / "demo-workspace"
+    (ws / "iteration-1").mkdir(parents=True)
+    (ws / "iteration-1" / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: v1\n---\n"
+    )
+    (ws / "iteration-2").mkdir(parents=True)
+    (ws / "iteration-2" / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: v2\n---\n"
+    )
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "history", "demo"])
+
+    assert result.exit_code == 0, result.output
+    assert "iteration-1" in result.output
+    assert "iteration-2" in result.output
+
+
+def test_skill_history_command_when_no_iterations(tmp_path):
+    kb = _make_kb(tmp_path)
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "history", "demo"])
+    assert result.exit_code == 0, result.output
+    assert "No previous iterations" in result.output
+
+
+def test_skill_rollback_restores_from_workspace(tmp_path):
+    """`openkb skill rollback <name>` copies the latest iteration back
+    into output/skills/<name>/."""
+    kb = _make_kb(tmp_path)
+    ws = kb / "output" / "skills" / "demo-workspace"
+    (ws / "iteration-1").mkdir(parents=True)
+    (ws / "iteration-1" / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: restored\n---\n\n# demo\n"
+    )
+    # Current skill is "broken"
+    current = kb / "output" / "skills" / "demo"
+    current.mkdir(parents=True)
+    (current / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: broken\n---\n"
+    )
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "rollback", "demo", "-y"])
+
+    assert result.exit_code == 0, result.output
+    text = (current / "SKILL.md").read_text()
+    assert "restored" in text
+    assert "broken" not in text
+    # Marketplace manifest regenerated
+    assert (kb / ".claude-plugin" / "marketplace.json").exists()
+
+
+def test_skill_rollback_to_specific_iteration(tmp_path):
+    kb = _make_kb(tmp_path)
+    ws = kb / "output" / "skills" / "demo-workspace"
+    (ws / "iteration-1").mkdir(parents=True)
+    (ws / "iteration-1" / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: v1\n---\n"
+    )
+    (ws / "iteration-2").mkdir(parents=True)
+    (ws / "iteration-2" / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: v2\n---\n"
+    )
+    current = kb / "output" / "skills" / "demo"
+    current.mkdir(parents=True)
+    (current / "SKILL.md").write_text("placeholder")
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(
+            cli, ["skill", "rollback", "demo", "--to", "1", "-y"]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "v1" in (current / "SKILL.md").read_text()
+
+
+def test_skill_rollback_errors_when_no_iterations(tmp_path):
+    kb = _make_kb(tmp_path)
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "rollback", "demo", "-y"])
+    assert result.exit_code != 0
+    assert "No iterations" in result.output
+
+
 def test_skill_new_keeps_existing_skill_when_key_setup_fails(tmp_path):
     """If LLM key setup raises (e.g. no API key), the old skill output
     must be preserved — don't rmtree before key setup is verified."""

@@ -1461,9 +1461,18 @@ def skill_new(ctx, name, intent, yes_flag):
 
     # Overwrite handling (CLI-specific). Done AFTER key/config so a
     # missing key doesn't wipe the user's existing skill output.
+    #
+    # When overwriting, we don't destroy the old skill — we copy it
+    # into <kb>/output/skills/<name>-workspace/iteration-N/ first, so
+    # the user can roll back via `openkb skill rollback`. See
+    # ``openkb/skill_workspace.py``.
+    from openkb.skill_workspace import save_iteration, write_diff
+
     target = kb_dir / "output" / "skills" / name
+    saved_iteration: Path | None = None
     if target.exists():
         if yes_flag:
+            saved_iteration = save_iteration(kb_dir, name)
             _clear_existing_skill_dir(kb_dir, name)
         elif sys.stdin.isatty():
             if not click.confirm(
@@ -1472,6 +1481,7 @@ def skill_new(ctx, name, intent, yes_flag):
             ):
                 click.echo("Aborted.")
                 ctx.exit(1)
+            saved_iteration = save_iteration(kb_dir, name)
             _clear_existing_skill_dir(kb_dir, name)
         else:
             click.echo(
@@ -1497,9 +1507,150 @@ def skill_new(ctx, name, intent, yes_flag):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
 
+    # Drop a structural diff inside the saved iteration so the user
+    # can see what changed since the previous compile.
+    if saved_iteration is not None:
+        try:
+            write_diff(saved_iteration, target, saved_iteration / "diff.md")
+        except Exception as exc:  # diff is best-effort; never block success
+            logging.getLogger(__name__).debug(
+                "diff generation failed: %s", exc, exc_info=True
+            )
+
     click.echo(f"\nSaved: output/skills/{name}/")
+    if saved_iteration is not None:
+        rel = saved_iteration.relative_to(kb_dir)
+        click.echo(f"Previous version: {rel}/  (run `openkb skill rollback {name}` to restore)")
     click.echo(f"Manifest: .claude-plugin/marketplace.json updated")
     click.echo(f"\nInstall locally:")
     click.echo(f"  cp -r output/skills/{name} ~/.claude/skills/")
     click.echo(f"\nShare (push KB to GitHub, then):")
     click.echo(f"  npx skills@latest add <owner>/<repo>")
+
+
+@skill.command("history")
+@click.argument("name")
+@click.pass_context
+def skill_history(ctx, name):
+    """List previous iterations of a skill."""
+    import datetime as _dt
+
+    from openkb.skill_workspace import list_iterations
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    err = _validate_skill_name(name)
+    if err:
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(1)
+
+    iters = list_iterations(kb_dir, name)
+    if not iters:
+        click.echo(f"No previous iterations for '{name}'.")
+        return
+
+    click.echo(f"Iterations of '{name}' ({len(iters)} total):\n")
+    click.echo("  N  Path                                                  Created")
+    click.echo("  -  --------------------------------------------------    -------")
+    for path in iters:
+        n = int(path.name.split("-", 1)[1])
+        rel = path.relative_to(kb_dir)
+        try:
+            mtime = _dt.datetime.fromtimestamp(path.stat().st_mtime)
+            stamp = mtime.strftime("%Y-%m-%d %H:%M")
+        except OSError:
+            stamp = "-"
+        click.echo(f"  {n}  {rel}  {stamp}")
+
+    current = kb_dir / "output" / "skills" / name
+    if current.is_dir():
+        rel_curr = current.relative_to(kb_dir)
+        click.echo(f"\n  Current: {rel_curr}/")
+
+    latest_n = int(iters[-1].name.split("-", 1)[1])
+    click.echo("\nRestore an iteration:")
+    click.echo(
+        f"  openkb skill rollback {name}          # restore latest (iteration-{latest_n})"
+    )
+    click.echo(
+        f"  openkb skill rollback {name} --to 1   # restore iteration-1"
+    )
+
+
+@skill.command("rollback")
+@click.argument("name")
+@click.option(
+    "--to", "to_n",
+    default=None, type=int,
+    help="Iteration number to restore. Defaults to latest.",
+)
+@click.option(
+    "-y", "--yes", "yes_flag",
+    is_flag=True, default=False,
+    help="Skip confirmation.",
+)
+@click.pass_context
+def skill_rollback(ctx, name, to_n, yes_flag):
+    """Restore a previous iteration as the current skill."""
+    from openkb.marketplace import regenerate_marketplace
+    from openkb.skill_workspace import list_iterations, restore_iteration
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    err = _validate_skill_name(name)
+    if err:
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(1)
+
+    iters = list_iterations(kb_dir, name)
+    if not iters:
+        click.echo(
+            f"[ERROR] No iterations exist for '{name}'. Nothing to roll back.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    target_n = to_n if to_n is not None else int(iters[-1].name.split("-", 1)[1])
+    target_label = f"iteration-{target_n}"
+    if not any(p.name == target_label for p in iters):
+        click.echo(
+            f"[ERROR] Iteration {target_n} not found for '{name}'. "
+            f"Run `openkb skill history {name}` to see available iterations.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    current = kb_dir / "output" / "skills" / name
+    if current.exists():
+        prompt = (
+            f"This will overwrite output/skills/{name}/ with {target_label}. Continue?"
+        )
+        if yes_flag:
+            pass
+        elif sys.stdin.isatty():
+            if not click.confirm(prompt, default=False):
+                click.echo("Aborted.")
+                ctx.exit(1)
+        else:
+            click.echo(
+                f"[ERROR] output/skills/{name}/ exists. Pass -y to overwrite "
+                f"in non-interactive contexts.",
+                err=True,
+            )
+            ctx.exit(1)
+
+    try:
+        restore_iteration(kb_dir, name, n=to_n)
+    except FileNotFoundError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    regenerate_marketplace(kb_dir)
+    click.echo(f"Restored output/skills/{name}/ from {target_label}.")
+    click.echo("Manifest: .claude-plugin/marketplace.json updated")
