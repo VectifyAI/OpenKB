@@ -1,4 +1,4 @@
-"""Tests for openkb.generator.Generator — the v0.1 abstraction that will
+"""Tests for openkb.skill.generator.Generator — the v0.1 abstraction that will
 be reused by future ppt / podcast generators.
 
 In v0.1, only target_type='skill' is supported. We test the dispatch shape
@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from openkb.generator import Generator
+from openkb.skill.generator import Generator
 
 
 def _make_kb(tmp_path):
@@ -53,8 +53,8 @@ async def test_generator_run_delegates_to_skill_creator(tmp_path):
         kb_dir=kb,
         model="gpt-4o-mini",
     )
-    with patch("openkb.generator.run_skill_create", new=AsyncMock()) as runner, \
-         patch("openkb.generator.regenerate_marketplace") as regen:
+    with patch("openkb.skill.generator.run_skill_create", new=AsyncMock()) as runner, \
+         patch("openkb.skill.generator.regenerate_marketplace") as regen:
         await g.run()
     runner.assert_awaited_once()
     regen.assert_called_once_with(kb)

@@ -1,11 +1,11 @@
-"""Tests for openkb.marketplace — regenerate <kb>/.claude-plugin/marketplace.json
+"""Tests for openkb.skill.marketplace — regenerate <kb>/.claude-plugin/marketplace.json
 from <kb>/output/skills/*/SKILL.md."""
 from __future__ import annotations
 
 import json
 import textwrap
 
-from openkb.marketplace import regenerate_marketplace
+from openkb.skill.marketplace import regenerate_marketplace
 
 
 def _make_kb(tmp_path):

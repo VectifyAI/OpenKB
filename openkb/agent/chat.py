@@ -542,7 +542,7 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     model = config.get("model", DEFAULT_CONFIG["model"])
 
-    from openkb.generator import Generator
+    from openkb.skill.generator import Generator
     _fmt(style, ("class:slash.help", f"Compiling skill '{name}'...\n"))
     try:
         gen = Generator(

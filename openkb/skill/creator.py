@@ -18,7 +18,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from agents.model_settings import ModelSettings
 
-from openkb.agent.skill_tools import (
+from openkb.skill.tools import (
     list_wiki_dir as _list_wiki_dir_impl,
     read_wiki_file_for_skill as _read_wiki_file_impl,
     write_skill_file as _write_skill_file_impl,

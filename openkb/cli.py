@@ -1466,7 +1466,7 @@ def skill_new(ctx, name, intent, yes_flag):
     # into <kb>/output/skills/<name>-workspace/iteration-N/ first, so
     # the user can roll back via `openkb skill rollback`. See
     # ``openkb/skill_workspace.py``.
-    from openkb.skill_workspace import save_iteration, write_diff
+    from openkb.skill.workspace import save_iteration, write_diff
 
     target = kb_dir / "output" / "skills" / name
     saved_iteration: Path | None = None
@@ -1492,7 +1492,7 @@ def skill_new(ctx, name, intent, yes_flag):
             ctx.exit(1)
 
     # Run the generator
-    from openkb.generator import Generator
+    from openkb.skill.generator import Generator
     click.echo(f"Compiling skill '{name}'...")
     try:
         gen = Generator(
@@ -1519,7 +1519,7 @@ def skill_new(ctx, name, intent, yes_flag):
 
     # Auto-validate the freshly compiled skill. Surface issues but don't
     # block — files are on disk and the user can fix or rollback.
-    from openkb.skill_validator import validate_skill
+    from openkb.skill.validator import validate_skill
     skill_dir = kb_dir / "output" / "skills" / name
     result = validate_skill(skill_dir)
     if result.errors or result.warnings:
@@ -1551,7 +1551,7 @@ def skill_history(ctx, name):
     """List previous iterations of a skill."""
     import datetime as _dt
 
-    from openkb.skill_workspace import list_iterations
+    from openkb.skill.workspace import list_iterations
 
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -1611,8 +1611,8 @@ def skill_history(ctx, name):
 @click.pass_context
 def skill_rollback(ctx, name, to_n, yes_flag):
     """Restore a previous iteration as the current skill."""
-    from openkb.marketplace import regenerate_marketplace
-    from openkb.skill_workspace import list_iterations, restore_iteration
+    from openkb.skill.marketplace import regenerate_marketplace
+    from openkb.skill.workspace import list_iterations, restore_iteration
 
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -1681,7 +1681,7 @@ def skill_rollback(ctx, name, to_n, yes_flag):
 @click.pass_context
 def skill_validate(ctx, name, strict):
     """Validate one skill (by name) or all compiled skills in this KB."""
-    from openkb.skill_validator import validate_skill
+    from openkb.skill.validator import validate_skill
 
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -1744,7 +1744,7 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
     the description should activate the skill for each prompt. Prints pass
     rate + miss list.
     """
-    from openkb.agent.skill_evaluator import (
+    from openkb.skill.evaluator import (
         run_eval, save_eval_set, load_eval_set, EvalPrompt,
     )
 

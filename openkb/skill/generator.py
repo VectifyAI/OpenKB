@@ -9,15 +9,15 @@ same:
   distribution mechanic as skills)
 
 Each target plugs in its own `run` coroutine. v0.1's only entry calls into
-``openkb.agent.skill_creator.run_skill_create``.
+``openkb.skill.creator.run_skill_create``.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
 
-from openkb.agent.skill_creator import run_skill_create
-from openkb.marketplace import regenerate_marketplace
+from openkb.skill.creator import run_skill_create
+from openkb.skill.marketplace import regenerate_marketplace
 
 
 TargetType = Literal["skill"]  # extend as new targets land

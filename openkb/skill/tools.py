@@ -2,7 +2,7 @@
 
 The skill-create agent runs with three capabilities:
   * READ from <kb>/wiki/**            (the substrate)
-  * QUERY the wiki via openkb query   (semantic retrieval, see skill_creator.py)
+  * QUERY the wiki via openkb query   (semantic retrieval, see creator.py)
   * WRITE under <kb>/output/skills/<name>/**   (the only output destination)
 
 These helpers enforce those boundaries at the Python level — every tool

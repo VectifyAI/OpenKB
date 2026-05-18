@@ -42,7 +42,7 @@ def test_skill_new_succeeds_and_writes_files(tmp_path):
         _fake_compile(kb_dir, skill_name)
 
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+         patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
         result = runner.invoke(cli, ["skill", "new", "demo", "test intent"])
 
     assert result.exit_code == 0, result.output
@@ -123,7 +123,7 @@ def test_skill_new_overwrites_with_yes_flag(tmp_path):
         _fake_compile(kb_dir, skill_name)
 
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+         patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
         result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
 
     assert result.exit_code == 0, result.output
@@ -147,7 +147,7 @@ def test_skill_new_saves_iteration_when_overwriting(tmp_path):
         _fake_compile(kb_dir, skill_name)
 
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+         patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
         result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
 
     assert result.exit_code == 0, result.output
@@ -343,7 +343,7 @@ def test_skill_eval_runs_with_provided_eval_set(tmp_path):
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
          patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.agent.skill_evaluator.grade_one", side_effect=perfect_grader):
+         patch("openkb.skill.evaluator.grade_one", side_effect=perfect_grader):
         result = runner.invoke(cli, [
             "skill", "eval", "demo", "--eval-set", str(eval_path),
         ])
@@ -374,7 +374,7 @@ def test_skill_eval_reports_misses(tmp_path):
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
          patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.agent.skill_evaluator.grade_one", side_effect=biased_grader):
+         patch("openkb.skill.evaluator.grade_one", side_effect=biased_grader):
         result = runner.invoke(cli, [
             "skill", "eval", "demo", "--eval-set", str(eval_path),
         ])

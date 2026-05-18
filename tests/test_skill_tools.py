@@ -1,7 +1,7 @@
-"""Tests for openkb.agent.skill_tools — path-scoped IO for the skill-create agent."""
+"""Tests for openkb.skill.tools — path-scoped IO for the skill-create agent."""
 from __future__ import annotations
 
-from openkb.agent.skill_tools import (
+from openkb.skill.tools import (
     list_wiki_dir,
     read_wiki_file_for_skill,
     write_skill_file,

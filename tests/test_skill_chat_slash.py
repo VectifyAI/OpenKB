@@ -36,7 +36,7 @@ async def test_slash_skill_new_calls_generator(tmp_path):
             f"---\nname: {skill_name}\ndescription: t\n---\n\n# {skill_name}\n"
         )
 
-    with patch("openkb.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+    with patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
         action = await _handle_slash(
             '/skill new demo "test intent"', kb, session, style
         )

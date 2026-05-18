@@ -1,4 +1,4 @@
-"""Tests for openkb.agent.skill_creator.
+"""Tests for openkb.skill.creator.
 
 The agent itself is mocked (we don't want to spend tokens in unit tests).
 What we DO test:
@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from openkb.agent.skill_creator import (
+from openkb.skill.creator import (
     build_skill_create_agent,
     run_skill_create,
 )
@@ -56,7 +56,7 @@ async def test_run_skill_create_creates_output_dir(tmp_path):
         from types import SimpleNamespace
         return SimpleNamespace(final_output="done")
 
-    with patch("openkb.agent.skill_creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.skill.creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         await run_skill_create(
             kb_dir=kb,
             skill_name="demo",
@@ -77,7 +77,7 @@ async def test_run_skill_create_raises_when_no_skill_md_written(tmp_path):
         from types import SimpleNamespace
         return SimpleNamespace(final_output="done")
 
-    with patch("openkb.agent.skill_creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.skill.creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="did not write SKILL.md"):
             await run_skill_create(
                 kb_dir=kb,
@@ -98,7 +98,7 @@ async def test_run_skill_create_translates_max_turns_to_runtime_error(tmp_path):
     async def fake_runner(*args, **kwargs):
         raise MaxTurnsExceeded("agent ran out of turns")
 
-    with patch("openkb.agent.skill_creator.Runner.run",
+    with patch("openkb.skill.creator.Runner.run",
                new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="step cap"):
             await run_skill_create(
