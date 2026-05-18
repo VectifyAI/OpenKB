@@ -24,15 +24,21 @@ Traditional RAG rediscovers knowledge from scratch on every query. Nothing accum
 
 ### Features
 
+OpenKB has two layers: a **wiki foundation** that compiles and maintains your knowledge, and **generators** that turn that wiki into useful artifacts.
+
+**Wiki foundation** — compile and maintain
 - **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, text, and more via markitdown
-- **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless long-context retrieval
+- **Scale to long documents** — Handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless long-context retrieval
 - **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
-- **Compiled Wiki** — LLM manages and compiles your documents into summaries, concept pages, and cross-links, all kept in sync
-- **Query** — Ask questions (one-off) against your wiki. The LLM navigates your compiled knowledge to answer
-- **Interactive Chat** — Multi-turn conversations with persisted sessions you can resume across runs
+- **Compiled Wiki** — LLM compiles documents into summaries, concept pages, and cross-links, all kept in sync
 - **Lint** — Health checks find contradictions, gaps, orphans, and stale content
 - **Watch mode** — Drop files into `raw/`, wiki updates automatically
 - **Obsidian compatible** — Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
+
+**Generators** — turn the wiki into something useful
+- **Query** — Ask questions (one-off) against your wiki. The LLM navigates compiled knowledge to answer
+- **Chat** — Multi-turn conversations with persisted sessions you can resume across runs
+- **Skill Factory** — *Drop in a book. Out comes a digital expert.* Compile any subset of your wiki into a redistributable [Anthropic Skill](https://docs.claude.com/en/docs/build-with-claude/skills) installable in Claude Code / Codex / Gemini CLI / Cursor
 
 # 🚀 Getting Started
 
@@ -80,6 +86,9 @@ openkb query "What are the main findings?"
 
 # 5. Or chat interactively
 openkb chat
+
+# 6. Or distill your wiki into a redistributable skill
+openkb skill new my-expert "Reason like an expert on <topic-from-your-docs>"
 ```
 
 ### Set up your LLM
@@ -109,7 +118,7 @@ raw/                              You drop files here
  │                         Wiki Compilation (using LLM)
  │                                     │
  ▼                                     ▼
-wiki/
+wiki/                                  │            ← the foundation
  ├── index.md            Knowledge base overview
  ├── log.md              Operations timeline
  ├── AGENTS.md           Wiki schema (LLM instructions)
@@ -118,6 +127,13 @@ wiki/
  ├── concepts/           Cross-document synthesis ← the good stuff
  ├── explorations/       Saved query results
  └── reports/            Lint reports
+                                       │
+                ┌──────────────────────┼──────────────────────┐
+                ▼                      ▼                      ▼
+            query / chat         Skill Factory          (future)
+          (LLM answers from     openkb skill new       ppt / podcast /
+            the wiki)           → output/skills/        report / …
+                                + marketplace.json
 ```
 
 ### Short vs. Long Document Handling
@@ -144,16 +160,15 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 
 # ⚙️ Usage
 
-### Commands
+OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output).
+
+## 🧱 Wiki Foundation — compile and maintain
 
 | Command | Description |
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
 | <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add documents and compile to wiki. URL ingest auto-detects PDF (saved as `.pdf` → PageIndex / markitdown) vs HTML (trafilatura main-content extract → `.md`) |
-| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Compile a skill from this KB's wiki into `output/skills/<name>/` and update the marketplace manifest |
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty-concepts` to retain artifacts) |
-| <code>openkb&nbsp;query&nbsp;"question"</code> | Ask a question over the knowledge base (use `--save` to save the answer to `wiki/explorations/`) |
-| `openkb chat` | Start an interactive multi-turn chat (use `--resume`, `--list`, `--delete` to manage sessions) |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
@@ -162,51 +177,23 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 
 <!-- | `openkb lint --fix` | Auto-fix what it can | -->
 
-### Skills — compile your wiki into a redistributable skill
+## ✨ Generators — turn the wiki into output
 
-Once you have a populated wiki, you can compile a subset of it into an
-**Anthropic Skill** — a portable folder that Claude Code, Codex CLI,
-Gemini CLI, and Cursor all know how to load.
+A "generator" reads from the compiled wiki and produces something usable: an answer, a conversation, a skill folder. The wiki is the substrate; generators are the surfaces.
 
-```bash
-openkb skill new karpathy-thinking \
-  "Reason about transformers and attention in Karpathy's style"
-```
+| Command | Output |
+|---|---|
+| <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (use `--save` to persist to `wiki/explorations/`) |
+| `openkb chat` | Interactive multi-turn session over the wiki (use `--resume`, `--list`, `--delete` to manage sessions) |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | A redistributable Anthropic Skill at `<kb>/output/skills/<name>/` + auto-updated `marketplace.json` |
 
-This produces `output/skills/karpathy-thinking/` with `SKILL.md`,
-optional `references/`, and an auto-updated
-`.claude-plugin/marketplace.json` for distribution.
+### Query & Chat — ask the wiki
 
-**Install locally:**
+`openkb query "..."` answers a single question. `openkb chat` is interactive — each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and the same retrieval primitives (PageIndex for long docs, direct concept reads for short).
 
 ```bash
-cp -r output/skills/karpathy-thinking ~/.claude/skills/
-```
+openkb query "What does the literature say about attention scaling?"
 
-**Share with others:**
-
-Push your KB directory to GitHub, then anyone can install all your skills with one command:
-
-```bash
-npx skills@latest add <your-org>/<your-repo>
-```
-
-You can also iterate inside chat:
-
-```
-/skill new karpathy-thinking "Reason about transformers like Karpathy"
-[generation streams]
-> description is too generic, make it about transformer implementations specifically
-[agent edits SKILL.md frontmatter in place]
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit your compiled skill back to the OpenKB community registry.
-
-### Interactive Chat
-
-`openkb chat` opens an interactive chat session over your wiki knowledge base. Unlike the one-shot `openkb query`, each turn carries the conversation history, so you can dig into a topic without re-typing context.
-
-```bash
 openkb chat                       # start a new session
 openkb chat --resume              # resume the most recent session
 openkb chat --resume 20260411     # resume by id (unique prefix works)
@@ -220,10 +207,56 @@ Inside a chat, type `/` to access slash commands (Tab to complete):
 - `/status` — show knowledge base status
 - `/list` — list all documents
 - `/add <path>` — add a document or directory without leaving the chat
+- `/skill new <name> "<intent>"` — compile a skill from this chat (see below)
 - `/save [name]` — export the transcript to `wiki/explorations/`
 - `/clear` — start a fresh session (the current one stays on disk)
 - `/lint` — run knowledge base lint
 - `/exit` — exit (Ctrl-D also works)
+
+### 🛠 Skill Factory — *Drop in a book. Out comes a digital expert.*
+
+The newest generator. `openkb skill new` distills any subset of your wiki into an [Anthropic Skill](https://docs.claude.com/en/docs/build-with-claude/skills) — a portable folder that **Claude Code, Codex CLI, Gemini CLI, and Cursor** all install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
+
+```bash
+openkb skill new karpathy-thinking \
+  "Reason about transformers and attention in Karpathy's style"
+```
+
+This produces:
+
+```
+<kb>/output/skills/karpathy-thinking/
+├── SKILL.md                   # YAML frontmatter + when-to-use + approach
+├── references/                # depth material the agent loads on demand
+│   ├── methodology.md
+│   └── key-quotes.md
+└── (scripts/)                 # optional, only if intent implies computation
+```
+
+…plus an auto-updated `<kb>/.claude-plugin/marketplace.json` so the whole KB is one-line installable.
+
+**Install locally:**
+
+```bash
+cp -r output/skills/karpathy-thinking ~/.claude/skills/
+```
+
+**Share with others** — push your KB to GitHub, then anyone runs:
+
+```bash
+npx skills@latest add <your-org>/<your-repo>
+```
+
+**Iterate from chat** — compilation is one-shot, but follow-up edits aren't. Inside `openkb chat`, you can refine without re-running the whole pipeline:
+
+```
+/skill new karpathy-thinking "Reason about transformers like Karpathy"
+[generation streams]
+> description is too generic, make it about transformer implementations specifically
+[agent edits SKILL.md frontmatter in place]
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit your compiled skill back to the community registry at [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB).
 
 ### Configuration
 
