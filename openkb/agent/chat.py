@@ -23,7 +23,7 @@ from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
-from openkb.agent.query import MAX_TURNS, build_chat_agent, build_query_agent
+from openkb.agent.query import MAX_TURNS, build_chat_agent
 from openkb.log import append_log
 
 
@@ -500,7 +500,11 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
     """Dispatch ``/skill new <name> "<intent>"`` and any future skill subcommands."""
     import shlex
 
-    parts = shlex.split(arg) if arg else []
+    try:
+        parts = shlex.split(arg) if arg else []
+    except ValueError as exc:
+        _fmt(style, ("class:error", f"[ERROR] Could not parse: {exc}\n"))
+        return
     if not parts:
         _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
         return

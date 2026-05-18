@@ -186,21 +186,26 @@ def write_kb_file(path: str, content: str, kb_root: str) -> str:
     Returns:
         ``"Written: {path}"`` on success, or an access-denied message.
     """
+    if not path:
+        return "Access denied: path must be a file under wiki/explorations/ or output/."
     root = Path(kb_root).resolve()
     full_path = (root / path).resolve()
     if not full_path.is_relative_to(root):
         return "Access denied: path escapes KB root."
     rel = full_path.relative_to(root)
     parts = rel.parts
+    # Require a file path with at least one component beyond the allow-list
+    # prefix, so a bare directory name (e.g. "output") does not slip through
+    # and crash on write_text with IsADirectoryError.
     allowed = (
-        len(parts) >= 2 and parts[0] == "wiki" and parts[1] == "explorations"
+        len(parts) >= 3 and parts[0] == "wiki" and parts[1] == "explorations"
     ) or (
-        len(parts) >= 1 and parts[0] == "output"
+        len(parts) >= 2 and parts[0] == "output"
     )
     if not allowed:
         return (
-            "Access denied: writes are only allowed under "
-            "wiki/explorations/** or output/**."
+            "Access denied: path must be a file under "
+            "wiki/explorations/ or output/."
         )
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")

@@ -176,7 +176,7 @@ async def test_run_chat_handles_ctrl_c_during_slash_command(tmp_path):
     p, collected = _collect_fmt()
     with (
         p,
-        patch("openkb.agent.chat.build_query_agent", return_value=object()),
+        patch("openkb.agent.chat.build_chat_agent", return_value=object()),
         patch("openkb.agent.chat._print_header"),
         patch("openkb.agent.chat._make_prompt_session", return_value=prompt),
         patch("openkb.agent.chat._handle_slash", new_callable=AsyncMock, side_effect=KeyboardInterrupt),
