@@ -28,6 +28,8 @@ def test_accepts_valid_kebab_case(name):
     ("double--dash", "consecutive"),
     ("../escape", "lowercase"),
     ("a" * 65, "64 characters"),
+    ("café", "lowercase"),
+    ("ünicöde", "lowercase"),
 ])
 def test_rejects_invalid_names(name, reason_fragment):
     msg = _validate_skill_name(name)

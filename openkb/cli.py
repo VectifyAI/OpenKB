@@ -154,7 +154,7 @@ def _validate_skill_name(name: str) -> str | None:
         return "Skill name must not be empty."
     if len(name) > 64:
         return "Skill name must be at most 64 characters."
-    if not all(c.islower() or c.isdigit() or c == "-" for c in name):
+    if not all(("a" <= c <= "z") or ("0" <= c <= "9") or c == "-" for c in name):
         return "Skill name must contain only lowercase letters, digits, and dashes."
     if name.startswith("-"):
         return "Skill name must not have a leading dash."
