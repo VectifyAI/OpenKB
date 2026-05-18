@@ -27,11 +27,12 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _DESCRIPTION_RE = re.compile(r"^description:\s*(.+?)\s*$", re.MULTILINE)
 
 
-def _git_owner() -> dict[str, str]:
-    """Read user.name and user.email from git config for the manifest owner.
+def _git_owner(kb_dir: Path) -> dict[str, str]:
+    """Read user.name and user.email from git config (run in kb_dir context).
 
-    Falls back to placeholders if git isn't configured — the manifest is
-    still valid, just less helpful for marketplace listings.
+    Falls back to placeholders if git isn't configured. ``cwd=kb_dir`` so
+    that ``git config`` resolves the KB's local-or-walked-up settings,
+    not the process's working directory at the time of CLI invocation.
     """
     import subprocess
 
@@ -40,6 +41,7 @@ def _git_owner() -> dict[str, str]:
             result = subprocess.run(
                 ["git", "config", "--get", key],
                 capture_output=True, text=True, timeout=2,
+                cwd=str(kb_dir),
             )
             return result.stdout.strip()
         except (subprocess.SubprocessError, FileNotFoundError):
@@ -71,11 +73,6 @@ def _read_skill_description(skill_md: Path) -> str:
     return desc_match.group(1).strip()
 
 
-def _kb_name(kb_dir: Path) -> str:
-    """Use the KB directory name as the marketplace name (sluggable)."""
-    return kb_dir.name
-
-
 def _list_skill_dirs(kb_dir: Path) -> list[Path]:
     """Return skill directories under <kb>/output/skills/ that contain a SKILL.md."""
     skills_root = kb_dir / "output" / "skills"
@@ -91,23 +88,22 @@ def _build_manifest(kb_dir: Path) -> dict[str, Any]:
     skills = _list_skill_dirs(kb_dir)
     skill_paths = [f"./output/skills/{d.name}" for d in skills]
 
-    # Aggregate description for the manifest metadata
-    name = _kb_name(kb_dir)
+    # Fixed clean descriptions — no truncation, no SKILL.md interpolation.
+    # Naming convention is locked to `openkb@vectify` so users get one
+    # canonical install command regardless of which KB they're consuming;
+    # different KBs are distinguished by <owner>/<repo> URL.
     metadata_desc = (
-        f"Skills compiled from the '{name}' knowledge base via OpenKB."
+        f"Skills compiled from the {kb_dir.name} knowledge base via OpenKB."
     )
-    if skills:
-        first_desc = _read_skill_description(skills[0] / "SKILL.md")
-        if first_desc:
-            metadata_desc += f" Featured: {first_desc[:200]}"
+    plugin_desc = "Knowledge skills compiled from this OpenKB-managed knowledge base."
 
     # Pull KB config for version if available; default to 0.1.0
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     version = str(config.get("version", "0.1.0"))
 
-    owner = _git_owner()
+    owner = _git_owner(kb_dir)
     return {
-        "name": name,
+        "name": "vectify",
         "owner": owner,
         "metadata": {
             "description": metadata_desc,
@@ -115,8 +111,8 @@ def _build_manifest(kb_dir: Path) -> dict[str, Any]:
         },
         "plugins": [
             {
-                "name": name,
-                "description": metadata_desc,
+                "name": "openkb",
+                "description": plugin_desc,
                 "source": "./",
                 "version": version,
                 "author": owner,
