@@ -1744,8 +1744,7 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
     the description should activate the skill for each prompt. Prints pass
     rate + miss list.
     """
-    import asyncio
-    from openkb.skill_evaluator import (
+    from openkb.agent.skill_evaluator import (
         run_eval, save_eval_set, load_eval_set, EvalPrompt,
     )
 
@@ -1759,7 +1758,11 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
         click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
         ctx.exit(1)
 
-    _setup_llm_key(kb_dir)
+    try:
+        _setup_llm_key(kb_dir)
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     model = config.get("model", DEFAULT_CONFIG["model"])
 

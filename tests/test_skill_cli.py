@@ -343,7 +343,7 @@ def test_skill_eval_runs_with_provided_eval_set(tmp_path):
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
          patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.skill_evaluator.grade_one", side_effect=perfect_grader):
+         patch("openkb.agent.skill_evaluator.grade_one", side_effect=perfect_grader):
         result = runner.invoke(cli, [
             "skill", "eval", "demo", "--eval-set", str(eval_path),
         ])
@@ -374,7 +374,7 @@ def test_skill_eval_reports_misses(tmp_path):
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
          patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.skill_evaluator.grade_one", side_effect=biased_grader):
+         patch("openkb.agent.skill_evaluator.grade_one", side_effect=biased_grader):
         result = runner.invoke(cli, [
             "skill", "eval", "demo", "--eval-set", str(eval_path),
         ])

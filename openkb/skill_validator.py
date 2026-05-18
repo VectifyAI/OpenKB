@@ -4,12 +4,15 @@ Pure Python — no LLM calls. Catches the common failure modes that would
 make a skill un-loadable or misleading to the agents that install it:
 
   * SKILL.md missing or unparseable
-  * frontmatter missing required fields
-  * name field doesn't match directory or violates the slug rule
-  * description too long (> 1024 chars per Anthropic spec)
-  * files too big (SKILL.md > 50 KB / references/*.md > 100 KB)
-  * `[[references/...]]` wikilinks pointing at files that don't exist
-  * (strict mode) scripts/*.py importing non-stdlib modules
+  * frontmatter present, parses as YAML, is a mapping
+  * required fields: name (matches dir + slug regex), description
+  * description length within bounds (warns < 20 chars, errors > 1024)
+  * description must not contain '<' or '>' (breaks activation parser)
+  * frontmatter keys limited to the Anthropic Skills allowed set
+    (warns on unknown keys; matches Anthropic's quick_validate.py)
+  * files within size limits (SKILL.md ≤ 50 KB / references/*.md ≤ 100 KB)
+  * `[[references/...]]` wikilinks resolve to actual files
+  * (strict mode) scripts/*.py imports only stdlib modules
 
 This is the deterministic counterpart to ``openkb skill eval`` — eval
 measures whether the description fires; validate ensures the structure
@@ -32,6 +35,9 @@ SKILL_MD_MAX_BYTES = 50 * 1024
 REFERENCE_MAX_BYTES = 100 * 1024
 NAME_MAX_LEN = 64
 WIKILINK_RE = re.compile(r"\[\[references/([a-z0-9._/-]+)\]\]", re.IGNORECASE)
+ALLOWED_FRONTMATTER_KEYS = {
+    "name", "description", "license", "allowed-tools", "metadata", "compatibility",
+}
 
 
 @dataclass
@@ -98,6 +104,15 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
         result.errors.append("Frontmatter must be a YAML mapping.")
         return result
 
+    extras = set(meta.keys()) - ALLOWED_FRONTMATTER_KEYS
+    if extras:
+        # Treat as warning, not error — keeps strict mode user-controllable
+        result.warnings.append(
+            f"Frontmatter contains unknown keys: {sorted(extras)}. "
+            f"Anthropic Skills spec only allows: "
+            f"{sorted(ALLOWED_FRONTMATTER_KEYS)}."
+        )
+
     # name field
     name = meta.get("name")
     if not name:
@@ -132,6 +147,11 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
             result.warnings.append(
                 f"Frontmatter 'description:' is only {len(desc)} chars — "
                 f"too short to be a useful activation signal."
+            )
+        if "<" in desc or ">" in desc:
+            result.errors.append(
+                "Frontmatter 'description:' must not contain '<' or '>' "
+                "characters — they break the activation parser in Claude Code."
             )
 
     # references/ wikilink resolution

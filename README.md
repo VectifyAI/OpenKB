@@ -274,8 +274,6 @@ openkb skill history karpathy-thinking
 openkb skill rollback karpathy-thinking --to 2
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit your compiled skill back to the community registry at [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB).
-
 ### Configuration
 
 Settings are initialized by `openkb init`, and stored in `.openkb/config.yaml`:

@@ -1,4 +1,4 @@
-"""Tests for openkb.skill_evaluator.
+"""Tests for openkb.agent.skill_evaluator.
 
 The Runner.run call is mocked everywhere — no real LLM tokens spent.
 What we DO verify:
@@ -17,8 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from openkb.skill_evaluator import (
-    EvalMiss,
+from openkb.agent.skill_evaluator import (
     EvalPrompt,
     EvalResult,
     _read_description,
@@ -80,7 +79,7 @@ async def test_generate_eval_set_parses_plain_json(tmp_path):
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output=_fake_generator_payload(10))
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         prompts = await generate_eval_set(skill_dir, model="gpt-4o-mini", count=10)
 
     assert len(prompts) == 20
@@ -98,7 +97,7 @@ async def test_generate_eval_set_strips_code_fences(tmp_path):
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output=fenced)
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         prompts = await generate_eval_set(skill_dir, model="gpt-4o-mini", count=3)
 
     assert len(prompts) == 6
@@ -112,7 +111,7 @@ async def test_grade_one_returns_trigger_for_trigger_response():
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="TRIGGER")
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         out = await grade_one("desc", "question?", model="gpt-4o-mini")
     assert out == "trigger"
 
@@ -122,7 +121,7 @@ async def test_grade_one_returns_no_trigger_for_negative_response():
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="NO-TRIGGER")
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         out = await grade_one("desc", "question?", model="gpt-4o-mini")
     assert out == "no-trigger"
 
@@ -132,7 +131,7 @@ async def test_grade_one_handles_mixed_case():
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="trigger")
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         out = await grade_one("desc", "question?", model="gpt-4o-mini")
     assert out == "trigger"
 
@@ -142,7 +141,7 @@ async def test_grade_one_handles_space_variant():
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="No Trigger")
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         out = await grade_one("desc", "question?", model="gpt-4o-mini")
     assert out == "no-trigger"
 
@@ -152,7 +151,7 @@ async def test_grade_one_defaults_to_no_trigger_on_ambiguous_output():
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="hmm not sure")
 
-    with patch("openkb.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.agent.skill_evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         out = await grade_one("desc", "question?", model="gpt-4o-mini")
     assert out == "no-trigger"
 
@@ -179,7 +178,7 @@ async def test_run_eval_happy_path_all_correct(tmp_path):
         match = next(p for p in eval_set if p.question == question)
         return match.expected
 
-    with patch("openkb.skill_evaluator.grade_one", side_effect=fake_grade):
+    with patch("openkb.agent.skill_evaluator.grade_one", side_effect=fake_grade):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert isinstance(result, EvalResult)
@@ -198,7 +197,7 @@ async def test_run_eval_reports_misses(tmp_path):
     async def fake_grade(description, question, *, model):
         return "trigger"
 
-    with patch("openkb.skill_evaluator.grade_one", side_effect=fake_grade):
+    with patch("openkb.agent.skill_evaluator.grade_one", side_effect=fake_grade):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert result.total == 6
@@ -230,3 +229,36 @@ def test_save_and_load_eval_set_round_trip(tmp_path):
     assert len(loaded) == 4
     assert [p.question for p in loaded if p.expected == "trigger"] == ["trig 0", "trig 1"]
     assert [p.question for p in loaded if p.expected == "no-trigger"] == ["no 0", "no 1"]
+
+
+# -------- RuntimeError translation for CLI catch -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_eval_set_translates_max_turns_to_runtime_error(tmp_path):
+    """MaxTurnsExceeded from Runner.run should become RuntimeError."""
+    from agents.exceptions import MaxTurnsExceeded
+
+    skill_dir = _make_skill(tmp_path)
+
+    async def fake_runner(*args, **kwargs):
+        raise MaxTurnsExceeded("ran out")
+
+    with patch("openkb.agent.skill_evaluator.Runner.run",
+               new=AsyncMock(side_effect=fake_runner)):
+        with pytest.raises(RuntimeError, match="max-turn cap"):
+            await generate_eval_set(skill_dir, model="gpt-4o-mini")
+
+
+@pytest.mark.asyncio
+async def test_generate_eval_set_translates_malformed_json_to_runtime_error(tmp_path):
+    """Non-JSON LLM output should produce a friendly RuntimeError."""
+    skill_dir = _make_skill(tmp_path)
+
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="this is not json at all")
+
+    with patch("openkb.agent.skill_evaluator.Runner.run",
+               new=AsyncMock(side_effect=fake_runner)):
+        with pytest.raises(RuntimeError, match="non-JSON output"):
+            await generate_eval_set(skill_dir, model="gpt-4o-mini")

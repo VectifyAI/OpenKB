@@ -117,7 +117,14 @@ async def generate_eval_set(
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
-    result = await Runner.run(agent, "Generate the eval set now.", max_turns=3)
+    from agents.exceptions import MaxTurnsExceeded
+    try:
+        result = await Runner.run(agent, "Generate the eval set now.", max_turns=3)
+    except MaxTurnsExceeded as exc:
+        raise RuntimeError(
+            "Eval set generation hit the max-turn cap. The model may be "
+            "looping; try a different model or a smaller --count."
+        ) from exc
     raw = (result.final_output or "").strip()
 
     # Strip optional code fence
@@ -126,7 +133,14 @@ async def generate_eval_set(
         if raw.startswith("json"):
             raw = raw[4:].lstrip()
 
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Eval set generator returned non-JSON output: {exc.msg}. "
+            f"Try a more capable model — small models often ignore "
+            f"'output only JSON' instructions. First 200 chars: {raw[:200]!r}"
+        ) from exc
     prompts: list[EvalPrompt] = []
     for q in data.get("should_trigger", []):
         prompts.append(EvalPrompt(question=q, expected="trigger"))
@@ -157,7 +171,14 @@ async def grade_one(
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
-    result = await Runner.run(agent, f"Question: {question}", max_turns=2)
+    from agents.exceptions import MaxTurnsExceeded
+    try:
+        result = await Runner.run(agent, f"Question: {question}", max_turns=2)
+    except MaxTurnsExceeded as exc:
+        raise RuntimeError(
+            f"Trigger grader hit the max-turn cap on question: {question!r}. "
+            f"Try a more capable model."
+        ) from exc
     raw = (result.final_output or "").strip().upper()
     if "NO-TRIGGER" in raw or "NO TRIGGER" in raw:
         return "no-trigger"

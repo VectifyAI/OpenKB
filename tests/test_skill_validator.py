@@ -303,3 +303,35 @@ def test_passed_vs_passed_strict_semantics(tmp_path):
     result = validate_skill(sd)
     assert result.passed is True
     assert result.passed_strict is False
+
+
+# ---------------------------------------------------------------------------
+# new round-2 checks: angle brackets in description + unknown frontmatter keys
+# ---------------------------------------------------------------------------
+
+def test_validator_rejects_angle_brackets_in_description(tmp_path):
+    """Anthropic's activation parser breaks on < or > in description."""
+    sd = _write_skill(
+        tmp_path, "demo",
+        frontmatter="name: demo\ndescription: Reason about <transformers> here.",
+    )
+    result = validate_skill(sd)
+    assert not result.passed
+    assert any("'<' or '>'" in e for e in result.errors)
+
+
+def test_validator_warns_on_unknown_frontmatter_keys(tmp_path):
+    """Anthropic spec only allows a fixed set of frontmatter keys."""
+    sd = _write_skill(
+        tmp_path, "demo",
+        frontmatter=(
+            "name: demo\ndescription: A valid description string here.\n"
+            "random_key: foo\nanother_one: bar"
+        ),
+    )
+    result = validate_skill(sd)
+    # Passes in default (warnings only)
+    assert result.passed
+    # But strict mode catches it
+    assert not result.passed_strict
+    assert any("unknown keys" in w for w in result.warnings)
