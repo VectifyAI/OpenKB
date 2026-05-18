@@ -252,6 +252,43 @@ def test_skill_rollback_errors_when_no_iterations(tmp_path):
     assert "No iterations" in result.output
 
 
+def test_skill_validate_passes_on_valid_skill(tmp_path):
+    """`openkb skill validate <name>` exits 0 and prints OK for a well-formed skill."""
+    kb = _make_kb(tmp_path)
+    target = kb / "output" / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text(
+        "---\nname: demo\n"
+        "description: A useful and descriptive activation signal for this skill.\n"
+        "---\n\n# demo\n"
+    )
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "validate", "demo"])
+
+    assert result.exit_code == 0, result.output
+    assert "[OK]" in result.output
+    assert "demo" in result.output
+
+
+def test_skill_validate_fails_on_invalid_frontmatter(tmp_path):
+    """`openkb skill validate <name>` exits non-zero on malformed YAML."""
+    kb = _make_kb(tmp_path)
+    target = kb / "output" / "skills" / "broken"
+    target.mkdir(parents=True)
+    # No frontmatter at all — must error out.
+    (target / "SKILL.md").write_text("# just a body, no frontmatter\n")
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "validate", "broken"])
+
+    assert result.exit_code != 0, result.output
+    assert "ERROR" in result.output
+    assert "[FAIL]" in result.output
+
+
 def test_skill_new_keeps_existing_skill_when_key_setup_fails(tmp_path):
     """If LLM key setup raises (e.g. no API key), the old skill output
     must be preserved — don't rmtree before key setup is verified."""

@@ -1517,6 +1517,22 @@ def skill_new(ctx, name, intent, yes_flag):
                 "diff generation failed: %s", exc, exc_info=True
             )
 
+    # Auto-validate the freshly compiled skill. Surface issues but don't
+    # block — files are on disk and the user can fix or rollback.
+    from openkb.skill_validator import validate_skill
+    skill_dir = kb_dir / "output" / "skills" / name
+    result = validate_skill(skill_dir)
+    if result.errors or result.warnings:
+        click.echo("\n[WARN] Validation found issues:")
+        for err in result.errors:
+            click.echo(f"  ERROR:   {err}")
+        for warn in result.warnings:
+            click.echo(f"  WARN:    {warn}")
+        click.echo(
+            f"\nRun `openkb skill validate {name}` to re-check, or "
+            f"`openkb skill rollback {name}` to revert."
+        )
+
     click.echo(f"\nSaved: output/skills/{name}/")
     if saved_iteration is not None:
         rel = saved_iteration.relative_to(kb_dir)
@@ -1654,3 +1670,53 @@ def skill_rollback(ctx, name, to_n, yes_flag):
     regenerate_marketplace(kb_dir)
     click.echo(f"Restored output/skills/{name}/ from {target_label}.")
     click.echo("Manifest: .claude-plugin/marketplace.json updated")
+
+
+@skill.command("validate")
+@click.argument("name", required=False)
+@click.option(
+    "--strict", is_flag=True, default=False,
+    help="Treat warnings as failures (exit non-zero).",
+)
+@click.pass_context
+def skill_validate(ctx, name, strict):
+    """Validate one skill (by name) or all compiled skills in this KB."""
+    from openkb.skill_validator import validate_skill
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found.", err=True)
+        ctx.exit(1)
+
+    skills_root = kb_dir / "output" / "skills"
+    if not skills_root.is_dir():
+        click.echo("No skills found. Compile one with `openkb skill new`.")
+        return
+
+    if name:
+        target = skills_root / name
+        if not target.is_dir():
+            click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
+            ctx.exit(1)
+        targets = [target]
+    else:
+        targets = sorted(
+            d for d in skills_root.iterdir()
+            if d.is_dir() and not d.name.endswith("-workspace")
+        )
+
+    any_failed = False
+    for t in targets:
+        result = validate_skill(t, strict=strict)
+        passed = result.passed_strict if strict else result.passed
+        prefix = "[OK]" if passed else "[FAIL]"
+        click.echo(f"{prefix} {t.name}")
+        for err in result.errors:
+            click.echo(f"  ERROR:   {err}")
+        for warn in result.warnings:
+            click.echo(f"  WARN:    {warn}")
+        if not passed:
+            any_failed = True
+
+    if any_failed:
+        ctx.exit(1)
