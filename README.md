@@ -186,6 +186,9 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (use `--save` to persist to `wiki/explorations/`) |
 | `openkb chat` | Interactive multi-turn session over the wiki (use `--resume`, `--list`, `--delete` to manage sessions) |
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | A redistributable Anthropic Skill at `<kb>/output/skills/<name>/` + auto-updated `marketplace.json` |
+| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Structural lint of compiled skills (frontmatter, file sizes, wikilinks, scripts/ stdlib check with `--strict`). Auto-runs at end of `skill new` |
+| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Trigger-accuracy evaluation — does the `description:` field actually fire? LLM generates eval prompts; grader LLM scores activation. `--save` persists the eval set |
+| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Iteration workspace — every overwrite saves the previous version to `output/skills/<name>-workspace/iteration-N/` with a structural diff. Rollback restores any iteration |
 
 ### Query & Chat — ask the wiki
 
@@ -254,6 +257,21 @@ npx skills@latest add <your-org>/<your-repo>
 [generation streams]
 > description is too generic, make it about transformer implementations specifically
 [agent edits SKILL.md frontmatter in place]
+```
+
+**Quality gates** — borrowing from [Codex skill-creator](https://github.com/openai/skills) (structural validation) and [Anthropic skill-creator](https://github.com/anthropics/skills/tree/main/skills/skill-creator) (trigger-accuracy evals):
+
+```bash
+# Lint structure (auto-runs at end of `skill new`)
+openkb skill validate karpathy-thinking
+openkb skill validate --strict          # treat warnings as failures
+
+# Does the description actually fire when it should?
+openkb skill eval karpathy-thinking --save
+
+# History + rollback if a new iteration regresses
+openkb skill history karpathy-thinking
+openkb skill rollback karpathy-thinking --to 2
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit your compiled skill back to the community registry at [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB).
