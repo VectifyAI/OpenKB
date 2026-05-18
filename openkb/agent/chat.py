@@ -521,10 +521,20 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
     name = parts[1]
     intent = " ".join(parts[2:])
 
-    from openkb.cli import _validate_skill_name
-    err = _validate_skill_name(name)
+    # Use the same safety gates as the CLI (name validation, wiki dir,
+    # wiki content). Chat doesn't have a -y flag, so existing skills
+    # block with a clear instruction to delete first.
+    from openkb.cli import _preflight_skill_new
+    err = _preflight_skill_new(kb_dir, name, yes_flag=False)
     if err:
         _fmt(style, ("class:error", f"[ERROR] {err}\n"))
+        return
+
+    target = kb_dir / "output" / "skills" / name
+    if target.exists():
+        _fmt(style, ("class:error",
+            f"[ERROR] output/skills/{name}/ already exists. Remove it first "
+            f"with `rm -rf output/skills/{name}` and re-run.\n"))
         return
 
     # Load model from KB config

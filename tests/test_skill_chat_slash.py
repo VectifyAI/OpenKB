@@ -17,6 +17,9 @@ def _make_kb(tmp_path):
     (tmp_path / "wiki" / "concepts").mkdir(parents=True)
     (tmp_path / "wiki" / "summaries").mkdir(parents=True)
     (tmp_path / "wiki" / "index.md").write_text("# index\n")
+    # Populate so wiki-content gate accepts
+    (tmp_path / "wiki" / "concepts" / "demo.md").write_text("# demo\n")
+    (tmp_path / "wiki" / "summaries" / "demo.md").write_text("# demo\n")
     return tmp_path
 
 
@@ -62,3 +65,41 @@ async def test_slash_skill_unknown_subcommand(tmp_path):
     style = Style.from_dict({})
     action = await _handle_slash('/skill list', kb, session, style)
     assert action is None
+
+
+@pytest.mark.asyncio
+async def test_slash_skill_new_rejects_empty_wiki(tmp_path):
+    """Chat / slash command must catch freshly-init'd KBs (no compiled content)."""
+    kb = tmp_path
+    (kb / ".openkb").mkdir()
+    (kb / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (kb / ".openkb" / "chats").mkdir()
+    # Empty wiki/ — exactly what `openkb init` creates
+    (kb / "wiki" / "concepts").mkdir(parents=True)
+    (kb / "wiki" / "summaries").mkdir(parents=True)
+    (kb / "wiki" / "index.md").write_text("# index\n")
+
+    session = ChatSession.new(kb, "gpt-4o-mini", "en")
+    style = Style.from_dict({})
+
+    action = await _handle_slash('/skill new demo "intent"', kb, session, style)
+    assert action is None
+    assert not (kb / "output").exists()
+
+
+@pytest.mark.asyncio
+async def test_slash_skill_new_rejects_when_target_exists(tmp_path):
+    """Chat / slash command must not silently overwrite an existing skill."""
+    kb = _make_kb(tmp_path)
+    (kb / "wiki" / "concepts" / "x.md").write_text("x")
+    (kb / "wiki" / "summaries" / "x.md").write_text("x")
+    (kb / "output" / "skills" / "demo").mkdir(parents=True)
+    (kb / "output" / "skills" / "demo" / "stale.txt").write_text("old")
+
+    session = ChatSession.new(kb, "gpt-4o-mini", "en")
+    style = Style.from_dict({})
+
+    action = await _handle_slash('/skill new demo "intent"', kb, session, style)
+    assert action is None
+    # stale.txt must still be there (we didn't overwrite)
+    assert (kb / "output" / "skills" / "demo" / "stale.txt").read_text() == "old"

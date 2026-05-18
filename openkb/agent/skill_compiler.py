@@ -13,16 +13,15 @@ in ``openkb.agent.query``. The differences:
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from agents import Agent, Runner, function_tool
 from agents.model_settings import ModelSettings
 
 from openkb.agent.skill_tools import (
-    list_wiki_dir,
-    read_wiki_file_for_skill,
-    write_skill_file,
+    list_wiki_dir as _list_wiki_dir_impl,
+    read_wiki_file_for_skill as _read_wiki_file_impl,
+    write_skill_file as _write_skill_file_impl,
 )
 from openkb.prompts import load_prompt
 from openkb.schema import get_agents_md
@@ -59,32 +58,31 @@ def build_skill_compile_agent(
     )
 
     @function_tool
-    def list_wiki(directory: str) -> str:
+    def list_wiki_dir(directory: str) -> str:
         """List .md files in a wiki subdirectory (e.g. 'concepts')."""
-        return list_wiki_dir(directory, wiki_root)
+        return _list_wiki_dir_impl(directory, wiki_root)
 
     @function_tool
-    def read_wiki(path: str) -> str:
+    def read_wiki_file(path: str) -> str:
         """Read a wiki markdown file by path relative to wiki/ (e.g. 'concepts/attention.md')."""
-        return read_wiki_file_for_skill(path, wiki_root)
+        return _read_wiki_file_impl(path, wiki_root)
 
     @function_tool
-    def query_wiki(question: str) -> str:
+    async def query_wiki(question: str) -> str:
         """Run a semantic query over the wiki and return the answer.
 
         Use sparingly — this is itself an LLM call. Prefer reading specific
         files when you already know which one you want.
         """
-        # Lazy import to avoid circular dependency at module import.
+        # Lazy import to avoid a circular dependency at module load time.
         from openkb.agent.query import run_query
         kb_dir = Path(wiki_root).parent
-        config_model = model
-        return asyncio.run(run_query(question, kb_dir, config_model, stream=False))
+        return await run_query(question, kb_dir, model, stream=False)
 
     @function_tool
-    def write_skill(path: str, content: str) -> str:
+    def write_skill_file(path: str, content: str) -> str:
         """Write a file under the skill directory."""
-        return write_skill_file(path, content, skill_root)
+        return _write_skill_file_impl(path, content, skill_root)
 
     @function_tool
     def done(summary: str) -> str:
@@ -94,7 +92,7 @@ def build_skill_compile_agent(
     return Agent(
         name="skill-compiler",
         instructions=instructions,
-        tools=[list_wiki, read_wiki, query_wiki, write_skill, done],
+        tools=[list_wiki_dir, read_wiki_file, query_wiki, write_skill_file, done],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )

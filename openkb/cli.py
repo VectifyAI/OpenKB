@@ -165,6 +165,54 @@ def _validate_skill_name(name: str) -> str | None:
     return None
 
 
+def _preflight_skill_new(
+    kb_dir: Path, name: str, yes_flag: bool,
+) -> str | None:
+    """Run all the safety gates for ``openkb skill new`` / ``/skill new``.
+
+    Returns ``None`` if it's safe to proceed (caller will then either
+    proceed or, for the overwrite case, call ``_clear_existing_skill_dir``
+    after confirming with the user). Returns an error message string if
+    one of the gates trips.
+
+    NOTE: This intentionally does NOT handle the overwrite confirmation
+    itself — that's caller-specific (TTY-based ``click.confirm`` in CLI;
+    explicit ``--force``-style flag in chat). It only returns an error if
+    the target dir exists AND ``yes_flag`` is False, and the caller is
+    expected to detect that error message and prompt as appropriate.
+    """
+    err = _validate_skill_name(name)
+    if err:
+        return err
+
+    wiki = kb_dir / "wiki"
+    if not wiki.is_dir():
+        return (
+            "No wiki found in this KB. Run `openkb add <source>` to "
+            "ingest documents first."
+        )
+
+    has_content = any(
+        (wiki / sub).is_dir() and any((wiki / sub).iterdir())
+        for sub in ("concepts", "summaries")
+    )
+    if not has_content:
+        return (
+            "Wiki has no compiled content yet. Ingest at least one "
+            "document with `openkb add` first."
+        )
+
+    return None
+
+
+def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
+    """Delete an existing ``<kb>/output/skills/<name>/`` directory."""
+    import shutil
+    target = kb_dir / "output" / "skills" / name
+    if target.exists():
+        shutil.rmtree(target)
+
+
 def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
@@ -1393,7 +1441,6 @@ def skill_new(ctx, name, intent, yes_flag):
       openkb skill new karpathy-thinking "Reason about transformers like Karpathy"
     """
     import asyncio
-    import shutil
     import sys
 
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
@@ -1401,38 +1448,16 @@ def skill_new(ctx, name, intent, yes_flag):
         click.echo("No knowledge base found. Run `openkb init` first.", err=True)
         ctx.exit(1)
 
-    # Validate name
-    err = _validate_skill_name(name)
+    err = _preflight_skill_new(kb_dir, name, yes_flag)
     if err:
         click.echo(f"[ERROR] {err}", err=True)
-        ctx.exit(2)
-
-    # Validate wiki exists and has content
-    wiki = kb_dir / "wiki"
-    if not wiki.is_dir():
-        click.echo(
-            "[ERROR] No wiki found in this KB. Run `openkb add <source>` "
-            "to ingest documents first.",
-            err=True,
-        )
-        ctx.exit(1)
-    has_content = any(
-        (wiki / sub).is_dir() and any((wiki / sub).iterdir())
-        for sub in ("concepts", "summaries")
-    )
-    if not has_content:
-        click.echo(
-            "[ERROR] Wiki has no compiled content yet. Ingest at least one "
-            "document with `openkb add` first.",
-            err=True,
-        )
         ctx.exit(1)
 
-    # Overwrite handling
+    # Overwrite handling (CLI-specific)
     target = kb_dir / "output" / "skills" / name
     if target.exists():
         if yes_flag:
-            shutil.rmtree(target)
+            _clear_existing_skill_dir(kb_dir, name)
         elif sys.stdin.isatty():
             if not click.confirm(
                 f"output/skills/{name}/ already exists. Overwrite?",
@@ -1440,7 +1465,7 @@ def skill_new(ctx, name, intent, yes_flag):
             ):
                 click.echo("Aborted.")
                 ctx.exit(1)
-            shutil.rmtree(target)
+            _clear_existing_skill_dir(kb_dir, name)
         else:
             click.echo(
                 f"[ERROR] output/skills/{name}/ exists. Pass -y to overwrite "
