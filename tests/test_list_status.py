@@ -147,3 +147,22 @@ class TestStatusCommand:
             result = runner.invoke(cli, ["status"])
 
         assert result.exit_code == 0
+
+
+class TestStatusKbPath:
+    """Status output must lead with the active KB path so agents and
+    scripts can locate the wiki when invoked from outside the KB root."""
+
+    def test_status_prints_kb_path_first(self, tmp_path):
+        kb_dir = _setup_kb(tmp_path)
+
+        runner = CliRunner()
+        with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        # First non-empty line carries the path in a parseable form:
+        #   "Knowledge base: /path/to/kb"
+        first_line = result.output.splitlines()[0]
+        assert first_line.startswith("Knowledge base: ")
+        assert first_line.split(": ", 1)[1] == str(kb_dir)

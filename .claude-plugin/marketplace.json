@@ -1,0 +1,31 @@
+{
+  "name": "vectify",
+  "owner": {
+    "name": "Ray",
+    "email": "ray@vectify.ai"
+  },
+  "metadata": {
+    "description": "Skills for navigating an OpenKB-compiled knowledge base from agent CLIs (Claude Code, Codex, Gemini CLI).",
+    "version": "0.1.4"
+  },
+  "plugins": [
+    {
+      "name": "openkb",
+      "description": "Navigate an OpenKB-compiled wiki: discover documents and concepts via openkb CLI commands, read concept and summary pages directly, and follow wikilinks across the knowledge graph.",
+      "source": "./",
+      "strict": false,
+      "version": "0.1.4",
+      "author": {
+        "name": "Ray",
+        "email": "ray@vectify.ai"
+      },
+      "homepage": "https://github.com/VectifyAI/OpenKB",
+      "repository": "https://github.com/VectifyAI/OpenKB",
+      "license": "Apache-2.0",
+      "keywords": ["knowledge-base", "wiki", "openkb", "rag", "agent-skill"],
+      "skills": [
+        "./skills/openkb"
+      ]
+    }
+  ]
+}
