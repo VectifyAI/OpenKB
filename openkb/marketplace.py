@@ -5,10 +5,11 @@ frontmatter), this module scans ``<kb>/output/skills/*/SKILL.md`` and
 rewrites ``<kb>/.claude-plugin/marketplace.json`` listing all currently
 compiled skills.
 
-The schema matches the OpenKB repo's own ``.claude-plugin/marketplace.json``:
-one plugin entry per KB, with a ``skills`` array of relative paths. Other
-agent CLIs (``npx skills add``, Claude Code ``/plugin marketplace add``)
-install from this manifest.
+The schema is a subset compatible with the OpenKB repo's own
+``.claude-plugin/marketplace.json``: one plugin entry per KB, with a
+``skills`` array of relative paths. ``owner`` is derived from git config
+so Claude Code's ``/plugin marketplace add`` accepts the manifest. Other
+agent CLIs (``npx skills add``) install from the same file.
 
 This is a deterministic step — no LLM calls.
 """
@@ -24,6 +25,32 @@ from openkb.config import load_config
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _DESCRIPTION_RE = re.compile(r"^description:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _git_owner() -> dict[str, str]:
+    """Read user.name and user.email from git config for the manifest owner.
+
+    Falls back to placeholders if git isn't configured — the manifest is
+    still valid, just less helpful for marketplace listings.
+    """
+    import subprocess
+
+    def _git(key: str) -> str:
+        try:
+            result = subprocess.run(
+                ["git", "config", "--get", key],
+                capture_output=True, text=True, timeout=2,
+            )
+            return result.stdout.strip()
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return ""
+
+    name = _git("user.name") or "openkb-user"
+    email = _git("user.email") or ""
+    owner: dict[str, str] = {"name": name}
+    if email:
+        owner["email"] = email
+    return owner
 
 
 def _read_skill_description(skill_md: Path) -> str:
@@ -78,8 +105,10 @@ def _build_manifest(kb_dir: Path) -> dict[str, Any]:
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     version = str(config.get("version", "0.1.0"))
 
+    owner = _git_owner()
     return {
         "name": name,
+        "owner": owner,
         "metadata": {
             "description": metadata_desc,
             "version": version,
@@ -90,6 +119,7 @@ def _build_manifest(kb_dir: Path) -> dict[str, Any]:
                 "description": metadata_desc,
                 "source": "./",
                 "version": version,
+                "author": owner,
                 "skills": skill_paths,
             }
         ],
