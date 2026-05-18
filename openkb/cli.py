@@ -1416,7 +1416,10 @@ def skill_new(ctx, name, intent, yes_flag):
             err=True,
         )
         ctx.exit(1)
-    has_content = any(wiki.iterdir())
+    has_content = any(
+        (wiki / sub).is_dir() and any((wiki / sub).iterdir())
+        for sub in ("concepts", "summaries")
+    )
     if not has_content:
         click.echo(
             "[ERROR] Wiki has no compiled content yet. Ingest at least one "

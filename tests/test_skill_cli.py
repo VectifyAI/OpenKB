@@ -20,6 +20,9 @@ def _make_kb(tmp_path):
     (tmp_path / "wiki" / "concepts").mkdir(parents=True)
     (tmp_path / "wiki" / "summaries").mkdir(parents=True)
     (tmp_path / "wiki" / "index.md").write_text("# index\n")
+    # Populate the wiki with compiled content so the wiki-content gate accepts it.
+    (tmp_path / "wiki" / "concepts" / "demo.md").write_text("# demo\n")
+    (tmp_path / "wiki" / "summaries" / "demo.md").write_text("# demo\n")
     return tmp_path
 
 
@@ -77,6 +80,24 @@ def test_skill_new_errors_with_empty_wiki(tmp_path):
         result = runner.invoke(cli, ["skill", "new", "demo", "x"])
     assert result.exit_code != 0
     assert "wiki" in result.output.lower()
+
+
+def test_skill_new_errors_with_freshly_init_wiki(tmp_path):
+    """A freshly init'd KB has wiki/ + empty concepts/ + summaries/ + index.md.
+    No documents have been ingested. The skill factory must refuse to compile
+    rather than spend tokens on an empty wiki."""
+    kb = tmp_path
+    (kb / ".openkb").mkdir()
+    (kb / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    # Mirror openkb init's layout: empty concepts + summaries, just index.md
+    (kb / "wiki" / "concepts").mkdir(parents=True)
+    (kb / "wiki" / "summaries").mkdir(parents=True)
+    (kb / "wiki" / "index.md").write_text("# index\n")
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=kb):
+        result = runner.invoke(cli, ["skill", "new", "demo", "x"])
+    assert result.exit_code != 0
+    assert "compiled content" in result.output.lower() or "ingest" in result.output.lower()
 
 
 def test_skill_new_aborts_when_target_exists_without_yes(tmp_path):
