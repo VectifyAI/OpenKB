@@ -143,6 +143,28 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
+def _validate_skill_name(name: str) -> str | None:
+    """Validate a skill slug. Returns None if OK, an error message if not.
+
+    Rules: lowercase ``[a-z0-9-]``, no leading/trailing dash, no consecutive
+    dashes, 1-64 characters. This matches the directory name we'll create
+    under ``<kb>/output/skills/`` and the ``name:`` frontmatter field.
+    """
+    if not name:
+        return "Skill name must not be empty."
+    if len(name) > 64:
+        return "Skill name must be at most 64 characters."
+    if not all(c.islower() or c.isdigit() or c == "-" for c in name):
+        return "Skill name must contain only lowercase letters, digits, and dashes."
+    if name.startswith("-"):
+        return "Skill name must not have a leading dash."
+    if name.endswith("-"):
+        return "Skill name must not have a trailing dash."
+    if "--" in name:
+        return "Skill name must not contain consecutive dashes."
+    return None
+
+
 def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
