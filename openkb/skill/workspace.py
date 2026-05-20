@@ -9,9 +9,6 @@ overwrites, so no work is destroyed by a new compile.
 After the new skill is generated, :func:`write_diff` drops a
 ``diff.md`` inside the saved iteration capturing the structural delta
 (description change, ref/script add/remove, SKILL.md line-count delta).
-
-Borrowed from Anthropic's `skill-creator` iteration pattern:
-https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md
 """
 from __future__ import annotations
 
