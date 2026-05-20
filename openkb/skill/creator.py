@@ -31,6 +31,7 @@ from openkb.prompts import load_prompt
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 80  # higher than query (50) because compile can write multiple files
+QUERY_WIKI_MAX_CALLS = 3  # bound nested-LLM tail latency; agents should prefer direct reads
 
 
 def build_skill_create_agent(
@@ -103,6 +104,12 @@ def build_skill_create_agent(
             return ToolOutputImage(image_url=result["image_url"])
         return ToolOutputText(text=result["text"])
 
+    # Per-compile counter for query_wiki. Each invocation spawns a nested
+    # Runner.run(max_turns=50), so an agent that leans on this tool can
+    # blow up wall-clock and token cost. The docstring already nudges
+    # toward direct reads; this hard cap is the structural backstop.
+    query_wiki_calls = 0
+
     @function_tool
     async def query_wiki(question: str) -> str:
         """Semantic search over the wiki — narrow follow-ups only.
@@ -112,7 +119,18 @@ def build_skill_create_agent(
         does the book say about X across multiple chapters?"). For primary
         traversal, use list/read/get_page_content instead — they are
         cheaper and give you the raw text, not another LLM's summary.
+
+        Capped at ``QUERY_WIKI_MAX_CALLS`` invocations per compile.
         """
+        nonlocal query_wiki_calls
+        query_wiki_calls += 1
+        if query_wiki_calls > QUERY_WIKI_MAX_CALLS:
+            return (
+                f"query_wiki call cap reached "
+                f"({QUERY_WIKI_MAX_CALLS} per compile). Use direct file "
+                f"reads (read_wiki_file / get_page_content) for further "
+                f"investigation."
+            )
         # Lazy import to avoid a circular dependency at module load time.
         from openkb.agent.query import run_query
         kb_dir = Path(wiki_root).parent
@@ -141,7 +159,14 @@ def build_skill_create_agent(
             done,
         ],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(parallel_tool_calls=False),
+        # Allow the model to issue multiple read tool calls in one turn —
+        # the compile's early phase is a fan-out (list dir -> read N
+        # summaries -> read N source page-ranges), and serialising each
+        # read into its own turn costs roughly 5-10 extra round-trips per
+        # compile. Writes serialise naturally because each
+        # `write_skill_file` depends on accumulated reads; the model has
+        # no reason to issue parallel writes to the same path.
+        model_settings=ModelSettings(parallel_tool_calls=True),
     )
 
 

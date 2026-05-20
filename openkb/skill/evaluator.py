@@ -30,6 +30,7 @@ real LLM calls in tests — both generator and graders are patched.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,11 @@ from openkb.skill import extract_body, extract_frontmatter
 
 EVAL_DEFAULT_COUNT = 10  # 10 trigger + 10 no-trigger = 20 prompts
 REFERENCES_PREVIEW_BYTES = 4000  # cap reference content fed to the eval LLM
+# Bound on concurrent grader LLM calls in run_eval. Without this the
+# default count=10 would fire ~30 simultaneous requests, which most
+# providers rate-limit. 8 is a conservative starting point — runs ~4x
+# the sequential baseline while staying well under typical RPM caps.
+EVAL_CONCURRENCY = 8
 
 
 @dataclass
@@ -366,23 +372,52 @@ async def run_eval(
     desc = _read_description(skill_dir)
     content = _skill_content_block(skill_dir)
     result = EvalResult(prompts=eval_set)
-    for prompt in eval_set:
-        graded = await grade_one(desc, prompt.question, model=model)
+
+    # Run grading concurrently. Each prompt is independent — graders read
+    # the same `desc`/`content` strings and produce results that are then
+    # appended to `result` in eval_set order below, so concurrent
+    # execution is correctness-preserving. A semaphore caps simultaneous
+    # LLM calls to avoid hitting provider rate limits.
+    sem = asyncio.Semaphore(EVAL_CONCURRENCY)
+
+    async def _trigger(p: EvalPrompt) -> Literal["trigger", "no-trigger"]:
+        async with sem:
+            return await grade_one(desc, p.question, model=model)
+
+    async def _coverage(p: EvalPrompt) -> tuple[
+        Literal["supported", "unsupported", "ambiguous"], str
+    ]:
+        async with sem:
+            return await grade_coverage(content, p.question, model=model)
+
+    trigger_tasks = [_trigger(p) for p in eval_set]
+    # Body alignment only meaningful on questions the skill claims to
+    # handle — for should-not questions the body is correctly empty of
+    # relevant material.
+    coverage_prompts = [p for p in eval_set if p.expected == "trigger"]
+    coverage_tasks = [_coverage(p) for p in coverage_prompts]
+
+    trigger_results, coverage_results = await asyncio.gather(
+        asyncio.gather(*trigger_tasks),
+        asyncio.gather(*coverage_tasks),
+    )
+
+    # Walk inputs in original order so `result.*` lists are deterministic
+    # even though the gather() above completed out of order.
+    for prompt, graded in zip(eval_set, trigger_results):
         if graded != prompt.expected:
             result.misses.append(EvalMiss(prompt=prompt, graded=graded))
-        # Body alignment only meaningful on questions the skill claims to
-        # handle — for should-not questions the body is correctly empty
-        # of relevant material.
-        if prompt.expected == "trigger":
-            verdict, reason = await grade_coverage(content, prompt.question, model=model)
-            if verdict == "ambiguous":
-                result.coverage_ambiguous.append(
-                    CoverageMiss(prompt=prompt, reason=reason)
-                )
-            elif verdict == "unsupported":
-                result.coverage_misses.append(
-                    CoverageMiss(prompt=prompt, reason=reason)
-                )
+
+    for prompt, (verdict, reason) in zip(coverage_prompts, coverage_results):
+        if verdict == "ambiguous":
+            result.coverage_ambiguous.append(
+                CoverageMiss(prompt=prompt, reason=reason)
+            )
+        elif verdict == "unsupported":
+            result.coverage_misses.append(
+                CoverageMiss(prompt=prompt, reason=reason)
+            )
+
     return result
 
 
