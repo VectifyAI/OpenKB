@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from openkb.config import load_config
-from openkb.skill import extract_description, skills_root
+from openkb.skill import skills_root
 
 
 def _git_owner(kb_dir: Path) -> dict[str, str]:

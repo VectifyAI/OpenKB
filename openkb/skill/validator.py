@@ -28,7 +28,10 @@ from pathlib import Path
 
 import yaml  # already a project dep (pyyaml)
 
-from openkb.skill import extract_frontmatter as _extract_frontmatter
+from openkb.skill import (
+    extract_body as _extract_body,
+    extract_frontmatter as _extract_frontmatter,
+)
 
 
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -165,17 +168,30 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
 
     # Foreign wikilinks. The skill ships *without* the producer's wiki, so
     # any [[concepts/...]] / [[summaries/...]] / [[sources/...]] left in
-    # the body or references is a dead link on the consumer's machine plus
-    # wasted context tokens. The compile prompt's "Linking rules" section
-    # makes this explicit; this is the structural enforcement.
-    foreign = FOREIGN_WIKILINK_RE.findall(text)
-    if foreign:
-        kinds = sorted({k.lower() for k in foreign})
+    # the description, body, or references is a dead link on the
+    # consumer's machine plus wasted context tokens. The compile prompt's
+    # "Linking rules" section makes this explicit; this is the structural
+    # enforcement. Scan each location separately so the error message
+    # tells the author where to look.
+    body = _extract_body(text)
+    if isinstance(desc, str):
+        desc_foreign = FOREIGN_WIKILINK_RE.findall(desc)
+        if desc_foreign:
+            kinds = sorted({k.lower() for k in desc_foreign})
+            result.errors.append(
+                f"SKILL.md `description:` contains foreign wikilinks "
+                f"({', '.join(kinds)}) back to the producer's wiki. "
+                f"Descriptions are the consumer-visible activation signal — "
+                f"paraphrase the reference inline."
+            )
+    body_foreign = FOREIGN_WIKILINK_RE.findall(body)
+    if body_foreign:
+        kinds = sorted({k.lower() for k in body_foreign})
         result.errors.append(
-            f"SKILL.md contains foreign wikilinks ({', '.join(kinds)}) back "
-            f"to the producer's wiki. Those don't ship with the skill and "
-            f"are dead on the consumer's machine — paraphrase the content "
-            f"inline or move it into `references/<slug>.md`."
+            f"SKILL.md body contains foreign wikilinks ({', '.join(kinds)}) "
+            f"back to the producer's wiki. Those don't ship with the skill "
+            f"and are dead on the consumer's machine — paraphrase the "
+            f"content inline or move it into `references/<slug>.md`."
         )
     refs_dir = skill_dir / "references"
     if refs_dir.is_dir():

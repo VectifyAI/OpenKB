@@ -1794,8 +1794,9 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
         f"({result.pass_rate * 100:.0f}%)  "
         f"— does the description fire on the right questions?"
     )
+    scored = result.trigger_questions - len(result.coverage_ambiguous)
     click.echo(
-        f"Body coverage:    {result.coverage_passed}/{result.trigger_questions} "
+        f"Body coverage:    {result.coverage_passed}/{scored} "
         f"({result.coverage_rate * 100:.0f}%)  "
         f"— does SKILL.md actually support what the description promises?"
     )
@@ -1811,7 +1812,21 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
             tail = f" — {gap.reason}" if gap.reason else ""
             click.echo(f"  - {gap.prompt.question}{tail}")
 
-    if not result.misses and not result.coverage_misses:
+    if result.coverage_ambiguous:
+        click.echo(
+            f"\n[WARN] Coverage grader returned unparseable output on "
+            f"{len(result.coverage_ambiguous)} prompt(s) — excluded from "
+            f"the body-coverage score. Try a more capable model:"
+        )
+        for amb in result.coverage_ambiguous:
+            tail = f" — {amb.reason}" if amb.reason else ""
+            click.echo(f"  - {amb.prompt.question}{tail}")
+
+    if (
+        not result.misses
+        and not result.coverage_misses
+        and not result.coverage_ambiguous
+    ):
         click.echo("\nAll prompts graded correctly with full body support.")
 
     if save_flag and eval_set is None:

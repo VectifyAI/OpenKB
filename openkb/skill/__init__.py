@@ -25,6 +25,7 @@ __all__ = [
     "skill_dir",
     "skill_workspace_dir",
     "extract_frontmatter",
+    "extract_body",
     "extract_description",
 ]
 
@@ -63,6 +64,24 @@ def extract_frontmatter(text: str) -> str | None:
     except ValueError:
         return None
     return "\n".join(lines[1:end])
+
+
+def extract_body(text: str) -> str:
+    """Return the body of a SKILL.md — everything after the closing ``---``.
+
+    Uses the same line-anchored logic as :func:`extract_frontmatter` so a
+    body that contains a standalone ``---`` (e.g. a Markdown horizontal
+    rule) is preserved intact. Files without frontmatter return their
+    full text unchanged.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return text
+    try:
+        end = lines.index("---", 1)
+    except ValueError:
+        return text
+    return "\n".join(lines[end + 1:])
 
 
 def extract_description(skill_md: Path) -> str:

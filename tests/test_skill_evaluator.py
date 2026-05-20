@@ -271,7 +271,7 @@ async def test_grade_coverage_parses_supported_verdict():
 
 
 @pytest.mark.asyncio
-async def test_grade_coverage_fails_closed_on_ambiguous_output():
+async def test_grade_coverage_reports_ambiguous_on_unparseable_output():
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="hmm not sure")
 
@@ -279,9 +279,40 @@ async def test_grade_coverage_fails_closed_on_ambiguous_output():
         verdict, reason = await grade_coverage(
             "body", "q?", model="gpt-4o-mini"
         )
-    # Fail closed: ambiguous → unsupported, not falsely supported.
-    assert verdict == "unsupported"
-    assert reason == ""
+    # Ambiguous is a third state — not collapsed into unsupported, so
+    # grader-malfunction doesn't silently inflate coverage_misses.
+    assert verdict == "ambiguous"
+    assert "unparseable grader output" in reason
+
+
+@pytest.mark.asyncio
+async def test_run_eval_segregates_ambiguous_from_coverage_misses(tmp_path):
+    """An ambiguous coverage verdict goes into ``coverage_ambiguous``, not
+    ``coverage_misses``, and is excluded from the coverage_rate denominator."""
+    skill_dir = _make_skill(tmp_path)
+    eval_set = _build_eval_set(3, 0)  # 3 trigger, 0 no-trigger
+
+    async def perfect_trigger(description, question, *, model):
+        return "trigger"
+
+    async def mixed_coverage(content, question, *, model):
+        # trig 0 -> supported, trig 1 -> unsupported, trig 2 -> ambiguous
+        if question == "trig 0":
+            return "supported", ""
+        if question == "trig 1":
+            return "unsupported", "body gap"
+        return "ambiguous", "unparseable grader output: 'xxx'"
+
+    with patch("openkb.skill.evaluator.grade_one", side_effect=perfect_trigger), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=mixed_coverage):
+        result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
+
+    assert result.trigger_questions == 3
+    assert len(result.coverage_misses) == 1  # only the "unsupported" one
+    assert len(result.coverage_ambiguous) == 1
+    # Score 1 supported out of (3 - 1 ambiguous) = 1/2
+    assert result.coverage_passed == 1
+    assert result.coverage_rate == pytest.approx(0.5)
 
 
 # -------- save/load round-trip ------------------------------------------------

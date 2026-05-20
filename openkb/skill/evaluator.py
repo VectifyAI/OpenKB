@@ -38,9 +38,10 @@ from typing import Literal
 import yaml
 
 from agents import Agent, Runner
+from agents.exceptions import MaxTurnsExceeded
 from agents.model_settings import ModelSettings
 
-from openkb.skill import extract_frontmatter
+from openkb.skill import extract_body, extract_frontmatter
 
 
 EVAL_DEFAULT_COUNT = 10  # 10 trigger + 10 no-trigger = 20 prompts
@@ -75,6 +76,11 @@ class EvalResult:
     prompts: list[EvalPrompt] = field(default_factory=list)
     misses: list[EvalMiss] = field(default_factory=list)
     coverage_misses: list[CoverageMiss] = field(default_factory=list)
+    # Trigger prompts where the coverage grader returned an unparseable
+    # verdict (neither SUPPORTED nor UNSUPPORTED). Tracked separately so
+    # grader-malfunction doesn't silently inflate ``coverage_misses`` and
+    # deflate ``coverage_rate``.
+    coverage_ambiguous: list[CoverageMiss] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -94,12 +100,19 @@ class EvalResult:
 
     @property
     def coverage_passed(self) -> int:
-        return self.trigger_questions - len(self.coverage_misses)
+        # Ambiguous outputs are excluded from both numerator and
+        # denominator — see ``coverage_rate``.
+        scored = self.trigger_questions - len(self.coverage_ambiguous)
+        return scored - len(self.coverage_misses)
 
     @property
     def coverage_rate(self) -> float:
-        total = self.trigger_questions
-        return self.coverage_passed / total if total else 0.0
+        # Score only the trigger prompts the grader gave a clear verdict
+        # on. A garbled run that flips half the outputs to ambiguous
+        # should narrow the denominator, not pretend half the body is
+        # hollow.
+        scored = self.trigger_questions - len(self.coverage_ambiguous)
+        return self.coverage_passed / scored if scored else 0.0
 
 
 def _read_description(skill_dir: Path) -> str:
@@ -119,12 +132,7 @@ def _read_description(skill_dir: Path) -> str:
 def _read_body(skill_dir: Path) -> str:
     """Return SKILL.md without the YAML frontmatter."""
     skill_md = skill_dir / "SKILL.md"
-    text = skill_md.read_text(encoding="utf-8")
-    fm = extract_frontmatter(text)
-    if fm is None:
-        return text
-    # Strip the leading frontmatter block (---\n...\n---\n)
-    return text.split("---", 2)[-1].lstrip()
+    return extract_body(skill_md.read_text(encoding="utf-8")).lstrip()
 
 
 def _read_references_preview(skill_dir: Path) -> str:
@@ -201,7 +209,6 @@ async def generate_eval_set(
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
-    from agents.exceptions import MaxTurnsExceeded
     try:
         result = await Runner.run(agent, "Generate the eval set now.", max_turns=3)
     except MaxTurnsExceeded as exc:
@@ -261,7 +268,6 @@ async def grade_one(
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
-    from agents.exceptions import MaxTurnsExceeded
     try:
         result = await Runner.run(agent, f"Question: {question}", max_turns=2)
     except MaxTurnsExceeded as exc:
@@ -283,13 +289,16 @@ async def grade_coverage(
     question: str,
     *,
     model: str,
-) -> tuple[Literal["supported", "unsupported"], str]:
+) -> tuple[Literal["supported", "unsupported", "ambiguous"], str]:
     """Ask the alignment grader whether the SKILL.md body + references
     actually contain enough substance to answer the question.
 
     This is the orthogonal check to :func:`grade_one`. A skill can have a
     perfectly-firing description and still be a hollow shell — this catches
-    that. Returns the verdict and a one-line reason from the grader.
+    that. Returns ``"supported"``, ``"unsupported"``, or ``"ambiguous"``
+    (parser couldn't extract a verdict from the grader's output) plus a
+    one-line reason. Callers should NOT collapse ``"ambiguous"`` into
+    ``"unsupported"`` — see :class:`EvalResult.coverage_ambiguous`.
     """
     instructions = (
         "You are auditing a skill for content quality. You will be given "
@@ -308,7 +317,6 @@ async def grade_coverage(
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
-    from agents.exceptions import MaxTurnsExceeded
     try:
         result = await Runner.run(agent, f"Question: {question}", max_turns=2)
     except MaxTurnsExceeded as exc:
@@ -318,20 +326,26 @@ async def grade_coverage(
         ) from exc
     raw = (result.final_output or "").strip()
     upper = raw.upper()
-    verdict: Literal["supported", "unsupported"]
+    verdict: Literal["supported", "unsupported", "ambiguous"]
     if "UNSUPPORTED" in upper:
         verdict = "unsupported"
     elif "SUPPORTED" in upper:
         verdict = "supported"
     else:
-        # Ambiguous output — treat as unsupported (fail closed).
-        verdict = "unsupported"
+        # Grader didn't emit a parseable verdict — surface as a distinct
+        # state so callers can report grader-malfunction separately from
+        # "the body is hollow." See ``EvalResult.coverage_ambiguous``.
+        verdict = "ambiguous"
     reason = ""
     for line in raw.splitlines():
         stripped = line.strip()
         if stripped.upper().startswith("REASON:"):
             reason = stripped.split(":", 1)[1].strip()
             break
+    if not reason and verdict == "ambiguous":
+        # Keep the first ~120 chars of the raw output so the user has
+        # something to debug from.
+        reason = f"unparseable grader output: {raw[:120]!r}"
     return verdict, reason
 
 
@@ -365,7 +379,11 @@ async def run_eval(
         # of relevant material.
         if prompt.expected == "trigger":
             verdict, reason = await grade_coverage(content, prompt.question, model=model)
-            if verdict != "supported":
+            if verdict == "ambiguous":
+                result.coverage_ambiguous.append(
+                    CoverageMiss(prompt=prompt, reason=reason)
+                )
+            elif verdict == "unsupported":
                 result.coverage_misses.append(
                     CoverageMiss(prompt=prompt, reason=reason)
                 )
