@@ -1,17 +1,30 @@
 """Path-scoped IO tools for the skill-create agent.
 
-The skill-create agent runs with three capabilities:
-  * READ from <kb>/wiki/**            (the substrate)
-  * QUERY the wiki via openkb query   (semantic retrieval, see creator.py)
-  * WRITE under <kb>/output/skills/<name>/**   (the only output destination)
+The skill-create agent runs with these capabilities:
+  * READ wiki structure       — ``list_wiki_dir``
+  * READ wiki markdown        — ``read_wiki_file_for_skill``
+  * READ PageIndex source pages — ``get_skill_page_content`` (delegates to
+    ``openkb.agent.tools.get_wiki_page_content``)
+  * READ wiki images          — ``read_skill_image`` (delegates to
+    ``openkb.agent.tools.read_wiki_image``)
+  * WRITE under skill root    — ``write_skill_file``
 
-These helpers enforce those boundaries at the Python level — every tool
-resolves its target path, then verifies it stays inside the allowed root.
+The first four wrap the canonical wiki tools in ``openkb/agent/tools.py``
+so the skill agent traverses the wiki the same way the query agent does —
+no separate retrieval semantics, no second implementation to drift.
+
+These helpers enforce write boundaries at the Python level — every write
+resolves its target path, then verifies it stays inside the skill root.
 Path traversal (``..``) and absolute paths are rejected outright.
 """
 from __future__ import annotations
 
 from pathlib import Path
+
+from openkb.agent.tools import (
+    get_wiki_page_content as _get_wiki_page_content,
+    read_wiki_image as _read_wiki_image,
+)
 
 
 def list_wiki_dir(directory: str, wiki_root: str) -> str:
@@ -45,6 +58,25 @@ def read_wiki_file_for_skill(path: str, wiki_root: str) -> str:
     if not full.exists():
         return f"File not found: {path}"
     return full.read_text(encoding="utf-8")
+
+
+def get_skill_page_content(doc_name: str, pages: str, wiki_root: str) -> str:
+    """Return formatted source pages from a PageIndex (long) document.
+
+    Thin pass-through to :func:`openkb.agent.tools.get_wiki_page_content` so
+    the skill agent shares the query agent's source-traversal semantics.
+    """
+    return _get_wiki_page_content(doc_name, pages, wiki_root)
+
+
+def read_skill_image(path: str, wiki_root: str) -> dict:
+    """Read a wiki image as a base64 data URL.
+
+    Thin pass-through to :func:`openkb.agent.tools.read_wiki_image`. The
+    caller decides whether to surface the result to the model as
+    ``ToolOutputImage`` or ``ToolOutputText``.
+    """
+    return _read_wiki_image(path, wiki_root)
 
 
 def write_skill_file(path: str, content: str, skill_root: str) -> str:

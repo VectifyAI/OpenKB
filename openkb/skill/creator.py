@@ -5,8 +5,9 @@ in ``openkb.agent.query``. The differences:
 
 * System prompt comes from ``openkb/prompts/skill_create.md`` and is
   interpolated with the user's intent and the target skill name.
-* Tools are scoped: read the wiki, query the wiki, write only within
-  the target skill directory.
+* Tools are scoped: the same deep-retrieval primitives the query agent
+  uses (``list``, ``read``, ``get_page_content``, ``get_image``), plus
+  one write tool restricted to the target skill directory.
 * The runner verifies that ``SKILL.md`` was written before declaring
   success — an agent that gets confused and never writes the required
   output should fail loudly rather than silently produce an empty dir.
@@ -15,11 +16,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agents import Agent, Runner, function_tool
+from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from agents.model_settings import ModelSettings
 
+from openkb.skill import skill_dir
 from openkb.skill.tools import (
+    get_skill_page_content as _get_page_content_impl,
     list_wiki_dir as _list_wiki_dir_impl,
+    read_skill_image as _read_image_impl,
     read_wiki_file_for_skill as _read_wiki_file_impl,
     write_skill_file as _write_skill_file_impl,
 )
@@ -68,11 +72,46 @@ def build_skill_create_agent(
         return _read_wiki_file_impl(path, wiki_root)
 
     @function_tool
-    async def query_wiki(question: str) -> str:
-        """Run a semantic query over the wiki and return the answer.
+    def get_page_content(doc_name: str, pages: str) -> str:
+        """Get text content of specific pages from a PageIndex (long) document.
 
-        Use sparingly — this is itself an LLM call. Prefer reading specific
-        files when you already know which one you want.
+        Use this to read the *source* of a long document at page-range
+        granularity. The summary page for the doc has a ``full_text``
+        frontmatter pointer plus a tree of section page ranges — use those
+        to target tight ranges, not the whole document.
+
+        Args:
+            doc_name: Document name without extension
+                (e.g. ``"attention-is-all-you-need"``).
+            pages: Page spec such as ``"3-5,7,10-12"``.
+        """
+        return _get_page_content_impl(doc_name, pages, wiki_root)
+
+    @function_tool
+    def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
+        """View an image from the wiki.
+
+        Use when a wiki page references a figure, chart, or diagram you
+        need to see in order to distil it correctly into the skill.
+
+        Args:
+            image_path: Path relative to wiki/
+                (e.g. ``"sources/images/doc/p1_img1.png"``).
+        """
+        result = _read_image_impl(image_path, wiki_root)
+        if result["type"] == "image":
+            return ToolOutputImage(image_url=result["image_url"])
+        return ToolOutputText(text=result["text"])
+
+    @function_tool
+    async def query_wiki(question: str) -> str:
+        """Semantic search over the wiki — narrow follow-ups only.
+
+        This is a nested LLM call. Use ONLY when you have a specific
+        sub-question that direct file reads can't easily answer (e.g. "what
+        does the book say about X across multiple chapters?"). For primary
+        traversal, use list/read/get_page_content instead — they are
+        cheaper and give you the raw text, not another LLM's summary.
         """
         # Lazy import to avoid a circular dependency at module load time.
         from openkb.agent.query import run_query
@@ -92,7 +131,15 @@ def build_skill_create_agent(
     return Agent(
         name="skill-creator",
         instructions=instructions,
-        tools=[list_wiki_dir, read_wiki_file, query_wiki, write_skill_file, done],
+        tools=[
+            list_wiki_dir,
+            read_wiki_file,
+            get_page_content,
+            get_image,
+            query_wiki,
+            write_skill_file,
+            done,
+        ],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
@@ -112,7 +159,7 @@ async def run_skill_create(
     or if the SDK hits its turn cap before the agent declares done.
     """
     wiki_root = str(kb_dir / "wiki")
-    skill_root = kb_dir / "output" / "skills" / skill_name
+    skill_root = skill_dir(kb_dir, skill_name)
 
     agent = build_skill_create_agent(
         wiki_root=wiki_root,

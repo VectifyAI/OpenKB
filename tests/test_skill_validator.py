@@ -306,6 +306,79 @@ def test_passed_vs_passed_strict_semantics(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# foreign wikilinks — links to the producer's wiki (concepts/, summaries/,
+# sources/) are dead on the consumer's machine and waste context tokens.
+# Only [[references/...]] is valid in shipped artifacts.
+# ---------------------------------------------------------------------------
+
+
+def test_validator_errors_on_concepts_wikilink_in_body(tmp_path):
+    sd = _write_skill(
+        tmp_path, "leaks-concepts",
+        body="# body\n\nSee [[concepts/attention]] for details.\n",
+    )
+    result = validate_skill(sd)
+    assert not result.passed
+    assert any("foreign wikilinks" in e and "concepts" in e for e in result.errors)
+
+
+def test_validator_errors_on_summaries_wikilink_in_body(tmp_path):
+    sd = _write_skill(
+        tmp_path, "leaks-summaries",
+        body="# body\n\nSee [[summaries/paper]] for the framing.\n",
+    )
+    result = validate_skill(sd)
+    assert not result.passed
+    assert any("foreign wikilinks" in e and "summaries" in e for e in result.errors)
+
+
+def test_validator_errors_on_sources_wikilink_in_body(tmp_path):
+    sd = _write_skill(
+        tmp_path, "leaks-sources",
+        body="# body\n\nQuote from [[sources/book#page-12]].\n",
+    )
+    result = validate_skill(sd)
+    assert not result.passed
+    assert any("foreign wikilinks" in e and "sources" in e for e in result.errors)
+
+
+def test_validator_errors_on_foreign_wikilink_in_reference(tmp_path):
+    """References ship with the skill — they must also be self-contained."""
+    sd = _write_skill(
+        tmp_path, "leaky-ref",
+        body="See [[references/depth]] for more.\n",
+        refs={"depth.md": "# depth\n\nLink to [[concepts/foo]] here.\n"},
+    )
+    result = validate_skill(sd)
+    assert not result.passed
+    assert any(
+        "depth.md" in e and "foreign wikilinks" in e for e in result.errors
+    )
+
+
+def test_validator_accepts_references_only_links(tmp_path):
+    """`[[references/...]]` ships with the skill so it's valid."""
+    sd = _write_skill(
+        tmp_path, "refs-only",
+        body="See [[references/depth]] for the worked example.\n",
+        refs={"depth.md": "# depth\n\nA self-contained reference page.\n"},
+    )
+    result = validate_skill(sd)
+    assert result.passed, result.errors
+
+
+def test_validator_accepts_plain_body_with_no_wikilinks(tmp_path):
+    """A skill with prose and zero wikilinks is fine — provenance lives
+    on the producer's side, not in the shipped artifact."""
+    sd = _write_skill(
+        tmp_path, "plain",
+        body="# body\n\n- Rule 1: when X, prefer Y.\n- Rule 2: avoid Z.\n",
+    )
+    result = validate_skill(sd)
+    assert result.passed, result.errors
+
+
+# ---------------------------------------------------------------------------
 # new round-2 checks: angle brackets in description + unknown frontmatter keys
 # ---------------------------------------------------------------------------
 

@@ -117,6 +117,24 @@ def test_restore_iteration_no_workspace_raises(tmp_path):
         restore_iteration(tmp_path, "demo")
 
 
+def test_restore_iteration_preserves_current_state(tmp_path):
+    """Rollback is reversible: the pre-rollback skill is saved before overwrite,
+    so a user who edited files in chat then rolled back can recover those edits.
+    """
+    _make_skill(tmp_path, "demo", description="v1")
+    save_iteration(tmp_path, "demo")  # iteration-1
+    # Simulate an in-place edit (e.g. via /skill or write_kb_file) — no save call.
+    _make_skill(tmp_path, "demo", description="unsaved-edit")
+
+    restore_iteration(tmp_path, "demo", n=1)
+
+    # Pre-rollback state should be preserved as a new iteration, not lost.
+    iters = list_iterations(tmp_path, "demo")
+    assert len(iters) == 2
+    preserved = iters[-1] / "SKILL.md"
+    assert "unsaved-edit" in preserved.read_text()
+
+
 # ---------------------------------------------------------------------------
 # write_diff
 # ---------------------------------------------------------------------------

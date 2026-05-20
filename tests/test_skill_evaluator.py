@@ -22,6 +22,7 @@ from openkb.skill.evaluator import (
     EvalResult,
     _read_description,
     generate_eval_set,
+    grade_coverage,
     grade_one,
     load_eval_set,
     run_eval,
@@ -168,6 +169,10 @@ def _build_eval_set(n_trig: int = 3, n_no: int = 3) -> list[EvalPrompt]:
     return prompts
 
 
+async def _supported_coverage(content, question, *, model):
+    return "supported", ""
+
+
 @pytest.mark.asyncio
 async def test_run_eval_happy_path_all_correct(tmp_path):
     skill_dir = _make_skill(tmp_path)
@@ -178,7 +183,8 @@ async def test_run_eval_happy_path_all_correct(tmp_path):
         match = next(p for p in eval_set if p.question == question)
         return match.expected
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade):
+    with patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=_supported_coverage):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert isinstance(result, EvalResult)
@@ -186,6 +192,11 @@ async def test_run_eval_happy_path_all_correct(tmp_path):
     assert result.passed == 6
     assert result.pass_rate == 1.0
     assert result.misses == []
+    # Body coverage was graded only on the 3 trigger prompts, all supported.
+    assert result.trigger_questions == 3
+    assert result.coverage_passed == 3
+    assert result.coverage_rate == 1.0
+    assert result.coverage_misses == []
 
 
 @pytest.mark.asyncio
@@ -197,7 +208,8 @@ async def test_run_eval_reports_misses(tmp_path):
     async def fake_grade(description, question, *, model):
         return "trigger"
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade):
+    with patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=_supported_coverage):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert result.total == 6
@@ -209,6 +221,67 @@ async def test_run_eval_reports_misses(tmp_path):
     # EvalMiss.label sanity check
     assert "no-trigger" in result.misses[0].label
     assert "trigger" in result.misses[0].label
+
+
+@pytest.mark.asyncio
+async def test_run_eval_reports_coverage_gaps(tmp_path):
+    """Body alignment must catch the hollow-body case: description fires
+    correctly but the body cannot support the questions it claims."""
+    skill_dir = _make_skill(tmp_path)
+    eval_set = _build_eval_set(3, 3)
+
+    async def perfect_trigger(description, question, *, model):
+        match = next(p for p in eval_set if p.question == question)
+        return match.expected
+
+    async def hollow_coverage(content, question, *, model):
+        # Body claims to support but actually doesn't for the first two
+        # trigger prompts.
+        if question in {"trig 0", "trig 1"}:
+            return "unsupported", "body has no material"
+        return "supported", ""
+
+    with patch("openkb.skill.evaluator.grade_one", side_effect=perfect_trigger), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=hollow_coverage):
+        result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
+
+    # Trigger accuracy is still perfect.
+    assert result.passed == 6
+    # But coverage catches the hollow shell.
+    assert result.trigger_questions == 3
+    assert len(result.coverage_misses) == 2
+    assert {g.prompt.question for g in result.coverage_misses} == {"trig 0", "trig 1"}
+    assert all(g.reason == "body has no material" for g in result.coverage_misses)
+    assert result.coverage_rate == pytest.approx(1 / 3)
+
+
+@pytest.mark.asyncio
+async def test_grade_coverage_parses_supported_verdict():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(
+            final_output="VERDICT: SUPPORTED\nREASON: body covers this directly"
+        )
+
+    with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        verdict, reason = await grade_coverage(
+            "body content", "question?", model="gpt-4o-mini"
+        )
+    assert verdict == "supported"
+    assert reason == "body covers this directly"
+
+
+@pytest.mark.asyncio
+async def test_grade_coverage_fails_closed_on_ambiguous_output():
+    async def fake_runner(*args, **kwargs):
+        return SimpleNamespace(final_output="hmm not sure")
+
+    with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        verdict, reason = await grade_coverage(
+            "body", "q?", model="gpt-4o-mini"
+        )
+    # Fail closed: ambiguous → unsupported, not falsely supported.
+    assert verdict == "unsupported"
+    assert reason == ""
 
 
 # -------- save/load round-trip ------------------------------------------------

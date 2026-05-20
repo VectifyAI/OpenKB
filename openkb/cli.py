@@ -206,7 +206,9 @@ def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
 
 def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
     """Delete an existing ``<kb>/output/skills/<name>/`` directory."""
-    target = kb_dir / "output" / "skills" / name
+    from openkb.skill import skill_dir
+
+    target = skill_dir(kb_dir, name)
     if target.exists():
         shutil.rmtree(target)
 
@@ -1465,10 +1467,11 @@ def skill_new(ctx, name, intent, yes_flag):
     # When overwriting, we don't destroy the old skill — we copy it
     # into <kb>/output/skills/<name>-workspace/iteration-N/ first, so
     # the user can roll back via `openkb skill rollback`. See
-    # ``openkb/skill_workspace.py``.
+    # ``openkb/skill/workspace.py``.
+    from openkb.skill import skill_dir
     from openkb.skill.workspace import save_iteration, write_diff
 
-    target = kb_dir / "output" / "skills" / name
+    target = skill_dir(kb_dir, name)
     saved_iteration: Path | None = None
     if target.exists():
         if yes_flag:
@@ -1491,17 +1494,18 @@ def skill_new(ctx, name, intent, yes_flag):
             )
             ctx.exit(1)
 
-    # Run the generator
+    # Run the generator. Generator.run handles compile -> validate ->
+    # marketplace publish, so both CLI and chat get the same quality gate.
     from openkb.skill.generator import Generator
     click.echo(f"Compiling skill '{name}'...")
+    gen = Generator(
+        target_type="skill",
+        name=name,
+        intent=intent,
+        kb_dir=kb_dir,
+        model=model,
+    )
     try:
-        gen = Generator(
-            target_type="skill",
-            name=name,
-            intent=intent,
-            kb_dir=kb_dir,
-            model=model,
-        )
         asyncio.run(gen.run())
     except RuntimeError as exc:
         click.echo(f"[ERROR] {exc}", err=True)
@@ -1517,12 +1521,10 @@ def skill_new(ctx, name, intent, yes_flag):
                 "diff generation failed: %s", exc, exc_info=True
             )
 
-    # Auto-validate the freshly compiled skill. Surface issues but don't
-    # block — files are on disk and the user can fix or rollback.
-    from openkb.skill.validator import validate_skill
-    skill_dir = kb_dir / "output" / "skills" / name
-    result = validate_skill(skill_dir)
-    if result.errors or result.warnings:
+    # Surface validation issues. Don't block — files are on disk and
+    # the user can fix or rollback.
+    result = gen.validation
+    if result is not None and (result.errors or result.warnings):
         click.echo("\n[WARN] Validation found issues:")
         for err in result.errors:
             click.echo(f"  ERROR:   {err}")
@@ -1581,7 +1583,8 @@ def skill_history(ctx, name):
             stamp = "-"
         click.echo(f"  {n}  {rel}  {stamp}")
 
-    current = kb_dir / "output" / "skills" / name
+    from openkb.skill import skill_dir
+    current = skill_dir(kb_dir, name)
     if current.is_dir():
         rel_curr = current.relative_to(kb_dir)
         click.echo(f"\n  Current: {rel_curr}/")
@@ -1642,7 +1645,8 @@ def skill_rollback(ctx, name, to_n, yes_flag):
         )
         ctx.exit(1)
 
-    current = kb_dir / "output" / "skills" / name
+    from openkb.skill import skill_dir
+    current = skill_dir(kb_dir, name)
     if current.exists():
         prompt = (
             f"This will overwrite output/skills/{name}/ with {target_label}. Continue?"
@@ -1681,27 +1685,28 @@ def skill_rollback(ctx, name, to_n, yes_flag):
 @click.pass_context
 def skill_validate(ctx, name, strict):
     """Validate one skill (by name) or all compiled skills in this KB."""
+    from openkb.skill import skill_dir, skills_root
     from openkb.skill.validator import validate_skill
 
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
-        click.echo("No knowledge base found.", err=True)
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
         ctx.exit(1)
 
-    skills_root = kb_dir / "output" / "skills"
-    if not skills_root.is_dir():
+    root = skills_root(kb_dir)
+    if not root.is_dir():
         click.echo("No skills found. Compile one with `openkb skill new`.")
         return
 
     if name:
-        target = skills_root / name
+        target = skill_dir(kb_dir, name)
         if not target.is_dir():
             click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
             ctx.exit(1)
         targets = [target]
     else:
         targets = sorted(
-            d for d in skills_root.iterdir()
+            d for d in root.iterdir()
             if d.is_dir() and not d.name.endswith("-workspace")
         )
 
@@ -1748,12 +1753,14 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
         run_eval, save_eval_set, load_eval_set, EvalPrompt,
     )
 
+    from openkb.skill import skill_dir as _skill_dir
+
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
-        click.echo("No knowledge base found.", err=True)
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
         ctx.exit(1)
 
-    skill_dir = kb_dir / "output" / "skills" / name
+    skill_dir = _skill_dir(kb_dir, name)
     if not skill_dir.is_dir():
         click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
         ctx.exit(1)
@@ -1783,16 +1790,29 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
 
     click.echo(f"\nEval set: {result.total} prompts")
     click.echo(
-        f"Pass rate: {result.passed}/{result.total} "
-        f"({result.pass_rate * 100:.0f}%)"
+        f"Trigger accuracy: {result.passed}/{result.total} "
+        f"({result.pass_rate * 100:.0f}%)  "
+        f"— does the description fire on the right questions?"
+    )
+    click.echo(
+        f"Body coverage:    {result.coverage_passed}/{result.trigger_questions} "
+        f"({result.coverage_rate * 100:.0f}%)  "
+        f"— does SKILL.md actually support what the description promises?"
     )
 
     if result.misses:
-        click.echo(f"\nMisses ({len(result.misses)}):")
+        click.echo(f"\nTrigger misses ({len(result.misses)}):")
         for miss in result.misses:
             click.echo(f"  - {miss.label} {miss.prompt.question}")
-    else:
-        click.echo("\nAll prompts graded correctly.")
+
+    if result.coverage_misses:
+        click.echo(f"\nCoverage gaps ({len(result.coverage_misses)}):")
+        for gap in result.coverage_misses:
+            tail = f" — {gap.reason}" if gap.reason else ""
+            click.echo(f"  - {gap.prompt.question}{tail}")
+
+    if not result.misses and not result.coverage_misses:
+        click.echo("\nAll prompts graded correctly with full body support.")
 
     if save_flag and eval_set is None:
         path = save_eval_set(kb_dir, name, result.prompts)

@@ -28,6 +28,8 @@ from pathlib import Path
 
 import yaml  # already a project dep (pyyaml)
 
+from openkb.skill import extract_frontmatter as _extract_frontmatter
+
 
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 DESCRIPTION_MAX_CHARS = 1024
@@ -35,6 +37,13 @@ SKILL_MD_MAX_BYTES = 50 * 1024
 REFERENCE_MAX_BYTES = 100 * 1024
 NAME_MAX_LEN = 64
 WIKILINK_RE = re.compile(r"\[\[references/([a-z0-9._/-]+)\]\]", re.IGNORECASE)
+# Foreign wikilinks point at the producer's wiki, which is not shipped
+# with the skill. On the consumer's machine they are dead links *and*
+# wasted context tokens — see "Linking rules" in skill_create.md.
+FOREIGN_WIKILINK_RE = re.compile(
+    r"\[\[(concepts|summaries|sources)/[^\]]+\]\]",
+    re.IGNORECASE,
+)
 ALLOWED_FRONTMATTER_KEYS = {
     "name", "description", "license", "allowed-tools", "metadata", "compatibility",
 }
@@ -154,9 +163,33 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
                 "characters — they break the activation parser in Claude Code."
             )
 
+    # Foreign wikilinks. The skill ships *without* the producer's wiki, so
+    # any [[concepts/...]] / [[summaries/...]] / [[sources/...]] left in
+    # the body or references is a dead link on the consumer's machine plus
+    # wasted context tokens. The compile prompt's "Linking rules" section
+    # makes this explicit; this is the structural enforcement.
+    foreign = FOREIGN_WIKILINK_RE.findall(text)
+    if foreign:
+        kinds = sorted({k.lower() for k in foreign})
+        result.errors.append(
+            f"SKILL.md contains foreign wikilinks ({', '.join(kinds)}) back "
+            f"to the producer's wiki. Those don't ship with the skill and "
+            f"are dead on the consumer's machine — paraphrase the content "
+            f"inline or move it into `references/<slug>.md`."
+        )
+    refs_dir = skill_dir / "references"
+    if refs_dir.is_dir():
+        for ref in refs_dir.rglob("*.md"):
+            ref_text = ref.read_text(encoding="utf-8", errors="replace")
+            if FOREIGN_WIKILINK_RE.search(ref_text):
+                result.errors.append(
+                    f"{ref.relative_to(skill_dir)} contains foreign "
+                    f"wikilinks back to the producer's wiki. References "
+                    f"ship with the skill and must be self-contained."
+                )
+
     # references/ wikilink resolution
     wikilinks = WIKILINK_RE.findall(text)
-    refs_dir = skill_dir / "references"
     for link in wikilinks:
         # link may or may not include .md suffix
         target = refs_dir / link
@@ -192,18 +225,6 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
                     )
 
     return result
-
-
-def _extract_frontmatter(text: str) -> str | None:
-    """Return the YAML body between the first two `---` lines, or None."""
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None
-    try:
-        end = lines.index("---", 1)
-    except ValueError:
-        return None
-    return "\n".join(lines[1:end])
 
 
 def _non_stdlib_imports(script: Path) -> set[str]:

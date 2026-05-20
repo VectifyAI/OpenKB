@@ -19,20 +19,18 @@ import re
 import shutil
 from pathlib import Path
 
+from openkb.skill import (
+    extract_description,
+    skill_dir as _skill_dir,
+    skill_workspace_dir as _workspace_dir,
+)
+
 __all__ = [
     "save_iteration",
     "list_iterations",
     "restore_iteration",
     "write_diff",
 ]
-
-
-def _skill_dir(kb_dir: Path, skill_name: str) -> Path:
-    return kb_dir / "output" / "skills" / skill_name
-
-
-def _workspace_dir(kb_dir: Path, skill_name: str) -> Path:
-    return kb_dir / "output" / "skills" / f"{skill_name}-workspace"
 
 
 _ITER_RE = re.compile(r"^iteration-(\d+)$")
@@ -112,8 +110,13 @@ def restore_iteration(
             )
         src = match
 
+    # Save the current state before overwriting it — rollback is a mutation
+    # too, and the workspace promise ("no work is destroyed") has to hold
+    # in both directions. A user who edits files in chat then rolls back
+    # gets those edits preserved as the next iteration, not silently lost.
     dest = _skill_dir(kb_dir, skill_name)
     if dest.exists():
+        save_iteration(kb_dir, skill_name)
         shutil.rmtree(dest)
     shutil.copytree(src, dest)
     return dest
@@ -122,28 +125,6 @@ def restore_iteration(
 # ---------------------------------------------------------------------------
 # Diff
 # ---------------------------------------------------------------------------
-
-
-_DESC_RE = re.compile(
-    r"^description:\s*(.*?)\s*$",
-    re.MULTILINE,
-)
-
-
-def _extract_description(skill_md: Path) -> str:
-    """Return the ``description:`` line from a SKILL.md frontmatter,
-    or empty string if absent."""
-    if not skill_md.is_file():
-        return ""
-    text = skill_md.read_text(encoding="utf-8", errors="replace")
-    # Only scan the frontmatter block to avoid matching body text.
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        head = text[: end if end != -1 else len(text)]
-    else:
-        head = text[:2000]
-    m = _DESC_RE.search(head)
-    return m.group(1) if m else ""
 
 
 def _list_files(root: Path, subdir: str) -> set[str]:
@@ -171,8 +152,8 @@ def write_diff(prev: Path, curr: Path, diff_path: Path) -> None:
       * files added/removed under ``references/`` and ``scripts/``
       * line-count delta on SKILL.md
     """
-    prev_desc = _extract_description(prev / "SKILL.md")
-    curr_desc = _extract_description(curr / "SKILL.md")
+    prev_desc = extract_description(prev / "SKILL.md")
+    curr_desc = extract_description(curr / "SKILL.md")
 
     prev_refs = _list_files(prev, "references")
     curr_refs = _list_files(curr, "references")

@@ -340,18 +340,22 @@ def test_skill_eval_runs_with_provided_eval_set(tmp_path):
     async def perfect_grader(description, question, *, model):
         return "trigger" if question.startswith("t") else "no-trigger"
 
+    async def perfect_coverage(content, question, *, model):
+        return "supported", ""
+
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
          patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.skill.evaluator.grade_one", side_effect=perfect_grader):
+         patch("openkb.skill.evaluator.grade_one", side_effect=perfect_grader), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=perfect_coverage):
         result = runner.invoke(cli, [
             "skill", "eval", "demo", "--eval-set", str(eval_path),
         ])
 
     assert result.exit_code == 0, result.output
-    assert "Pass rate" in result.output
+    assert "Trigger accuracy" in result.output
     assert "4/4" in result.output
-    assert "100%" in result.output
+    assert "Body coverage" in result.output
     assert "All prompts graded correctly" in result.output
 
 
@@ -371,18 +375,22 @@ def test_skill_eval_reports_misses(tmp_path):
     async def biased_grader(description, question, *, model):
         return "trigger"
 
+    async def perfect_coverage(content, question, *, model):
+        return "supported", ""
+
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb), \
          patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.skill.evaluator.grade_one", side_effect=biased_grader):
+         patch("openkb.skill.evaluator.grade_one", side_effect=biased_grader), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=perfect_coverage):
         result = runner.invoke(cli, [
             "skill", "eval", "demo", "--eval-set", str(eval_path),
         ])
 
     assert result.exit_code == 0, result.output
-    assert "Pass rate" in result.output
+    assert "Trigger accuracy" in result.output
     assert "2/4" in result.output
-    assert "Misses (2)" in result.output
+    assert "Trigger misses (2)" in result.output
     # Each missed prompt must be listed in the output
     assert "n0" in result.output
     assert "n1" in result.output

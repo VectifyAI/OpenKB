@@ -215,7 +215,7 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/list",   "List all documents"),
     ("/lint",   "Lint the knowledge base"),
     ("/add",    "Add a document or directory"),
-    ("/skill",  "compile a skill (try `/skill new <name> \"intent\"`)"),
+    ("/skill",  "Compile a skill (try `/skill new <name> \"intent\"`)"),
 ]
 
 
@@ -530,7 +530,8 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"[ERROR] {err}\n"))
         return
 
-    target = kb_dir / "output" / "skills" / name
+    from openkb.skill import skill_dir
+    target = skill_dir(kb_dir, name)
     if target.exists():
         _fmt(style, ("class:error",
             f"[ERROR] output/skills/{name}/ already exists. Remove it first "
@@ -544,18 +545,30 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
 
     from openkb.skill.generator import Generator
     _fmt(style, ("class:slash.help", f"Compiling skill '{name}'...\n"))
+    gen = Generator(
+        target_type="skill",
+        name=name,
+        intent=intent,
+        kb_dir=kb_dir,
+        model=model,
+    )
     try:
-        gen = Generator(
-            target_type="skill",
-            name=name,
-            intent=intent,
-            kb_dir=kb_dir,
-            model=model,
-        )
         await gen.run()
     except RuntimeError as exc:
         _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
         return
+
+    # Surface validation issues from Generator.run (same gate as CLI).
+    result = gen.validation
+    if result is not None and (result.errors or result.warnings):
+        _fmt(style, ("class:error", "[WARN] Validation found issues:\n"))
+        for err in result.errors:
+            _fmt(style, ("class:error", f"  ERROR:   {err}\n"))
+        for warn in result.warnings:
+            _fmt(style, ("class:error", f"  WARN:    {warn}\n"))
+        _fmt(style, ("class:slash.help",
+            f"Run `openkb skill validate {name}` to re-check, or "
+            f"`openkb skill rollback {name}` to revert.\n"))
 
     _fmt(style, ("class:slash.ok", f"Saved: output/skills/{name}/\n"))
     _fmt(style, ("class:slash.help",

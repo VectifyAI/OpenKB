@@ -1,22 +1,32 @@
-"""Trigger-accuracy evaluator for compiled skills.
+"""Quality evaluation for compiled skills.
 
-The description: field in SKILL.md is the activation signal — it's what
-other agents read to decide whether to load the skill for a given user
-question. A vague or off-target description fails to fire when it should
-(false negatives) or fires when it shouldn't (false positives). This
-module catches both.
+Two metrics, two LLM passes:
+
+**Trigger accuracy** — given *only* the description, does an external
+agent decide correctly whether to load the skill for a given question?
+This catches under-specific descriptions (false negatives) and
+over-broad descriptions (false positives).
+
+**Body alignment** — given the *full* SKILL.md (body + references), can
+the skill actually answer the should-trigger questions it claims to
+handle? This catches the failure mode where a well-written description
+promises capability that the body doesn't deliver — a hollow skill that
+would trigger but fail in practice.
 
 Flow:
-  1. Read description from the skill's SKILL.md frontmatter
-  2. Ask a generator LLM: produce N should-trigger + N should-not prompts
-     based purely on the description (no other context)
-  3. For each prompt, ask a grader LLM: "given just this description,
-     should an agent load this skill for this question? yes/no"
-  4. Compare against expected labels (the ground truth from step 2)
-  5. Report pass rate + the specific misses
+  1. Read the SKILL.md frontmatter (description) + body + references/*.
+  2. Generator LLM produces N should-trigger + N should-not prompts,
+     using description AND body so prompts reflect what the skill
+     actually claims to cover, not just description vibes.
+  3. Trigger grader sees ONLY the description and answers
+     trigger / no-trigger for each prompt — same as before.
+  4. Alignment grader sees the SKILL.md body+references and each
+     should-trigger prompt; answers "supported / unsupported" — does the
+     skill have the substance to handle this question?
+  5. Report both pass rates and the specific misses.
 
 Uses the same LiteLLM model the rest of the KB uses (config.yaml). No
-real LLM calls in tests — both generator and grader are patched.
+real LLM calls in tests — both generator and graders are patched.
 """
 from __future__ import annotations
 
@@ -30,8 +40,11 @@ import yaml
 from agents import Agent, Runner
 from agents.model_settings import ModelSettings
 
+from openkb.skill import extract_frontmatter
+
 
 EVAL_DEFAULT_COUNT = 10  # 10 trigger + 10 no-trigger = 20 prompts
+REFERENCES_PREVIEW_BYTES = 4000  # cap reference content fed to the eval LLM
 
 
 @dataclass
@@ -51,9 +64,17 @@ class EvalMiss:
 
 
 @dataclass
+class CoverageMiss:
+    """A should-trigger prompt the description promises but the body can't support."""
+    prompt: EvalPrompt
+    reason: str = ""
+
+
+@dataclass
 class EvalResult:
     prompts: list[EvalPrompt] = field(default_factory=list)
     misses: list[EvalMiss] = field(default_factory=list)
+    coverage_misses: list[CoverageMiss] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -67,23 +88,72 @@ class EvalResult:
     def pass_rate(self) -> float:
         return self.passed / self.total if self.total else 0.0
 
+    @property
+    def trigger_questions(self) -> int:
+        return sum(1 for p in self.prompts if p.expected == "trigger")
+
+    @property
+    def coverage_passed(self) -> int:
+        return self.trigger_questions - len(self.coverage_misses)
+
+    @property
+    def coverage_rate(self) -> float:
+        total = self.trigger_questions
+        return self.coverage_passed / total if total else 0.0
+
 
 def _read_description(skill_dir: Path) -> str:
     """Extract the description: field from SKILL.md frontmatter."""
     skill_md = skill_dir / "SKILL.md"
     text = skill_md.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
+    fm = extract_frontmatter(text)
+    if fm is None:
         raise RuntimeError(f"{skill_md} has no YAML frontmatter.")
-    try:
-        end = lines.index("---", 1)
-    except ValueError:
-        raise RuntimeError(f"{skill_md} has no YAML frontmatter.")
-    meta = yaml.safe_load("\n".join(lines[1:end])) or {}
+    meta = yaml.safe_load(fm) or {}
     desc = meta.get("description")
     if not isinstance(desc, str) or not desc:
         raise RuntimeError(f"{skill_md} has no description: field.")
     return desc
+
+
+def _read_body(skill_dir: Path) -> str:
+    """Return SKILL.md without the YAML frontmatter."""
+    skill_md = skill_dir / "SKILL.md"
+    text = skill_md.read_text(encoding="utf-8")
+    fm = extract_frontmatter(text)
+    if fm is None:
+        return text
+    # Strip the leading frontmatter block (---\n...\n---\n)
+    return text.split("---", 2)[-1].lstrip()
+
+
+def _read_references_preview(skill_dir: Path) -> str:
+    """Concatenate references/*.md, capped per-file, for the eval LLM.
+
+    The cap keeps token use bounded for large reference sets. Each file
+    contributes its first N bytes (text is markdown so a byte cap is a
+    reasonable proxy for tokens).
+    """
+    refs_dir = skill_dir / "references"
+    if not refs_dir.is_dir():
+        return ""
+    chunks: list[str] = []
+    for ref in sorted(refs_dir.rglob("*.md")):
+        rel = ref.relative_to(skill_dir)
+        text = ref.read_text(encoding="utf-8", errors="replace")
+        if len(text) > REFERENCES_PREVIEW_BYTES:
+            text = text[:REFERENCES_PREVIEW_BYTES] + "\n…[truncated]\n"
+        chunks.append(f"--- {rel} ---\n{text}")
+    return "\n\n".join(chunks)
+
+
+def _skill_content_block(skill_dir: Path) -> str:
+    """Bundle body + reference previews into one prompt-ready string."""
+    body = _read_body(skill_dir)
+    refs = _read_references_preview(skill_dir)
+    if not refs:
+        return f"SKILL.md body:\n{body}"
+    return f"SKILL.md body:\n{body}\n\nReferences (excerpts):\n{refs}"
 
 
 async def generate_eval_set(
@@ -93,22 +163,36 @@ async def generate_eval_set(
     count: int = EVAL_DEFAULT_COUNT,
 ) -> list[EvalPrompt]:
     """Use an LLM to generate ``count`` should-trigger + ``count`` should-not
-    eval prompts based on the skill's description.
+    eval prompts grounded in what the skill actually claims to cover.
+
+    The generator now sees the SKILL.md body and reference previews, not
+    just the description. That keeps the should-trigger questions
+    realistic (questions the skill is genuinely set up to answer) and the
+    should-not questions plausibly-adjacent (so trigger accuracy actually
+    catches over-broad descriptions, not just disjoint ones).
     """
     desc = _read_description(skill_dir)
+    content = _skill_content_block(skill_dir)
 
     instructions = (
         "You are designing an evaluation set for a knowledge-base skill. "
-        f"The skill's activation description is:\n\n"
+        "The skill's activation description is:\n\n"
         f"  {desc}\n\n"
-        f"Produce exactly {count} 'should-trigger' user questions (questions where "
-        f"an agent SHOULD load this skill to answer well) and exactly {count} "
-        f"'should-not' user questions (plausible-sounding questions about other "
-        f"topics where this skill is NOT the right tool).\n\n"
-        f"Output ONLY a JSON object with this exact shape:\n"
+        "The skill's body (SKILL.md without frontmatter) and references "
+        "are below. Use them to ground the questions in what the skill "
+        "actually claims to cover.\n\n"
+        f"{content}\n\n"
+        f"Produce exactly {count} 'should-trigger' user questions "
+        "(questions a user might ask where this skill genuinely helps — "
+        "ones the body and references contain material for) and exactly "
+        f"{count} 'should-not' user questions (plausibly-adjacent "
+        "questions where this skill is NOT the right tool — they should "
+        "be close enough that a sloppy description would mis-trigger, "
+        "but the body clearly does not cover them).\n\n"
+        "Output ONLY a JSON object with this exact shape:\n"
         f'  {{"should_trigger": [...{count} strings...], '
         f'"should_not": [...{count} strings...]}}\n\n'
-        f"No prose. No markdown. Just the JSON object."
+        "No prose. No markdown. Just the JSON object."
     )
 
     agent = Agent(
@@ -155,8 +239,14 @@ async def grade_one(
     *,
     model: str,
 ) -> Literal["trigger", "no-trigger"]:
-    """Ask the grader LLM whether the description suggests this skill
-    should be loaded for the given question."""
+    """Ask the trigger grader LLM whether the description suggests this
+    skill should be loaded for the given question.
+
+    The grader deliberately sees ONLY the description — that is the
+    trigger surface external agents will see when deciding to load the
+    skill. The body is irrelevant to *this* metric; see
+    :func:`grade_coverage` for the body-aware check.
+    """
     instructions = (
         "You are deciding whether an agent should load a specific skill to "
         "answer a user question. You will be given the skill's activation "
@@ -188,6 +278,63 @@ async def grade_one(
     return "no-trigger"
 
 
+async def grade_coverage(
+    skill_content: str,
+    question: str,
+    *,
+    model: str,
+) -> tuple[Literal["supported", "unsupported"], str]:
+    """Ask the alignment grader whether the SKILL.md body + references
+    actually contain enough substance to answer the question.
+
+    This is the orthogonal check to :func:`grade_one`. A skill can have a
+    perfectly-firing description and still be a hollow shell — this catches
+    that. Returns the verdict and a one-line reason from the grader.
+    """
+    instructions = (
+        "You are auditing a skill for content quality. You will be given "
+        "the skill's body (SKILL.md without frontmatter) and any "
+        "reference excerpts, plus a user question that the skill's "
+        "description claims to handle. Decide whether the body has "
+        "substantive material to answer the question.\n\n"
+        "Answer with EXACTLY this two-line shape:\n"
+        "VERDICT: SUPPORTED  (or UNSUPPORTED)\n"
+        "REASON: <one short sentence>\n\n"
+        f"{skill_content}"
+    )
+    agent = Agent(
+        name="coverage-grader",
+        instructions=instructions,
+        model=f"litellm/{model}",
+        model_settings=ModelSettings(parallel_tool_calls=False),
+    )
+    from agents.exceptions import MaxTurnsExceeded
+    try:
+        result = await Runner.run(agent, f"Question: {question}", max_turns=2)
+    except MaxTurnsExceeded as exc:
+        raise RuntimeError(
+            f"Coverage grader hit the max-turn cap on question: {question!r}. "
+            f"Try a more capable model."
+        ) from exc
+    raw = (result.final_output or "").strip()
+    upper = raw.upper()
+    verdict: Literal["supported", "unsupported"]
+    if "UNSUPPORTED" in upper:
+        verdict = "unsupported"
+    elif "SUPPORTED" in upper:
+        verdict = "supported"
+    else:
+        # Ambiguous output — treat as unsupported (fail closed).
+        verdict = "unsupported"
+    reason = ""
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.upper().startswith("REASON:"):
+            reason = stripped.split(":", 1)[1].strip()
+            break
+    return verdict, reason
+
+
 async def run_eval(
     skill_dir: Path,
     *,
@@ -195,7 +342,7 @@ async def run_eval(
     eval_set: list[EvalPrompt] | None = None,
     count: int = EVAL_DEFAULT_COUNT,
 ) -> EvalResult:
-    """Run a trigger-accuracy evaluation.
+    """Run trigger-accuracy + body-alignment evaluation.
 
     Args:
         skill_dir: ``<kb>/output/skills/<name>``
@@ -207,11 +354,21 @@ async def run_eval(
         eval_set = await generate_eval_set(skill_dir, model=model, count=count)
 
     desc = _read_description(skill_dir)
+    content = _skill_content_block(skill_dir)
     result = EvalResult(prompts=eval_set)
     for prompt in eval_set:
         graded = await grade_one(desc, prompt.question, model=model)
         if graded != prompt.expected:
             result.misses.append(EvalMiss(prompt=prompt, graded=graded))
+        # Body alignment only meaningful on questions the skill claims to
+        # handle — for should-not questions the body is correctly empty
+        # of relevant material.
+        if prompt.expected == "trigger":
+            verdict, reason = await grade_coverage(content, prompt.question, model=model)
+            if verdict != "supported":
+                result.coverage_misses.append(
+                    CoverageMiss(prompt=prompt, reason=reason)
+                )
     return result
 
 

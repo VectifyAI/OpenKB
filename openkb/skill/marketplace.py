@@ -21,15 +21,11 @@ NOT auto-regenerated; re-run ``openkb skill new`` or
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from openkb.config import load_config
-
-
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
-_DESCRIPTION_RE = re.compile(r"^description:\s*(.+?)\s*$", re.MULTILINE)
+from openkb.skill import extract_description, skills_root
 
 
 def _git_owner(kb_dir: Path) -> dict[str, str]:
@@ -60,31 +56,13 @@ def _git_owner(kb_dir: Path) -> dict[str, str]:
     return owner
 
 
-def _read_skill_description(skill_md: Path) -> str:
-    """Pull the ``description:`` field from a SKILL.md frontmatter block.
-
-    Returns an empty string if missing or unparseable — the manifest still
-    lists the skill, just with a generic plugin-level description.
-    """
-    if not skill_md.exists():
-        return ""
-    text = skill_md.read_text(encoding="utf-8")
-    fm_match = _FRONTMATTER_RE.match(text)
-    if not fm_match:
-        return ""
-    desc_match = _DESCRIPTION_RE.search(fm_match.group(1))
-    if not desc_match:
-        return ""
-    return desc_match.group(1).strip()
-
-
 def _list_skill_dirs(kb_dir: Path) -> list[Path]:
     """Return skill directories under <kb>/output/skills/ that contain a SKILL.md."""
-    skills_root = kb_dir / "output" / "skills"
-    if not skills_root.is_dir():
+    root = skills_root(kb_dir)
+    if not root.is_dir():
         return []
     return sorted(
-        d for d in skills_root.iterdir()
+        d for d in root.iterdir()
         if d.is_dir() and (d / "SKILL.md").exists()
     )
 
