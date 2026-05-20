@@ -243,7 +243,7 @@ npx skills@latest add <your-org>/<your-repo>
 [agent edits SKILL.md frontmatter in place]
 ```
 
-**Quality gates** — borrowing from [Codex skill-creator](https://github.com/openai/skills) (structural validation) and [Anthropic skill-creator](https://github.com/anthropics/skills/tree/main/skills/skill-creator) (trigger-accuracy evals):
+**Quality gates** — structural validation, trigger-accuracy + body-coverage evaluation, and full history/rollback:
 
 ```bash
 # Lint structure (auto-runs at end of `skill new`)
