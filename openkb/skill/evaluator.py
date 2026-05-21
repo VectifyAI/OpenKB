@@ -18,11 +18,15 @@ Flow:
   2. Generator LLM produces N should-trigger + N should-not prompts,
      using description AND body so prompts reflect what the skill
      actually claims to cover, not just description vibes.
-  3. Trigger grader sees ONLY the description and answers
-     trigger / no-trigger for each prompt — same as before.
-  4. Alignment grader sees the SKILL.md body+references and each
-     should-trigger prompt; answers "supported / unsupported" — does the
-     skill have the substance to handle this question?
+  3. Trigger grader (description-only, runs on every prompt) and
+     alignment grader (body + references, runs on should-trigger
+     prompts only) are dispatched concurrently via ``asyncio.gather``,
+     bounded by ``EVAL_CONCURRENCY``. Each grader is independent so
+     the two passes overlap completely.
+  4. Failed gradings (e.g. ``MaxTurnsExceeded``) are captured per task
+     via ``return_exceptions=True`` so a single failure doesn't discard
+     the other ~29 successful gradings; errored prompts are surfaced
+     separately and excluded from the rate denominators.
   5. Report both pass rates and the specific misses.
 
 Uses the same LiteLLM model the rest of the KB uses (config.yaml). No
@@ -48,8 +52,11 @@ EVAL_DEFAULT_COUNT = 10  # 10 trigger + 10 no-trigger = 20 prompts
 REFERENCES_PREVIEW_BYTES = 4000  # cap reference content fed to the eval LLM
 # Bound on concurrent grader LLM calls in run_eval. Without this the
 # default count=10 would fire ~30 simultaneous requests, which most
-# providers rate-limit. 8 is a conservative starting point — runs ~4x
-# the sequential baseline while staying well under typical RPM caps.
+# providers rate-limit. 8 is a conservative starting point — the
+# semaphore acts as a sliding window across the combined trigger + coverage
+# pool, so realistic speedup ranges from 30/8 (~3.75x) to 8x depending
+# on per-call latency variance. Bumping this up trades rate-limit risk
+# for wall-clock latency.
 EVAL_CONCURRENCY = 8
 
 
@@ -86,6 +93,14 @@ class EvalResult:
     # grader-malfunction doesn't silently inflate ``coverage_misses`` and
     # deflate ``coverage_rate``.
     coverage_ambiguous: list[CoverageMiss] = field(default_factory=list)
+    # Prompts whose grader raised (typically ``RuntimeError`` from a
+    # ``MaxTurnsExceeded`` wrap or a malformed-response failure inside
+    # the SDK). Captured per-task via ``return_exceptions=True`` in
+    # ``run_eval`` so one failure doesn't discard the other ~29
+    # gradings. Errors are excluded from rate denominators — we don't
+    # know what the verdict would have been.
+    trigger_errors: list[CoverageMiss] = field(default_factory=list)
+    coverage_errors: list[CoverageMiss] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -93,11 +108,17 @@ class EvalResult:
 
     @property
     def passed(self) -> int:
-        return self.total - len(self.misses)
+        return self.trigger_scored - len(self.misses)
+
+    @property
+    def trigger_scored(self) -> int:
+        """Trigger prompts the grader returned a verdict on (no error)."""
+        return self.total - len(self.trigger_errors)
 
     @property
     def pass_rate(self) -> float:
-        return self.passed / self.total if self.total else 0.0
+        scored = self.trigger_scored
+        return self.passed / scored if scored else 0.0
 
     @property
     def trigger_questions(self) -> int:
@@ -105,18 +126,26 @@ class EvalResult:
 
     @property
     def coverage_passed(self) -> int:
-        # Ambiguous outputs are excluded from both numerator and
-        # denominator — see ``coverage_rate``.
-        scored = self.trigger_questions - len(self.coverage_ambiguous)
+        # Ambiguous and errored outputs are excluded from both numerator
+        # and denominator — see ``coverage_rate``.
+        scored = (
+            self.trigger_questions
+            - len(self.coverage_ambiguous)
+            - len(self.coverage_errors)
+        )
         return scored - len(self.coverage_misses)
 
     @property
     def coverage_rate(self) -> float:
         # Score only the trigger prompts the grader gave a clear verdict
-        # on. A garbled run that flips half the outputs to ambiguous
-        # should narrow the denominator, not pretend half the body is
-        # hollow.
-        scored = self.trigger_questions - len(self.coverage_ambiguous)
+        # on. A garbled run that flips half the outputs to ambiguous or
+        # errors out should narrow the denominator, not pretend half the
+        # body is hollow.
+        scored = (
+            self.trigger_questions
+            - len(self.coverage_ambiguous)
+            - len(self.coverage_errors)
+        )
         return self.coverage_passed / scored if scored else 0.0
 
 
@@ -397,18 +426,32 @@ async def run_eval(
     coverage_prompts = [p for p in eval_set if p.expected == "trigger"]
     coverage_tasks = [_coverage(p) for p in coverage_prompts]
 
+    # return_exceptions=True so one failed grader doesn't discard the
+    # other ~29 successful gradings. Errored prompts are surfaced
+    # separately on the result and excluded from rate denominators.
     trigger_results, coverage_results = await asyncio.gather(
-        asyncio.gather(*trigger_tasks),
-        asyncio.gather(*coverage_tasks),
+        asyncio.gather(*trigger_tasks, return_exceptions=True),
+        asyncio.gather(*coverage_tasks, return_exceptions=True),
     )
 
     # Walk inputs in original order so `result.*` lists are deterministic
     # even though the gather() above completed out of order.
     for prompt, graded in zip(eval_set, trigger_results):
+        if isinstance(graded, BaseException):
+            result.trigger_errors.append(
+                CoverageMiss(prompt=prompt, reason=str(graded))
+            )
+            continue
         if graded != prompt.expected:
             result.misses.append(EvalMiss(prompt=prompt, graded=graded))
 
-    for prompt, (verdict, reason) in zip(coverage_prompts, coverage_results):
+    for prompt, outcome in zip(coverage_prompts, coverage_results):
+        if isinstance(outcome, BaseException):
+            result.coverage_errors.append(
+                CoverageMiss(prompt=prompt, reason=str(outcome))
+            )
+            continue
+        verdict, reason = outcome
         if verdict == "ambiguous":
             result.coverage_ambiguous.append(
                 CoverageMiss(prompt=prompt, reason=reason)

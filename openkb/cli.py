@@ -1790,13 +1790,17 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
 
     click.echo(f"\nEval set: {result.total} prompts")
     click.echo(
-        f"Trigger accuracy: {result.passed}/{result.total} "
+        f"Trigger accuracy: {result.passed}/{result.trigger_scored} "
         f"({result.pass_rate * 100:.0f}%)  "
         f"— does the description fire on the right questions?"
     )
-    scored = result.trigger_questions - len(result.coverage_ambiguous)
+    coverage_scored = (
+        result.trigger_questions
+        - len(result.coverage_ambiguous)
+        - len(result.coverage_errors)
+    )
     click.echo(
-        f"Body coverage:    {result.coverage_passed}/{scored} "
+        f"Body coverage:    {result.coverage_passed}/{coverage_scored} "
         f"({result.coverage_rate * 100:.0f}%)  "
         f"— does SKILL.md actually support what the description promises?"
     )
@@ -1822,10 +1826,23 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
             tail = f" — {amb.reason}" if amb.reason else ""
             click.echo(f"  - {amb.prompt.question}{tail}")
 
+    if result.trigger_errors or result.coverage_errors:
+        click.echo(
+            f"\n[WARN] {len(result.trigger_errors)} trigger and "
+            f"{len(result.coverage_errors)} coverage grader call(s) "
+            f"failed and are excluded from the scores above:"
+        )
+        for err in result.trigger_errors:
+            click.echo(f"  - trigger:  {err.prompt.question} — {err.reason}")
+        for err in result.coverage_errors:
+            click.echo(f"  - coverage: {err.prompt.question} — {err.reason}")
+
     if (
         not result.misses
         and not result.coverage_misses
         and not result.coverage_ambiguous
+        and not result.trigger_errors
+        and not result.coverage_errors
     ):
         click.echo("\nAll prompts graded correctly with full body support.")
 

@@ -315,6 +315,49 @@ async def test_run_eval_segregates_ambiguous_from_coverage_misses(tmp_path):
     assert result.coverage_rate == pytest.approx(0.5)
 
 
+@pytest.mark.asyncio
+async def test_run_eval_captures_grader_failures_without_aborting(tmp_path):
+    """A single grader failure must NOT abort the whole eval. The failed
+    prompt goes into trigger_errors/coverage_errors and is excluded from
+    rate denominators; the other prompts grade normally."""
+    skill_dir = _make_skill(tmp_path)
+    eval_set = _build_eval_set(2, 2)  # 2 trigger + 2 no-trigger
+
+    async def flaky_trigger(description, question, *, model):
+        if question == "trig 0":
+            raise RuntimeError("max-turn cap hit")
+        # Everything else: perfect grader
+        match = next(p for p in eval_set if p.question == question)
+        return match.expected
+
+    async def flaky_coverage(content, question, *, model):
+        if question == "trig 1":
+            raise RuntimeError("malformed grader output")
+        return "supported", ""
+
+    with patch("openkb.skill.evaluator.grade_one", side_effect=flaky_trigger), \
+         patch("openkb.skill.evaluator.grade_coverage", side_effect=flaky_coverage):
+        result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
+
+    # 4 prompts total; one trigger errored, one coverage errored.
+    assert result.total == 4
+    assert len(result.trigger_errors) == 1
+    assert result.trigger_errors[0].prompt.question == "trig 0"
+    assert "max-turn cap" in result.trigger_errors[0].reason
+    assert len(result.coverage_errors) == 1
+    assert result.coverage_errors[0].prompt.question == "trig 1"
+    assert "malformed" in result.coverage_errors[0].reason
+
+    # Trigger: 3 prompts scored (1 errored), all correct -> 3/3 = 100%
+    assert result.trigger_scored == 3
+    assert result.passed == 3
+    assert result.pass_rate == pytest.approx(1.0)
+
+    # Coverage: 2 trigger prompts, 1 errored, 1 supported -> 1/1 = 100%
+    assert result.coverage_passed == 1
+    assert result.coverage_rate == pytest.approx(1.0)
+
+
 # -------- save/load round-trip ------------------------------------------------
 
 
