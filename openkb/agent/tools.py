@@ -167,6 +167,51 @@ def read_wiki_image(path: str, wiki_root: str) -> dict:
     return {"type": "image", "image_url": f"data:{mime};base64,{b64}"}
 
 
+def write_kb_file(path: str, content: str, kb_root: str) -> str:
+    """Write a text file under the KB, restricted to safe write zones.
+
+    Allowed prefixes (relative to *kb_root*):
+      * ``wiki/explorations/**`` — user-saved chat transcripts and notes.
+      * ``output/**``            — generator artifacts (skills, etc.) the
+        user iterates on via natural-language chat follow-ups.
+
+    Parent directories are created automatically. Any path outside the
+    allow-list is rejected.
+
+    Args:
+        path: File path relative to *kb_root*.
+        content: Text content to write.
+        kb_root: Absolute path to the KB root directory.
+
+    Returns:
+        ``"Written: {path}"`` on success, or an access-denied message.
+    """
+    if not path:
+        return "Access denied: path must be a file under wiki/explorations/ or output/."
+    root = Path(kb_root).resolve()
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root):
+        return "Access denied: path escapes KB root."
+    rel = full_path.relative_to(root)
+    parts = rel.parts
+    # Require a file path with at least one component beyond the allow-list
+    # prefix, so a bare directory name (e.g. "output") does not slip through
+    # and crash on write_text with IsADirectoryError.
+    allowed = (
+        len(parts) >= 3 and parts[0] == "wiki" and parts[1] == "explorations"
+    ) or (
+        len(parts) >= 2 and parts[0] == "output"
+    )
+    if not allowed:
+        return (
+            "Access denied: path must be a file under "
+            "wiki/explorations/ or output/."
+        )
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(content, encoding="utf-8")
+    return f"Written: {path}"
+
+
 def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     """Write or overwrite a Markdown file in the wiki.
 

@@ -143,6 +143,76 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
+def _validate_skill_name(name: str) -> str | None:
+    """Validate a skill slug. Returns None if OK, an error message if not.
+
+    Rules: lowercase ``[a-z0-9-]``, no leading/trailing dash, no consecutive
+    dashes, 1-64 characters. This matches the directory name we'll create
+    under ``<kb>/output/skills/`` and the ``name:`` frontmatter field.
+    """
+    if not name:
+        return "Skill name must not be empty."
+    if len(name) > 64:
+        return "Skill name must be at most 64 characters."
+    if not all(("a" <= c <= "z") or ("0" <= c <= "9") or c == "-" for c in name):
+        return "Skill name must contain only lowercase letters, digits, and dashes."
+    if name.startswith("-"):
+        return "Skill name must not have a leading dash."
+    if name.endswith("-"):
+        return "Skill name must not have a trailing dash."
+    if "--" in name:
+        return "Skill name must not contain consecutive dashes."
+    return None
+
+
+def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
+    """Run shared safety gates for ``openkb skill new`` / ``/skill new``.
+
+    Checks (in order):
+      * skill name is a valid kebab-case slug
+      * ``<kb>/wiki`` exists
+      * ``<kb>/wiki/concepts`` or ``<kb>/wiki/summaries`` has at least
+        one file (i.e. some document has been ingested + compiled)
+
+    Returns ``None`` if all gates pass, else a single-line error message
+    suitable to print to the user.
+
+    Overwrite handling is NOT done here — the CLI handles it with
+    ``-y`` + ``click.confirm``; chat refuses overwrite outright.
+    """
+    err = _validate_skill_name(name)
+    if err:
+        return err
+
+    wiki = kb_dir / "wiki"
+    if not wiki.is_dir():
+        return (
+            "No wiki found in this KB. Run `openkb add <source>` to "
+            "ingest documents first."
+        )
+
+    has_content = any(
+        (wiki / sub).is_dir() and any((wiki / sub).iterdir())
+        for sub in ("concepts", "summaries")
+    )
+    if not has_content:
+        return (
+            "Wiki has no compiled content yet. Ingest at least one "
+            "document with `openkb add` first."
+        )
+
+    return None
+
+
+def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
+    """Delete an existing ``<kb>/output/skills/<name>/`` directory."""
+    from openkb.skill import skill_dir
+
+    target = skill_dir(kb_dir, name)
+    if target.exists():
+        shutil.rmtree(target)
+
+
 def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
@@ -1340,3 +1410,442 @@ def feedback(ctx, message, feedback_type):
             "  (no browser available — copy the URL above to file the issue)",
             err=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# `openkb skill ...` — skill factory (v0.1)
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def skill():
+    """Compile knowledge into a redistributable Anthropic Skill."""
+
+
+@skill.command("new")
+@click.argument("name")
+@click.argument("intent")
+@click.option(
+    "-y", "--yes", "yes_flag",
+    is_flag=True, default=False,
+    help="Overwrite existing output/skills/<name>/ without prompting.",
+)
+@click.pass_context
+def skill_new(ctx, name, intent, yes_flag):
+    """Compile a new skill from this KB's wiki.
+
+    NAME is a kebab-case slug used for the output directory and skill name.
+    INTENT is a natural-language description of what this skill should do.
+
+    Example:
+
+      openkb skill new karpathy-thinking "Reason about transformers like Karpathy"
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    err = _preflight_skill_new(kb_dir, name)
+    if err:
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(1)
+
+    # Verify LLM key + load config BEFORE touching existing output. Any
+    # failure here (missing API key, malformed config) must leave the old
+    # skill directory intact — we can't replace it if we can't proceed.
+    try:
+        _setup_llm_key(kb_dir)
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Overwrite handling (CLI-specific). Done AFTER key/config so a
+    # missing key doesn't wipe the user's existing skill output.
+    #
+    # When overwriting, we don't destroy the old skill — we copy it
+    # into <kb>/output/skills/<name>-workspace/iteration-N/ first, so
+    # the user can roll back via `openkb skill rollback`. See
+    # ``openkb/skill/workspace.py``.
+    from openkb.skill import skill_dir
+    from openkb.skill.workspace import save_iteration, write_diff
+
+    target = skill_dir(kb_dir, name)
+    saved_iteration: Path | None = None
+    if target.exists():
+        if yes_flag:
+            saved_iteration = save_iteration(kb_dir, name)
+            _clear_existing_skill_dir(kb_dir, name)
+        elif sys.stdin.isatty():
+            if not click.confirm(
+                f"output/skills/{name}/ already exists. Overwrite?",
+                default=False,
+            ):
+                click.echo("Aborted.")
+                ctx.exit(1)
+            saved_iteration = save_iteration(kb_dir, name)
+            _clear_existing_skill_dir(kb_dir, name)
+        else:
+            click.echo(
+                f"[ERROR] output/skills/{name}/ exists. Pass -y to overwrite "
+                f"in non-interactive contexts.",
+                err=True,
+            )
+            ctx.exit(1)
+
+    # Run the generator. Generator.run handles compile -> validate ->
+    # marketplace publish, so both CLI and chat get the same quality gate.
+    from openkb.skill.generator import Generator
+    click.echo(f"Compiling skill '{name}'...")
+    gen = Generator(
+        target_type="skill",
+        name=name,
+        intent=intent,
+        kb_dir=kb_dir,
+        model=model,
+    )
+    try:
+        asyncio.run(gen.run())
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    # Drop a structural diff inside the saved iteration so the user
+    # can see what changed since the previous compile.
+    if saved_iteration is not None:
+        try:
+            write_diff(saved_iteration, target, saved_iteration / "diff.md")
+        except Exception as exc:  # diff is best-effort; never block success
+            logging.getLogger(__name__).debug(
+                "diff generation failed: %s", exc, exc_info=True
+            )
+
+    # Surface validation issues. Don't block — files are on disk and
+    # the user can fix or rollback.
+    result = gen.validation
+    if result is not None and (result.errors or result.warnings):
+        click.echo("\n[WARN] Validation found issues:")
+        for err in result.errors:
+            click.echo(f"  ERROR:   {err}")
+        for warn in result.warnings:
+            click.echo(f"  WARN:    {warn}")
+        click.echo(
+            f"\nRun `openkb skill validate {name}` to re-check, or "
+            f"`openkb skill rollback {name}` to revert."
+        )
+
+    click.echo(f"\nSaved: output/skills/{name}/")
+    if saved_iteration is not None:
+        rel = saved_iteration.relative_to(kb_dir)
+        click.echo(f"Previous version: {rel}/  (run `openkb skill rollback {name}` to restore)")
+    click.echo(f"Manifest: .claude-plugin/marketplace.json updated")
+    click.echo(f"\nInstall locally:")
+    click.echo(f"  cp -r output/skills/{name} ~/.claude/skills/")
+    click.echo(f"\nShare (push KB to GitHub, then):")
+    click.echo(f"  npx skills@latest add <owner>/<repo>")
+
+
+@skill.command("history")
+@click.argument("name")
+@click.pass_context
+def skill_history(ctx, name):
+    """List previous iterations of a skill."""
+    import datetime as _dt
+
+    from openkb.skill.workspace import list_iterations
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    err = _validate_skill_name(name)
+    if err:
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(1)
+
+    iters = list_iterations(kb_dir, name)
+    if not iters:
+        click.echo(f"No previous iterations for '{name}'.")
+        return
+
+    click.echo(f"Iterations of '{name}' ({len(iters)} total):\n")
+    click.echo("  N  Path                                                  Created")
+    click.echo("  -  --------------------------------------------------    -------")
+    for path in iters:
+        n = int(path.name.split("-", 1)[1])
+        rel = path.relative_to(kb_dir)
+        try:
+            mtime = _dt.datetime.fromtimestamp(path.stat().st_mtime)
+            stamp = mtime.strftime("%Y-%m-%d %H:%M")
+        except OSError:
+            stamp = "-"
+        click.echo(f"  {n}  {rel}  {stamp}")
+
+    from openkb.skill import skill_dir
+    current = skill_dir(kb_dir, name)
+    if current.is_dir():
+        rel_curr = current.relative_to(kb_dir)
+        click.echo(f"\n  Current: {rel_curr}/")
+
+    latest_n = int(iters[-1].name.split("-", 1)[1])
+    click.echo("\nRestore an iteration:")
+    click.echo(
+        f"  openkb skill rollback {name}          # restore latest (iteration-{latest_n})"
+    )
+    click.echo(
+        f"  openkb skill rollback {name} --to 1   # restore iteration-1"
+    )
+
+
+@skill.command("rollback")
+@click.argument("name")
+@click.option(
+    "--to", "to_n",
+    default=None, type=int,
+    help="Iteration number to restore. Defaults to latest.",
+)
+@click.option(
+    "-y", "--yes", "yes_flag",
+    is_flag=True, default=False,
+    help="Skip confirmation.",
+)
+@click.pass_context
+def skill_rollback(ctx, name, to_n, yes_flag):
+    """Restore a previous iteration as the current skill."""
+    from openkb.skill.marketplace import regenerate_marketplace
+    from openkb.skill.workspace import list_iterations, restore_iteration
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    err = _validate_skill_name(name)
+    if err:
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(1)
+
+    iters = list_iterations(kb_dir, name)
+    if not iters:
+        click.echo(
+            f"[ERROR] No iterations exist for '{name}'. Nothing to roll back.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    target_n = to_n if to_n is not None else int(iters[-1].name.split("-", 1)[1])
+    target_label = f"iteration-{target_n}"
+    if not any(p.name == target_label for p in iters):
+        click.echo(
+            f"[ERROR] Iteration {target_n} not found for '{name}'. "
+            f"Run `openkb skill history {name}` to see available iterations.",
+            err=True,
+        )
+        ctx.exit(1)
+
+    from openkb.skill import skill_dir
+    current = skill_dir(kb_dir, name)
+    if current.exists():
+        prompt = (
+            f"This will overwrite output/skills/{name}/ with {target_label}. Continue?"
+        )
+        if yes_flag:
+            pass
+        elif sys.stdin.isatty():
+            if not click.confirm(prompt, default=False):
+                click.echo("Aborted.")
+                ctx.exit(1)
+        else:
+            click.echo(
+                f"[ERROR] output/skills/{name}/ exists. Pass -y to overwrite "
+                f"in non-interactive contexts.",
+                err=True,
+            )
+            ctx.exit(1)
+
+    try:
+        restore_iteration(kb_dir, name, n=to_n)
+    except FileNotFoundError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    regenerate_marketplace(kb_dir)
+    click.echo(f"Restored output/skills/{name}/ from {target_label}.")
+    click.echo("Manifest: .claude-plugin/marketplace.json updated")
+
+
+@skill.command("validate")
+@click.argument("name", required=False)
+@click.option(
+    "--strict", is_flag=True, default=False,
+    help="Treat warnings as failures (exit non-zero).",
+)
+@click.pass_context
+def skill_validate(ctx, name, strict):
+    """Validate one skill (by name) or all compiled skills in this KB."""
+    from openkb.skill import skill_dir, skills_root
+    from openkb.skill.validator import validate_skill
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    root = skills_root(kb_dir)
+    if not root.is_dir():
+        click.echo("No skills found. Compile one with `openkb skill new`.")
+        return
+
+    if name:
+        target = skill_dir(kb_dir, name)
+        if not target.is_dir():
+            click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
+            ctx.exit(1)
+        targets = [target]
+    else:
+        targets = sorted(
+            d for d in root.iterdir()
+            if d.is_dir() and not d.name.endswith("-workspace")
+        )
+
+    any_failed = False
+    for t in targets:
+        result = validate_skill(t, strict=strict)
+        passed = result.passed_strict if strict else result.passed
+        prefix = "[OK]" if passed else "[FAIL]"
+        click.echo(f"{prefix} {t.name}")
+        for err in result.errors:
+            click.echo(f"  ERROR:   {err}")
+        for warn in result.warnings:
+            click.echo(f"  WARN:    {warn}")
+        if not passed:
+            any_failed = True
+
+    if any_failed:
+        ctx.exit(1)
+
+
+@skill.command("eval")
+@click.argument("name")
+@click.option(
+    "--save", "save_flag", is_flag=True, default=False,
+    help="Persist the generated eval set to .openkb/eval-sets/<name>.json",
+)
+@click.option(
+    "--eval-set", "eval_set_path", default=None, type=click.Path(),
+    help="Use a saved eval set instead of generating fresh prompts.",
+)
+@click.option(
+    "--count", default=10, type=int,
+    help="Number of should-trigger + should-not prompts (each).",
+)
+@click.pass_context
+def skill_eval(ctx, name, save_flag, eval_set_path, count):
+    """Measure how accurately a compiled skill's description fires.
+
+    Generates trigger-eval prompts via LLM, then asks a grader LLM whether
+    the description should activate the skill for each prompt. Prints pass
+    rate + miss list.
+    """
+    from openkb.skill.evaluator import (
+        run_eval, save_eval_set, load_eval_set, EvalPrompt,
+    )
+
+    from openkb.skill import skill_dir as _skill_dir
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    skill_dir = _skill_dir(kb_dir, name)
+    if not skill_dir.is_dir():
+        click.echo(f"[ERROR] Skill '{name}' not found.", err=True)
+        ctx.exit(1)
+
+    try:
+        _setup_llm_key(kb_dir)
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    eval_set: list[EvalPrompt] | None = None
+    if eval_set_path:
+        eval_set = load_eval_set(Path(eval_set_path))
+        click.echo(f"Loaded eval set from {eval_set_path} ({len(eval_set)} prompts).")
+    else:
+        click.echo(f"Generating eval set for '{name}' (count={count} per side)...")
+
+    try:
+        result = asyncio.run(run_eval(
+            skill_dir, model=model, eval_set=eval_set, count=count,
+        ))
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    click.echo(f"\nEval set: {result.total} prompts")
+    click.echo(
+        f"Trigger accuracy: {result.passed}/{result.trigger_scored} "
+        f"({result.pass_rate * 100:.0f}%)  "
+        f"— does the description fire on the right questions?"
+    )
+    coverage_scored = (
+        result.trigger_questions
+        - len(result.coverage_ambiguous)
+        - len(result.coverage_errors)
+    )
+    click.echo(
+        f"Body coverage:    {result.coverage_passed}/{coverage_scored} "
+        f"({result.coverage_rate * 100:.0f}%)  "
+        f"— does SKILL.md actually support what the description promises?"
+    )
+
+    if result.misses:
+        click.echo(f"\nTrigger misses ({len(result.misses)}):")
+        for miss in result.misses:
+            click.echo(f"  - {miss.label} {miss.prompt.question}")
+
+    if result.coverage_misses:
+        click.echo(f"\nCoverage gaps ({len(result.coverage_misses)}):")
+        for gap in result.coverage_misses:
+            tail = f" — {gap.reason}" if gap.reason else ""
+            click.echo(f"  - {gap.prompt.question}{tail}")
+
+    if result.coverage_ambiguous:
+        click.echo(
+            f"\n[WARN] Coverage grader returned unparseable output on "
+            f"{len(result.coverage_ambiguous)} prompt(s) — excluded from "
+            f"the body-coverage score. Try a more capable model:"
+        )
+        for amb in result.coverage_ambiguous:
+            tail = f" — {amb.reason}" if amb.reason else ""
+            click.echo(f"  - {amb.prompt.question}{tail}")
+
+    if result.trigger_errors or result.coverage_errors:
+        click.echo(
+            f"\n[WARN] {len(result.trigger_errors)} trigger and "
+            f"{len(result.coverage_errors)} coverage grader call(s) "
+            f"failed and are excluded from the scores above:"
+        )
+        for err in result.trigger_errors:
+            click.echo(f"  - trigger:  {err.prompt.question} — {err.reason}")
+        for err in result.coverage_errors:
+            click.echo(f"  - coverage: {err.prompt.question} — {err.reason}")
+
+    if (
+        not result.misses
+        and not result.coverage_misses
+        and not result.coverage_ambiguous
+        and not result.trigger_errors
+        and not result.coverage_errors
+    ):
+        click.echo("\nAll prompts graded correctly with full body support.")
+
+    if save_flag and eval_set is None:
+        path = save_eval_set(kb_dir, name, result.prompts)
+        click.echo(f"\nEval set persisted to {path}")
