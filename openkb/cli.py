@@ -359,6 +359,7 @@ def use(path):
 
 
 _LANGUAGE_MAX_LEN = 50
+_MODEL_MAX_LEN = 100
 
 
 def _coerce_language(value: str | None) -> str | None:
@@ -393,6 +394,35 @@ def _language_option_callback(_ctx, _param, value):
     return _coerce_language(value)
 
 
+def _coerce_model(value: str | None) -> str | None:
+    """Strip a model string; treat blanks as unset; reject unsafe values.
+
+    Mirrors ``_coerce_language``. The model string is passed to LiteLLM and
+    also echoed in logs/CLI output, so embedded control characters would
+    corrupt that output. Capping length keeps pathological values out of
+    config.yaml.
+
+    Returns the cleaned string, or ``None`` if the input was missing or blank
+    after stripping. Raises ``click.BadParameter`` on unsafe input.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > _MODEL_MAX_LEN or any(c in value for c in "\n\r\t"):
+        raise click.BadParameter(
+            f"model must be {_MODEL_MAX_LEN} characters or fewer "
+            "with no control characters",
+            param_hint="'--model'",
+        )
+    return value
+
+
+def _model_option_callback(_ctx, _param, value):
+    return _coerce_model(value)
+
+
 def _stdin_is_tty() -> bool:
     """Return True when stdin is a real terminal.
 
@@ -405,12 +435,22 @@ def _stdin_is_tty() -> bool:
 
 @cli.command()
 @click.option(
+    "--model", "-m", "model",
+    default=None, metavar="MODEL",
+    callback=_model_option_callback,
+    help=(
+        "LLM in LiteLLM provider/model format "
+        "(e.g. 'gpt-5.4-mini', 'anthropic/claude-sonnet-4-6'). "
+        "Skips the interactive prompt when set."
+    ),
+)
+@click.option(
     "--language", "-l", "language",
     default=None, metavar="LANG",
     callback=_language_option_callback,
     help="Wiki output language (e.g. 'en', 'ko'). Skips the interactive prompt when set.",
 )
-def init(language):
+def init(model, language):
     """Initialise a new knowledge base in the current directory."""
     openkb_dir = Path(".openkb")
     if openkb_dir.exists():
@@ -424,11 +464,14 @@ def init(language):
     click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
     click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
     click.echo()
-    model = click.prompt(
-        f"Model (enter for default {DEFAULT_CONFIG['model']})",
-        default=DEFAULT_CONFIG["model"],
-        show_default=False,
-    )
+    if model is None and _stdin_is_tty():
+        model = _coerce_model(click.prompt(
+            f"Model (enter for default {DEFAULT_CONFIG['model']})",
+            default=DEFAULT_CONFIG["model"],
+            show_default=False,
+        ))
+    if not model:
+        model = DEFAULT_CONFIG["model"]
     api_key = click.prompt(
         "LLM API Key (saved to .env, enter to skip)",
         default="",
