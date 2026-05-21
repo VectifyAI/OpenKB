@@ -222,6 +222,34 @@ def test_hash_registry_remove_by_doc_name(tmp_path):
     assert list(saved.keys()) == ["h2"]
 
 
+def test_hash_registry_remove_by_hash(tmp_path):
+    """Issue #58 / Bug 1: `remove_by_hash` is the hash-keyed sibling of
+    `remove_by_doc_name`. It exists so callers that already have the
+    file_hash in hand (e.g. the CLI after `_resolve_doc_identifier`)
+    don't need to round-trip through the `doc_name` slug — that round
+    trip is what silently no-ops for legacy registry entries lacking a
+    `doc_name` key (ingested before commit c504e26).
+    """
+    path = tmp_path / "hashes.json"
+    path.write_text(json.dumps({
+        "h_modern": {"name": "a.pdf", "doc_name": "a-h_modern", "type": "short"},
+        "h_legacy": {"name": "b.pdf", "type": "short"},  # no doc_name
+    }))
+
+    reg = HashRegistry(path)
+
+    # Modern entry: removable by hash.
+    assert reg.remove_by_hash("h_modern") is True
+    assert reg.remove_by_hash("h_modern") is False  # idempotent
+    # Legacy entry (no doc_name): removable by hash too — that's the point.
+    assert reg.remove_by_hash("h_legacy") is True
+    # Unknown hash: returns False, doesn't raise.
+    assert reg.remove_by_hash("never-existed") is False
+
+    assert reg.all_entries() == {}
+    assert json.loads(path.read_text()) == {}
+
+
 # ---------------------------------------------------------------------------
 # _resolve_doc_identifier
 # ---------------------------------------------------------------------------
@@ -459,24 +487,128 @@ def test_cli_remove_confirm_no_aborts(kb_dir):
     assert (kb_dir / "wiki" / "summaries" / "attention-h_a.md").exists()
 
 
-def test_cli_remove_lint_cleans_dangling_links(kb_dir):
-    """`openkb remove` must auto-run lint --fix so wikilinks pointing at
-    the deleted summary/concept get stripped from sibling pages.
+def _seed_legacy_kb(kb_dir: Path) -> None:
+    """Seed a KB whose registry entry pre-dates PR #51.
+
+    Layout reflects the issue #58 / Bug 1 repro: ``hashes.json`` only
+    has ``{name, type}`` (no ``doc_name`` key), and the wiki paths use
+    the bare stem of the original filename — which is also what
+    ``cli.py``'s ``Path(name).stem`` fallback produces on the read path.
+    """
+    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
+        "h_legacy": {"name": "ollama.md", "type": "md"},
+        "h_keep": {"name": "other.md", "type": "md"},  # untouched bystander
+    }))
+    (kb_dir / "raw" / "ollama.md").write_text("# Ollama\n", encoding="utf-8")
+    (kb_dir / "raw" / "other.md").write_text("# Other\n", encoding="utf-8")
+
+    (kb_dir / "wiki" / "summaries" / "ollama.md").write_text(
+        "---\nsources: [raw/ollama.md]\nbrief: x\n---\n# Ollama\n",
+        encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "summaries" / "other.md").write_text(
+        "---\nsources: [raw/other.md]\nbrief: y\n---\n# Other\n",
+        encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "index.md").write_text(
+        "# Knowledge Base Index\n\n## Documents\n"
+        "- [[summaries/ollama]] (md) - Ollama notes\n"
+        "- [[summaries/other]] (md) - Other notes\n\n"
+        "## Concepts\n\n## Explorations\n",
+        encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "log.md").write_text("# Log\n", encoding="utf-8")
+
+
+def test_cli_remove_prunes_legacy_registry_entry_without_doc_name(kb_dir):
+    """Issue #58 / Bug 1 regression: a registry entry written before
+    PR #51 has only ``{name, type}``. The earlier remove path called
+    ``remove_by_doc_name(meta.get('doc_name') or Path(name).stem)``,
+    which silently no-op'd because ``meta.get('doc_name')`` is None for
+    every legacy row — leaving an orphan hash entry that then re-bound
+    the next ``openkb add`` of the same file via SHA dedup.
+
+    Fix: the CLI now prunes the registry by the already-resolved
+    ``file_hash`` (returned by ``_resolve_doc_identifier``), so the
+    metadata shape doesn't matter.
+    """
+    _seed_legacy_kb(kb_dir)
+    hashes_path = kb_dir / ".openkb" / "hashes.json"
+
+    result = _invoke(kb_dir, ["remove", "ollama.md", "--yes"])
+
+    assert result.exit_code == 0, result.output
+
+    remaining = json.loads(hashes_path.read_text())
+    assert "h_legacy" not in remaining, (
+        "legacy registry entry survived remove — see issue #58 Bug 1"
+    )
+    # Sibling legacy entry is untouched.
+    assert "h_keep" in remaining
+
+    # Wiki side-effects of the remove still happened (sanity).
+    assert not (kb_dir / "wiki" / "summaries" / "ollama.md").exists()
+    assert not (kb_dir / "raw" / "ollama.md").exists()
+
+
+def test_cli_remove_lint_cleans_dangling_links_in_modified_page(kb_dir):
+    """`openkb remove` must auto-run a scoped lint --fix so wikilinks
+    pointing at the just-deleted summary get stripped from concept
+    pages that this removal modified.
+
+    Scope (issue #58 / Bug 2): only files in ``concept_result["modified"]``
+    plus ``index.md`` — see ``test_cli_remove_preserves_ghosts_in_unrelated_pages``
+    for the complementary contract.
     """
     _seed_two_doc_kb(kb_dir)
-    # Plant a stray reference to the about-to-be-deleted summary inside
-    # the surviving concept's body (not in any structured section).
-    llm_path = kb_dir / "wiki" / "concepts" / "llm.md"
-    llm_path.write_text(
-        llm_path.read_text() + "\nSee also [[summaries/attention-h_a]] for background.\n",
+    # Plant a stray free-text reference in the body of the MULTI-source
+    # concept page — `concepts/attention.md` has both attention-h_a and
+    # llm-h_l as sources, so the remove flow modifies it (drops
+    # attention-h_a from the frontmatter). The lint pass should also
+    # strip the dangling free-text link.
+    attn_path = kb_dir / "wiki" / "concepts" / "attention.md"
+    attn_path.write_text(
+        attn_path.read_text() + "\nSee also [[summaries/attention-h_a]] for background.\n",
         encoding="utf-8",
     )
 
     result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
 
     assert result.exit_code == 0, result.output
-    cleaned = llm_path.read_text()
+    cleaned = attn_path.read_text()
     assert "[[summaries/attention-h_a]]" not in cleaned
+
+
+def test_cli_remove_preserves_ghosts_in_unrelated_pages(kb_dir):
+    """Issue #58 / Bug 2 regression: `openkb remove` must NOT strip
+    pre-existing dangling wikilinks from concept pages that don't have
+    the removed doc in their frontmatter sources.
+
+    Before the fix, ``fix_broken_links(wiki_dir)`` swept the whole wiki
+    on every remove, producing 39-file / 1254-line diffs and silently
+    deleting links the user had hand-written to not-yet-added concepts.
+    """
+    _seed_two_doc_kb(kb_dir)
+    # llm.md's frontmatter sources include only ``summaries/llm-h_l`` —
+    # the removal of ``attention.pdf`` does NOT touch its sources list,
+    # so it is out of scope for the post-remove lint pass.
+    llm_path = kb_dir / "wiki" / "concepts" / "llm.md"
+    original = llm_path.read_text() + (
+        "\nFollow-up: [[concepts/agent-loops]] (concept I'll add next week).\n"
+        "Also a hand-added back-ref [[summaries/attention-h_a]] users may want.\n"
+    )
+    llm_path.write_text(original, encoding="utf-8")
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    surviving = llm_path.read_text()
+    # Pre-existing ghost to a not-yet-added concept survives.
+    assert "[[concepts/agent-loops]]" in surviving
+    # And a hand-added link to the just-deleted summary also survives
+    # because llm.md is OUT OF SCOPE for this removal's cleanup. Users
+    # who want a wiki-wide sweep can run `openkb lint --fix` explicitly.
+    assert "[[summaries/attention-h_a]]" in surviving
 
 
 # ---------------------------------------------------------------------------

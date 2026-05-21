@@ -173,7 +173,11 @@ def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
     return targets
 
 
-def fix_broken_links(wiki: Path) -> tuple[int, int]:
+def fix_broken_links(
+    wiki: Path,
+    *,
+    restrict_to: list[Path] | None = None,
+) -> tuple[int, int]:
     """Rewrite or strip broken [[wikilinks]] across the wiki in place.
 
     For each Markdown page under ``wiki`` (excluding ``reports/`` and
@@ -184,6 +188,16 @@ def fix_broken_links(wiki: Path) -> tuple[int, int]:
 
     Args:
         wiki: Path to the wiki root directory.
+        restrict_to: When provided, only rewrite these files (must live
+            under ``wiki``). Paths outside the wiki and non-existent
+            paths are silently skipped. An empty list is a no-op — the
+            valid-target whitelist is still computed from the entire
+            wiki, so links like ``[[concepts/sibling]]`` resolve
+            correctly even when ``sibling.md`` is not in the scope.
+            Used by ``openkb remove`` (issue #58 / Bug 2) to clean only
+            the pages it actually touched instead of sweeping the
+            whole wiki and stripping pre-existing dangling links the
+            user may want to keep.
 
     Returns:
         Tuple of ``(files_changed, ghosts_stripped)``.
@@ -200,14 +214,27 @@ def fix_broken_links(wiki: Path) -> tuple[int, int]:
     # otherwise strip_ghost_wikilinks would rebuild it per file (O(F·M)).
     norm_index = build_norm_index(known_targets)
 
+    if restrict_to is None:
+        candidates: list[Path] = [
+            md for md in wiki.rglob("*.md")
+            if md.name not in _EXCLUDED_FILES
+            and md.relative_to(wiki).parts[:1] not in (("reports",), ("sources",))
+        ]
+    else:
+        wiki_resolved = wiki.resolve()
+        candidates = []
+        for raw in restrict_to:
+            if not raw.is_file():
+                continue
+            try:
+                raw.resolve().relative_to(wiki_resolved)
+            except ValueError:
+                continue  # outside wiki — skip silently
+            candidates.append(raw)
+
     files_changed = 0
     ghosts_stripped = 0
-    for md in wiki.rglob("*.md"):
-        if md.name in _EXCLUDED_FILES:
-            continue
-        rel_parts = md.relative_to(wiki).parts
-        if rel_parts and rel_parts[0] in ("reports", "sources"):
-            continue
+    for md in candidates:
         text = _read_md(md)
         cleaned, ghosts = strip_ghost_wikilinks(
             text, known_targets, norm_index=norm_index,

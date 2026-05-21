@@ -11,6 +11,7 @@ from openkb.lint import (
     find_broken_links,
     find_missing_entries,
     find_orphans,
+    fix_broken_links,
     run_structural_lint,
     strip_ghost_wikilinks,
 )
@@ -392,3 +393,111 @@ class TestBuildNormIndex:
 
     def test_empty_set_returns_empty_dict(self):
         assert build_norm_index(set()) == {}
+
+
+class TestFixBrokenLinksRestrictTo:
+    """Issue #58 / Bug 2: ``fix_broken_links`` must support scoping the
+    rewrite to a caller-supplied subset of files so ``openkb remove``
+    can clean up only the pages it actually touched (modified concept
+    pages ∪ index.md) instead of sweeping the entire wiki and stripping
+    pre-existing dangling links the user may want to keep.
+    """
+
+    def test_default_behavior_scans_all_files(self, tmp_path):
+        """Calling ``fix_broken_links(wiki)`` without ``restrict_to``
+        still processes every wiki file — the existing global behavior
+        is preserved for callers that want it (e.g. ``openkb lint --fix``).
+        """
+        wiki = _make_wiki(tmp_path)
+        a = wiki / "concepts" / "a.md"
+        b = wiki / "concepts" / "b.md"
+        a.write_text("# A\n\nLink [[concepts/ghost]] here.\n", encoding="utf-8")
+        b.write_text("# B\n\nLink [[concepts/ghost]] too.\n", encoding="utf-8")
+
+        files_changed, ghosts = fix_broken_links(wiki)
+
+        assert files_changed == 2
+        assert ghosts == 2
+        assert "[[concepts/ghost]]" not in a.read_text()
+        assert "[[concepts/ghost]]" not in b.read_text()
+
+    def test_restrict_to_only_touches_listed_files(self, tmp_path):
+        """When ``restrict_to`` is provided, only those files are
+        rewritten — even if pre-existing ghost links exist elsewhere
+        in the wiki, those files are left alone.
+        """
+        wiki = _make_wiki(tmp_path)
+        touched = wiki / "concepts" / "touched.md"
+        untouched = wiki / "concepts" / "untouched.md"
+        touched.write_text(
+            "# touched\n\nGhost [[concepts/ghost]] here.\n", encoding="utf-8",
+        )
+        untouched.write_text(
+            "# untouched\n\nGhost [[concepts/ghost]] here.\n", encoding="utf-8",
+        )
+
+        files_changed, ghosts = fix_broken_links(wiki, restrict_to=[touched])
+
+        assert files_changed == 1
+        assert ghosts == 1
+        assert "[[concepts/ghost]]" not in touched.read_text()
+        # Untouched file keeps its pre-existing ghost link verbatim.
+        assert "[[concepts/ghost]]" in untouched.read_text()
+
+    def test_restrict_to_empty_list_is_noop(self, tmp_path):
+        """An empty ``restrict_to`` means "process nothing" (not "fall
+        back to wiki-wide"). The whole point of the parameter is letting
+        the CLI say "I touched zero files; don't sweep the wiki on my
+        behalf."
+        """
+        wiki = _make_wiki(tmp_path)
+        a = wiki / "concepts" / "a.md"
+        a.write_text("# A\n\nGhost [[concepts/ghost]] here.\n", encoding="utf-8")
+
+        files_changed, ghosts = fix_broken_links(wiki, restrict_to=[])
+
+        assert files_changed == 0
+        assert ghosts == 0
+        assert "[[concepts/ghost]]" in a.read_text()
+
+    def test_restrict_to_skips_paths_not_under_wiki(self, tmp_path):
+        """Defensive: a path that doesn't live under ``wiki`` (e.g. a
+        leftover absolute path from the caller) is silently skipped
+        rather than rewriting an unrelated file.
+        """
+        wiki = _make_wiki(tmp_path)
+        stray = tmp_path / "stray.md"
+        stray.write_text("# stray\n[[concepts/ghost]]\n", encoding="utf-8")
+        before = stray.read_text()
+
+        files_changed, ghosts = fix_broken_links(wiki, restrict_to=[stray])
+
+        assert files_changed == 0
+        assert ghosts == 0
+        assert stray.read_text() == before
+
+    def test_restrict_to_uses_global_known_targets(self, tmp_path):
+        """The valid-target set must still be computed from the whole
+        wiki — restricting only narrows which files get *rewritten*,
+        not what counts as a valid link target. Without this,
+        ``[[concepts/sibling]]`` in the file under review would be
+        misclassified as a ghost just because ``sibling.md`` is outside
+        ``restrict_to``.
+        """
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "sibling.md").write_text("# sibling", encoding="utf-8")
+        target = wiki / "concepts" / "target.md"
+        target.write_text(
+            "Valid [[concepts/sibling]] and ghost [[concepts/ghost]]\n",
+            encoding="utf-8",
+        )
+
+        files_changed, ghosts = fix_broken_links(wiki, restrict_to=[target])
+
+        assert files_changed == 1
+        assert ghosts == 1
+        text = target.read_text()
+        # Real sibling link survives unchanged.
+        assert "[[concepts/sibling]]" in text
+        # Ghost link gets demoted.
+        assert "[[concepts/ghost]]" not in text

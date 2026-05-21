@@ -882,7 +882,21 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     # Strip dangling wikilinks now so a retry (after a PageIndex
     # failure below) finds a clean wiki — no point in re-running this
     # on every attempt.
-    files_changed, ghosts = fix_broken_links(wiki_dir)
+    #
+    # Scope: only the pages this remove actually touched (modified
+    # concept pages ∪ index.md). Previously this swept the whole wiki
+    # via ``fix_broken_links(wiki_dir)``, which silently stripped
+    # pre-existing dangling links in unrelated pages — see issue #58
+    # (Bug 2). Users who want a wiki-wide sweep can still run
+    # ``openkb lint --fix`` explicitly.
+    lint_scope: list[Path] = [
+        wiki_dir / "concepts" / f"{slug}.md"
+        for slug in concept_result["modified"]
+    ]
+    index_md = wiki_dir / "index.md"
+    if index_md.exists():
+        lint_scope.append(index_md)
+    files_changed, ghosts = fix_broken_links(wiki_dir, restrict_to=lint_scope)
     if files_changed:
         click.echo(f"  lint --fix cleaned {ghosts} dangling wikilink(s) in {files_changed} file(s)")
 
@@ -909,7 +923,10 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
             return
 
     # ----- Commit point -----
-    registry.remove_by_doc_name(doc_name)
+    # Prune by hash, not by ``doc_name``: legacy registry entries
+    # (ingested before commit c504e26) carry only ``{name, type}`` and
+    # would silently no-op under ``remove_by_doc_name``. See issue #58.
+    registry.remove_by_hash(file_hash)
 
     if raw_path is not None:
         raw_path.unlink(missing_ok=True)
