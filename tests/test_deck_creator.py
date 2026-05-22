@@ -97,3 +97,65 @@ def test_run_translates_maxturns(tmp_path: Path):
                     critique=False,
                 )
             )
+
+
+def test_build_agent_critique_sets_handoffs(tmp_path: Path):
+    wiki_root, deck_root = _build(tmp_path)
+    agent = build_deck_create_agent(
+        wiki_root=str(wiki_root),
+        deck_root=str(deck_root),
+        deck_name="test-deck",
+        intent="A test deck.",
+        model="openai/gpt-4o",
+        critique=True,
+    )
+    # Main still has 7 tools (SDK auto-exposes the handoff transfer tool
+    # separately, not through the explicit `tools` list).
+    assert len(agent.tools) == 7
+    assert agent.handoffs, "critique=True must wire a critic handoff"
+    assert len(agent.handoffs) == 1
+    assert agent.handoffs[0].name == "deck-critic"
+
+
+def test_build_agent_critique_appends_handoff_instructions(tmp_path: Path):
+    wiki_root, deck_root = _build(tmp_path)
+    agent = build_deck_create_agent(
+        wiki_root=str(wiki_root),
+        deck_root=str(deck_root),
+        deck_name="test-deck",
+        intent="A test deck.",
+        model="openai/gpt-4o",
+        critique=True,
+    )
+    assert "Critique pass" in agent.instructions
+    assert "transfer to" in agent.instructions.lower()
+
+
+def test_run_with_critique_uses_higher_turn_cap(tmp_path: Path):
+    """When critique=True, Runner.run must be called with max_turns=120."""
+    wiki_root, _ = _build(tmp_path)
+    kb_dir = tmp_path
+    captured: dict = {}
+
+    async def _fake_run(agent, seed, *, max_turns):
+        captured["max_turns"] = max_turns
+        # Write a minimal index.html so run_deck_create does not raise.
+        from openkb.deck import deck_dir
+        d = deck_dir(kb_dir, "test-deck")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "index.html").write_text("<html></html>", encoding="utf-8")
+        return MagicMock()
+
+    with patch("openkb.deck.creator.Runner") as runner:
+        runner.run = _fake_run  # plain async fn, not AsyncMock — we read args
+        import asyncio
+        asyncio.run(
+            run_deck_create(
+                kb_dir=kb_dir,
+                deck_name="test-deck",
+                intent="A test deck.",
+                model="openai/gpt-4o",
+                critique=True,
+            )
+        )
+    assert captured["max_turns"] == 120

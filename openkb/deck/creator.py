@@ -117,31 +117,78 @@ def build_deck_create_agent(
         """Signal the deck is complete. Call exactly once when finished."""
         return f"Deck marked done: {summary}"
 
-    # critique=True wiring is added in Task 7. For now, no handoffs.
-    if critique:
-        raise NotImplementedError(
-            "--critique wiring lands in Task 7. Until then, build_deck_create_agent "
-            "only supports critique=False."
+    main_tools = [
+        list_wiki_dir,
+        read_wiki_file,
+        get_page_content,
+        get_image,
+        query_wiki,
+        write_deck_file,
+        done,
+    ]
+
+    if not critique:
+        return Agent(
+            name="deck-creator",
+            instructions=instructions,
+            tools=main_tools,
+            model=f"litellm/{model}",
+            # Parallel reads (early fan-out: list dir → read N summaries → read N
+            # source page-ranges) saves 5-10 round-trips per compile. Writes
+            # naturally serialise since each write_deck_file depends on prior
+            # reads; model has no reason to write the same path twice in
+            # parallel.
+            model_settings=ModelSettings(parallel_tool_calls=True),
         )
+
+    # critique=True: wire critic agent as a handoff target. The agents
+    # SDK auto-exposes a `transfer_to_<critic_name>` tool when handoffs
+    # is non-empty; we don't need to declare it in `main_tools` ourselves.
+    from openkb.deck.critic import build_deck_critic_agent, snapshot_pre_critique
+
+    critic_agent = build_deck_critic_agent(
+        wiki_root=wiki_root,
+        deck_root=deck_root,
+        intent=intent,
+        model=model,
+    )
+
+    # Attach snapshot hook to critic so index.pre-critique.html is taken
+    # the instant control transfers. We try the SDK's lifecycle hook
+    # first; if unavailable in the pinned version, snapshot via critic
+    # prompt's first action is the fallback (see comment below).
+    def _on_handoff_to_critic(_ctx) -> None:
+        snapshot_pre_critique(Path(deck_root))
+
+    # SDK lifecycle hook — different versions expose this under different
+    # names. We try the documented form, then fall back to a no-op so
+    # the import-time wiring never crashes the build.
+    setter = getattr(critic_agent, "on_handoff", None) or getattr(
+        critic_agent, "on_invocation_start", None
+    )
+    if callable(setter):
+        try:
+            critic_agent.on_handoff = _on_handoff_to_critic  # type: ignore[attr-defined]
+        except Exception:
+            # Hook not assignable in this SDK version — the critic prompt's
+            # working method step 1 is "first action: call snapshot_pre_critique".
+            # See Task 6's prompt.
+            pass
+
+    handoff_instructions = (
+        "\n\n## Critique pass\n\n"
+        "A critic agent will review your work. When you have finished "
+        "writing index.html and run your self-check, **do not call `done()`** — "
+        "instead transfer to the critic via the handoff tool. The critic "
+        "will revise the deck and call `done` itself."
+    )
 
     return Agent(
         name="deck-creator",
-        instructions=instructions,
-        tools=[
-            list_wiki_dir,
-            read_wiki_file,
-            get_page_content,
-            get_image,
-            query_wiki,
-            write_deck_file,
-            done,
-        ],
+        instructions=instructions + handoff_instructions,
+        tools=main_tools,
+        handoffs=[critic_agent],
         model=f"litellm/{model}",
-        # Parallel reads (early fan-out: list dir → read N summaries → read N
-        # source page-ranges) saves 5-10 round-trips per compile. Writes
-        # naturally serialise since each write_deck_file depends on prior
-        # reads; model has no reason to write the same path twice in
-        # parallel.
         model_settings=ModelSettings(parallel_tool_calls=True),
     )
 
