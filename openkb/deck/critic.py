@@ -11,9 +11,12 @@ Critic-only tools:
 
 Safety:
   * ``snapshot_pre_critique`` copies ``index.html`` →
-    ``index.pre-critique.html`` the instant control transfers to critic
-    (called from the SDK lifecycle hook attached in
-    ``build_deck_create_agent`` Task 7).
+    ``index.pre-critique.html``. The critic agent calls this via its
+    ``take_snapshot`` tool as the first action in its working method
+    (see ``deck_critique.md`` step 1). The pinned openai-agents SDK
+    exposes lifecycle callbacks only via ``Agent.hooks`` (an AgentHooks
+    subclass), not as settable ``on_handoff`` attributes, so a
+    prompt-driven first-tool-call is the simplest reliable trigger.
   * ``restore_pre_critique`` puts the snapshot back when critic raises,
     hits MaxTurnsExceeded, or produces output that fails validation.
   * ``cleanup_pre_critique`` removes the snapshot once critique has
