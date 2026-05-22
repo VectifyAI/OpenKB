@@ -64,3 +64,24 @@ def test_restore_idempotent_when_no_snapshot(tmp_path: Path):
     # No pre-critique file. Should be a no-op, not an error.
     restore_pre_critique(deck_root)
     assert (deck_root / "index.html").read_text() == "<html>only-version</html>"
+
+
+def test_cleanup_removes_snapshot(tmp_path: Path):
+    deck_root = tmp_path / "deck"
+    deck_root.mkdir()
+    (deck_root / "index.html").write_text("<html>v2</html>", encoding="utf-8")
+    (deck_root / "index.pre-critique.html").write_text("<html>v1</html>", encoding="utf-8")
+    from openkb.deck.critic import cleanup_pre_critique
+    cleanup_pre_critique(deck_root)
+    assert not (deck_root / "index.pre-critique.html").exists()
+    # index.html (the live deck) is untouched
+    assert (deck_root / "index.html").read_text() == "<html>v2</html>"
+
+
+def test_cleanup_idempotent_when_no_snapshot(tmp_path: Path):
+    deck_root = tmp_path / "deck"
+    deck_root.mkdir()
+    (deck_root / "index.html").write_text("<html>v1</html>", encoding="utf-8")
+    from openkb.deck.critic import cleanup_pre_critique
+    cleanup_pre_critique(deck_root)  # No snapshot to clean — no exception.
+    assert (deck_root / "index.html").read_text() == "<html>v1</html>"

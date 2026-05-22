@@ -16,6 +16,9 @@ Safety:
     ``build_deck_create_agent`` Task 7).
   * ``restore_pre_critique`` puts the snapshot back when critic raises,
     hits MaxTurnsExceeded, or produces output that fails validation.
+  * ``cleanup_pre_critique`` removes the snapshot once critique has
+    succeeded and validation passes — keeps the deck directory clean
+    across runs.
 """
 from __future__ import annotations
 
@@ -63,6 +66,19 @@ def restore_pre_critique(deck_root: Path) -> None:
         return  # idempotent — nothing to restore
     dst = deck_root / "index.html"
     shutil.copy2(src, dst)
+
+
+def cleanup_pre_critique(deck_root: Path) -> None:
+    """Delete index.pre-critique.html if present. No-op if absent.
+
+    Task 7's lifecycle wiring calls this once the critique pass has
+    completed and validation has passed — at that point the snapshot is
+    no longer needed, and leaving it on disk would accumulate stale
+    files across runs.
+    """
+    snapshot = deck_root / f"index.{PRE_CRITIQUE_SUFFIX}.html"
+    if snapshot.is_file():
+        snapshot.unlink()
 
 
 def build_deck_critic_agent(

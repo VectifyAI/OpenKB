@@ -23,6 +23,9 @@ sources you can locate from inherited context.
 ## Working method
 
 1. **Read the current draft.** `read_deck_file("index.html")` first.
+   Ignore any sibling files in the deck directory (e.g.
+   `index.pre-critique.html`) — those are internal safety snapshots,
+   not for you to read or write.
 2. **Score against failure modes.** For each of these, identify each
    slide that violates and note what to change:
    - Bullet dump (> 5 bullets)
