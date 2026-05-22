@@ -29,8 +29,10 @@ The wiki you can read from is structured as follows.
 * `get_page_content(doc_name, pages)` — fetch source pages of a
   PageIndex (long) document at page-range granularity. Use tight ranges,
   never the whole document.
-* `get_image(image_path)` — view a figure or diagram from the wiki when
-  you need to see it to decide whether and how to include it.
+* `get_image(image_path)` — view a figure or diagram from the wiki to
+  decide whether to *reference* it in prose. (v1 does not support
+  embedding bitmap images in the deck — use inline `<svg>` if you need
+  graphics.)
 * `query_wiki(question)` — semantic search; narrow follow-ups only.
   This is a nested LLM call (slow, expensive); prefer direct reads.
 * `write_deck_file(path, content)` — write under
@@ -101,7 +103,7 @@ Serif for everything except labels. Labels use sans, uppercase,
 * Top label row (10px sans, `--muted`, uppercase, tracking):
   left = chapter id (e.g. "CHAPTER 03"), right = source mark
   (e.g. "VASWANI ET AL · 2017").
-* Bottom folio row (8px sans, very `--muted`): left = `N / Total`,
+* Bottom folio row (use `--type-label`, slightly more `--muted` than the top row): left = `N / Total`,
   right = source short label.
 
 ## Slide grammar
@@ -133,7 +135,14 @@ structural shape):
   </div>
   <div class="folio"><span>01 / N</span><span>{{source mark}}</span></div>
 </section>
+```
 
+**Cover/closing exception:** the `cover` and `closing` slides have no
+chapter context, so the top-left label is the deck identifier
+("OPENKB") instead of a `CHAPTER NN` id. Every other slide type uses
+the chapter id on the top-left as described in §Frame.
+
+```html
 <section class="slide" data-type="thesis">
   <div class="label-top"><span>{{chapter id}}</span><span>{{source mark}}</span></div>
   <div class="thesis-body">
@@ -152,9 +161,11 @@ structural shape):
    read `wiki/index.md`. Form a mental map of what the KB actually contains
    before you decide what the deck argues.
 2. **Choose a narrative arc.** Before writing any HTML, write a one-line
-   thesis the deck argues, then a 7-12 step arc (problem → tension →
-   resolution, or whatever shape the intent calls for). Write this arc
-   into the deck only as section titles — *not* as on-slide text.
+   thesis the deck argues, then an 8-12 step arc (problem → tension →
+   resolution, or whatever shape the intent calls for). Each step
+   becomes 1-2 slides, which lands the final deck in the 8-15 range
+   required by §Self-check. Write this arc into the deck only as
+   section titles — *not* as on-slide text.
 3. **Read the relevant content.** For each concept the arc touches, read
    the concept page (`read_wiki_file("concepts/...")`). For each
    document a concept cites, read at least one targeted slice of the
@@ -165,8 +176,11 @@ structural shape):
    total. **Vary `data-type`** — at least 4 distinct types, no run of
    3+ consecutive same type.
 5. **Write `index.html`.** One `write_deck_file("index.html", ...)`
-   call with the complete file. Inline all CSS, inline the keyboard nav
-   JS, inline any images as base64 (cap at ~3 images total).
+   call with the complete file. Inline all CSS and the keyboard nav JS.
+   For any inline graphics use `<svg>` written directly into the HTML —
+   v1 does not embed bitmap images. The `get_image` tool exists for
+   *previewing* wiki figures so you can decide whether to reference
+   them in prose, not for embedding them.
 6. **Revise.** Re-read what you wrote against the failure modes in §
    "Failure modes" below. Touch at least one slide on this pass.
 7. **Self-check** the 5 invariants in § "Self-check" below. Fix anything
