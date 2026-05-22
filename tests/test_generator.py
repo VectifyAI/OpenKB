@@ -58,3 +58,67 @@ async def test_generator_run_delegates_to_skill_creator(tmp_path):
         await g.run()
     runner.assert_awaited_once()
     regen.assert_called_once_with(kb)
+
+
+# --- target_type="deck" dispatch -------------------------------------------
+
+from openkb.deck.validator import ValidationResult as DeckValidationResult
+
+
+@pytest.mark.asyncio
+async def test_generator_deck_dispatches_to_deck_creator(tmp_path):
+    kb_dir = tmp_path
+    (kb_dir / "wiki").mkdir()
+    (kb_dir / "wiki" / "AGENTS.md").write_text("schema", encoding="utf-8")
+
+    gen = Generator(
+        target_type="deck",
+        name="my-deck",
+        intent="…",
+        kb_dir=kb_dir,
+        model="openai/gpt-4o",
+        critique=False,
+    )
+
+    with patch("openkb.skill.generator.run_deck_create", new_callable=AsyncMock) as run_dc, \
+         patch("openkb.skill.generator.regenerate_marketplace") as regen, \
+         patch("openkb.skill.generator.validate_deck") as v_deck:
+        run_dc.return_value = gen.output_dir
+        v_deck.return_value = DeckValidationResult()
+        result = await gen.run()
+
+    run_dc.assert_awaited_once_with(
+        kb_dir=kb_dir,
+        deck_name="my-deck",
+        intent="…",
+        model="openai/gpt-4o",
+        critique=False,
+    )
+    v_deck.assert_called_once_with(gen.output_dir)
+    regen.assert_not_called()  # marketplace is skill-only
+    assert result == gen.output_dir
+
+
+@pytest.mark.asyncio
+async def test_generator_deck_output_dir_is_decks(tmp_path):
+    gen = Generator(
+        target_type="deck",
+        name="my-deck",
+        intent="…",
+        kb_dir=tmp_path,
+        model="openai/gpt-4o",
+        critique=False,
+    )
+    assert gen.output_dir == tmp_path / "output" / "decks" / "my-deck"
+
+
+def test_generator_rejects_podcast_target_type(tmp_path):
+    with pytest.raises(ValueError, match="Unknown target_type"):
+        Generator(
+            target_type="podcast",  # type: ignore[arg-type]
+            name="x",
+            intent="…",
+            kb_dir=tmp_path,
+            model="openai/gpt-4o",
+            critique=False,
+        )
