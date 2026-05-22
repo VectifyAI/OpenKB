@@ -1951,15 +1951,18 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag):
         click.echo("No knowledge base found. Run `openkb init` first.", err=True)
         ctx.exit(1)
 
-    # Reuse skill's name validation (kebab-case lowercase + hyphens).
-    err = _validate_skill_name(name)
+    # Reuse the shared safety gates: name validation + wiki content check.
+    # Matches chat's `/deck new` so users see the same errors in both UIs.
+    err = _preflight_skill_new(kb_dir, name)
     if err:
-        # Reword "Skill name" → "Deck name" so error matches the command.
-        deck_err = err.replace("Skill name", "Deck name")
-        click.echo(
-            f"[ERROR] {deck_err} Use a kebab-case slug like 'my-deck'.",
-            err=True,
-        )
+        # _preflight_skill_new returns messages like "Skill name must not be empty."
+        # and "Wiki at ... is empty — add documents with `openkb add` first."
+        err = err.replace("Skill name", "Deck name")
+        # Only append the kebab-case hint when the failure is actually about
+        # the slug, not the wiki-content gate.
+        if "kebab" not in err.lower() and "Wiki" not in err and "wiki" not in err:
+            err = err + " Use a kebab-case slug like 'my-deck'."
+        click.echo(f"[ERROR] {err}", err=True)
         ctx.exit(1)
 
     # Verify LLM key + load config BEFORE touching existing output. Any

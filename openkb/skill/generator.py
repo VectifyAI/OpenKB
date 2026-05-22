@@ -20,7 +20,7 @@ from typing import Literal, Union
 
 from openkb.deck import deck_dir
 from openkb.deck.creator import run_deck_create
-from openkb.deck.critic import restore_pre_critique
+from openkb.deck.critic import cleanup_pre_critique, restore_pre_critique
 from openkb.deck.validator import (
     ValidationResult as DeckValidationResult,
     validate_deck,
@@ -107,13 +107,18 @@ class Generator:
         )
         self.validation = validate_deck(self.output_dir)
 
-        if self.critique and self.validation.errors:
-            # Critique pass produced invalid HTML. Restore pre-critique
-            # snapshot and re-validate so callers see the clean state.
-            restore_pre_critique(self.output_dir)
-            self.validation = validate_deck(self.output_dir)
-            self.validation.warnings.append(
-                "critique pass failed; restored pre-critique draft."
-            )
+        if self.critique:
+            if self.validation.errors:
+                # Critique pass produced invalid HTML. Restore pre-critique
+                # snapshot and re-validate so callers see the clean state.
+                restore_pre_critique(self.output_dir)
+                self.validation = validate_deck(self.output_dir)
+                self.validation.warnings.append(
+                    "critique pass failed; restored pre-critique draft."
+                )
+            else:
+                # Critique succeeded — remove the snapshot so it doesn't
+                # accumulate across runs.
+                cleanup_pre_critique(self.output_dir)
 
         return self.output_dir
