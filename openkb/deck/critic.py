@@ -129,6 +129,17 @@ def build_deck_critic_agent(
         return await run_query(question, kb_dir, model, stream=False)
 
     @function_tool
+    def take_snapshot() -> str:
+        """Save the current index.html as index.pre-critique.html.
+
+        Call this as your FIRST action when starting the critique, before
+        reading or modifying anything. It preserves the creator's draft
+        so it can be restored if your revisions fail validation.
+        """
+        snapshot_pre_critique(Path(deck_root))
+        return "Snapshot taken: index.pre-critique.html"
+
+    @function_tool
     def read_deck_file(path: str) -> str:
         """Read a file from the deck directory (e.g. 'index.html')."""
         return _read_deck_file_impl(path, deck_root)
@@ -152,6 +163,7 @@ def build_deck_critic_agent(
             get_page_content,
             get_image,
             query_wiki,
+            take_snapshot,
             read_deck_file,
             write_deck_file,
             done,

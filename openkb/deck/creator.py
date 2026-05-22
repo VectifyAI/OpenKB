@@ -144,7 +144,7 @@ def build_deck_create_agent(
     # critique=True: wire critic agent as a handoff target. The agents
     # SDK auto-exposes a `transfer_to_<critic_name>` tool when handoffs
     # is non-empty; we don't need to declare it in `main_tools` ourselves.
-    from openkb.deck.critic import build_deck_critic_agent, snapshot_pre_critique
+    from openkb.deck.critic import build_deck_critic_agent
 
     critic_agent = build_deck_critic_agent(
         wiki_root=wiki_root,
@@ -153,27 +153,13 @@ def build_deck_create_agent(
         model=model,
     )
 
-    # Attach snapshot hook to critic so index.pre-critique.html is taken
-    # the instant control transfers. We try the SDK's lifecycle hook
-    # first; if unavailable in the pinned version, snapshot via critic
-    # prompt's first action is the fallback (see comment below).
-    def _on_handoff_to_critic(_ctx) -> None:
-        snapshot_pre_critique(Path(deck_root))
-
-    # SDK lifecycle hook — different versions expose this under different
-    # names. We try the documented form, then fall back to a no-op so
-    # the import-time wiring never crashes the build.
-    setter = getattr(critic_agent, "on_handoff", None) or getattr(
-        critic_agent, "on_invocation_start", None
-    )
-    if callable(setter):
-        try:
-            critic_agent.on_handoff = _on_handoff_to_critic  # type: ignore[attr-defined]
-        except Exception:
-            # Hook not assignable in this SDK version — the critic prompt's
-            # working method step 1 is "first action: call snapshot_pre_critique".
-            # See Task 6's prompt.
-            pass
+    # The critic's prompt step 1 instructs it to call its `take_snapshot`
+    # tool as the first action, which creates index.pre-critique.html.
+    # We tried an SDK lifecycle hook (on_handoff) for this, but the
+    # pinned openai-agents version exposes lifecycle callbacks only via
+    # the Agent.hooks dataclass field (AgentHooks subclass), not as a
+    # settable attribute. The prompt-driven approach is simpler and
+    # works regardless of SDK version.
 
     handoff_instructions = (
         "\n\n## Critique pass\n\n"

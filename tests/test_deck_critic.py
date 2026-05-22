@@ -26,9 +26,10 @@ def test_build_critic_agent_shape(tmp_path: Path):
         model="openai/gpt-4o",
     )
     assert agent.name == "deck-critic"
-    # 8 tools: 5 wiki-read + write_deck_file + read_deck_file + done
-    assert len(agent.tools) == 8
+    # 9 tools: 5 wiki-read + take_snapshot + read_deck_file + write_deck_file + done
+    assert len(agent.tools) == 9
     tool_names = {getattr(t, "name", "?") for t in agent.tools}
+    assert "take_snapshot" in tool_names
     assert "read_deck_file" in tool_names
     assert "write_deck_file" in tool_names
 
