@@ -54,10 +54,8 @@ load_dotenv()  # load from cwd (covers running inside the KB dir)
 
 _KNOWN_PROVIDER_KEYS = (
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
-    "DEEPSEEK_API_KEY", "COHERE_API_KEY", "MISTRAL_API_KEY",
-    "TOGETHER_API_KEY", "GROQ_API_KEY", "MOONSHOT_API_KEY",
-    "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY", "KIMI_API_KEY",
-    "GLM_API_KEY", "QWEN_API_KEY",
+    "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "MOONSHOT_API_KEY",
+    "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY",
 )
 
 
@@ -400,7 +398,7 @@ def init(language):
     click.echo("  OpenAI:    gpt-5.4-mini, gpt-5.4")
     click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
     click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
-    click.echo("  DeepSeek:  deepseek/deepseek-v4-flash, deepseek/deepseek-v4-0417")
+    click.echo("  DeepSeek:  deepseek/deepseek-v4-flash, deepseek/deepseek-v4-pro")
     click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
     click.echo()
     model = click.prompt(
