@@ -59,6 +59,10 @@ class _DeckParser(HTMLParser):
             src = (a.get("src") or "").strip()
             if src.startswith(("http://", "https://", "//")):
                 self.external_links.append(f"<script src={src!r}>")
+        elif tag == "img":
+            src = (a.get("src") or "").strip()
+            if src.startswith(("http://", "https://", "//")):
+                self.external_links.append(f"<img src={src!r}>")
 
 
 def validate_deck(deck_dir: Path) -> ValidationResult:
@@ -127,7 +131,7 @@ def validate_deck(deck_dir: Path) -> ValidationResult:
             f"slide count {n} outside recommended range [{MIN_SLIDES_SOFT}, {MAX_SLIDES_SOFT}]."
         )
     distinct = len(type_set - {""})
-    if distinct < MIN_DISTINCT_TYPES:
+    if n and distinct < MIN_DISTINCT_TYPES:
         result.warnings.append(
             f"only {distinct} distinct data-type(s) used; recommend ≥ {MIN_DISTINCT_TYPES} for visual variety."
         )

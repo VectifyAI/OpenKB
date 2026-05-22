@@ -106,6 +106,15 @@ def test_external_script_blocks(tmp_path: Path):
     assert any("not self-contained" in e for e in result.errors)
 
 
+def test_external_img_blocks(tmp_path: Path):
+    html = GOOD_DECK.replace(
+        '<section class="slide" data-type="quote"><blockquote>"…"</blockquote></section>',
+        '<section class="slide" data-type="quote"><img src="https://example.com/x.png"></section>',
+    )
+    result = validate_deck(_write(tmp_path, html))
+    assert any("not self-contained" in e for e in result.errors)
+
+
 def test_few_slides_warning(tmp_path: Path):
     # 6 slides — passes hard floor (5), but warns (< 8).
     html = (
@@ -153,6 +162,14 @@ def test_low_distinct_types_warning(tmp_path: Path):
     result = validate_deck(_write(tmp_path, html))
     # Errors fine; this run-length and distinct-count will both warn.
     assert any("distinct data-type" in w for w in result.warnings)
+
+
+def test_no_slides_no_distinct_warning(tmp_path: Path):
+    # A deck with zero slides already produces hard errors; the distinct-type
+    # warning ("only 0 distinct…") is noise on an empty deck and is suppressed.
+    html = "<html><body></body></html>"
+    result = validate_deck(_write(tmp_path, html))
+    assert not any("distinct data-type" in w for w in result.warnings)
 
 
 def test_oversize_file_warning(tmp_path: Path, monkeypatch):
