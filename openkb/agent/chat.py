@@ -61,6 +61,7 @@ _HELP_TEXT = (
     "  /add <path>    Add a document or directory to the knowledge base\n"
     '  /skill new <name> "<intent>"   Compile a skill from the wiki\n'
     '  /deck new [--critique] <name> "<intent>"   Generate an HTML deck from the wiki\n'
+    "  /critique <path-to-html>   Run html-critic skill on a file (CSS bugs, layout, self-containment)\n"
     "  /help          Show this"
 )
 
@@ -218,6 +219,7 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/add",    "Add a document or directory"),
     ("/skill",  "Compile a skill (try `/skill new <name> \"intent\"`)"),
     ("/deck",   "Generate a deck (try `/deck new <name> \"intent\"`)"),
+    ("/critique", "Run html-critic skill on a file (e.g. `/critique output/decks/foo/index.html`)"),
 ]
 
 
@@ -751,11 +753,77 @@ async def _handle_slash(
         await _handle_slash_deck(arg, kb_dir, style)
         return None
 
+    if head == "/critique":
+        await _handle_slash_critique(arg, kb_dir, style)
+        return None
+
     _fmt(
         style,
         ("class:error", f"Unknown command: {head}. Try /help.\n"),
     )
     return None
+
+
+async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
+    """``/critique <path>`` — run the openkb-html-critic skill on a file.
+
+    The skill reads the HTML, fixes CSS specificity bugs / missing nav /
+    self-containment violations, and writes the corrected file back. It
+    will not touch slide content (numbers, names, quotes).
+    """
+    path = arg.strip()
+    if not path:
+        _fmt(
+            style,
+            ("class:slash.help", "Usage: /critique <path-to-html>\n"),
+        )
+        return
+
+    target = (kb_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
+    if not target.is_file():
+        _fmt(style, ("class:error", f"[ERROR] File not found: {path}\n"))
+        return
+
+    from openkb.agent.skill_runner import (
+        MAX_TURNS_WITH_CRITIQUE,
+        SkillNotFoundError,
+        run_skill,
+    )
+    from openkb.config import DEFAULT_CONFIG, load_config
+
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Path passed to the skill is relative to kb_dir (the agent's cwd
+    # conceptually). The skill's read_file/write_file tools operate
+    # under wiki/ and output/ scopes — give it the relative form so
+    # write_kb_file resolves correctly.
+    try:
+        rel = target.relative_to(kb_dir)
+        rel_str = str(rel)
+    except ValueError:
+        # Outside KB — pass absolute, write tool will reject, but read
+        # may still work for a critique-only diagnostic.
+        rel_str = str(target)
+
+    _fmt(style, ("class:slash.ok", f"Critiquing {rel_str}...\n"))
+
+    try:
+        await run_skill(
+            skill_name="openkb-html-critic",
+            intent=f"Critique and patch the HTML file at: {rel_str}",
+            kb_dir=kb_dir,
+            model=model,
+            max_turns=40,
+        )
+    except SkillNotFoundError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+    except RuntimeError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+
+    _fmt(style, ("class:slash.ok", f"Critique pass complete: {rel_str}\n"))
 
 
 async def run_chat(

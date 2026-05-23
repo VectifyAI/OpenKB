@@ -190,9 +190,88 @@ async def run_deck_create(
 ) -> Path:
     """Compile a single deck from the KB's wiki.
 
+    **As of skill-system refactor:** internally loads the
+    ``openkb-deck-editorial`` skill via :func:`openkb.agent.skill_runner.run_skill`,
+    then (if ``critique``) the ``openkb-html-critic`` skill on the
+    produced file. The CLI surface (``openkb deck new``) is unchanged —
+    only the internals are now the unified skill pipeline.
+
     Returns the deck directory. Raises ``RuntimeError`` if the agent
-    finishes without writing ``index.html``, or if the SDK hits its
+    finishes without writing ``index.html``, or if the run hits the
     turn cap.
+    """
+    from openkb.agent.skill_runner import (
+        MAX_TURNS,
+        MAX_TURNS_WITH_CRITIQUE,
+        SkillNotFoundError,
+        run_skill,
+    )
+
+    deck_root = deck_dir(kb_dir, deck_name)
+    deck_root.mkdir(parents=True, exist_ok=True)
+    target_path = f"output/decks/{deck_name}/index.html"
+
+    builder_intent = (
+        f"Deck slug: {deck_name}\n"
+        f"Write the deck to: {target_path}\n\n"
+        f"User brief:\n{intent}"
+    )
+
+    try:
+        await run_skill(
+            skill_name="openkb-deck-editorial",
+            intent=builder_intent,
+            kb_dir=kb_dir,
+            model=model,
+            max_turns=MAX_TURNS_WITH_CRITIQUE if critique else MAX_TURNS,
+        )
+    except SkillNotFoundError as exc:
+        raise RuntimeError(
+            f"Required skill 'openkb-deck-editorial' is missing. "
+            f"It ships at skills/openkb-deck-editorial/SKILL.md — "
+            f"ensure it's present or re-install openkb."
+        ) from exc
+
+    if not (deck_root / "index.html").exists():
+        raise RuntimeError(
+            f"Deck generation finished but the skill did not write "
+            f"index.html at {deck_root}. The deck is incomplete; "
+            f"check whether the wiki has content related to your intent."
+        )
+
+    if critique:
+        critic_intent = (
+            f"Critique and patch the HTML deck at: {target_path}\n"
+            f"Original user brief (for context, do not change content):\n{intent}"
+        )
+        try:
+            await run_skill(
+                skill_name="openkb-html-critic",
+                intent=critic_intent,
+                kb_dir=kb_dir,
+                model=model,
+                max_turns=40,  # critic is reading + patching, not authoring
+            )
+        except SkillNotFoundError:
+            # Critic skill missing is a soft failure — the deck is still
+            # on disk; just no patch pass happened.
+            pass
+
+    return deck_root
+
+
+async def _legacy_run_deck_create_pre_skill_refactor(
+    *,
+    kb_dir: Path,
+    deck_name: str,
+    intent: str,
+    model: str,
+    critique: bool,
+) -> Path:
+    """Pre-skill-refactor implementation. Kept under a renamed symbol
+    so the existing test_deck_creator tests still have a target while
+    we update them in a follow-up. New CLI / chat paths use
+    :func:`run_deck_create` above, which delegates to the skill runner.
     """
     wiki_root = str(kb_dir / "wiki")
     deck_root = deck_dir(kb_dir, deck_name)

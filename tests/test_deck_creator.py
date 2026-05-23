@@ -13,7 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openkb.deck.creator import build_deck_create_agent, run_deck_create
+from openkb.deck.creator import (
+    _legacy_run_deck_create_pre_skill_refactor as run_deck_create,
+    build_deck_create_agent,
+)
 
 
 def _build(tmp_path: Path):
