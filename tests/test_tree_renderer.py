@@ -1,7 +1,6 @@
 """Tests for openkb.tree_renderer."""
 from __future__ import annotations
 
-import pytest
 
 from openkb.tree_renderer import render_summary_md
 

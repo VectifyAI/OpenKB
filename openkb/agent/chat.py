@@ -23,7 +23,7 @@ from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
-from openkb.agent.query import MAX_TURNS, build_query_agent
+from openkb.agent.query import MAX_TURNS, build_chat_agent
 from openkb.log import append_log
 
 
@@ -59,6 +59,7 @@ _HELP_TEXT = (
     "  /list          List all documents in the knowledge base\n"
     "  /lint          Lint the knowledge base\n"
     "  /add <path>    Add a document or directory to the knowledge base\n"
+    '  /skill new <name> "<intent>"   Compile a skill from the wiki\n'
     "  /help          Show this"
 )
 
@@ -80,6 +81,16 @@ def _build_style(use_color: bool) -> Style:
 
 
 def _fmt(style: Style, *fragments: tuple[str, str]) -> None:
+    # prompt_toolkit's print_formatted_text constructs a Win32Output on
+    # Windows that requires a real console handle, raising
+    # NoConsoleScreenBufferError when stdout is a pipe, file, or captured
+    # subprocess stream. Fall back to plain text when the output isn't a
+    # usable console.
+    if not _use_color(force_off=False):
+        for _, text in fragments:
+            sys.stdout.write(text)
+        sys.stdout.flush()
+        return
     print_formatted_text(FormattedText(list(fragments)), style=style, end="")
 
 
@@ -204,6 +215,7 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/list",   "List all documents"),
     ("/lint",   "Lint the knowledge base"),
     ("/add",    "Add a document or directory"),
+    ("/skill",  "Compile a skill (try `/skill new <name> \"intent\"`)"),
 ]
 
 
@@ -328,7 +340,6 @@ async def _run_turn(
     need_blank_before_text = False
 
     if use_color and not raw:
-        from rich.console import Console
         from rich.live import Live
 
         console = _make_rich_console()
@@ -405,6 +416,12 @@ async def _run_turn(
 
 
 def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Path:
+    from openkb.lint import (
+        build_norm_index,
+        list_existing_wiki_targets,
+        strip_ghost_wikilinks,
+    )
+
     explore_dir = kb_dir / "wiki" / "explorations"
     explore_dir.mkdir(parents=True, exist_ok=True)
 
@@ -412,6 +429,15 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
     slug = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")[:60] or session.id
     date = session.created_at[:10].replace("-", "")
     path = explore_dir / f"{slug}-{date}.md"
+
+    # Strip ghost wikilinks from assistant responses (the agent's
+    # instructions encourage [[wikilinks]] but it can reference pages
+    # that don't exist on disk). User turns are written verbatim — they
+    # represent intentional user input, not LLM hallucination.
+    # Build the normalized index once and reuse for every turn — the
+    # whitelist is the same across the whole session.
+    known = list_existing_wiki_targets(kb_dir / "wiki")
+    norm_index = build_norm_index(known)
 
     lines: list[str] = [
         "---",
@@ -426,7 +452,11 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
     for i, (u, a) in enumerate(zip(session.user_turns, session.assistant_texts), 1):
         lines.append(f"## [{i}] {u}")
         lines.append("")
-        lines.append(a or "_(no response recorded)_")
+        if a:
+            cleaned_a, _ = strip_ghost_wikilinks(a, known, norm_index=norm_index)
+            lines.append(cleaned_a)
+        else:
+            lines.append("_(no response recorded)_")
         lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -464,6 +494,86 @@ async def _run_add(arg: str, kb_dir: Path, style: Style) -> None:
             _fmt(style, ("class:error", f"Unsupported file type: {target.suffix}\n"))
             return
         await asyncio.to_thread(add_single_file, target, kb_dir)
+
+
+async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
+    """Dispatch ``/skill new <name> "<intent>"`` and any future skill subcommands."""
+    import shlex
+
+    try:
+        parts = shlex.split(arg) if arg else []
+    except ValueError as exc:
+        _fmt(style, ("class:error", f"[ERROR] Could not parse: {exc}\n"))
+        return
+    if not parts:
+        _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
+        return
+
+    sub = parts[0].lower()
+    if sub != "new":
+        _fmt(style, ("class:error", f"Unknown skill subcommand: {sub}. Try /skill new.\n"))
+        return
+
+    if len(parts) < 3:
+        _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
+        return
+
+    name = parts[1]
+    intent = " ".join(parts[2:])
+
+    # Use the same safety gates as the CLI (name validation, wiki dir,
+    # wiki content). Chat doesn't have a -y flag, so existing skills
+    # block with a clear instruction to delete first.
+    from openkb.cli import _preflight_skill_new
+    err = _preflight_skill_new(kb_dir, name)
+    if err:
+        _fmt(style, ("class:error", f"[ERROR] {err}\n"))
+        return
+
+    from openkb.skill import skill_dir
+    target = skill_dir(kb_dir, name)
+    if target.exists():
+        _fmt(style, ("class:error",
+            f"[ERROR] output/skills/{name}/ already exists. Remove it first "
+            f"with `rm -rf output/skills/{name}` and re-run.\n"))
+        return
+
+    # Load model from KB config
+    from openkb.config import load_config, DEFAULT_CONFIG
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    from openkb.skill.generator import Generator
+    _fmt(style, ("class:slash.help", f"Compiling skill '{name}'...\n"))
+    gen = Generator(
+        target_type="skill",
+        name=name,
+        intent=intent,
+        kb_dir=kb_dir,
+        model=model,
+    )
+    try:
+        await gen.run()
+    except RuntimeError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+
+    # Surface validation issues from Generator.run (same gate as CLI).
+    result = gen.validation
+    if result is not None and (result.errors or result.warnings):
+        _fmt(style, ("class:error", "[WARN] Validation found issues:\n"))
+        for err in result.errors:
+            _fmt(style, ("class:error", f"  ERROR:   {err}\n"))
+        for warn in result.warnings:
+            _fmt(style, ("class:error", f"  WARN:    {warn}\n"))
+        _fmt(style, ("class:slash.help",
+            f"Run `openkb skill validate {name}` to re-check, or "
+            f"`openkb skill rollback {name}` to revert.\n"))
+
+    _fmt(style, ("class:slash.ok", f"Saved: output/skills/{name}/\n"))
+    _fmt(style, ("class:slash.help",
+        f"Iterate: ask follow-up questions in this chat and the agent can "
+        f"edit files under output/skills/{name}/ directly.\n"))
 
 
 async def _handle_slash(
@@ -529,6 +639,10 @@ async def _handle_slash(
         await _run_add(arg, kb_dir, style)
         return None
 
+    if head == "/skill":
+        await _handle_slash_skill(arg, kb_dir, style)
+        return None
+
     _fmt(
         style,
         ("class:error", f"Unknown command: {head}. Try /help.\n"),
@@ -551,8 +665,7 @@ async def run_chat(
 
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     language = session.language or config.get("language", "en")
-    wiki_root = str(kb_dir / "wiki")
-    agent = build_query_agent(wiki_root, session.model, language=language)
+    agent = build_chat_agent(kb_dir, session.model, language=language)
 
     _print_header(session, kb_dir, style)
     if session.turn_count > 0:
@@ -592,7 +705,7 @@ async def run_chat(
                 return
             if action == "new_session":
                 session = ChatSession.new(kb_dir, session.model, session.language)
-                agent = build_query_agent(wiki_root, session.model, language=language)
+                agent = build_chat_agent(kb_dir, session.model, language=language)
                 prompt_session = _make_prompt_session(session, style, use_color, kb_dir)
             continue
 

@@ -1,5 +1,21 @@
 name: Publish to PyPI
 
+# Release flow:
+#   1. `git tag -a vX.Y.Z -m "Release X.Y.Z" && git push origin vX.Y.Z`
+#   2. This workflow builds the package (hatch-vcs derives the version from
+#      the tag automatically — pyproject.toml has no static version field),
+#      publishes to PyPI via OIDC trusted publishing, and creates a GitHub
+#      Release with auto-generated notes.
+#
+# Tag must follow PEP 440: `v0.1.4`, `v0.2.0rc1`, `v0.1.4.dev0`. The
+# leading `v` is stripped by hatch-vcs when computing the package version.
+#
+# Do not run `python -m build && twine upload` locally — that bypasses the
+# GitHub Release creation and produces a release without an attached
+# changelog. PyPI rejects duplicate version uploads, so if the workflow
+# fails after PyPI publish succeeded, manually create the missing GitHub
+# Release with `gh release create vX.Y.Z`.
+
 on:
   push:
     tags:
@@ -10,9 +26,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write
+      id-token: write   # OIDC trusted publishing to PyPI
+      contents: write   # Create GitHub Release
     steps:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # v4.2.2
+        with:
+          fetch-depth: 0   # hatch-vcs needs full history + tags
 
       - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
         with:
@@ -25,4 +44,12 @@ jobs:
         run: python -m build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@fb13cb306901256ace3dab689990e13a5550ffaa  # release/v1.11.0
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1.14.0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*

@@ -8,7 +8,7 @@ from agents import Agent, Runner, function_tool
 from openkb.agent.tools import list_wiki_files, read_wiki_file
 
 MAX_TURNS = 50
-from openkb.schema import SCHEMA_MD, get_agents_md
+from openkb.schema import get_agents_md
 
 _LINTER_INSTRUCTIONS_TEMPLATE = """\
 You are OpenKB's semantic lint agent. Your job is to audit the wiki

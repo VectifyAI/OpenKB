@@ -297,3 +297,14 @@ def test_remove_by_doc_name(tmp_path):
     assert not registry.is_known("h2")
     assert registry.is_known("h3")
     assert registry.remove_by_doc_name("missing") is None
+
+
+def test_remove_by_hash(tmp_path):
+    registry = DbRegistry(tmp_path / "hashes.db")
+    registry.add("h1", {"name": "doc.pdf", "doc_name": "doc-abc123"})
+    registry.add("h2", {"name": "legacy.pdf"})
+    assert registry.remove_by_hash("h1") is True
+    assert registry.remove_by_hash("h1") is False
+    assert registry.remove_by_hash("h2") is True
+    assert registry.remove_by_hash("missing") is False
+    assert registry.all_entries() == {}

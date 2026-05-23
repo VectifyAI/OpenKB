@@ -80,6 +80,20 @@ class HashRegistry:
             del self._data[file_hash]
         self._persist()
 
+    def remove_by_hash(self, file_hash: str) -> bool:
+        """Remove the entry keyed by ``file_hash``. Returns True if removed.
+
+        Preferred over :meth:`remove_by_doc_name` when the caller already
+        has the hash in hand — works regardless of whether the entry's
+        metadata carries a ``doc_name`` field (legacy entries written
+        before commit c504e26 do not).
+        """
+        if file_hash not in self._data:
+            return False
+        del self._data[file_hash]
+        self._persist()
+        return True
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -259,6 +273,15 @@ class DbRegistry:
                         "DELETE FROM registry WHERE file_hash = ?",
                         (file_hash,),
                     )
+
+    def remove_by_hash(self, file_hash: str) -> bool:
+        """Remove the entry keyed by ``file_hash``. Returns True if removed."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM registry WHERE file_hash = ?",
+                (file_hash,),
+            )
+            return cursor.rowcount > 0
 
     @staticmethod
     def hash_file(path: Path) -> str:

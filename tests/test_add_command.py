@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from openkb.cli import SUPPORTED_EXTENSIONS, _find_kb_dir, cli
@@ -71,7 +69,7 @@ class TestAddCommand:
         runner = CliRunner()
         with patch("openkb.cli.add_single_file") as mock_add, \
              patch("openkb.cli._find_kb_dir", return_value=kb_dir):
-            result = runner.invoke(cli, ["add", str(doc)])
+            runner.invoke(cli, ["add", str(doc)])
             mock_add.assert_called_once_with(doc, kb_dir)
 
     def test_add_directory_calls_helper_for_each_file(self, tmp_path):
@@ -85,7 +83,7 @@ class TestAddCommand:
         runner = CliRunner()
         with patch("openkb.cli.add_single_file") as mock_add, \
              patch("openkb.cli._find_kb_dir", return_value=kb_dir):
-            result = runner.invoke(cli, ["add", str(docs_dir)])
+            runner.invoke(cli, ["add", str(docs_dir)])
             # Should be called for .md and .txt but not .xyz
             assert mock_add.call_count == 2
             called_names = {call.args[0].name for call in mock_add.call_args_list}
@@ -121,7 +119,7 @@ class TestAddCommand:
 
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.convert_document", return_value=mock_result) as mock_conv, \
+             patch("openkb.cli.convert_document", return_value=mock_result), \
              patch("openkb.cli.asyncio.run") as mock_arun:
             result = runner.invoke(cli, ["add", str(doc)])
             assert "SKIP" in result.output
