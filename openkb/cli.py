@@ -92,7 +92,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
-    ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx",
+    ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx", ".xls",
     ".html", ".htm", ".txt", ".csv",
 }
 
@@ -101,7 +101,7 @@ _TYPE_DISPLAY_MAP = {
     "long_pdf": "pageindex",
 }
 
-_SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx"}
+_SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx", "xls"}
 
 
 def _display_type(raw_type: str) -> str:
