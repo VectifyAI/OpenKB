@@ -98,13 +98,47 @@ Serif for everything except labels. Labels use sans, uppercase,
 
 * 16:9 aspect ratio: `aspect-ratio: 16/9; width: 100vw; max-width: 1280px;`
 * Per-slide padding: 64px top/bottom, 80px left/right.
-* **4px brick-red bar on the right edge of every slide.** This is the
-  deck's visual signature; do not omit it.
+* **10px brick-red bar on the right edge of every slide.** This is the
+  deck's visual signature; do not omit it. (4px reads as invisible at
+  presentation scale — 10px reads as a confident hairline rule.)
 * Top label row (10px sans, `--muted`, uppercase, tracking):
   left = chapter id (e.g. "CHAPTER 03"), right = source mark
   (e.g. "VASWANI ET AL · 2017").
 * Bottom folio row (use `--type-label`, slightly more `--muted` than the top row): left = `N / Total`,
   right = source short label.
+
+### Composition rules (avoid the "right half empty" failure)
+
+* **Cover title (`.display`)** must use `max-width: 18ch` (NOT 10ch or
+  narrower). A 6-word title at 56px should break to at most 2-3 lines
+  with natural breaks — never wrap an article ("the", "an", "to")
+  onto its own line.
+* **Data slides** must center the big number horizontally on the slide
+  (set the `.data-body` container to `align-items: center; text-align: center`
+  for `data-type="data"` only — leave other slide types left-aligned).
+  Body copy beneath the number stays centered, max-width 38em. The big
+  number must read as the slide's anchor; orphaning it to the left
+  column wastes the canvas.
+* **Cover and closing slides** also benefit from filling more of the
+  canvas — set `.cover-body, .closing-body {{ max-width: 26em }}` (not
+  narrower). Right-side dead space should be rare and intentional.
+
+### Keyboard nav hint
+
+The "← → navigate · F fullscreen · P print" hint exists for first-time
+users — it must NOT compete with the folio during presentation.
+Required CSS:
+
+```css
+.kbd {{
+  opacity: 0;
+  transition: opacity .25s ease;
+}}
+body:hover .kbd {{ opacity: .55; }}
+```
+
+The hint fades in only when the user moves the mouse; idle / fullscreen
+presentation never shows it.
 
 ## Slide grammar
 
