@@ -560,7 +560,9 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
         return
 
-    # Surface validation issues from Generator.run (same gate as CLI).
+    # Surface validation issues from Generator.run. Unlike the CLI
+    # (which exits 1 on validation errors), chat is interactive — print
+    # issues inline and continue so the user can inspect and iterate.
     result = gen.validation
     if result is not None and (result.errors or result.warnings):
         _fmt(style, ("class:error", "[WARN] Validation found issues:\n"))
@@ -661,7 +663,9 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
         return
 
-    # Surface validation issues from Generator.run (same gate as CLI).
+    # Surface validation issues from Generator.run. Unlike the CLI
+    # (which exits 1 on validation errors), chat is interactive — print
+    # issues inline and continue so the user can inspect and iterate.
     result = gen.validation
     if result is not None and (result.errors or result.warnings):
         _fmt(style, ("class:error", "[WARN] Validation found issues:\n"))

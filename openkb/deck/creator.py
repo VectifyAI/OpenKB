@@ -6,8 +6,9 @@ agent in ``openkb.skill.creator``. Differences:
 * System prompt comes from ``openkb/prompts/deck_create.md`` and is
   interpolated with intent, deck_name, and wiki schema.
 * Output is one self-contained ``index.html`` (not a SKILL.md + refs/).
-* Optional ``critique=True`` mode adds a critic agent via SDK handoff
-  (see Task 7 — until then, only ``critique=False`` is wired).
+* Optional ``critique=True`` mode wires a critic agent as an SDK
+  handoff target (see ``openkb.deck.critic``); the main agent transfers
+  to it instead of calling ``done()``.
 * The runner verifies that ``index.html`` was written before declaring
   success.
 """

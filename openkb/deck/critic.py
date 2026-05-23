@@ -17,8 +17,11 @@ Safety:
     exposes lifecycle callbacks only via ``Agent.hooks`` (an AgentHooks
     subclass), not as settable ``on_handoff`` attributes, so a
     prompt-driven first-tool-call is the simplest reliable trigger.
-  * ``restore_pre_critique`` puts the snapshot back when critic raises,
-    hits MaxTurnsExceeded, or produces output that fails validation.
+  * ``restore_pre_critique`` puts the snapshot back when the critic's
+    output fails post-validation in ``Generator.run``. NOTE: critic
+    exceptions and MaxTurnsExceeded currently propagate out of
+    ``Generator.run`` before the restore branch — wrap the deck path in
+    try/except there if that coverage is needed in the future.
   * ``cleanup_pre_critique`` removes the snapshot once critique has
     succeeded and validation passes — keeps the deck directory clean
     across runs.
