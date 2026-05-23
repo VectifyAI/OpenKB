@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -13,15 +12,15 @@ from openkb.state import DbRegistry
 def test_db_registry_creates_database_file(tmp_path):
     """DbRegistry should create a .db file on init."""
     db_path = tmp_path / "hashes.db"
-    registry = DbRegistry(db_path)
+    DbRegistry(db_path)
     assert db_path.exists()
 
 
 def test_db_registry_creates_table(tmp_path):
     """DbRegistry should create the registry table."""
     db_path = tmp_path / "hashes.db"
-    registry = DbRegistry(db_path)
-    
+    DbRegistry(db_path)
+
     conn = sqlite3.connect(str(db_path))
     cursor = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='registry'"
@@ -63,7 +62,7 @@ def test_db_persistence_across_instances(tmp_path):
     db_path = tmp_path / "hashes.db"
     r1 = DbRegistry(db_path)
     r1.add("hash1", {"file": "a.pdf"})
-    
+
     r2 = DbRegistry(db_path)
     assert r2.is_known("hash1") is True
     assert r2.get("hash1") == {"file": "a.pdf"}
@@ -119,7 +118,7 @@ def test_db_wal_mode_enabled(tmp_path):
     """Database should use WAL mode for concurrency."""
     db_path = tmp_path / "hashes.db"
     DbRegistry(db_path)
-    
+
     conn = sqlite3.connect(str(db_path))
     cursor = conn.execute("PRAGMA journal_mode")
     result = cursor.fetchone()
@@ -135,10 +134,10 @@ def test_migrate_from_json(tmp_path):
         "hash2": {"name": "doc2.pdf", "pages": 20},
     }
     json_path.write_text(json.dumps(existing_data), encoding="utf-8")
-    
+
     db_path = tmp_path / "hashes.db"
     registry = DbRegistry(db_path, migrate_from=json_path)
-    
+
     assert registry.is_known("hash1")
     assert registry.is_known("hash2")
     assert registry.get("hash1") == {"name": "doc1.pdf", "pages": 10}
@@ -150,15 +149,15 @@ def test_migrate_only_once(tmp_path):
     json_path = tmp_path / "hashes.json"
     existing_data = {"hash1": {"name": "doc1.pdf"}}
     json_path.write_text(json.dumps(existing_data), encoding="utf-8")
-    
+
     db_path = tmp_path / "hashes.db"
-    
+
     r1 = DbRegistry(db_path, migrate_from=json_path)
     assert r1.is_known("hash1")
-    
+
     existing_data["hash2"] = {"name": "doc2.pdf"}
     json_path.write_text(json.dumps(existing_data), encoding="utf-8")
-    
+
     r2 = DbRegistry(db_path, migrate_from=json_path)
     assert r2.is_known("hash1")
     assert not r2.is_known("hash2")
@@ -196,21 +195,105 @@ def test_migration_resumes_after_interrupt(tmp_path):
     assert registry.is_known("hash1")
 
 
+def test_migration_retries_partial_db_without_marker(tmp_path):
+    json_path = tmp_path / "hashes.json"
+    json_path.write_text(
+        json.dumps({
+            "hash1": {"name": "doc1.pdf"},
+            "hash2": {"name": "doc2.pdf"},
+        }),
+        encoding="utf-8",
+    )
+
+    db_path = tmp_path / "hashes.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE registry (
+            file_hash TEXT PRIMARY KEY,
+            metadata_json TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE INDEX idx_created_at ON registry(created_at)")
+    conn.execute(
+        "INSERT INTO registry (file_hash, metadata_json) VALUES (?, ?)",
+        ("hash1", json.dumps({"name": "doc1.pdf"})),
+    )
+    conn.commit()
+    conn.close()
+
+    registry = DbRegistry(db_path, migrate_from=json_path)
+
+    assert registry.is_known("hash1")
+    assert registry.is_known("hash2")
+
+    conn = sqlite3.connect(str(db_path))
+    marker = conn.execute(
+        "SELECT value FROM schema_meta WHERE key = 'migrated_from_json'"
+    ).fetchone()
+    conn.close()
+    assert marker == ("1",)
+
+
+def test_migration_rolls_back_when_completion_marker_fails(tmp_path):
+    json_path = tmp_path / "hashes.json"
+    json_path.write_text(
+        json.dumps({"hash1": {"name": "doc1.pdf"}}),
+        encoding="utf-8",
+    )
+
+    db_path = tmp_path / "hashes.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE registry (
+            file_hash TEXT PRIMARY KEY,
+            metadata_json TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL CHECK(value = 'blocked')
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        DbRegistry(db_path, migrate_from=json_path)
+
+    conn = sqlite3.connect(str(db_path))
+    count = conn.execute("SELECT COUNT(*) FROM registry").fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
 def test_get_by_path(tmp_path):
-    """get_by_path should match 'name' or 'path' metadata keys."""
     registry = DbRegistry(tmp_path / "hashes.db")
-    registry.add("h1", {"name": "doc.pdf", "path": "/raw/doc.pdf"})
-    assert registry.get_by_path("doc.pdf") == {"name": "doc.pdf", "path": "/raw/doc.pdf"}
-    assert registry.get_by_path("/raw/doc.pdf") == {"name": "doc.pdf", "path": "/raw/doc.pdf"}
+    metadata = {
+        "name": "doc.pdf",
+        "doc_name": "doc-abc123",
+        "path": "inputs/doc.pdf",
+        "raw_path": "raw/doc-abc123.pdf",
+        "source_path": "wiki/sources/doc-abc123.md",
+    }
+    registry.add("h1", metadata)
+    assert registry.get_by_path("inputs/doc.pdf") == metadata
+    assert registry.get_by_path("raw/doc-abc123.pdf") == metadata
+    assert registry.get_by_path("wiki/sources/doc-abc123.md") == metadata
     assert registry.get_by_path("missing") is None
 
 
 def test_remove_by_doc_name(tmp_path):
-    """remove_by_doc_name should delete entry by metadata 'name'."""
     registry = DbRegistry(tmp_path / "hashes.db")
-    registry.add("h1", {"name": "doc1.pdf"})
-    registry.add("h2", {"name": "doc2.pdf"})
-    assert registry.remove_by_doc_name("doc1.pdf") is True
+    registry.add("h1", {"name": "doc.pdf", "doc_name": "doc-abc123"})
+    registry.add("h2", {"name": "doc.pdf", "doc_name": "doc-abc123"})
+    registry.add("h3", {"name": "other.pdf", "doc_name": "other-def456"})
+    assert registry.remove_by_doc_name("doc-abc123") is None
     assert not registry.is_known("h1")
-    assert registry.is_known("h2")
-    assert registry.remove_by_doc_name("missing") is False
+    assert not registry.is_known("h2")
+    assert registry.is_known("h3")
+    assert registry.remove_by_doc_name("missing") is None

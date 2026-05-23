@@ -1,5 +1,5 @@
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
@@ -92,7 +92,12 @@ def test_run_lint_reads_from_registry_not_json(tmp_path):
 
     with patch("openkb.cli._setup_llm_key"), \
          patch("openkb.lint.run_structural_lint", return_value="structural ok"), \
-         patch("openkb.agent.linter.run_knowledge_lint", return_value="knowledge ok"):
+         patch(
+             "openkb.agent.linter.run_knowledge_lint",
+             new_callable=AsyncMock,
+             return_value="knowledge ok",
+         ):
         result = asyncio.run(run_lint(tmp_path))
 
     assert result is not None
+    assert "knowledge ok" in result.read_text(encoding="utf-8")

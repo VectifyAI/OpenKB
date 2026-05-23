@@ -27,11 +27,11 @@ def test_load_config_includes_storage_backend(tmp_path):
 def test_storage_backend_valid_values(tmp_path):
     """storage_backend should accept 'sqlite' or 'json'."""
     config_path = tmp_path / "config.yaml"
-    
+
     save_config(config_path, {"storage_backend": "sqlite"})
     loaded = load_config(config_path)
     assert loaded["storage_backend"] == "sqlite"
-    
+
     save_config(config_path, {"storage_backend": "json"})
     loaded = load_config(config_path)
     assert loaded["storage_backend"] == "json"

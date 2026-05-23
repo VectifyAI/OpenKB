@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Iterator
 
 
+_MIGRATION_META_KEY = "migrated_from_json"
+
+
 def _hash_file(path: Path) -> str:
     """Return the SHA-256 hex digest (64 chars) of the file at path."""
     h = hashlib.sha256()
@@ -54,23 +57,28 @@ class HashRegistry:
         self._persist()
 
     def get_by_path(self, path: str) -> dict | None:
-        """Return metadata for the first entry whose 'path' or 'name' matches."""
+        """Return metadata registered for a source, raw, or wiki path."""
         for metadata in self._data.values():
-            if metadata.get("path") == path or metadata.get("name") == path:
+            if path in {
+                metadata.get("path"),
+                metadata.get("raw_path"),
+                metadata.get("source_path"),
+            }:
                 return metadata
         return None
 
-    def remove_by_doc_name(self, doc_name: str) -> bool:
-        """Remove the first entry whose metadata 'name' matches doc_name.
-
-        Returns True if an entry was removed, False otherwise.
-        """
-        for file_hash, metadata in list(self._data.items()):
-            if metadata.get("name") == doc_name:
-                del self._data[file_hash]
-                self._persist()
-                return True
-        return False
+    def remove_by_doc_name(self, doc_name: str) -> None:
+        """Remove older content-hash entries for the same document."""
+        stale_hashes = [
+            file_hash
+            for file_hash, metadata in self._data.items()
+            if metadata.get("doc_name") == doc_name
+        ]
+        if not stale_hashes:
+            return
+        for file_hash in stale_hashes:
+            del self._data[file_hash]
+        self._persist()
 
     # ------------------------------------------------------------------
     # Internal
@@ -93,7 +101,7 @@ class HashRegistry:
 
 class DbRegistry:
     """SQLite-backed registry mapping file SHA-256 hashes to metadata dicts.
-    
+
     Provides better scalability, concurrency support, and extensibility
     compared to JSON-backed HashRegistry.
     """
@@ -105,16 +113,14 @@ class DbRegistry:
             path: Path to SQLite database file.
             migrate_from: Optional path to JSON file to migrate from.
                           Migration is retried if not previously completed
-                          and the registry table is empty.
+                          and marked complete atomically.
         """
         self._path = path
         self._init_db()
         if migrate_from is not None and migrate_from.exists():
-            if not self._is_migration_complete() and self._is_empty():
-                self._migrate_from_json(migrate_from)
-                self._mark_migration_complete()
+            self._migrate_from_json_if_needed(migrate_from)
 
-    def _migrate_from_json(self, json_path: Path) -> None:
+    def _migrate_from_json_if_needed(self, json_path: Path) -> None:
         """Migrate data from JSON file to SQLite database."""
         if not json_path.exists():
             return
@@ -123,34 +129,23 @@ class DbRegistry:
             data: dict[str, dict] = json.load(fh)
 
         with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = ?",
+                (_MIGRATION_META_KEY,),
+            )
+            if cursor.fetchone() is not None:
+                return
+
             for file_hash, metadata in data.items():
                 metadata_json = json.dumps(metadata, ensure_ascii=False)
                 conn.execute("""
                     INSERT OR REPLACE INTO registry (file_hash, metadata_json)
                     VALUES (?, ?)
                 """, (file_hash, metadata_json))
-
-    def _is_migration_complete(self) -> bool:
-        """Return True if a previous JSON migration was successfully finished."""
-        with self._connect() as conn:
-            cursor = conn.execute(
-                "SELECT value FROM schema_meta WHERE key = 'migrated_from_json'"
-            )
-            return cursor.fetchone() is not None
-
-    def _mark_migration_complete(self) -> None:
-        """Record that JSON migration has finished."""
-        with self._connect() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO schema_meta (key, value)
-                VALUES ('migrated_from_json', '1')
-            """)
-
-    def _is_empty(self) -> bool:
-        """Return True if the registry table contains no rows."""
-        with self._connect() as conn:
-            cursor = conn.execute("SELECT COUNT(*) FROM registry")
-            return cursor.fetchone()[0] == 0
+                VALUES (?, '1')
+            """, (_MIGRATION_META_KEY,))
 
     def _init_db(self) -> None:
         """Initialize database schema if not exists."""
@@ -184,6 +179,9 @@ class DbRegistry:
         try:
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -221,7 +219,7 @@ class DbRegistry:
 
     def add(self, file_hash: str, metadata: dict) -> None:
         """Register file_hash with metadata and persist to disk.
-        
+
         If file_hash already exists, updates the metadata.
         """
         metadata_json = json.dumps(metadata, ensure_ascii=False)
@@ -235,33 +233,32 @@ class DbRegistry:
             """, (file_hash, metadata_json))
 
     def get_by_path(self, path: str) -> dict | None:
-        """Return metadata for the first entry whose 'path' or 'name' matches."""
+        """Return metadata registered for a source, raw, or wiki path."""
         with self._connect() as conn:
             rows = conn.execute("SELECT metadata_json FROM registry").fetchall()
             for (metadata_json,) in rows:
                 metadata = json.loads(metadata_json)
-                if metadata.get("path") == path or metadata.get("name") == path:
+                if path in {
+                    metadata.get("path"),
+                    metadata.get("raw_path"),
+                    metadata.get("source_path"),
+                }:
                     return metadata
         return None
 
-    def remove_by_doc_name(self, doc_name: str) -> bool:
-        """Remove the first entry whose metadata 'name' matches doc_name.
-
-        Returns True if an entry was removed, False otherwise.
-        """
+    def remove_by_doc_name(self, doc_name: str) -> None:
+        """Remove older content-hash entries for the same document."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT file_hash, metadata_json FROM registry"
             ).fetchall()
             for file_hash, metadata_json in rows:
                 metadata = json.loads(metadata_json)
-                if metadata.get("name") == doc_name:
+                if metadata.get("doc_name") == doc_name:
                     conn.execute(
                         "DELETE FROM registry WHERE file_hash = ?",
                         (file_hash,),
                     )
-                    return True
-        return False
 
     @staticmethod
     def hash_file(path: Path) -> str:
@@ -274,14 +271,14 @@ def get_registry(
     backend: str = "sqlite",
 ) -> HashRegistry | DbRegistry:
     """Factory function to get the appropriate registry implementation.
-    
+
     Args:
         openkb_dir: Path to .openkb directory.
         backend: Storage backend - "sqlite" or "json".
-        
+
     Returns:
         HashRegistry for "json" backend, DbRegistry for "sqlite" backend.
-        
+
     When switching from json to sqlite and a JSON file exists,
     automatically migrates the data.
     """
@@ -290,9 +287,9 @@ def get_registry(
 
     if backend == "json":
         return HashRegistry(openkb_dir / "hashes.json")
-    
+
     db_path = openkb_dir / "hashes.db"
     json_path = openkb_dir / "hashes.json"
-    
+
     migrate_from = json_path if json_path.exists() else None
     return DbRegistry(db_path, migrate_from=migrate_from)
