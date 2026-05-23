@@ -124,73 +124,8 @@ def test_generator_rejects_podcast_target_type(tmp_path):
         )
 
 
-@pytest.mark.asyncio
-async def test_generator_deck_cleanup_on_critique_success(tmp_path):
-    """When critique=True and validation passes, the pre-critique snapshot
-    must be deleted so it doesn't accumulate across runs."""
-    kb_dir = tmp_path
-    (kb_dir / "wiki").mkdir()
-    (kb_dir / "wiki" / "AGENTS.md").write_text("schema", encoding="utf-8")
-
-    gen = Generator(
-        target_type="deck",
-        name="my-deck",
-        intent="…",
-        kb_dir=kb_dir,
-        model="openai/gpt-4o",
-        critique=True,
-    )
-
-    # Simulate the creator + critic having written both files.
-    gen.output_dir.mkdir(parents=True, exist_ok=True)
-    (gen.output_dir / "index.html").write_text("<html>critic-output</html>", encoding="utf-8")
-    (gen.output_dir / "index.pre-critique.html").write_text("<html>pre-critic</html>", encoding="utf-8")
-
-    with patch("openkb.skill.generator.run_deck_create", new_callable=AsyncMock) as run_dc, \
-         patch("openkb.skill.generator.validate_deck") as v_deck:
-        run_dc.return_value = gen.output_dir
-        v_deck.return_value = DeckValidationResult()  # no errors → success
-        await gen.run()
-
-    # On critique success, the snapshot is cleaned up.
-    assert not (gen.output_dir / "index.pre-critique.html").exists()
-    # The live deck is untouched.
-    assert (gen.output_dir / "index.html").read_text() == "<html>critic-output</html>"
-
-
-@pytest.mark.asyncio
-async def test_generator_deck_restore_on_critique_failure(tmp_path):
-    """When critique=True and validation fails, the pre-critique snapshot
-    must be restored back to index.html and the snapshot kept for inspection."""
-    kb_dir = tmp_path
-    (kb_dir / "wiki").mkdir()
-    (kb_dir / "wiki" / "AGENTS.md").write_text("schema", encoding="utf-8")
-
-    gen = Generator(
-        target_type="deck",
-        name="my-deck",
-        intent="…",
-        kb_dir=kb_dir,
-        model="openai/gpt-4o",
-        critique=True,
-    )
-
-    # Simulate critic having corrupted index.html, with snapshot of original.
-    gen.output_dir.mkdir(parents=True, exist_ok=True)
-    (gen.output_dir / "index.html").write_text("<html>critic-broken</html>", encoding="utf-8")
-    (gen.output_dir / "index.pre-critique.html").write_text("<html>pre-critic-good</html>", encoding="utf-8")
-
-    # First validation reports an error; second (post-restore) is clean.
-    first_result = DeckValidationResult()
-    first_result.errors.append("bad slide count")
-    second_result = DeckValidationResult()
-
-    with patch("openkb.skill.generator.run_deck_create", new_callable=AsyncMock) as run_dc, \
-         patch("openkb.skill.generator.validate_deck", side_effect=[first_result, second_result]):
-        run_dc.return_value = gen.output_dir
-        await gen.run()
-
-    # index.html was restored from the snapshot.
-    assert (gen.output_dir / "index.html").read_text() == "<html>pre-critic-good</html>"
-    # The warning about restore is surfaced.
-    assert any("restored pre-critique draft" in w for w in gen.validation.warnings)
+# Pre-skill-system snapshot/restore Generator tests removed: the
+# html-critic skill patches HTML in place, so there is no longer a
+# pre-critique snapshot to clean up or restore. See
+# tests/test_deck_creator.py::test_run_deck_create_chains_critic_when_critique_true
+# for the equivalent guarantee at the new layer.

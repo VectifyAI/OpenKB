@@ -1,17 +1,18 @@
 """Generator primitive — shared abstraction for all `<kb>/output/<type>/` artifacts.
 
-v0.2 supports ``target_type="skill"`` and ``target_type="deck"``. Future
-targets (``"podcast"``, ``"report"``, ``"video"``) plug in here under the
-same conventions:
+v0.3 supports ``target_type="skill"`` and ``target_type="deck"``. Both
+targets now route through ``openkb.agent.skill_runner.run_skill`` under
+the hood; ``Generator`` is the thin wrapper that owns:
 
 * output-path convention: ``<kb>/output/<type>/<name>/``
 * post-compile validation: target-specific validator dispatched here
-* post-run hooks: skill regenerates marketplace.json; deck does not (it's
-  not a Claude Code plugin)
+* post-run hooks: skill regenerates ``marketplace.json``; deck has no
+  per-target hook (the html-critic skill, when invoked, has already
+  patched the file in place)
 
-Each target plugs in its own ``run`` coroutine. v0.2 dispatches to
-``openkb.skill.creator.run_skill_create`` or
-``openkb.deck.creator.run_deck_create``.
+Future targets (``"podcast"``, ``"report"``, ``"video"``) plug in by
+declaring an output dir and a validator; the actual content generation
+is just another SKILL.md under ``skills/``.
 """
 from __future__ import annotations
 
@@ -20,7 +21,6 @@ from typing import Literal, Union
 
 from openkb.deck import deck_dir
 from openkb.deck.creator import run_deck_create
-from openkb.deck.critic import cleanup_pre_critique, restore_pre_critique
 from openkb.deck.validator import (
     ValidationResult as DeckValidationResult,
     validate_deck,
@@ -39,7 +39,7 @@ AnyValidationResult = Union[SkillValidationResult, DeckValidationResult]
 
 
 class Generator:
-    """A v0.2 generator instance.
+    """A v0.3 generator instance.
 
     Args:
         target_type: ``"skill"`` or ``"deck"``.
@@ -47,8 +47,9 @@ class Generator:
         intent: natural-language description of the desired artifact.
         kb_dir: KB root.
         model: LiteLLM model name (from KB config).
-        critique: (deck only) opt-in second-pass review via SDK handoff.
-            Ignored for ``target_type="skill"``.
+        critique: (deck only) opt-in second-pass via the
+            ``openkb-html-critic`` skill which patches the produced HTML
+            in place. Ignored for ``target_type="skill"``.
     """
 
     def __init__(
@@ -63,7 +64,7 @@ class Generator:
     ) -> None:
         if target_type not in ("skill", "deck"):
             raise ValueError(
-                f"Unknown target_type {target_type!r}. v0.2 supports 'skill' and 'deck'."
+                f"Unknown target_type {target_type!r}. v0.3 supports 'skill' and 'deck'."
             )
         self.target_type: TargetType = target_type
         self.name = name
@@ -82,9 +83,6 @@ class Generator:
         Side-effects, in order: compile → validate → (skill only) publish
         manifest. ``self.validation`` holds the result so callers can
         surface issues without re-running the validator.
-
-        Deck path: on validation error after a critique run, restore the
-        pre-critique snapshot so the user never loses the clean main draft.
         """
         if self.target_type == "skill":
             await run_skill_create(
@@ -106,19 +104,4 @@ class Generator:
             critique=self.critique,
         )
         self.validation = validate_deck(self.output_dir)
-
-        if self.critique:
-            if self.validation.errors:
-                # Critique pass produced invalid HTML. Restore pre-critique
-                # snapshot and re-validate so callers see the clean state.
-                restore_pre_critique(self.output_dir)
-                self.validation = validate_deck(self.output_dir)
-                self.validation.warnings.append(
-                    "critique pass failed; restored pre-critique draft."
-                )
-            else:
-                # Critique succeeded — remove the snapshot so it doesn't
-                # accumulate across runs.
-                cleanup_pre_critique(self.output_dir)
-
         return self.output_dir
