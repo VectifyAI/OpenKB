@@ -176,6 +176,38 @@ async def test_run_deck_create_raises_when_skill_missing(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_run_deck_create_critique_handles_symlinked_tmp(tmp_path: Path):
+    """Regression: on macOS ``/tmp`` symlinks to ``/private/tmp`` so
+    ``output_path`` comes back resolved while ``kb_dir`` is still the
+    symlink form. ``relative_to`` must not blow up — both must resolve
+    before comparing. Caught in smoke testing the e2e flow."""
+    kb_dir = _make_kb(tmp_path)
+    # output_path resolved to a deeper-named absolute path (simulates
+    # the macOS /tmp -> /private/tmp situation)
+    resolved_target = (kb_dir / "output" / "decks" / "test-deck" / "index.html").resolve()
+
+    async def fake_skill(skill_name, intent, **kw):
+        if skill_name == DEFAULT_DECK_SKILL:
+            _write_index(kb_dir, "test-deck")
+            return SkillRunResult(
+                skill_name=DEFAULT_DECK_SKILL,
+                output_path=resolved_target,
+                metadata={"mode": "deck"},
+            )
+        return _critic_result()
+
+    with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)):
+        # critique=True is what exercises the relative_to call
+        await run_deck_create(
+            kb_dir=kb_dir,
+            deck_name="test-deck",
+            intent="t",
+            model="m",
+            critique=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_run_deck_create_tolerates_missing_critic(tmp_path: Path):
     """Critic skill not installed shouldn't kill the run — the unpatched
     deck is still on disk and usable."""

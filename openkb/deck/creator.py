@@ -93,8 +93,13 @@ async def run_deck_create(
         # The producer's output_path tells the critic which file to patch.
         # If the producer didn't template a path, fall back to the
         # conventional location.
+        #
+        # ``result.output_path`` is already ``.resolve()``-d by run_skill;
+        # ``kb_dir`` may still hold an un-resolved form (e.g. ``/tmp/...``
+        # on macOS where ``/tmp`` symlinks to ``/private/tmp``). Resolve
+        # the KB root too so ``relative_to`` doesn't trip on the symlink.
         target_path = (
-            result.output_path.relative_to(kb_dir)
+            result.output_path.relative_to(kb_dir.resolve())
             if result.output_path is not None
             else Path(f"output/decks/{deck_name}/index.html")
         )

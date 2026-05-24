@@ -215,9 +215,11 @@ def test_no_slides_no_distinct_warning(tmp_path: Path):
 
 
 def test_oversize_file_warning(tmp_path: Path, monkeypatch):
-    # Inject a fake stat() so we don't actually allocate 2MB.
-    import openkb.deck.validator as v
-
-    monkeypatch.setattr(v, "MAX_FILE_BYTES", 100)  # threshold 100 bytes for the test
+    # Lower the size threshold so we don't actually allocate 2MB to
+    # trigger the warning branch.
+    monkeypatch.setattr(
+        "openkb.deck.validator.MAX_FILE_BYTES",
+        100,  # threshold 100 bytes for the test
+    )
     result = validate_deck(_write(tmp_path, GOOD_DECK))
     assert any("MB" in w for w in result.warnings)

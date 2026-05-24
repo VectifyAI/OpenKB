@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from agents import Agent, Runner, function_tool
+from agents import Runner, function_tool
 
 from openkb.agent.query import build_query_agent
 from openkb.agent.skills import _parse_frontmatter, scan_local_skills
