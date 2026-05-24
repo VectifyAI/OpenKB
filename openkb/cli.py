@@ -52,6 +52,27 @@ warnings.filterwarnings("ignore")
 load_dotenv()  # load from cwd (covers running inside the KB dir)
 
 
+_KNOWN_PROVIDER_KEYS = (
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "MOONSHOT_API_KEY",
+    "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY",
+)
+
+
+def _extract_provider(model: str) -> str | None:
+    """Extract the LiteLLM provider name from a model string.
+
+    ``model`` uses ``provider/model`` LiteLLM format.
+    OpenAI models can omit the prefix; default to ``"openai"``.
+    """
+    model = model.strip()
+    if not model:
+        return None
+    if "/" in model:
+        return model.split("/")[0].lower()
+    return "openai"
+
+
 def _setup_llm_key(kb_dir: Path | None = None) -> None:
     """Set LiteLLM API key from LLM_API_KEY env var if present.
 
@@ -62,6 +83,8 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     Also propagates to provider-specific env vars (OPENAI_API_KEY, etc.)
     so that the Agents SDK litellm provider can pick them up.
+    Provider is auto-detected from the KB config when available; otherwise
+    a common provider set is used as a fallback.
     """
     if kb_dir is not None:
         env_file = kb_dir / ".env"
@@ -74,9 +97,23 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
         load_dotenv(global_env, override=False)
 
     api_key = os.environ.get("LLM_API_KEY", "")
+
+    # Try to resolve the active provider from the KB config
+    provider: str | None = None
+    if kb_dir is not None:
+        config_path = kb_dir / ".openkb" / "config.yaml"
+        if config_path.exists():
+            config = load_config(config_path)
+            model = config.get("model", "")
+            provider = _extract_provider(str(model))
+
     if not api_key:
         # Check if any provider key is already set
-        has_key = any(os.environ.get(k) for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"))
+        check_keys = (
+            (f"{provider.upper()}_API_KEY",) if provider
+            else _KNOWN_PROVIDER_KEYS
+        )
+        has_key = any(os.environ.get(k) for k in check_keys)
         if not has_key:
             click.echo(
                 "Warning: No LLM API key found. Set one of:\n"
@@ -86,7 +123,16 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             )
     else:
         litellm.api_key = api_key
-        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+
+        # Dynamically set the provider-specific env var when possible
+        if provider:
+            provider_env = f"{provider.upper()}_API_KEY"
+            if not os.environ.get(provider_env):
+                os.environ[provider_env] = api_key
+
+        # Fallback: also set common provider keys so multi-provider
+        # configs (e.g. PageIndex Cloud) still work
+        for env_var in _KNOWN_PROVIDER_KEYS:
             if not os.environ.get(env_var):
                 os.environ[env_var] = api_key
 
@@ -462,6 +508,7 @@ def init(model, language):
     click.echo("  OpenAI:    gpt-5.4-mini, gpt-5.4")
     click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
     click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
+    click.echo("  DeepSeek:  deepseek/deepseek-v4-flash, deepseek/deepseek-v4-pro")
     click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
     click.echo()
     if model is None and _stdin_is_tty():
