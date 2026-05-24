@@ -80,11 +80,20 @@ async def test_generator_deck_dispatches_to_deck_creator(tmp_path):
         critique=False,
     )
 
+    # Post-refactor: validate_deck moved into run_skill (called inside
+    # run_deck_create). Generator just propagates the SkillRunResult's
+    # validation up to self.validation.
+    from openkb.agent.skill_runner import SkillRunResult
+    fake_run_result = SkillRunResult(
+        skill_name="openkb-deck-editorial",
+        output_path=gen.output_dir / "index.html",
+        validation=DeckValidationResult(),
+        metadata={"mode": "deck"},
+    )
+
     with patch("openkb.skill.generator.run_deck_create", new_callable=AsyncMock) as run_dc, \
-         patch("openkb.skill.generator.regenerate_marketplace") as regen, \
-         patch("openkb.skill.generator.validate_deck") as v_deck:
-        run_dc.return_value = gen.output_dir
-        v_deck.return_value = DeckValidationResult()
+         patch("openkb.skill.generator.regenerate_marketplace") as regen:
+        run_dc.return_value = fake_run_result
         result = await gen.run()
 
     run_dc.assert_awaited_once_with(
@@ -93,10 +102,11 @@ async def test_generator_deck_dispatches_to_deck_creator(tmp_path):
         intent="…",
         model="openai/gpt-4o",
         critique=False,
+        skill_name="openkb-deck-editorial",
     )
-    v_deck.assert_called_once_with(gen.output_dir)
     regen.assert_not_called()  # marketplace is skill-only
     assert result == gen.output_dir
+    assert gen.validation is fake_run_result.validation
 
 
 @pytest.mark.asyncio

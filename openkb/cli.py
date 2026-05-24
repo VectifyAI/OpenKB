@@ -1934,8 +1934,18 @@ def deck():
     is_flag=True, default=False,
     help="Opt-in second-pass review via a critic agent (slower, higher quality).",
 )
+@click.option(
+    "--skill", "skill_name",
+    metavar="SKILL_NAME",
+    default=None,
+    help=(
+        "Which deck skill to use. Defaults to 'openkb-deck-editorial' "
+        "(the built-in). Pass e.g. 'deck-guizang-editorial' to route to "
+        "a third-party skill installed under ~/.openkb/skills/."
+    ),
+)
 @click.pass_context
-def deck_new(ctx, name, intent, yes_flag, critique_flag):
+def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
     """Generate a new HTML deck from this KB's wiki.
 
     NAME is a kebab-case slug used for the output directory.
@@ -1945,6 +1955,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag):
 
       openkb deck new transformers-pitch "Explain attention to engineers"
       openkb deck new transformers-pitch "Explain attention to engineers" --critique
+      openkb deck new transformers-pitch "..." --skill deck-guizang-editorial
     """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -2007,7 +2018,8 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag):
 
     # Run the generator.
     from openkb.skill.generator import Generator
-    click.echo(f"Generating deck '{name}'...")
+    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    click.echo(f"Generating deck '{name}' via skill {skill_label}...")
     gen = Generator(
         target_type="deck",
         name=name,
@@ -2015,6 +2027,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag):
         kb_dir=kb_dir,
         model=model,
         critique=critique_flag,
+        skill_name=skill_name,
     )
     try:
         asyncio.run(gen.run())

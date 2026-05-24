@@ -6,8 +6,8 @@ build_deck_critic_agent symbols they covered. See git history before
 commit 08e95c3 if you need the originals.
 
 The remaining surface to test is small: ``run_deck_create`` is a thin
-wrapper that calls ``run_skill`` (mocked here), checks the output file
-exists, and optionally chains the critic skill.
+wrapper that calls ``run_skill`` (mocked here), returns the producer
+skill's ``SkillRunResult``, and optionally chains the critic skill.
 """
 from __future__ import annotations
 
@@ -16,8 +16,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from openkb.agent.skill_runner import SkillNotFoundError
-from openkb.deck.creator import CRITIC_MAX_TURNS, run_deck_create
+from openkb.agent.skill_runner import SkillNotFoundError, SkillRunResult
+from openkb.deck.creator import (
+    CRITIC_MAX_TURNS,
+    CRITIC_SKILL,
+    DEFAULT_DECK_SKILL,
+    run_deck_create,
+)
 
 
 def _make_kb(tmp_path: Path) -> Path:
@@ -28,7 +33,7 @@ def _make_kb(tmp_path: Path) -> Path:
 
 
 def _write_index(kb_dir: Path, deck_name: str, body: str = "<html></html>") -> Path:
-    """Simulate the deck-editorial skill writing index.html."""
+    """Simulate the producer skill writing index.html."""
     out = kb_dir / "output" / "decks" / deck_name
     out.mkdir(parents=True, exist_ok=True)
     p = out / "index.html"
@@ -36,13 +41,29 @@ def _write_index(kb_dir: Path, deck_name: str, body: str = "<html></html>") -> P
     return p
 
 
+def _producer_result(kb_dir: Path, deck_name: str) -> SkillRunResult:
+    """Build the SkillRunResult ``run_skill`` would return for the producer."""
+    return SkillRunResult(
+        skill_name=DEFAULT_DECK_SKILL,
+        output_path=(kb_dir / "output" / "decks" / deck_name / "index.html").resolve(),
+        validation=None,  # validator is mocked elsewhere; not relevant here
+        metadata={"mode": "deck"},
+    )
+
+
+def _critic_result() -> SkillRunResult:
+    return SkillRunResult(skill_name=CRITIC_SKILL, output_path=None, validation=None)
+
+
 @pytest.mark.asyncio
-async def test_run_deck_create_calls_editorial_skill(tmp_path: Path):
+async def test_run_deck_create_calls_editorial_skill_by_default(tmp_path: Path):
     kb_dir = _make_kb(tmp_path)
 
-    async def fake_skill(skill_name, intent, **_):
-        if skill_name == "openkb-deck-editorial":
+    async def fake_skill(skill_name, intent, **kw):
+        if skill_name == DEFAULT_DECK_SKILL:
             _write_index(kb_dir, "test-deck")
+            return _producer_result(kb_dir, "test-deck")
+        return _critic_result()
 
     with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)) as run_skill:
         result = await run_deck_create(
@@ -53,13 +74,37 @@ async def test_run_deck_create_calls_editorial_skill(tmp_path: Path):
             critique=False,
         )
 
-    assert result == kb_dir / "output" / "decks" / "test-deck"
-    assert (result / "index.html").is_file()
-    # exactly one skill call (no critic when critique=False)
+    # Producer skill ran with the default name + correct slug.
     assert run_skill.await_count == 1
-    args, kwargs = run_skill.call_args
-    assert kwargs["skill_name"] == "openkb-deck-editorial"
-    assert "test-deck" in kwargs["intent"]
+    kwargs = run_skill.call_args.kwargs
+    assert kwargs["skill_name"] == DEFAULT_DECK_SKILL
+    assert kwargs["slug"] == "test-deck"
+    # Return value is the producer SkillRunResult.
+    assert isinstance(result, SkillRunResult)
+    assert result.skill_name == DEFAULT_DECK_SKILL
+
+
+@pytest.mark.asyncio
+async def test_run_deck_create_honors_skill_name_override(tmp_path: Path):
+    """When the caller passes ``skill_name=...`` (e.g. CLI ``--skill``),
+    the producer skill switches and the path layout still applies."""
+    kb_dir = _make_kb(tmp_path)
+
+    async def fake_skill(skill_name, intent, **kw):
+        _write_index(kb_dir, "test-deck")
+        return _producer_result(kb_dir, "test-deck")
+
+    with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)) as run_skill:
+        await run_deck_create(
+            kb_dir=kb_dir,
+            deck_name="test-deck",
+            intent="A test deck.",
+            model="openai/gpt-4o",
+            critique=False,
+            skill_name="deck-guizang-editorial",
+        )
+
+    assert run_skill.call_args.kwargs["skill_name"] == "deck-guizang-editorial"
 
 
 @pytest.mark.asyncio
@@ -67,10 +112,12 @@ async def test_run_deck_create_chains_critic_when_critique_true(tmp_path: Path):
     kb_dir = _make_kb(tmp_path)
     calls: list[str] = []
 
-    async def fake_skill(skill_name, intent, **_):
+    async def fake_skill(skill_name, intent, **kw):
         calls.append(skill_name)
-        if skill_name == "openkb-deck-editorial":
+        if skill_name == DEFAULT_DECK_SKILL:
             _write_index(kb_dir, "test-deck")
+            return _producer_result(kb_dir, "test-deck")
+        return _critic_result()
 
     with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)):
         await run_deck_create(
@@ -81,7 +128,7 @@ async def test_run_deck_create_chains_critic_when_critique_true(tmp_path: Path):
             critique=True,
         )
 
-    assert calls == ["openkb-deck-editorial", "openkb-html-critic"]
+    assert calls == [DEFAULT_DECK_SKILL, CRITIC_SKILL]
 
 
 @pytest.mark.asyncio
@@ -91,8 +138,10 @@ async def test_run_deck_create_critic_max_turns(tmp_path: Path):
     kb_dir = _make_kb(tmp_path)
 
     async def fake_skill(skill_name, intent, **kw):
-        if skill_name == "openkb-deck-editorial":
+        if skill_name == DEFAULT_DECK_SKILL:
             _write_index(kb_dir, "test-deck")
+            return _producer_result(kb_dir, "test-deck")
+        return _critic_result()
 
     with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)) as run_skill:
         await run_deck_create(
@@ -104,7 +153,7 @@ async def test_run_deck_create_critic_max_turns(tmp_path: Path):
         )
 
     critic_call = run_skill.call_args_list[1]
-    assert critic_call.kwargs["skill_name"] == "openkb-html-critic"
+    assert critic_call.kwargs["skill_name"] == CRITIC_SKILL
     assert critic_call.kwargs["max_turns"] == CRITIC_MAX_TURNS
 
 
@@ -116,26 +165,7 @@ async def test_run_deck_create_raises_when_skill_missing(tmp_path: Path):
         raise SkillNotFoundError("not installed")
 
     with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=missing_skill)):
-        with pytest.raises(RuntimeError, match="openkb-deck-editorial"):
-            await run_deck_create(
-                kb_dir=kb_dir,
-                deck_name="test-deck",
-                intent="A test deck.",
-                model="openai/gpt-4o",
-                critique=False,
-            )
-
-
-@pytest.mark.asyncio
-async def test_run_deck_create_raises_when_html_missing(tmp_path: Path):
-    """If the skill returns but no index.html was written, error out."""
-    kb_dir = _make_kb(tmp_path)
-
-    async def fake_skill(**_):
-        return  # no file written
-
-    with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)):
-        with pytest.raises(RuntimeError, match="did not write index.html"):
+        with pytest.raises(RuntimeError, match="not installed"):
             await run_deck_create(
                 kb_dir=kb_dir,
                 deck_name="test-deck",
@@ -151,11 +181,11 @@ async def test_run_deck_create_tolerates_missing_critic(tmp_path: Path):
     deck is still on disk and usable."""
     kb_dir = _make_kb(tmp_path)
 
-    async def fake_skill(skill_name, **_):
-        if skill_name == "openkb-deck-editorial":
+    async def fake_skill(skill_name, **kw):
+        if skill_name == DEFAULT_DECK_SKILL:
             _write_index(kb_dir, "test-deck")
-        else:
-            raise SkillNotFoundError("critic not installed")
+            return _producer_result(kb_dir, "test-deck")
+        raise SkillNotFoundError("critic not installed")
 
     with patch("openkb.deck.creator.run_skill", new=AsyncMock(side_effect=fake_skill)):
         result = await run_deck_create(
@@ -166,4 +196,6 @@ async def test_run_deck_create_tolerates_missing_critic(tmp_path: Path):
             critique=True,
         )
 
-    assert (result / "index.html").is_file()
+    assert isinstance(result, SkillRunResult)
+    # File is still on disk despite critic failure
+    assert (kb_dir / "output" / "decks" / "test-deck" / "index.html").is_file()

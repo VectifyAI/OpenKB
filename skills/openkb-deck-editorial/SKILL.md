@@ -8,6 +8,15 @@ description: |
   opened in a browser, full-screened, and shared. Does NOT apply to
   generating skills (that's `openkb skill new`), long-form research reports,
   or interactive prototypes.
+od:
+  mode: deck
+  output_path_template: "output/decks/{slug}/index.html"
+  deck_grammar:
+    kind_attr: data-type
+    required: [cover, closing]
+    allowed: [cover, chapter, thesis, quote, compare, data, closing]
+    min_distinct: 4
+    max_consecutive_same: 2
 ---
 
 # Editorial Monocle deck skill

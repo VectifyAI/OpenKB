@@ -60,7 +60,7 @@ _HELP_TEXT = (
     "  /lint          Lint the knowledge base\n"
     "  /add <path>    Add a document or directory to the knowledge base\n"
     '  /skill new <name> "<intent>"   Compile a skill from the wiki\n'
-    '  /deck new [--critique] <name> "<intent>"   Generate an HTML deck from the wiki\n'
+    '  /deck new [--critique] [--skill <name>] <name> "<intent>"   Generate an HTML deck from the wiki\n'
     "  /critique <path-to-html>   Run html-critic skill on a file (CSS bugs, layout, self-containment)\n"
     "  /help          Show this"
 )
@@ -606,20 +606,29 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"Unknown deck subcommand: {sub}. Try /deck new.\n"))
         return
 
-    # Parse optional --critique flag (anywhere among the remaining tokens
-    # is fine, but typically right after `new`).
+    # Parse optional --critique flag and --skill <name> option. Both can
+    # appear anywhere among the remaining tokens.
     rest = parts[1:]
     critique = False
+    skill_name: str | None = None
     filtered: list[str] = []
-    for tok in rest:
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
         if tok == "--critique":
             critique = True
+        elif tok == "--skill" and i + 1 < len(rest):
+            skill_name = rest[i + 1]
+            i += 1
+        elif tok.startswith("--skill="):
+            skill_name = tok.split("=", 1)[1]
         else:
             filtered.append(tok)
+        i += 1
 
     if len(filtered) < 2:
         _fmt(style, ("class:error",
-            "Usage: /deck new [--critique] <name> \"<intent>\"\n"))
+            "Usage: /deck new [--critique] [--skill <skill>] <name> \"<intent>\"\n"))
         return
 
     name = filtered[0]
@@ -650,7 +659,11 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.skill.generator import Generator
-    _fmt(style, ("class:slash.help", f"Generating deck '{name}'...\n"))
+    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    _fmt(
+        style,
+        ("class:slash.help", f"Generating deck '{name}' via skill {skill_label}...\n"),
+    )
     gen = Generator(
         target_type="deck",
         name=name,
@@ -658,6 +671,7 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         kb_dir=kb_dir,
         model=model,
         critique=critique,
+        skill_name=skill_name,
     )
     try:
         await gen.run()

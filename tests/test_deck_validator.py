@@ -1,10 +1,25 @@
-"""Tests for the deck validator. No LLM; pure structural checks."""
+"""Tests for the deck validator. No LLM; pure structural checks.
+
+Post-refactor the validator runs in two modes:
+
+* **generic** (``grammar=None``) — only skill-agnostic invariants
+  (file exists, parses, ≥5 ``<section class="slide">`` blocks,
+  self-contained). Used when a skill doesn't declare its slide grammar.
+
+* **grammar-aware** — skill passes its frontmatter
+  ``od.deck_grammar`` (``EDITORIAL_MONOCLE_GRAMMAR`` here). Adds
+  required/allowed-kind checks.
+
+Each test below explicitly picks a mode so the contract for both
+surfaces is pinned.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
 from openkb.deck.validator import (
     ALLOWED_DATA_TYPES,
+    EDITORIAL_MONOCLE_GRAMMAR,
     ValidationResult,
     validate_deck,
 )
@@ -65,27 +80,54 @@ def test_too_few_slides(tmp_path: Path):
 
 
 def test_missing_cover(tmp_path: Path):
+    """Grammar-aware mode: missing required "cover" is an error."""
+    html = GOOD_DECK.replace('data-type="cover"', 'data-type="thesis"')
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
+    assert any('"cover"' in e for e in result.errors)
+
+
+def test_missing_cover_ignored_in_generic_mode(tmp_path: Path):
+    """Generic mode: missing-cover is NOT an error — third-party deck
+    skills aren't required to use the Editorial Monocle data-type vocabulary."""
     html = GOOD_DECK.replace('data-type="cover"', 'data-type="thesis"')
     result = validate_deck(_write(tmp_path, html))
-    assert any('"cover"' in e for e in result.errors)
+    assert not any('"cover"' in e for e in result.errors)
 
 
 def test_missing_closing(tmp_path: Path):
     html = GOOD_DECK.replace('data-type="closing"', 'data-type="thesis"')
-    result = validate_deck(_write(tmp_path, html))
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     assert any('"closing"' in e for e in result.errors)
 
 
 def test_unknown_data_type(tmp_path: Path):
     html = GOOD_DECK.replace('data-type="quote"', 'data-type="hero-banner"')
-    result = validate_deck(_write(tmp_path, html))
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     assert any("hero-banner" in e for e in result.errors)
 
 
 def test_missing_data_type_attr(tmp_path: Path):
     html = GOOD_DECK.replace('data-type="quote"', '')
-    result = validate_deck(_write(tmp_path, html))
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     assert any("missing data-type" in e for e in result.errors)
+
+
+def test_guizang_shape_passes_generic_mode(tmp_path: Path):
+    """A third-party deck (no data-type, uses CSS class for kind) must
+    pass the default (skill-agnostic) validator. Confirms #2 in the
+    architectural-review fix list."""
+    guizang_shape = (
+        "<html><body>"
+        '<section class="slide hero active"><h1>Cover</h1></section>'
+        '<section class="slide act inverse"><h1>Act 1</h1></section>'
+        '<section class="slide grid6"><div>Numbers</div></section>'
+        '<section class="slide two-col"><div>L</div><div>R</div></section>'
+        '<section class="slide q inverse"><h2>?</h2></section>'
+        '<section class="slide hero inverse"><h1>Close</h1></section>'
+        "</body></html>"
+    )
+    result = validate_deck(_write(tmp_path, guizang_shape))
+    assert result.errors == [], f"unexpected errors: {result.errors}"
 
 
 def test_external_link_blocks(tmp_path: Path):
@@ -145,7 +187,7 @@ def test_run_of_3_same_type_warning(tmp_path: Path):
         '<section class="slide" data-type="closing"></section>'
         "</body></html>"
     )
-    result = validate_deck(_write(tmp_path, html))
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     assert result.errors == []
     assert any("consecutive" in w for w in result.warnings)
 
@@ -159,7 +201,7 @@ def test_low_distinct_types_warning(tmp_path: Path):
         + '<section class="slide" data-type="closing"></section>'
         "</body></html>"
     )
-    result = validate_deck(_write(tmp_path, html))
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     # Errors fine; this run-length and distinct-count will both warn.
     assert any("distinct data-type" in w for w in result.warnings)
 
@@ -168,7 +210,7 @@ def test_no_slides_no_distinct_warning(tmp_path: Path):
     # A deck with zero slides already produces hard errors; the distinct-type
     # warning ("only 0 distinct…") is noise on an empty deck and is suppressed.
     html = "<html><body></body></html>"
-    result = validate_deck(_write(tmp_path, html))
+    result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     assert not any("distinct data-type" in w for w in result.warnings)
 
 

@@ -20,11 +20,8 @@ from pathlib import Path
 from typing import Literal, Union
 
 from openkb.deck import deck_dir
-from openkb.deck.creator import run_deck_create
-from openkb.deck.validator import (
-    ValidationResult as DeckValidationResult,
-    validate_deck,
-)
+from openkb.deck.creator import DEFAULT_DECK_SKILL, run_deck_create
+from openkb.deck.validator import ValidationResult as DeckValidationResult
 from openkb.skill import skill_dir
 from openkb.skill.creator import run_skill_create
 from openkb.skill.marketplace import regenerate_marketplace
@@ -61,7 +58,13 @@ class Generator:
         kb_dir: Path,
         model: str,
         critique: bool = False,
+        skill_name: str | None = None,
     ) -> None:
+        """Args:
+            skill_name: For ``target_type="deck"``, which deck skill to use.
+                Defaults to :data:`openkb.deck.creator.DEFAULT_DECK_SKILL`
+                (``"openkb-deck-editorial"``). Ignored for skill target.
+        """
         if target_type not in ("skill", "deck"):
             raise ValueError(
                 f"Unknown target_type {target_type!r}. v0.3 supports 'skill' and 'deck'."
@@ -72,6 +75,7 @@ class Generator:
         self.kb_dir = kb_dir
         self.model = model
         self.critique = critique
+        self.skill_name = skill_name or DEFAULT_DECK_SKILL
         self.output_dir = (
             deck_dir(kb_dir, name) if target_type == "deck" else skill_dir(kb_dir, name)
         )
@@ -82,7 +86,9 @@ class Generator:
 
         Side-effects, in order: compile → validate → (skill only) publish
         manifest. ``self.validation`` holds the result so callers can
-        surface issues without re-running the validator.
+        surface issues without re-running the validator. For deck target,
+        validation runs inside ``run_skill`` via the producing skill's
+        frontmatter-declared grammar; we propagate it up.
         """
         if self.target_type == "skill":
             await run_skill_create(
@@ -96,12 +102,16 @@ class Generator:
             return self.output_dir
 
         # target_type == "deck"
-        await run_deck_create(
+        deck_result = await run_deck_create(
             kb_dir=self.kb_dir,
             deck_name=self.name,
             intent=self.intent,
             model=self.model,
             critique=self.critique,
+            skill_name=self.skill_name,
         )
-        self.validation = validate_deck(self.output_dir)
+        # run_deck_create returns a SkillRunResult-like (or Path) — use its
+        # validation if present; otherwise fall back to None (skill didn't
+        # declare a grammar to validate against).
+        self.validation = deck_result.validation
         return self.output_dir
