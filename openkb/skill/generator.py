@@ -1,18 +1,24 @@
 """Generator primitive — shared abstraction for all `<kb>/output/<type>/` artifacts.
 
 v0.3 supports ``target_type="skill"`` and ``target_type="deck"``. Both
-targets now route through ``openkb.agent.skill_runner.run_skill`` under
-the hood; ``Generator`` is the thin wrapper that owns:
+targets route through ``openkb.agent.skill_runner.run_skill`` under the
+hood; ``Generator`` is the thin wrapper that owns:
 
 * output-path convention: ``<kb>/output/<type>/<name>/``
-* post-compile validation: target-specific validator dispatched here
-* post-run hooks: skill regenerates ``marketplace.json``; deck has no
-  per-target hook (the html-critic skill, when invoked, has already
-  patched the file in place)
+* post-run hooks: skill target regenerates ``marketplace.json``; deck
+  target has no per-target hook (the producer SKILL.md's frontmatter
+  ``od.deck_grammar`` already drove validation inside ``run_skill``,
+  and the html-critic skill, when chained, patched the file in place)
 
-Future targets (``"podcast"``, ``"report"``, ``"video"``) plug in by
-declaring an output dir and a validator; the actual content generation
-is just another SKILL.md under ``skills/``.
+The artifact CONTENT for each target is a ``SKILL.md`` under
+``skills/`` — the dispatch here is purely the orchestration shell
+(arg-routing, output path resolution, post-run hook firing).
+
+A third target type would require editing this module (the ``Literal``
+type, the ``target_type`` check in ``__init__``, the ``if/else`` in
+``run``). A plug-in registry refactor is in the deferred-followups list
+(score 70 in the architectural review); current ``if/else`` is
+intentional v0.x scope.
 """
 from __future__ import annotations
 
