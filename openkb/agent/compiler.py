@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 # Prompt templates
 # ---------------------------------------------------------------------------
 
+# JSON-mode hint for calls whose prompt asks the LLM to return a JSON object.
+# Most providers (OpenAI, DeepSeek, Qwen, Kimi, GLM, MiniMax, Doubao) accept
+# this kwarg and switch into a JSON-constrained decoding mode; providers that
+# don't will either ignore it or raise BadRequestError (caller's choice).
+# DeepSeek/Qwen also require the prompt itself to mention "json", which the
+# templates below already satisfy.
+_JSON_RESPONSE_FORMAT = {"type": "json_object"}
+
 _SYSTEM_TEMPLATE = """\
 You are OpenKB's wiki compilation agent for a personal knowledge base.
 
@@ -295,6 +303,28 @@ def _parse_json(text: str) -> list | dict:
     if not isinstance(result, (dict, list)):
         raise ValueError(f"Expected JSON object or array, got {type(result).__name__}")
     return result
+
+
+def _filter_concept_items(items: list, label: str) -> list[dict]:
+    """Keep only dict items; warn about anything else.
+
+    The concepts-plan prompt asks for ``[{"name": ..., "title": ...}, ...]``
+    but LLMs occasionally emit nested lists or bare strings. Letting those
+    through crashes ``_gen_create`` at ``concept.get("title")`` and silently
+    loses every concept in the batch (issue #71).
+    """
+    if not isinstance(items, list):
+        logger.warning("concepts plan: %s was %s, expected list — dropping",
+                       label, type(items).__name__)
+        return []
+    valid = [c for c in items if isinstance(c, dict)]
+    if len(valid) < len(items):
+        bad_types = sorted({type(c).__name__ for c in items if not isinstance(c, dict)})
+        logger.warning(
+            "concepts plan: dropped %d malformed %s item(s) (types: %s)",
+            len(items) - len(valid), label, ", ".join(bad_types),
+        )
+    return valid
 
 
 # ---------------------------------------------------------------------------
@@ -911,7 +941,7 @@ async def _compile_concepts(
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
         )},
-    ], "concepts-plan", max_tokens=1024)
+    ], "concepts-plan", max_tokens=1024, response_format=_JSON_RESPONSE_FORMAT)
 
     def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
@@ -935,20 +965,34 @@ async def _compile_concepts(
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to parse concepts plan: %s", exc)
-        logger.debug("Raw: %s", plan_raw)
+        # Include raw output preview in the WARNING itself (was DEBUG-only).
+        # Without this, users hitting LLM gibberish have no way to diagnose
+        # why no concepts were generated — see issue #71.
+        preview = plan_raw[:500] + ("..." if len(plan_raw) > 500 else "")
+        logger.warning(
+            "Failed to parse concepts plan: %s. Raw output (first 500 chars): %r",
+            exc, preview,
+        )
+        sys.stdout.write(
+            f"    [WARN] concepts plan unparseable for {doc_name} — "
+            f"no concept pages generated. See log above.\n"
+        )
+        sys.stdout.flush()
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
-    # Fallback: if LLM returns a flat list, treat all items as "create"
+    # Fallback: if LLM returns a flat list, treat all items as "create".
+    # Validate each item is a dict — without this, a nested list like
+    # [[{...}]] crashes _gen_create at `concept.get("title")` (issue #71).
     if isinstance(parsed, list):
-        plan = {"create": parsed, "update": [], "related": []}
+        plan = {"create": _filter_concept_items(parsed, "list"),
+                "update": [], "related": []}
     else:
         plan = {
-            "create": parsed.get("create", []),
-            "update": parsed.get("update", []),
+            "create": _filter_concept_items(parsed.get("create", []), "create"),
+            "update": _filter_concept_items(parsed.get("update", []), "update"),
             "related": parsed.get("related", []),
         }
 
@@ -1010,7 +1054,7 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     update_instruction="",
                 )},
-            ], f"concept: {name}")
+            ], f"concept: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
@@ -1042,7 +1086,7 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     existing_content=existing_content,
                 )},
-            ], f"update: {name}")
+            ], f"update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
@@ -1076,6 +1120,18 @@ async def _compile_concepts(
             concept_names.append(safe_name)
             if brief:
                 concept_briefs_map[safe_name] = brief
+
+        # Surface partial/total failure prominently: WARNING logs are easy to
+        # miss in long compile output, and the [OK] line at the end of `add`
+        # is unconditional. Issue #71: silent loss of all concepts looked
+        # like success to the user.
+        written = len(pending_writes)
+        if written < total:
+            sys.stdout.write(
+                f"    [WARN] {total} concept(s) planned but only {written} written "
+                f"for {doc_name} — check warnings above.\n"
+            )
+            sys.stdout.flush()
 
     # Strip unresolved wikilinks from concept bodies before writing. The
     # whitelist includes existing files + this round's planned slugs +
@@ -1212,7 +1268,8 @@ async def compile_short_doc(
     # for the plan + concept-generation calls, then rewritten into a final
     # v2 (with a whitelist of known wikilink targets) inside
     # _compile_concepts before being written to disk.
-    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary")
+    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary",
+                             response_format=_JSON_RESPONSE_FORMAT)
     try:
         summary_parsed = _parse_json(summary_raw)
         doc_brief = summary_parsed.get("brief", "")
