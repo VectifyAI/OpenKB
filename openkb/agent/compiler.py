@@ -357,6 +357,22 @@ def _filter_concept_items(items: list, label: str) -> list[dict]:
     return valid
 
 
+def _require_nonempty_content(content, name: str) -> None:
+    """Raise if a concept body is missing or whitespace-only.
+
+    Under ``response_format=json_object`` the LLM can legally return
+    ``{"content": null}`` or ``{"content": ""}`` — typically a refusal
+    or a content-policy hit. Without this guard, ``_gen_create`` /
+    ``_gen_update`` would return an empty tuple that ``pending_writes``
+    accepts as a successful concept, then ``_write_concept`` would commit
+    an empty Markdown page to disk and ``[OK]`` would print as if all
+    was well. Raising here makes the failure visible through the
+    existing ``failure_types`` collector + partial-failure ``[WARN]``.
+    """
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(f"LLM returned empty content for concept {name!r}")
+
+
 def _filter_related_slugs(items: list) -> list[str]:
     """Keep only non-empty string slugs; warn about anything else.
 
@@ -1055,6 +1071,25 @@ async def _compile_concepts(
     update_items = plan["update"]
     related_items = plan["related"]
 
+    # Detect "plan had items but the filters dropped them all". Without
+    # this, the early-return below looks identical to "LLM legitimately
+    # had nothing to add" — the exact silent-loss-looks-like-success bug
+    # PR #75's [WARN] mechanism set out to fix.
+    if isinstance(parsed, list):
+        original_total = len(parsed)
+    else:
+        original_total = sum(
+            len(parsed.get(k, [])) if isinstance(parsed.get(k), list) else 0
+            for k in ("create", "update", "related")
+        )
+    post_filter_total = len(create_items) + len(update_items) + len(related_items)
+    if original_total > 0 and post_filter_total == 0:
+        sys.stdout.write(
+            f"    [WARN] concepts plan for {doc_name} had {original_total} "
+            f"item(s), all dropped as malformed — see log (stderr).\n"
+        )
+        sys.stdout.flush()
+
     if not create_items and not update_items and not related_items:
         if rewrite_summary:
             _write_v1_summary_stripped()
@@ -1113,9 +1148,15 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            content = parsed.get("content", raw)
+            # ``.get("content", raw)`` only uses the default when the key is
+            # absent — ``{"content": null}`` (legal under json_object mode
+            # for a refused/empty page) returns None. ``or raw`` collapses
+            # null/empty to the raw fallback so the validator below sees
+            # a consistent string-or-empty.
+            content = parsed.get("content") or raw
         except (json.JSONDecodeError, ValueError):
             brief, content = "", raw
+        _require_nonempty_content(content, name)
         return name, content, False, brief
 
     async def _gen_update(concept: dict) -> tuple[str, str, bool, str]:
@@ -1145,9 +1186,10 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            content = parsed.get("content", raw)
+            content = parsed.get("content") or raw
         except (json.JSONDecodeError, ValueError):
             brief, content = "", raw
+        _require_nonempty_content(content, name)
         return name, content, True, brief
 
     tasks = []
