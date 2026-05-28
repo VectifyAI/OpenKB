@@ -266,6 +266,7 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
 
     response = litellm.completion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
+    _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     spinner.stop(_format_usage(time.time() - t0, response.usage))
     logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
@@ -282,12 +283,34 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
 
     response = await litellm.acompletion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
+    _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     elapsed = time.time() - t0
     sys.stdout.write(f"    {step_name}... {_format_usage(elapsed, response.usage)}\n")
     sys.stdout.flush()
     logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
     return content.strip()
+
+
+def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None:
+    """Surface ``finish_reason == 'length'`` as a visible warning.
+
+    When the LLM hits the ``max_tokens`` cap mid-response, ``json_repair``
+    will often salvage the truncated prefix and parsing silently succeeds
+    with a smaller-than-intended payload. Flagging it here lets users
+    distinguish "LLM emitted a short plan" from "LLM was cut off".
+    """
+    try:
+        finish_reason = response.choices[0].finish_reason
+    except (AttributeError, IndexError):
+        return
+    if finish_reason != "length":
+        return
+    cap = f" (max_tokens={max_tokens})" if max_tokens else ""
+    logger.warning("LLM [%s] hit length limit%s — output may be truncated.",
+                   step_name, cap)
+    sys.stdout.write(f"    [WARN] {step_name} hit length limit{cap} — output may be truncated.\n")
+    sys.stdout.flush()
 
 
 def _parse_json(text: str) -> list | dict:
@@ -971,7 +994,7 @@ async def _compile_concepts(
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
         )},
-    ], "concepts-plan", max_tokens=1024, response_format=_JSON_RESPONSE_FORMAT)
+    ], "concepts-plan", max_tokens=2048, response_format=_JSON_RESPONSE_FORMAT)
 
     def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
@@ -995,17 +1018,19 @@ async def _compile_concepts(
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
-        # Include raw output preview in the WARNING itself (was DEBUG-only).
-        # Without this, users hitting LLM gibberish have no way to diagnose
-        # why no concepts were generated — see issue #71.
+        # Surface the first 500 chars at WARNING so operators not running
+        # with DEBUG enabled can still diagnose; keep the full raw at
+        # DEBUG for the truncation-past-500 case (see issue #71).
         preview = plan_raw[:500] + ("..." if len(plan_raw) > 500 else "")
         logger.warning(
             "Failed to parse concepts plan: %s. Raw output (first 500 chars): %r",
             exc, preview,
         )
+        logger.debug("Concepts plan raw output (full, %d chars): %s",
+                     len(plan_raw), plan_raw)
         sys.stdout.write(
             f"    [WARN] concepts plan unparseable for {doc_name} — "
-            f"no concept pages generated. See log above.\n"
+            f"no concept pages generated. See log (stderr) for details.\n"
         )
         sys.stdout.flush()
         if rewrite_summary:
@@ -1140,9 +1165,11 @@ async def _compile_concepts(
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        failure_types: list[str] = []
         for r in results:
             if isinstance(r, Exception):
                 logger.warning("Concept generation failed: %s", r)
+                failure_types.append(type(r).__name__)
                 continue
             name, page_content, is_update, brief = r
             pending_writes.append((name, page_content, is_update, brief))
@@ -1154,12 +1181,18 @@ async def _compile_concepts(
         # Surface partial/total failure prominently: WARNING logs are easy to
         # miss in long compile output, and the [OK] line at the end of `add`
         # is unconditional. Issue #71: silent loss of all concepts looked
-        # like success to the user.
+        # like success to the user. Include exception type names inline so
+        # the stdout line is self-contained (the per-failure WARNING logs
+        # go to stderr, which a stdout-only consumer never sees).
         written = len(pending_writes)
         if written < total:
+            reason = (
+                ", ".join(sorted(set(failure_types)))
+                if failure_types else "see log (stderr)"
+            )
             sys.stdout.write(
                 f"    [WARN] {total} concept(s) planned but only {written} written "
-                f"for {doc_name} — check warnings above.\n"
+                f"for {doc_name} ({reason}).\n"
             )
             sys.stdout.flush()
 
