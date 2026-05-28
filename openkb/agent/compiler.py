@@ -306,23 +306,53 @@ def _parse_json(text: str) -> list | dict:
 
 
 def _filter_concept_items(items: list, label: str) -> list[dict]:
-    """Keep only dict items; warn about anything else.
+    """Keep only dicts that carry a non-empty ``name``; warn about anything else.
 
     The concepts-plan prompt asks for ``[{"name": ..., "title": ...}, ...]``
-    but LLMs occasionally emit nested lists or bare strings. Letting those
-    through crashes ``_gen_create`` at ``concept.get("title")`` and silently
-    loses every concept in the batch (issue #71).
+    but LLMs occasionally emit nested lists, bare strings, or dicts that
+    forgot ``name``. JSON mode constrains syntax, not schema, so all of
+    these still slip through ``_parse_json``. Without this guard a
+    name-less dict crashes the ``planned_slugs`` set comprehension
+    (``c["name"]`` → KeyError) and aborts the whole concepts step.
     """
     if not isinstance(items, list):
         logger.warning("concepts plan: %s was %s, expected list — dropping",
                        label, type(items).__name__)
         return []
-    valid = [c for c in items if isinstance(c, dict)]
+    valid = [c for c in items if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
     if len(valid) < len(items):
-        bad_types = sorted({type(c).__name__ for c in items if not isinstance(c, dict)})
+        reasons: list[str] = []
+        for c in items:
+            if not isinstance(c, dict):
+                reasons.append(type(c).__name__)
+            elif not isinstance(c.get("name"), str) or not c["name"].strip():
+                reasons.append("dict-missing-name")
         logger.warning(
-            "concepts plan: dropped %d malformed %s item(s) (types: %s)",
-            len(items) - len(valid), label, ", ".join(bad_types),
+            "concepts plan: dropped %d malformed %s item(s) (reasons: %s)",
+            len(items) - len(valid), label, ", ".join(sorted(set(reasons))),
+        )
+    return valid
+
+
+def _filter_related_slugs(items: list) -> list[str]:
+    """Keep only non-empty string slugs; warn about anything else.
+
+    ``related`` is documented in the prompt as "array of slug strings",
+    but the same shape drift that motivates ``_filter_concept_items``
+    applies here. Non-strings reaching ``_sanitize_concept_name`` raise
+    TypeError inside ``unicodedata.normalize`` and crash the whole
+    ``_compile_concepts`` call.
+    """
+    if not isinstance(items, list):
+        logger.warning("concepts plan: related was %s, expected list — dropping",
+                       type(items).__name__)
+        return []
+    valid = [s for s in items if isinstance(s, str) and s.strip()]
+    if len(valid) < len(items):
+        bad_types = sorted({type(s).__name__ for s in items if not (isinstance(s, str) and s.strip())})
+        logger.warning(
+            "concepts plan: dropped %d malformed related item(s) (types: %s)",
+            len(items) - len(valid), ", ".join(bad_types),
         )
     return valid
 
@@ -993,7 +1023,7 @@ async def _compile_concepts(
         plan = {
             "create": _filter_concept_items(parsed.get("create", []), "create"),
             "update": _filter_concept_items(parsed.get("update", []), "update"),
-            "related": parsed.get("related", []),
+            "related": _filter_related_slugs(parsed.get("related", [])),
         }
 
     create_items = plan["create"]
