@@ -27,6 +27,7 @@ import unicodedata
 from pathlib import Path
 
 import litellm
+import yaml
 
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import get_agents_md
@@ -564,6 +565,19 @@ def _sanitize_concept_name(name: str) -> str:
     return sanitized or "unnamed-concept"
 
 
+def _yaml_kv_line(key: str, value: str) -> str:
+    """Render a single ``key: value`` line that round-trips through any YAML loader.
+
+    LLM-authored values often contain colons, quotes, ``#``, brackets, etc.;
+    f-string interpolation produces invalid YAML for those. ``yaml.safe_dump``
+    auto-quotes when needed and never wraps (``width=inf``).
+    """
+    dumped = yaml.safe_dump(
+        {key: value}, default_flow_style=False, width=10**9, allow_unicode=True,
+    ).strip()
+    return dumped.split("\n", 1)[0]
+
+
 def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
     """Write or update a concept page, managing the sources frontmatter."""
     concepts_dir = wiki_dir / "concepts"
@@ -598,10 +612,13 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
             if end != -1:
                 fm = existing[:end + 3]
                 body = existing[end + 3:]
+                brief_line = _yaml_kv_line("brief", brief)
                 if "brief:" in fm:
-                    fm = re.sub(r"brief:.*", f"brief: {brief}", fm)
+                    # Lambda to bypass re.sub backref interpretation in the
+                    # replacement string (brief may contain \1, \g<…>, etc.).
+                    fm = re.sub(r"brief:.*", lambda _m: brief_line, fm)
                 else:
-                    fm = fm.replace("---\n", f"---\nbrief: {brief}\n", 1)
+                    fm = fm.replace("---\n", f"---\n{brief_line}\n", 1)
                 existing = fm + body
         path.write_text(existing, encoding="utf-8")
     else:
@@ -611,7 +628,7 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                 content = content[end + 3:].lstrip("\n")
         fm_lines = [f"sources: [{source_file}]"]
         if brief:
-            fm_lines.append(f"brief: {brief}")
+            fm_lines.append(_yaml_kv_line("brief", brief))
         frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
         path.write_text(frontmatter + content, encoding="utf-8")
 
