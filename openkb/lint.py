@@ -419,6 +419,12 @@ def find_invalid_frontmatter(wiki: Path) -> list[str]:
     for path in sorted(wiki.rglob("*.md")):
         if path.name in _EXCLUDED_FILES:
             continue
+        # Skip reports/ and sources/ — auto-generated / user-uploaded
+        # content, not wiki pages we manage. Matches the convention in
+        # find_broken_links / find_orphans.
+        rel_parts = path.relative_to(wiki).parts
+        if rel_parts and rel_parts[0] in ("reports", "sources"):
+            continue
         text = _read_md(path)
         if not text.startswith("---"):
             continue

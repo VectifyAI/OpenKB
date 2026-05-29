@@ -406,12 +406,14 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
         if text.startswith("---"):
             end = text.find("---", 3)
             if end != -1:
-                fm = text[:end + 3]
+                fm_text = text[3:end].strip("\n")
                 body = text[end + 3:]
-                for line in fm.split("\n"):
-                    if line.startswith("brief:"):
-                        brief = line[len("brief:"):].strip()
-                        break
+                try:
+                    fm = yaml.safe_load(fm_text)
+                except yaml.YAMLError:
+                    fm = None
+                if isinstance(fm, dict) and isinstance(fm.get("brief"), str):
+                    brief = fm["brief"].strip()
         if not brief:
             brief = body.strip().replace("\n", " ")[:150]
         if brief:
@@ -568,14 +570,34 @@ def _sanitize_concept_name(name: str) -> str:
 def _yaml_kv_line(key: str, value: str) -> str:
     """Render a single ``key: value`` line that round-trips through any YAML loader.
 
-    LLM-authored values often contain colons, quotes, ``#``, brackets, etc.;
-    f-string interpolation produces invalid YAML for those. ``yaml.safe_dump``
-    auto-quotes when needed and never wraps (``width=inf``).
+    Uses ``json.dumps`` for the value — JSON strings are a strict subset of
+    YAML, always single-line, always correctly escaped (newlines, quotes,
+    control chars), and never auto-promoted to multi-line block scalars.
     """
-    dumped = yaml.safe_dump(
-        {key: value}, default_flow_style=False, width=10**9, allow_unicode=True,
-    ).strip()
-    return dumped.split("\n", 1)[0]
+    return f"{key}: {json.dumps(value, ensure_ascii=False)}"
+
+
+def _yaml_list_line(key: str, items: list[str]) -> str:
+    """Render ``key: [a, b, c]`` as JSON-style YAML (always single-line, always valid)."""
+    return f"{key}: {json.dumps(list(items), ensure_ascii=False)}"
+
+
+def _parse_yaml_list_value(line: str) -> list[str] | None:
+    """Parse the right-hand side of ``key: [...]`` into a list of strings.
+
+    Returns ``None`` when the value cannot be interpreted as a list — callers
+    treat that as "leave the frontmatter alone".
+    """
+    colon = line.find(":")
+    if colon == -1:
+        return None
+    try:
+        parsed = yaml.safe_load(line[colon + 1:])
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    return [str(x) for x in parsed]
 
 
 def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
@@ -626,7 +648,7 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
             end = content.find("---", 3)
             if end != -1:
                 content = content[end + 3:].lstrip("\n")
-        fm_lines = [f"sources: [{source_file}]"]
+        fm_lines = [_yaml_list_line("sources", [source_file])]
         if brief:
             fm_lines.append(_yaml_kv_line("brief", brief))
         frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
@@ -641,7 +663,7 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     the frontmatter is malformed (no closing ``---``).
     """
     if not text.startswith("---"):
-        return f"---\nsources: [{source_file}]\n---\n\n" + text
+        return f"---\n{_yaml_list_line('sources', [source_file])}\n---\n\n" + text
 
     fm_end = text.find("---", 3)
     if fm_end == -1:
@@ -654,18 +676,16 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
             continue
-        lb = line.find("[")
-        rb = line.rfind("]")
-        if lb == -1 or rb == -1 or rb < lb:
+        items = _parse_yaml_list_value(line)
+        if items is None:
             return text
-        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
         if source_file in items:
             return text
         items.insert(0, source_file)
-        fm_lines[i] = f"sources: [{', '.join(items)}]"
+        fm_lines[i] = _yaml_list_line("sources", items)
         return "\n".join(fm_lines) + body
 
-    fm_lines.insert(1, f"sources: [{source_file}]")
+    fm_lines.insert(1, _yaml_list_line("sources", [source_file]))
     return "\n".join(fm_lines) + body
 
 
@@ -693,15 +713,13 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
             continue
-        lb = line.find("[")
-        rb = line.rfind("]")
-        if lb == -1 or rb == -1 or rb < lb:
+        items = _parse_yaml_list_value(line)
+        if items is None:
             return text, False
-        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
         if source_file not in items:
             return text, False
         items.remove(source_file)
-        fm_lines[i] = f"sources: [{', '.join(items)}]"
+        fm_lines[i] = _yaml_list_line("sources", items)
         return "\n".join(fm_lines) + body, len(items) == 0
 
     return text, False
