@@ -37,12 +37,8 @@ logger = logging.getLogger(__name__)
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-# JSON-mode hint for calls whose prompt asks the LLM to return a JSON object.
-# Most providers (OpenAI, DeepSeek, Qwen, Kimi, GLM, MiniMax, Doubao) accept
-# this kwarg and switch into a JSON-constrained decoding mode; providers that
-# don't will either ignore it or raise BadRequestError (caller's choice).
-# DeepSeek/Qwen also require the prompt itself to mention "json", which the
-# templates below already satisfy.
+# DeepSeek/Qwen require the prompt itself to mention "json" when this kwarg
+# is set; the templates below already do.
 _JSON_RESPONSE_FORMAT = {"type": "json_object"}
 
 _SYSTEM_TEMPLATE = """\
@@ -293,12 +289,10 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
 
 
 def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None:
-    """Surface ``finish_reason == 'length'`` as a visible warning.
+    """Emit a warning when the LLM hit the max_tokens cap.
 
-    When the LLM hits the ``max_tokens`` cap mid-response, ``json_repair``
-    will often salvage the truncated prefix and parsing silently succeeds
-    with a smaller-than-intended payload. Flagging it here lets users
-    distinguish "LLM emitted a short plan" from "LLM was cut off".
+    ``json_repair`` will silently salvage the truncated prefix, so without
+    this the caller can't tell a short response from a cut-off one.
     """
     try:
         finish_reason = response.choices[0].finish_reason
@@ -329,15 +323,7 @@ def _parse_json(text: str) -> list | dict:
 
 
 def _filter_concept_items(items: list, label: str) -> list[dict]:
-    """Keep only dicts that carry a non-empty ``name``; warn about anything else.
-
-    The concepts-plan prompt asks for ``[{"name": ..., "title": ...}, ...]``
-    but LLMs occasionally emit nested lists, bare strings, or dicts that
-    forgot ``name``. JSON mode constrains syntax, not schema, so all of
-    these still slip through ``_parse_json``. Without this guard a
-    name-less dict crashes the ``planned_slugs`` set comprehension
-    (``c["name"]`` → KeyError) and aborts the whole concepts step.
-    """
+    """Keep only dicts that carry a non-empty ``name``; warn about anything else."""
     if not isinstance(items, list):
         logger.warning("concepts plan: %s was %s, expected list — dropping",
                        label, type(items).__name__)
@@ -358,30 +344,13 @@ def _filter_concept_items(items: list, label: str) -> list[dict]:
 
 
 def _require_nonempty_content(content, name: str) -> None:
-    """Raise if a concept body is missing or whitespace-only.
-
-    Under ``response_format=json_object`` the LLM can legally return
-    ``{"content": null}`` or ``{"content": ""}`` — typically a refusal
-    or a content-policy hit. Without this guard, ``_gen_create`` /
-    ``_gen_update`` would return an empty tuple that ``pending_writes``
-    accepts as a successful concept, then ``_write_concept`` would commit
-    an empty Markdown page to disk and ``[OK]`` would print as if all
-    was well. Raising here makes the failure visible through the
-    existing ``failure_types`` collector + partial-failure ``[WARN]``.
-    """
+    """Raise if a concept body is missing or whitespace-only."""
     if not isinstance(content, str) or not content.strip():
         raise ValueError(f"LLM returned empty content for concept {name!r}")
 
 
 def _filter_related_slugs(items: list) -> list[str]:
-    """Keep only non-empty string slugs; warn about anything else.
-
-    ``related`` is documented in the prompt as "array of slug strings",
-    but the same shape drift that motivates ``_filter_concept_items``
-    applies here. Non-strings reaching ``_sanitize_concept_name`` raise
-    TypeError inside ``unicodedata.normalize`` and crash the whole
-    ``_compile_concepts`` call.
-    """
+    """Keep only non-empty string slugs; warn about anything else."""
     if not isinstance(items, list):
         logger.warning("concepts plan: related was %s, expected list — dropping",
                        type(items).__name__)
@@ -1034,9 +1003,6 @@ async def _compile_concepts(
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
-        # Surface the first 500 chars at WARNING so operators not running
-        # with DEBUG enabled can still diagnose; keep the full raw at
-        # DEBUG for the truncation-past-500 case (see issue #71).
         preview = plan_raw[:500] + ("..." if len(plan_raw) > 500 else "")
         logger.warning(
             "Failed to parse concepts plan: %s. Raw output (first 500 chars): %r",
@@ -1055,8 +1021,6 @@ async def _compile_concepts(
         return
 
     # Fallback: if LLM returns a flat list, treat all items as "create".
-    # Validate each item is a dict — without this, a nested list like
-    # [[{...}]] crashes _gen_create at `concept.get("title")` (issue #71).
     if isinstance(parsed, list):
         plan = {"create": _filter_concept_items(parsed, "list"),
                 "update": [], "related": []}
@@ -1071,10 +1035,7 @@ async def _compile_concepts(
     update_items = plan["update"]
     related_items = plan["related"]
 
-    # Detect "plan had items but the filters dropped them all". Without
-    # this, the early-return below looks identical to "LLM legitimately
-    # had nothing to add" — the exact silent-loss-looks-like-success bug
-    # PR #75's [WARN] mechanism set out to fix.
+    # Distinguish "filters dropped everything" from "LLM emitted an empty plan".
     if isinstance(parsed, list):
         original_total = len(parsed)
     else:
@@ -1148,11 +1109,8 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            # ``.get("content", raw)`` only uses the default when the key is
-            # absent — ``{"content": null}`` (legal under json_object mode
-            # for a refused/empty page) returns None. ``or raw`` collapses
-            # null/empty to the raw fallback so the validator below sees
-            # a consistent string-or-empty.
+            # ``or raw``: ``.get("content", raw)`` returns None for
+            # ``{"content": null}`` (legal under json_object mode).
             content = parsed.get("content") or raw
         except (json.JSONDecodeError, ValueError):
             brief, content = "", raw
@@ -1220,12 +1178,8 @@ async def _compile_concepts(
             if brief:
                 concept_briefs_map[safe_name] = brief
 
-        # Surface partial/total failure prominently: WARNING logs are easy to
-        # miss in long compile output, and the [OK] line at the end of `add`
-        # is unconditional. Issue #71: silent loss of all concepts looked
-        # like success to the user. Include exception type names inline so
-        # the stdout line is self-contained (the per-failure WARNING logs
-        # go to stderr, which a stdout-only consumer never sees).
+        # Include exception type names inline so the stdout line is
+        # self-contained — per-failure WARNINGs go to stderr.
         written = len(pending_writes)
         if written < total:
             reason = (
