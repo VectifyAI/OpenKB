@@ -5,12 +5,15 @@ Checks for:
 - Orphaned pages — pages with no incoming or outgoing links
 - Missing wiki entries — raw files without corresponding sources/summaries
 - Index sync — index.md links vs actual files on disk
+- Invalid frontmatter — YAML that won't round-trip through safe_load
 """
 from __future__ import annotations
 
 import re
 import unicodedata
 from pathlib import Path
+
+import yaml
 
 # Matches [[wikilink]] or [[subdir/link]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -402,6 +405,42 @@ def check_index_sync(wiki: Path) -> list[str]:
     return sorted(issues)
 
 
+def find_invalid_frontmatter(wiki: Path) -> list[str]:
+    """Return wiki pages whose YAML frontmatter fails ``yaml.safe_load``.
+
+    Catches the silent-write class of bug where an LLM-authored field
+    (e.g. ``brief:``) ships unquoted and turns a colon-bearing value
+    into invalid YAML that OpenKB itself reads with string slicing but
+    external YAML-aware tools (VS Code, Obsidian, doc generators) reject.
+    """
+    issues: list[str] = []
+    if not wiki.exists():
+        return issues
+    for path in sorted(wiki.rglob("*.md")):
+        if path.name in _EXCLUDED_FILES:
+            continue
+        # Skip reports/ and sources/ — auto-generated / user-uploaded
+        # content, not wiki pages we manage. Matches the convention in
+        # find_broken_links / find_orphans.
+        rel_parts = path.relative_to(wiki).parts
+        if rel_parts and rel_parts[0] in ("reports", "sources"):
+            continue
+        text = _read_md(path)
+        if not text.startswith("---"):
+            continue
+        end = text.find("\n---", 3)
+        if end == -1:
+            continue
+        fm = text[3:end].strip("\n")
+        try:
+            yaml.safe_load(fm)
+        except yaml.YAMLError as exc:
+            rel = path.relative_to(wiki)
+            msg = str(exc).splitlines()[0]
+            issues.append(f"{rel}: {msg}")
+    return issues
+
+
 def run_structural_lint(kb_dir: Path) -> str:
     """Run all structural lint checks and return a formatted Markdown report.
 
@@ -418,6 +457,7 @@ def run_structural_lint(kb_dir: Path) -> str:
     orphans = find_orphans(wiki)
     missing = find_missing_entries(raw, wiki)
     sync_issues = check_index_sync(wiki)
+    bad_frontmatter = find_invalid_frontmatter(wiki)
 
     lines = ["## Structural Lint Report\n"]
 
@@ -455,5 +495,14 @@ def run_structural_lint(kb_dir: Path) -> str:
             lines.append(f"- {issue}")
     else:
         lines.append("Index is in sync.")
+    lines.append("")
+
+    # Invalid frontmatter
+    lines.append(f"### Invalid Frontmatter ({len(bad_frontmatter)})")
+    if bad_frontmatter:
+        for issue in bad_frontmatter:
+            lines.append(f"- {issue}")
+    else:
+        lines.append("All frontmatter parses as valid YAML.")
 
     return "\n".join(lines)

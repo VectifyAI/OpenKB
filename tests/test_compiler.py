@@ -137,8 +137,8 @@ class TestWriteConcept:
         path = wiki / "concepts" / "attention.md"
         assert path.exists()
         text = path.read_text()
-        assert "sources: [paper.pdf]" in text
-        assert "brief: Mechanism for selective focus" in text
+        assert 'sources: ["paper.pdf"]' in text
+        assert 'brief: "Mechanism for selective focus"' in text
         assert "# Attention" in text
 
     def test_new_concept_without_brief(self, tmp_path):
@@ -148,7 +148,7 @@ class TestWriteConcept:
         path = wiki / "concepts" / "attention.md"
         assert path.exists()
         text = path.read_text()
-        assert "sources: [paper.pdf]" in text
+        assert 'sources: ["paper.pdf"]' in text
         assert "brief:" not in text
 
     def test_update_concept_updates_brief(self, tmp_path):
@@ -163,7 +163,7 @@ class TestWriteConcept:
         text = (concepts / "attention.md").read_text()
         assert "paper2.pdf" in text
         assert "paper1.pdf" in text
-        assert "brief: Updated brief" in text
+        assert 'brief: "Updated brief"' in text
         assert "Old brief" not in text
 
     def test_update_concept_appends_source(self, tmp_path):
@@ -633,7 +633,8 @@ class TestAddRelatedLink:
         )
         _add_related_link(wiki, "attention", "new-doc", "paper.pdf")
         text = (concepts / "attention.md").read_text()
-        assert "sources: [paper.pdf]" in text
+        assert 'sources: ["paper.pdf"]' in text
+        # Brief was not touched (existing line preserved); only sources was inserted.
         assert "brief: Focus mechanism" in text
         assert "[[summaries/new-doc]]" in text
 
@@ -732,7 +733,7 @@ class TestCompileShortDoc:
         # Verify concept written
         concept_path = wiki / "concepts" / "transformer.md"
         assert concept_path.exists()
-        assert "sources: [summaries/test-doc.md]" in concept_path.read_text()
+        assert 'sources: ["summaries/test-doc.md"]' in concept_path.read_text()
 
         # Verify index updated
         index_text = (wiki / "index.md").read_text()
@@ -1205,7 +1206,7 @@ class TestCompileConceptsPlan:
         fa_path = wiki / "concepts" / "flash-attention.md"
         assert fa_path.exists()
         fa_text = fa_path.read_text()
-        assert "sources: [summaries/test-doc.md]" in fa_text
+        assert 'sources: ["summaries/test-doc.md"]' in fa_text
         assert "Flash Attention" in fa_text
 
         # Verify attention updated (is_update=True path in _write_concept)
@@ -1287,7 +1288,7 @@ class TestCompileConceptsPlan:
         att_path = wiki / "concepts" / "attention.md"
         assert att_path.exists()
         att_text = att_path.read_text()
-        assert "sources: [summaries/test-doc.md]" in att_text
+        assert 'sources: ["summaries/test-doc.md"]' in att_text
         assert "Attention" in att_text
 
 
@@ -1338,7 +1339,7 @@ class TestBriefIntegration:
 
         # Concept frontmatter has brief
         concept_text = (wiki / "concepts" / "transformer.md").read_text()
-        assert "brief: NN architecture using self-attention" in concept_text
+        assert 'brief: "NN architecture using self-attention"' in concept_text
 
         # Index has briefs
         index_text = (wiki / "index.md").read_text()
