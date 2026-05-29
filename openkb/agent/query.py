@@ -102,12 +102,19 @@ def build_chat_agent(
     language: str = "en",
 ) -> Agent:
     """Build the chat agent: query agent + a write tool restricted to
-    ``<kb>/wiki/explorations/**`` and ``<kb>/output/**``.
+    ``<kb>/wiki/explorations/**`` and ``<kb>/output/**`` + a ``ShellTool``
+    advertising locally-installed Anthropic-style skills.
 
     This is the variant used by the interactive ``openkb chat`` REPL so users
     can iterate on generated artifacts (e.g. ``output/skills/<name>/``) via
     natural-language follow-ups without giving the agent unrestricted write
     access to the wiki.
+
+    Skill discovery: ``openkb/agent/skills.scan_local_skills`` looks in
+    ``<kb>/skills/``, ``~/.openkb/skills/``, ``~/.claude/skills/`` for
+    ``SKILL.md`` files. Any found skill is exposed to the agent via
+    ``ShellTool.environment.skills`` so the model can ``cat`` the skill body
+    and follow its instructions when the user's request matches.
     """
     wiki_root = str(kb_dir / "wiki")
     kb_root = str(kb_dir)
@@ -130,7 +137,107 @@ def build_chat_agent(
         """
         return write_kb_file(path, content, kb_root)
 
-    return base.clone(tools=[*base.tools, write_file])
+    extra_tools: list = [write_file]
+    skill_instructions_addendum = ""
+
+    # Skill discovery via function tools. The agents SDK has a richer
+    # ``ShellTool``+``ShellToolLocalSkill`` mechanism for this, but those
+    # are OpenAI Responses-API hosted tools; LiteLLM routes through
+    # ChatCompletions which rejects hosted tools. So we use plain
+    # ``function_tool`` primitives that work with any LiteLLM-routed model.
+    from openkb.agent.skills import scan_local_skills
+
+    skills = scan_local_skills(kb_dir)
+    skill_index = {s["name"]: s for s in skills}
+
+    if skill_index:
+        skill_list_text = _format_skill_list(skills)
+
+        @function_tool
+        def list_skills() -> str:
+            """List skills available in this environment.
+
+            Returns a text catalog of installed Anthropic-style skills.
+            Each entry has a name and a one-line description; use the
+            description to decide whether the skill matches the user's
+            request, then call ``read_skill(name)`` to load its body.
+            """
+            return skill_list_text
+
+        @function_tool
+        def read_skill(name: str) -> str:
+            """Read a skill's ``SKILL.md`` body.
+
+            Call this once you've decided a skill matches the user's
+            request. The returned text is the full skill instructions
+            (frontmatter stripped). Follow it as your working method
+            and write outputs via the ``write_file`` tool.
+
+            Args:
+                name: skill name as listed by ``list_skills``.
+            """
+            entry = skill_index.get(name)
+            if entry is None:
+                return (
+                    f"Unknown skill: {name!r}. Call list_skills() to see "
+                    f"available skills."
+                )
+            md_path = Path(entry["path"]) / "SKILL.md"
+            try:
+                text = md_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return f"Could not read {md_path}: {exc}"
+            # Strip frontmatter, return body only.
+            from openkb.agent.skills import _parse_frontmatter
+            _, body = _parse_frontmatter(text)
+            return body
+
+        extra_tools.extend([list_skills, read_skill])
+
+        # Build the prompt addendum listing skill names + descriptions
+        # right inside the system prompt so the model sees them up front
+        # and knows what to look for, even before deciding to call
+        # list_skills(). This is the difference between "agent
+        # eventually discovers skills" and "agent treats skill use as
+        # the default for matching requests".
+        skill_lines = []
+        for s in skills:
+            desc_one_line = " ".join(s["description"].split())
+            skill_lines.append(f"- **{s['name']}** — {desc_one_line}")
+        skill_instructions_addendum = (
+            "\n\n## Available skills\n\n"
+            "The following Anthropic-style skill packages are installed in "
+            "this environment. **When a user request matches a skill's "
+            "description (e.g. 'make a deck', 'generate slides', 'draft a "
+            "report'), you MUST call `read_skill(name)` to load that "
+            "skill's full instructions and follow them strictly** — do not "
+            "freestyle the output format if a skill covers it.\n\n"
+            + "\n".join(skill_lines)
+            + "\n\nIf no listed skill matches the request, proceed with "
+            "your default tools."
+        )
+
+    new_instructions = (base.instructions or "") + skill_instructions_addendum
+    return base.clone(
+        tools=[*base.tools, *extra_tools],
+        instructions=new_instructions,
+    )
+
+
+def _format_skill_list(skills: list[dict[str, str]]) -> str:
+    """Render the skill catalog as a compact text block for the agent."""
+    if not skills:
+        return "No skills installed."
+    lines = [f"{len(skills)} skill(s) available:\n"]
+    for s in skills:
+        lines.append(f"- {s['name']}")
+        # Indent description; keep it one paragraph so the agent reads it fast.
+        desc = " ".join(s["description"].split())
+        lines.append(f"    {desc}")
+    lines.append(
+        "\nTo use a skill, call read_skill(name) and follow its instructions."
+    )
+    return "\n".join(lines)
 
 
 async def run_query(

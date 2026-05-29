@@ -167,6 +167,40 @@ def read_wiki_image(path: str, wiki_root: str) -> dict:
     return {"type": "image", "image_url": f"data:{mime};base64,{b64}"}
 
 
+def read_kb_file(path: str, kb_root: str) -> str:
+    """Read a text file from the KB, restricted to safe read zones.
+
+    Allowed prefixes (relative to *kb_root*):
+      * ``wiki/**``    — compiled wiki content (full read access).
+      * ``output/**``  — generated artifacts (decks, skills, etc.) for
+        critic / iteration workflows.
+      * ``skills/**``  — locally installed skills' bodies.
+
+    Args:
+        path: File path relative to *kb_root*.
+        kb_root: Absolute path to the KB root directory.
+
+    Returns:
+        File content on success, or an access-denied / not-found message.
+    """
+    if not path:
+        return "Access denied: empty path."
+    root = Path(kb_root).resolve()
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root):
+        return "Access denied: path escapes KB root."
+    rel = full_path.relative_to(root)
+    if not rel.parts:
+        return "Access denied: KB root itself is not readable."
+    if rel.parts[0] not in ("wiki", "output", "skills"):
+        return (
+            "Access denied: path must be under wiki/, output/, or skills/."
+        )
+    if not full_path.is_file():
+        return f"File not found: {path}"
+    return full_path.read_text(encoding="utf-8", errors="replace")
+
+
 def write_kb_file(path: str, content: str, kb_root: str) -> str:
     """Write a text file under the KB, restricted to safe write zones.
 

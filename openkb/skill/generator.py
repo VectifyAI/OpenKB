@@ -1,45 +1,58 @@
 """Generator primitive — shared abstraction for all `<kb>/output/<type>/` artifacts.
 
-v0.1 supports ``target_type="skill"`` only. Future targets (``"ppt"``,
-``"podcast"``, ``"report"``, ``"video"``) will register here and reuse the
-same:
+v0.3 supports ``target_type="skill"`` and ``target_type="deck"``. Both
+targets route through ``openkb.agent.skill_runner.run_skill`` under the
+hood; ``Generator`` is the thin wrapper that owns:
 
 * output-path convention: ``<kb>/output/<type>/<name>/``
-* post-compile validation: structural check via :mod:`openkb.skill.validator`
-* post-run hook: marketplace.json regeneration (so artifacts ride the same
-  distribution mechanic as skills)
+* post-run hooks: skill target regenerates ``marketplace.json``; deck
+  target has no per-target hook (the producer SKILL.md's frontmatter
+  ``od.deck_grammar`` already drove validation inside ``run_skill``,
+  and the html-critic skill, when chained, patched the file in place)
 
-Each target plugs in its own `run` coroutine. v0.1's only entry calls into
-``openkb.skill.creator.run_skill_create``.
+The artifact CONTENT for each target is a ``SKILL.md`` under
+``skills/`` — the dispatch here is purely the orchestration shell
+(arg-routing, output path resolution, post-run hook firing).
 
-Validation runs inside ``run`` so every entry point — CLI, chat slash
-command, or future programmatic caller — gets the same quality gate.
-Callers consume :attr:`Generator.validation` after ``run()`` returns to
-format the issues for their output sink.
+A third target type would require editing this module (the ``Literal``
+type, the ``target_type`` check in ``__init__``, the ``if/else`` in
+``run``). A plug-in registry refactor is in the deferred-followups list
+(score 70 in the architectural review); current ``if/else`` is
+intentional v0.x scope.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Union
 
+from openkb.deck import deck_dir
+from openkb.deck.creator import DEFAULT_DECK_SKILL, run_deck_create
+from openkb.deck.validator import ValidationResult as DeckValidationResult
 from openkb.skill import skill_dir
 from openkb.skill.creator import run_skill_create
 from openkb.skill.marketplace import regenerate_marketplace
-from openkb.skill.validator import ValidationResult, validate_skill
+from openkb.skill.validator import (
+    ValidationResult as SkillValidationResult,
+    validate_skill,
+)
 
 
-TargetType = Literal["skill"]  # extend as new targets land
+TargetType = Literal["skill", "deck"]
+AnyValidationResult = Union[SkillValidationResult, DeckValidationResult]
 
 
 class Generator:
-    """A v0.1 generator instance.
+    """A v0.3 generator instance.
 
     Args:
-        target_type: One of the supported targets. v0.1: ``"skill"``.
+        target_type: ``"skill"`` or ``"deck"``.
         name: kebab-case slug; becomes the output directory name.
         intent: natural-language description of the desired artifact.
         kb_dir: KB root.
         model: LiteLLM model name (from KB config).
+        critique: (deck only) opt-in second-pass via the
+            ``openkb-html-critic`` skill which patches the produced HTML
+            in place. Ignored for ``target_type="skill"``.
     """
 
     def __init__(
@@ -50,32 +63,61 @@ class Generator:
         intent: str,
         kb_dir: Path,
         model: str,
+        critique: bool = False,
+        skill_name: str | None = None,
     ) -> None:
-        if target_type != "skill":
+        """Args:
+            skill_name: For ``target_type="deck"``, which deck skill to use.
+                Defaults to :data:`openkb.deck.creator.DEFAULT_DECK_SKILL`
+                (``"openkb-deck-editorial"``). Ignored for skill target.
+        """
+        if target_type not in ("skill", "deck"):
             raise ValueError(
-                f"Unknown target_type {target_type!r}. v0.1 supports only 'skill'."
+                f"Unknown target_type {target_type!r}. v0.3 supports 'skill' and 'deck'."
             )
-        self.target_type = target_type
+        self.target_type: TargetType = target_type
         self.name = name
         self.intent = intent
         self.kb_dir = kb_dir
         self.model = model
-        self.output_dir = skill_dir(kb_dir, name)
-        self.validation: ValidationResult | None = None
+        self.critique = critique
+        self.skill_name = skill_name or DEFAULT_DECK_SKILL
+        self.output_dir = (
+            deck_dir(kb_dir, name) if target_type == "deck" else skill_dir(kb_dir, name)
+        )
+        self.validation: AnyValidationResult | None = None
 
     async def run(self) -> Path:
         """Execute the generator. Returns the path to the produced artifact.
 
-        Side-effects, in order: compile → validate → publish manifest.
-        ``self.validation`` holds the :class:`ValidationResult` so callers
-        can surface issues without re-running the validator.
+        Side-effects, in order: compile → validate → (skill only) publish
+        manifest. ``self.validation`` holds the result so callers can
+        surface issues without re-running the validator. For deck target,
+        validation runs inside ``run_skill`` via the producing skill's
+        frontmatter-declared grammar; we propagate it up.
         """
-        await run_skill_create(
+        if self.target_type == "skill":
+            await run_skill_create(
+                kb_dir=self.kb_dir,
+                skill_name=self.name,
+                intent=self.intent,
+                model=self.model,
+            )
+            self.validation = validate_skill(self.output_dir)
+            regenerate_marketplace(self.kb_dir)
+            return self.output_dir
+
+        # target_type == "deck"
+        deck_result = await run_deck_create(
             kb_dir=self.kb_dir,
-            skill_name=self.name,
+            deck_name=self.name,
             intent=self.intent,
             model=self.model,
+            critique=self.critique,
+            skill_name=self.skill_name,
         )
-        self.validation = validate_skill(self.output_dir)
-        regenerate_marketplace(self.kb_dir)
+        # run_deck_create returns a SkillRunResult-like (or Path) — use its
+        # validation if present; otherwise fall back to None (skill didn't
+        # declare a grammar to validate against).
+        self.validation = deck_result.validation
         return self.output_dir

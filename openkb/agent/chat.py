@@ -60,6 +60,8 @@ _HELP_TEXT = (
     "  /lint          Lint the knowledge base\n"
     "  /add <path>    Add a document or directory to the knowledge base\n"
     '  /skill new <name> "<intent>"   Compile a skill from the wiki\n'
+    '  /deck new [--critique] [--skill <name>] <name> "<intent>"   Generate an HTML deck from the wiki\n'
+    "  /critique <path-to-html>   Run html-critic skill on a file (CSS bugs, layout, self-containment)\n"
     "  /help          Show this"
 )
 
@@ -216,6 +218,8 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/lint",   "Lint the knowledge base"),
     ("/add",    "Add a document or directory"),
     ("/skill",  "Compile a skill (try `/skill new <name> \"intent\"`)"),
+    ("/deck",   "Generate a deck (try `/deck new <name> \"intent\"`)"),
+    ("/critique", "Run html-critic skill on a file (e.g. `/critique output/decks/foo/index.html`)"),
 ]
 
 
@@ -558,7 +562,9 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
         return
 
-    # Surface validation issues from Generator.run (same gate as CLI).
+    # Surface validation issues from Generator.run. Unlike the CLI
+    # (which exits 1 on validation errors), chat is interactive — print
+    # issues inline and continue so the user can inspect and iterate.
     result = gen.validation
     if result is not None and (result.errors or result.warnings):
         _fmt(style, ("class:error", "[WARN] Validation found issues:\n"))
@@ -574,6 +580,120 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
     _fmt(style, ("class:slash.help",
         f"Iterate: ask follow-up questions in this chat and the agent can "
         f"edit files under output/skills/{name}/ directly.\n"))
+
+
+async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
+    """Dispatch ``/deck new [--critique] <name> "<intent>"``.
+
+    Mirrors :func:`_handle_slash_skill`: validates the name, runs the
+    same wiki preflight gate, refuses to overwrite an existing deck
+    (chat has no ``-y`` flag), then invokes ``Generator(target_type="deck")``.
+    """
+    import shlex
+
+    try:
+        parts = shlex.split(arg) if arg else []
+    except ValueError as exc:
+        _fmt(style, ("class:error", f"[ERROR] Could not parse: {exc}\n"))
+        return
+    if not parts:
+        _fmt(style, ("class:error",
+            "Usage: /deck new [--critique] <name> \"<intent>\"\n"))
+        return
+
+    sub = parts[0].lower()
+    if sub != "new":
+        _fmt(style, ("class:error", f"Unknown deck subcommand: {sub}. Try /deck new.\n"))
+        return
+
+    # Parse optional --critique flag and --skill <name> option. Both can
+    # appear anywhere among the remaining tokens.
+    rest = parts[1:]
+    critique = False
+    skill_name: str | None = None
+    filtered: list[str] = []
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--critique":
+            critique = True
+        elif tok == "--skill" and i + 1 < len(rest):
+            skill_name = rest[i + 1]
+            i += 1
+        elif tok.startswith("--skill="):
+            skill_name = tok.split("=", 1)[1]
+        else:
+            filtered.append(tok)
+        i += 1
+
+    if len(filtered) < 2:
+        _fmt(style, ("class:error",
+            "Usage: /deck new [--critique] [--skill <skill>] <name> \"<intent>\"\n"))
+        return
+
+    name = filtered[0]
+    intent = " ".join(filtered[1:])
+
+    # Reuse the shared safety gates from the CLI (name validation,
+    # wiki dir, wiki content). Chat has no -y flag, so existing decks
+    # block with a clear instruction to delete first.
+    from openkb.cli import _preflight_skill_new
+    err = _preflight_skill_new(kb_dir, name)
+    if err:
+        # Reword "Skill name" → "Deck name" so error matches the command.
+        err = err.replace("Skill name", "Deck name")
+        _fmt(style, ("class:error", f"[ERROR] {err}\n"))
+        return
+
+    from openkb.deck import deck_dir
+    target = deck_dir(kb_dir, name)
+    if target.exists():
+        _fmt(style, ("class:error",
+            f"[ERROR] output/decks/{name}/ already exists. Remove it first "
+            f"with `rm -rf output/decks/{name}` and re-run.\n"))
+        return
+
+    # Load model from KB config
+    from openkb.config import load_config, DEFAULT_CONFIG
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    from openkb.skill.generator import Generator
+    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    _fmt(
+        style,
+        ("class:slash.help", f"Generating deck '{name}' via skill {skill_label}...\n"),
+    )
+    gen = Generator(
+        target_type="deck",
+        name=name,
+        intent=intent,
+        kb_dir=kb_dir,
+        model=model,
+        critique=critique,
+        skill_name=skill_name,
+    )
+    try:
+        await gen.run()
+    except RuntimeError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+
+    # Surface validation issues from Generator.run. Unlike the CLI
+    # (which exits 1 on validation errors), chat is interactive — print
+    # issues inline and continue so the user can inspect and iterate.
+    result = gen.validation
+    if result is not None and (result.errors or result.warnings):
+        _fmt(style, ("class:error", "[WARN] Validation found issues:\n"))
+        for err in result.errors:
+            _fmt(style, ("class:error", f"  ERROR:   {err}\n"))
+        for warn in result.warnings:
+            _fmt(style, ("class:error", f"  WARN:    {warn}\n"))
+
+    _fmt(style, ("class:slash.ok", f"Saved: output/decks/{name}/index.html\n"))
+    _fmt(style, ("class:slash.help",
+        f"Iterate: ask follow-up questions in this chat and the agent can "
+        f"edit files under output/decks/{name}/ directly.\n"))
 
 
 async def _handle_slash(
@@ -643,11 +763,81 @@ async def _handle_slash(
         await _handle_slash_skill(arg, kb_dir, style)
         return None
 
+    if head == "/deck":
+        await _handle_slash_deck(arg, kb_dir, style)
+        return None
+
+    if head == "/critique":
+        await _handle_slash_critique(arg, kb_dir, style)
+        return None
+
     _fmt(
         style,
         ("class:error", f"Unknown command: {head}. Try /help.\n"),
     )
     return None
+
+
+async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
+    """``/critique <path>`` — run the openkb-html-critic skill on a file.
+
+    The skill reads the HTML, fixes CSS specificity bugs / missing nav /
+    self-containment violations, and writes the corrected file back. It
+    will not touch slide content (numbers, names, quotes).
+    """
+    path = arg.strip()
+    if not path:
+        _fmt(
+            style,
+            ("class:slash.help", "Usage: /critique <path-to-html>\n"),
+        )
+        return
+
+    target = (kb_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
+    if not target.is_file():
+        _fmt(style, ("class:error", f"[ERROR] File not found: {path}\n"))
+        return
+
+    from openkb.agent.skill_runner import (
+        MAX_TURNS_WITH_CRITIQUE,
+        SkillNotFoundError,
+        run_skill,
+    )
+    from openkb.config import DEFAULT_CONFIG, load_config
+
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Path passed to the skill is relative to kb_dir (the agent's cwd
+    # conceptually). The skill's read_file/write_file tools operate
+    # under wiki/ and output/ scopes — give it the relative form so
+    # write_kb_file resolves correctly.
+    try:
+        rel = target.relative_to(kb_dir)
+        rel_str = str(rel)
+    except ValueError:
+        # Outside KB — pass absolute, write tool will reject, but read
+        # may still work for a critique-only diagnostic.
+        rel_str = str(target)
+
+    _fmt(style, ("class:slash.ok", f"Critiquing {rel_str}...\n"))
+
+    try:
+        await run_skill(
+            skill_name="openkb-html-critic",
+            intent=f"Critique and patch the HTML file at: {rel_str}",
+            kb_dir=kb_dir,
+            model=model,
+            max_turns=40,
+        )
+    except SkillNotFoundError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+    except RuntimeError as exc:
+        _fmt(style, ("class:error", f"[ERROR] {exc}\n"))
+        return
+
+    _fmt(style, ("class:slash.ok", f"Critique pass complete: {rel_str}\n"))
 
 
 async def run_chat(
