@@ -1262,14 +1262,19 @@ def _update_index(
         _ensure_h2_section(lines, "## Entities")
     for name in entity_names:
         link = f"[[entities/{name}]]"
-        etype, brief = entity_meta.get(name, ("other", ""))
-        entry = f"- {link} ({etype})"
-        if brief:
-            entry += f" — {brief}"
-        if _section_contains_link(lines, "## Entities", link):
-            _replace_section_entry(lines, "## Entities", link, entry)
+        if name in entity_meta:
+            etype, brief = entity_meta[name]
+            entry = f"- {link} ({etype})"
+            if brief:
+                entry += f" — {brief}"
+            if _section_contains_link(lines, "## Entities", link):
+                _replace_section_entry(lines, "## Entities", link, entry)
+            else:
+                _insert_section_entry(lines, "## Entities", entry)
         else:
-            _insert_section_entry(lines, "## Entities", entry)
+            if not _section_contains_link(lines, "## Entities", link):
+                entry = f"- {link} (other)"
+                _insert_section_entry(lines, "## Entities", entry)
 
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -1769,6 +1774,7 @@ async def _compile_concepts(
         _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
     # --- Step 3d: Process entity related items + backlinks (code only) ---
+    entity_related_slugs = []
     for slug in [_sanitize_concept_name(s) for s in entity_related]:
         epath = wiki_dir / "entities" / f"{slug}.md"
         if epath.exists():
@@ -1778,11 +1784,12 @@ async def _compile_concepts(
                     etext = _prepend_source_to_frontmatter(etext, source_file)
                 etext += f"\n\nSee also: [[summaries/{doc_name}]]"
                 epath.write_text(etext, encoding="utf-8")
-            entity_names.append(slug)
+            entity_related_slugs.append(slug)
 
-    if entity_names:
-        _backlink_summary_entities(wiki_dir, doc_name, entity_names)
-        _backlink_entities(wiki_dir, doc_name, entity_names)
+    entity_backlink_slugs = entity_names + entity_related_slugs
+    if entity_backlink_slugs:
+        _backlink_summary_entities(wiki_dir, doc_name, entity_backlink_slugs)
+        _backlink_entities(wiki_dir, doc_name, entity_backlink_slugs)
 
     # --- Step 4: Update index (code only) ---
     _update_index(wiki_dir, doc_name, concept_names,

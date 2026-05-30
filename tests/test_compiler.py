@@ -1589,3 +1589,54 @@ class TestCompileEntitiesEndToEnd:
         assert "[[entities/nvidia]]" in index
         summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
         assert "[[entities/nvidia]]" in summary  # backlink
+
+    @pytest.mark.asyncio
+    async def test_related_entity_does_not_downgrade_index_label(self, tmp_path, monkeypatch):
+        """Related-only entities must not overwrite a correct index entry with (other)."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "entities").mkdir(parents=True)
+
+        # Pre-seed summaries/doc.md
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        # Pre-seed index.md with a correct entry for anthropic
+        (wiki / "index.md").write_text(
+            "## Documents\n\n## Concepts\n\n## Entities\n\n"
+            "- [[entities/anthropic]] (organization) — AI safety lab\n",
+            encoding="utf-8",
+        )
+
+        # Pre-seed entities/anthropic.md with type frontmatter and a source
+        (wiki / "entities" / "anthropic.md").write_text(
+            "---\ntype: organization\nsources: []\n---\n\n# Anthropic\n",
+            encoding="utf-8",
+        )
+
+        # LLM plan: anthropic is ONLY under entities.related, not create/update
+        def fake_llm(model, messages, label, **kw):
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [], "update": [], "related": []},
+                    "entities": {"create": [], "update": [], "related": ["anthropic"]},
+                })
+            return json.dumps({"brief": "b", "type": "organization", "content": "# Page\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        sys_msg = {"role": "system", "content": "x"}
+        doc_msg = {"role": "user", "content": "x"}
+        await _compile_concepts(wiki, tmp_path, "m", sys_msg, doc_msg,
+                                "summary text", "doc", max_concurrency=2,
+                                doc_type="short", rewrite_summary=False)
+
+        index = (wiki / "index.md").read_text(encoding="utf-8")
+        # The pre-existing correct line must NOT have been downgraded to (other)
+        assert "(organization)" in index, "index entry was downgraded from (organization) to (other)"
+        assert "AI safety lab" in index, "index brief was stripped from the entry"
