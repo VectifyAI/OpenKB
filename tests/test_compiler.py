@@ -14,6 +14,7 @@ from openkb.agent.compiler import (
     _sanitize_concept_name,
     _write_summary,
     _write_concept,
+    _write_entity,
     _update_index,
     _read_wiki_context,
     _read_concept_briefs,
@@ -494,6 +495,40 @@ class TestReadEntityBriefs:
         lines = out.strip().splitlines()
         assert lines[0].startswith("- alpha ")
         assert lines[1].startswith("- zeta ")
+
+
+class TestWriteEntity:
+    def test_new_entity_frontmatter(self, tmp_path):
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nAI lab.",
+            "summaries/a.md", is_update=False,
+            brief="AI lab behind Claude.", type_="organization",
+            aliases=["Anthropic PBC"],
+        )
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert "type:" in text and "organization" in text
+        assert "brief:" in text and "AI lab behind Claude." in text
+        assert "sources:" in text and "summaries/a.md" in text
+        assert "Anthropic PBC" in text
+        assert text.count("---") == 2  # exactly one frontmatter block
+
+    def test_update_prepends_source_keeps_type(self, tmp_path):
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nv1.",
+            "summaries/a.md", is_update=False,
+            brief="b1", type_="organization", aliases=None,
+        )
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nv2 richer.",
+            "summaries/b.md", is_update=True,
+            brief="b2", type_="organization", aliases=None,
+        )
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert "summaries/b.md" in text and "summaries/a.md" in text
+        assert "type:" in text and "organization" in text
+        assert "v2 richer." in text
+        assert "v1." not in text
+        assert "brief:" in text and "b2" in text
 
 
 class TestBacklinkSummary:

@@ -701,6 +701,73 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
         path.write_text(frontmatter + content, encoding="utf-8")
 
 
+def _write_entity(
+    wiki_dir: Path, name: str, content: str, source_file: str,
+    is_update: bool, brief: str = "", type_: str = "other",
+    aliases: list[str] | None = None,
+) -> None:
+    """Write or update an entity page in entities/, managing frontmatter.
+
+    Frontmatter fields: ``sources`` (list), ``type`` (one of the entity
+    enum), ``brief`` (one-liner), and optional ``aliases`` (list, omitted
+    when empty). On update the new source is prepended and the body replaced
+    with the LLM rewrite; ``type`` is preserved from the new write.
+    """
+    entities_dir = wiki_dir / "entities"
+    entities_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = _sanitize_concept_name(name)
+    path = (entities_dir / f"{safe_name}.md").resolve()
+    if not path.is_relative_to(entities_dir.resolve()):
+        logger.warning("Entity name escapes entities dir: %s", name)
+        return
+
+    # Strip any frontmatter the LLM body may carry.
+    clean = content
+    if clean.startswith("---"):
+        end = clean.find("---", 3)
+        if end != -1:
+            clean = clean[end + 3:].lstrip("\n")
+
+    if is_update and path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if source_file not in existing:
+            existing = _prepend_source_to_frontmatter(existing, source_file)
+        if existing.startswith("---"):
+            end = existing.find("---", 3)
+            if end != -1:
+                fm = existing[:end + 3]
+                fm = _set_fm_line(fm, "brief", brief) if brief else fm
+                fm = _set_fm_line(fm, "type", type_) if type_ else fm
+                existing = fm + "\n\n" + clean
+            else:
+                existing = clean
+        else:
+            existing = clean
+        path.write_text(existing, encoding="utf-8")
+        return
+
+    fm_lines = [_yaml_list_line("sources", [source_file])]
+    fm_lines.append(_yaml_kv_line("type", type_ or "other"))
+    if brief:
+        fm_lines.append(_yaml_kv_line("brief", brief))
+    if aliases:
+        fm_lines.append(_yaml_list_line("aliases", aliases))
+    frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
+    path.write_text(frontmatter + clean, encoding="utf-8")
+
+
+def _set_fm_line(fm: str, key: str, value: str) -> str:
+    """Set or replace a single scalar ``key:`` line inside a frontmatter block.
+
+    ``fm`` includes the opening and closing ``---`` markers. Uses a lambda
+    replacement so values containing regex backrefs are inserted literally.
+    """
+    line = _yaml_kv_line(key, value)
+    if re.search(rf"^{re.escape(key)}:", fm, flags=re.MULTILINE):
+        return re.sub(rf"^{re.escape(key)}:.*", lambda _m: line, fm, flags=re.MULTILINE)
+    return fm.replace("---\n", f"---\n{line}\n", 1)
+
+
 def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     """Prepend ``source_file`` to the inline ``sources:`` list in YAML frontmatter.
 
