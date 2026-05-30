@@ -27,6 +27,7 @@ import unicodedata
 from pathlib import Path
 
 import litellm
+import yaml
 
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import get_agents_md
@@ -36,6 +37,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
+
+# DeepSeek/Qwen require the prompt itself to mention "json" when this kwarg
+# is set; the templates below already do.
+_JSON_RESPONSE_FORMAT = {"type": "json_object"}
 
 _SYSTEM_TEMPLATE = """\
 You are OpenKB's wiki compilation agent for a personal knowledge base.
@@ -258,6 +263,7 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
 
     response = litellm.completion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
+    _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     spinner.stop(_format_usage(time.time() - t0, response.usage))
     logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
@@ -274,12 +280,32 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
 
     response = await litellm.acompletion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
+    _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     elapsed = time.time() - t0
     sys.stdout.write(f"    {step_name}... {_format_usage(elapsed, response.usage)}\n")
     sys.stdout.flush()
     logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
     return content.strip()
+
+
+def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None:
+    """Emit a warning when the LLM hit the max_tokens cap.
+
+    ``json_repair`` will silently salvage the truncated prefix, so without
+    this the caller can't tell a short response from a cut-off one.
+    """
+    try:
+        finish_reason = response.choices[0].finish_reason
+    except (AttributeError, IndexError):
+        return
+    if finish_reason != "length":
+        return
+    cap = f" (max_tokens={max_tokens})" if max_tokens else ""
+    logger.warning("LLM [%s] hit length limit%s — output may be truncated.",
+                   step_name, cap)
+    sys.stdout.write(f"    [WARN] {step_name} hit length limit{cap} — output may be truncated.\n")
+    sys.stdout.flush()
 
 
 def _parse_json(text: str) -> list | dict:
@@ -295,6 +321,49 @@ def _parse_json(text: str) -> list | dict:
     if not isinstance(result, (dict, list)):
         raise ValueError(f"Expected JSON object or array, got {type(result).__name__}")
     return result
+
+
+def _filter_concept_items(items: list, label: str) -> list[dict]:
+    """Keep only dicts that carry a non-empty ``name``; warn about anything else."""
+    if not isinstance(items, list):
+        logger.warning("concepts plan: %s was %s, expected list — dropping",
+                       label, type(items).__name__)
+        return []
+    valid = [c for c in items if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
+    if len(valid) < len(items):
+        reasons: list[str] = []
+        for c in items:
+            if not isinstance(c, dict):
+                reasons.append(type(c).__name__)
+            elif not isinstance(c.get("name"), str) or not c["name"].strip():
+                reasons.append("dict-missing-name")
+        logger.warning(
+            "concepts plan: dropped %d malformed %s item(s) (reasons: %s)",
+            len(items) - len(valid), label, ", ".join(sorted(set(reasons))),
+        )
+    return valid
+
+
+def _require_nonempty_content(content, name: str) -> None:
+    """Raise if a concept body is missing or whitespace-only."""
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(f"LLM returned empty content for concept {name!r}")
+
+
+def _filter_related_slugs(items: list) -> list[str]:
+    """Keep only non-empty string slugs; warn about anything else."""
+    if not isinstance(items, list):
+        logger.warning("concepts plan: related was %s, expected list — dropping",
+                       type(items).__name__)
+        return []
+    valid = [s for s in items if isinstance(s, str) and s.strip()]
+    if len(valid) < len(items):
+        bad_types = sorted({type(s).__name__ for s in items if not (isinstance(s, str) and s.strip())})
+        logger.warning(
+            "concepts plan: dropped %d malformed related item(s) (types: %s)",
+            len(items) - len(valid), ", ".join(bad_types),
+        )
+    return valid
 
 
 # ---------------------------------------------------------------------------
@@ -337,12 +406,14 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
         if text.startswith("---"):
             end = text.find("---", 3)
             if end != -1:
-                fm = text[:end + 3]
+                fm_text = text[3:end].strip("\n")
                 body = text[end + 3:]
-                for line in fm.split("\n"):
-                    if line.startswith("brief:"):
-                        brief = line[len("brief:"):].strip()
-                        break
+                try:
+                    fm = yaml.safe_load(fm_text)
+                except yaml.YAMLError:
+                    fm = None
+                if isinstance(fm, dict) and isinstance(fm.get("brief"), str):
+                    brief = fm["brief"].strip()
         if not brief:
             brief = body.strip().replace("\n", " ")[:150]
         if brief:
@@ -496,6 +567,39 @@ def _sanitize_concept_name(name: str) -> str:
     return sanitized or "unnamed-concept"
 
 
+def _yaml_kv_line(key: str, value: str) -> str:
+    """Render a single ``key: value`` line that round-trips through any YAML loader.
+
+    Uses ``json.dumps`` for the value — JSON strings are a strict subset of
+    YAML, always single-line, always correctly escaped (newlines, quotes,
+    control chars), and never auto-promoted to multi-line block scalars.
+    """
+    return f"{key}: {json.dumps(value, ensure_ascii=False)}"
+
+
+def _yaml_list_line(key: str, items: list[str]) -> str:
+    """Render ``key: [a, b, c]`` as JSON-style YAML (always single-line, always valid)."""
+    return f"{key}: {json.dumps(list(items), ensure_ascii=False)}"
+
+
+def _parse_yaml_list_value(line: str) -> list[str] | None:
+    """Parse the right-hand side of ``key: [...]`` into a list of strings.
+
+    Returns ``None`` when the value cannot be interpreted as a list — callers
+    treat that as "leave the frontmatter alone".
+    """
+    colon = line.find(":")
+    if colon == -1:
+        return None
+    try:
+        parsed = yaml.safe_load(line[colon + 1:])
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    return [str(x) for x in parsed]
+
+
 def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
     """Write or update a concept page, managing the sources frontmatter."""
     concepts_dir = wiki_dir / "concepts"
@@ -530,10 +634,13 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
             if end != -1:
                 fm = existing[:end + 3]
                 body = existing[end + 3:]
+                brief_line = _yaml_kv_line("brief", brief)
                 if "brief:" in fm:
-                    fm = re.sub(r"brief:.*", f"brief: {brief}", fm)
+                    # Lambda to bypass re.sub backref interpretation in the
+                    # replacement string (brief may contain \1, \g<…>, etc.).
+                    fm = re.sub(r"brief:.*", lambda _m: brief_line, fm)
                 else:
-                    fm = fm.replace("---\n", f"---\nbrief: {brief}\n", 1)
+                    fm = fm.replace("---\n", f"---\n{brief_line}\n", 1)
                 existing = fm + body
         path.write_text(existing, encoding="utf-8")
     else:
@@ -541,9 +648,9 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
             end = content.find("---", 3)
             if end != -1:
                 content = content[end + 3:].lstrip("\n")
-        fm_lines = [f"sources: [{source_file}]"]
+        fm_lines = [_yaml_list_line("sources", [source_file])]
         if brief:
-            fm_lines.append(f"brief: {brief}")
+            fm_lines.append(_yaml_kv_line("brief", brief))
         frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
         path.write_text(frontmatter + content, encoding="utf-8")
 
@@ -556,7 +663,7 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     the frontmatter is malformed (no closing ``---``).
     """
     if not text.startswith("---"):
-        return f"---\nsources: [{source_file}]\n---\n\n" + text
+        return f"---\n{_yaml_list_line('sources', [source_file])}\n---\n\n" + text
 
     fm_end = text.find("---", 3)
     if fm_end == -1:
@@ -569,18 +676,16 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
             continue
-        lb = line.find("[")
-        rb = line.rfind("]")
-        if lb == -1 or rb == -1 or rb < lb:
+        items = _parse_yaml_list_value(line)
+        if items is None:
             return text
-        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
         if source_file in items:
             return text
         items.insert(0, source_file)
-        fm_lines[i] = f"sources: [{', '.join(items)}]"
+        fm_lines[i] = _yaml_list_line("sources", items)
         return "\n".join(fm_lines) + body
 
-    fm_lines.insert(1, f"sources: [{source_file}]")
+    fm_lines.insert(1, _yaml_list_line("sources", [source_file]))
     return "\n".join(fm_lines) + body
 
 
@@ -608,15 +713,13 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
             continue
-        lb = line.find("[")
-        rb = line.rfind("]")
-        if lb == -1 or rb == -1 or rb < lb:
+        items = _parse_yaml_list_value(line)
+        if items is None:
             return text, False
-        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
         if source_file not in items:
             return text, False
         items.remove(source_file)
-        fm_lines[i] = f"sources: [{', '.join(items)}]"
+        fm_lines[i] = _yaml_list_line("sources", items)
         return "\n".join(fm_lines) + body, len(items) == 0
 
     return text, False
@@ -911,7 +1014,7 @@ async def _compile_concepts(
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
         )},
-    ], "concepts-plan", max_tokens=1024)
+    ], "concepts-plan", max_tokens=2048, response_format=_JSON_RESPONSE_FORMAT)
 
     def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
@@ -935,26 +1038,53 @@ async def _compile_concepts(
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to parse concepts plan: %s", exc)
-        logger.debug("Raw: %s", plan_raw)
+        preview = plan_raw[:500] + ("..." if len(plan_raw) > 500 else "")
+        logger.warning(
+            "Failed to parse concepts plan: %s. Raw output (first 500 chars): %r",
+            exc, preview,
+        )
+        logger.debug("Concepts plan raw output (full, %d chars): %s",
+                     len(plan_raw), plan_raw)
+        sys.stdout.write(
+            f"    [WARN] concepts plan unparseable for {doc_name} — "
+            f"no concept pages generated. See log (stderr) for details.\n"
+        )
+        sys.stdout.flush()
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
-    # Fallback: if LLM returns a flat list, treat all items as "create"
+    # Fallback: if LLM returns a flat list, treat all items as "create".
     if isinstance(parsed, list):
-        plan = {"create": parsed, "update": [], "related": []}
+        plan = {"create": _filter_concept_items(parsed, "list"),
+                "update": [], "related": []}
     else:
         plan = {
-            "create": parsed.get("create", []),
-            "update": parsed.get("update", []),
-            "related": parsed.get("related", []),
+            "create": _filter_concept_items(parsed.get("create", []), "create"),
+            "update": _filter_concept_items(parsed.get("update", []), "update"),
+            "related": _filter_related_slugs(parsed.get("related", [])),
         }
 
     create_items = plan["create"]
     update_items = plan["update"]
     related_items = plan["related"]
+
+    # Distinguish "filters dropped everything" from "LLM emitted an empty plan".
+    if isinstance(parsed, list):
+        original_total = len(parsed)
+    else:
+        original_total = sum(
+            len(parsed.get(k, [])) if isinstance(parsed.get(k), list) else 0
+            for k in ("create", "update", "related")
+        )
+    post_filter_total = len(create_items) + len(update_items) + len(related_items)
+    if original_total > 0 and post_filter_total == 0:
+        sys.stdout.write(
+            f"    [WARN] concepts plan for {doc_name} had {original_total} "
+            f"item(s), all dropped as malformed — see log (stderr).\n"
+        )
+        sys.stdout.flush()
 
     if not create_items and not update_items and not related_items:
         if rewrite_summary:
@@ -1010,13 +1140,16 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     update_instruction="",
                 )},
-            ], f"concept: {name}")
+            ], f"concept: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            content = parsed.get("content", raw)
+            # ``or raw``: ``.get("content", raw)`` returns None for
+            # ``{"content": null}`` (legal under json_object mode).
+            content = parsed.get("content") or raw
         except (json.JSONDecodeError, ValueError):
             brief, content = "", raw
+        _require_nonempty_content(content, name)
         return name, content, False, brief
 
     async def _gen_update(concept: dict) -> tuple[str, str, bool, str]:
@@ -1042,13 +1175,14 @@ async def _compile_concepts(
                     title=title, doc_name=doc_name,
                     existing_content=existing_content,
                 )},
-            ], f"update: {name}")
+            ], f"update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            content = parsed.get("content", raw)
+            content = parsed.get("content") or raw
         except (json.JSONDecodeError, ValueError):
             brief, content = "", raw
+        _require_nonempty_content(content, name)
         return name, content, True, brief
 
     tasks = []
@@ -1066,9 +1200,11 @@ async def _compile_concepts(
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        failure_types: list[str] = []
         for r in results:
             if isinstance(r, Exception):
                 logger.warning("Concept generation failed: %s", r)
+                failure_types.append(type(r).__name__)
                 continue
             name, page_content, is_update, brief = r
             pending_writes.append((name, page_content, is_update, brief))
@@ -1076,6 +1212,20 @@ async def _compile_concepts(
             concept_names.append(safe_name)
             if brief:
                 concept_briefs_map[safe_name] = brief
+
+        # Include exception type names inline so the stdout line is
+        # self-contained — per-failure WARNINGs go to stderr.
+        written = len(pending_writes)
+        if written < total:
+            reason = (
+                ", ".join(sorted(set(failure_types)))
+                if failure_types else "see log (stderr)"
+            )
+            sys.stdout.write(
+                f"    [WARN] {total} concept(s) planned but only {written} written "
+                f"for {doc_name} ({reason}).\n"
+            )
+            sys.stdout.flush()
 
     # Strip unresolved wikilinks from concept bodies before writing. The
     # whitelist includes existing files + this round's planned slugs +
@@ -1212,7 +1362,8 @@ async def compile_short_doc(
     # for the plan + concept-generation calls, then rewritten into a final
     # v2 (with a whitelist of known wikilink targets) inside
     # _compile_concepts before being written to disk.
-    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary")
+    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary",
+                             response_format=_JSON_RESPONSE_FORMAT)
     try:
         summary_parsed = _parse_json(summary_raw)
         doc_brief = summary_parsed.get("brief", "")

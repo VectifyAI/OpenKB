@@ -52,6 +52,27 @@ warnings.filterwarnings("ignore")
 load_dotenv()  # load from cwd (covers running inside the KB dir)
 
 
+_KNOWN_PROVIDER_KEYS = (
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "MOONSHOT_API_KEY",
+    "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY",
+)
+
+
+def _extract_provider(model: str) -> str | None:
+    """Extract the LiteLLM provider name from a model string.
+
+    ``model`` uses ``provider/model`` LiteLLM format.
+    OpenAI models can omit the prefix; default to ``"openai"``.
+    """
+    model = model.strip()
+    if not model:
+        return None
+    if "/" in model:
+        return model.split("/")[0].lower()
+    return "openai"
+
+
 def _setup_llm_key(kb_dir: Path | None = None) -> None:
     """Set LiteLLM API key from LLM_API_KEY env var if present.
 
@@ -62,6 +83,8 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     Also propagates to provider-specific env vars (OPENAI_API_KEY, etc.)
     so that the Agents SDK litellm provider can pick them up.
+    Provider is auto-detected from the KB config when available; otherwise
+    a common provider set is used as a fallback.
     """
     if kb_dir is not None:
         env_file = kb_dir / ".env"
@@ -74,9 +97,23 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
         load_dotenv(global_env, override=False)
 
     api_key = os.environ.get("LLM_API_KEY", "")
+
+    # Try to resolve the active provider from the KB config
+    provider: str | None = None
+    if kb_dir is not None:
+        config_path = kb_dir / ".openkb" / "config.yaml"
+        if config_path.exists():
+            config = load_config(config_path)
+            model = config.get("model", "")
+            provider = _extract_provider(str(model))
+
     if not api_key:
         # Check if any provider key is already set
-        has_key = any(os.environ.get(k) for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"))
+        check_keys = (
+            (f"{provider.upper()}_API_KEY",) if provider
+            else _KNOWN_PROVIDER_KEYS
+        )
+        has_key = any(os.environ.get(k) for k in check_keys)
         if not has_key:
             click.echo(
                 "Warning: No LLM API key found. Set one of:\n"
@@ -86,13 +123,22 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             )
     else:
         litellm.api_key = api_key
-        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+
+        # Dynamically set the provider-specific env var when possible
+        if provider:
+            provider_env = f"{provider.upper()}_API_KEY"
+            if not os.environ.get(provider_env):
+                os.environ[provider_env] = api_key
+
+        # Fallback: also set common provider keys so multi-provider
+        # configs (e.g. PageIndex Cloud) still work
+        for env_var in _KNOWN_PROVIDER_KEYS:
             if not os.environ.get(env_var):
                 os.environ[env_var] = api_key
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
-    ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx",
+    ".pdf", ".md", ".markdown", ".docx", ".pptx", ".xlsx", ".xls",
     ".html", ".htm", ".txt", ".csv",
 }
 
@@ -101,7 +147,7 @@ _TYPE_DISPLAY_MAP = {
     "long_pdf": "pageindex",
 }
 
-_SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx"}
+_SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx", "xls"}
 
 
 def _display_type(raw_type: str) -> str:
@@ -463,6 +509,7 @@ def init(model, language):
     click.echo("  OpenAI:    gpt-5.4-mini, gpt-5.4")
     click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
     click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
+    click.echo("  DeepSeek:  deepseek/deepseek-v4-flash, deepseek/deepseek-v4-pro")
     click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
     click.echo()
     if model is None and _stdin_is_tty():
@@ -1912,3 +1959,176 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
     if save_flag and eval_set is None:
         path = save_eval_set(kb_dir, name, result.prompts)
         click.echo(f"\nEval set persisted to {path}")
+
+
+# ---------------------------------------------------------------------------
+# `openkb deck ...` — deck factory (v0.2)
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def deck():
+    """Generate a polished single-file HTML slide deck from the wiki."""
+
+
+@deck.command("new")
+@click.argument("name")
+@click.argument("intent")
+@click.option(
+    "-y", "--yes", "yes_flag",
+    is_flag=True, default=False,
+    help="Overwrite existing output/decks/<name>/ without prompting.",
+)
+@click.option(
+    "--critique", "critique_flag",
+    is_flag=True, default=False,
+    help="Opt-in second-pass review via a critic agent (slower, higher quality).",
+)
+@click.option(
+    "--skill", "skill_name",
+    metavar="SKILL_NAME",
+    default=None,
+    help=(
+        "Which deck skill to use. Defaults to 'openkb-deck-editorial' "
+        "(the built-in). Pass e.g. 'deck-guizang-editorial' to route to "
+        "a third-party skill installed under ~/.openkb/skills/."
+    ),
+)
+@click.pass_context
+def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
+    """Generate a new HTML deck from this KB's wiki.
+
+    NAME is a kebab-case slug used for the output directory.
+    INTENT is a natural-language description of what the deck is about.
+
+    Example:
+
+      openkb deck new transformers-pitch "Explain attention to engineers"
+      openkb deck new transformers-pitch "Explain attention to engineers" --critique
+      openkb deck new transformers-pitch "..." --skill deck-guizang-editorial
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.", err=True)
+        ctx.exit(1)
+
+    # Reuse the shared safety gates: name validation + wiki content check.
+    # Matches chat's `/deck new` so users see the same errors in both UIs.
+    err = _preflight_skill_new(kb_dir, name)
+    if err:
+        # _preflight_skill_new returns messages like "Skill name must not be empty."
+        # and "Wiki at ... is empty — add documents with `openkb add` first."
+        err = err.replace("Skill name", "Deck name")
+        # Only append the kebab-case hint when the failure is actually about
+        # the slug, not the wiki-content gate.
+        if "kebab" not in err.lower() and "Wiki" not in err and "wiki" not in err:
+            err = err + " Use a kebab-case slug like 'my-deck'."
+        click.echo(f"[ERROR] {err}", err=True)
+        ctx.exit(1)
+
+    # Verify LLM key + load config BEFORE touching existing output. Any
+    # failure here (missing API key, malformed config) must leave the old
+    # deck directory intact — we can't replace it if we can't proceed.
+    try:
+        _setup_llm_key(kb_dir)
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Overwrite handling — inline because openkb.skill.workspace.save_iteration
+    # is hard-wired to skill paths (uses skill_dir / skill_workspace_dir from
+    # openkb.skill). Mirror its iteration-N copy-then-rmtree behavior here
+    # using deck_workspace_dir so users keep rollback safety without coupling
+    # deck CLI to skill internals.
+    from openkb.deck import deck_dir as _deck_dir, deck_workspace_dir as _deck_workspace_dir
+
+    target = _deck_dir(kb_dir, name)
+    if target.exists():
+        if yes_flag:
+            _save_deck_iteration(kb_dir, name)
+            shutil.rmtree(target)
+        elif sys.stdin.isatty():
+            if not click.confirm(
+                f"output/decks/{name}/ already exists. Overwrite?",
+                default=False,
+            ):
+                click.echo("Aborted.")
+                ctx.exit(1)
+            _save_deck_iteration(kb_dir, name)
+            shutil.rmtree(target)
+        else:
+            click.echo(
+                f"[ERROR] output/decks/{name}/ exists. Pass -y to overwrite "
+                f"in non-interactive contexts.",
+                err=True,
+            )
+            ctx.exit(1)
+
+    # Run the generator.
+    from openkb.skill.generator import Generator
+    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    click.echo(f"Generating deck '{name}' via skill {skill_label}...")
+    gen = Generator(
+        target_type="deck",
+        name=name,
+        intent=intent,
+        kb_dir=kb_dir,
+        model=model,
+        critique=critique_flag,
+        skill_name=skill_name,
+    )
+    try:
+        asyncio.run(gen.run())
+    except RuntimeError as exc:
+        click.echo(f"[ERROR] {exc}", err=True)
+        ctx.exit(1)
+
+    # Surface validation result.
+    if gen.validation:
+        for w in gen.validation.warnings:
+            click.echo(f"[WARN] {w}", err=True)
+        for e in gen.validation.errors:
+            click.echo(f"[ERROR] {e}", err=True)
+        if gen.validation.errors:
+            click.echo(
+                f"Deck written to {gen.output_dir / 'index.html'} but failed validation. "
+                f"Inspect and re-run.",
+                err=True,
+            )
+            ctx.exit(1)
+
+    click.echo(f"Deck written to {gen.output_dir / 'index.html'}")
+
+
+def _save_deck_iteration(kb_dir: Path, deck_name: str) -> Path | None:
+    """Copy ``<kb>/output/decks/<name>/`` to the next iteration slot.
+
+    Mirrors ``openkb.skill.workspace.save_iteration`` but uses
+    ``deck_workspace_dir`` so deck rollback history stays separate from
+    skill history. Returns the saved iteration path, or ``None`` if there's
+    no current deck to save.
+    """
+    import re
+    from openkb.deck import deck_dir as _deck_dir, deck_workspace_dir as _deck_workspace_dir
+
+    src = _deck_dir(kb_dir, deck_name)
+    if not src.is_dir():
+        return None
+
+    ws = _deck_workspace_dir(kb_dir, deck_name)
+    ws.mkdir(parents=True, exist_ok=True)
+
+    iter_re = re.compile(r"^iteration-(\d+)$")
+    existing_ns: list[int] = []
+    for child in ws.iterdir():
+        if child.is_dir():
+            m = iter_re.match(child.name)
+            if m:
+                existing_ns.append(int(m.group(1)))
+    next_n = (max(existing_ns) if existing_ns else 0) + 1
+
+    dest = ws / f"iteration-{next_n}"
+    shutil.copytree(src, dest)
+    return dest
