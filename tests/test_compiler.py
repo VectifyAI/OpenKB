@@ -456,6 +456,45 @@ class TestReadEntityBriefs:
         out = _read_entity_briefs(tmp_path)
         assert out == "- anthropic (organization, 2 sources) — AI lab behind Claude."
 
+    def test_empty_dir_returns_none(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        assert _read_entity_briefs(tmp_path) == "(none yet)"
+
+    def test_falls_back_to_body_when_no_brief(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        body_text = "OpenAI is a research lab focused on artificial general intelligence."
+        (ent / "openai.md").write_text(
+            "---\n"
+            "type: organization\n"
+            "sources: [summaries/a.md, summaries/b.md, summaries/c.md]\n"
+            "---\n\n" + body_text,
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        # Should use truncated body (first 150 chars) as the brief
+        expected_brief = body_text[:150]
+        assert f" — {expected_brief}" in out
+        # Should still include type and source count
+        assert "(organization, 3 sources)" in out
+
+    def test_sorted_alphabetically(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "zeta.md").write_text(
+            "---\ntype: person\nsources: [summaries/a.md]\nbrief: Last letter of Greek alphabet.\n---\n",
+            encoding="utf-8",
+        )
+        (ent / "alpha.md").write_text(
+            "---\ntype: concept\nsources: [summaries/b.md]\nbrief: First letter of Greek alphabet.\n---\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        lines = out.strip().splitlines()
+        assert lines[0].startswith("- alpha ")
+        assert lines[1].startswith("- zeta ")
+
 
 class TestBacklinkSummary:
     def test_adds_missing_concept_links(self, tmp_path):
