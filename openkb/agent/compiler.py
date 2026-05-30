@@ -908,6 +908,40 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
         path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _backlink_summary_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
+    """Append missing entity wikilinks to the summary page under '## Entities'."""
+    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
+    if not summary_path.exists():
+        return
+    text = summary_path.read_text(encoding="utf-8")
+    missing = [s for s in entity_slugs if f"[[entities/{s}]]" not in text]
+    if not missing:
+        return
+    lines = text.split("\n")
+    _ensure_h2_section(lines, "## Entities")
+    for slug in reversed(missing):
+        _insert_section_entry(lines, "## Entities", f"- [[entities/{slug}]]")
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _backlink_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
+    """Append the source summary wikilink to each entity page under
+    '## Related Documents' (mirrors _backlink_concepts)."""
+    link = f"[[summaries/{doc_name}]]"
+    entities_dir = wiki_dir / "entities"
+    for slug in entity_slugs:
+        path = entities_dir / f"{slug}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if link in text:
+            continue
+        lines = text.split("\n")
+        _ensure_h2_section(lines, "## Related Documents")
+        _insert_section_entry(lines, "## Related Documents", f"- {link}")
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def remove_doc_from_concept_pages(
     wiki_dir: Path,
     doc_name: str,

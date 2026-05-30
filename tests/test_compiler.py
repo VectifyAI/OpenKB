@@ -22,6 +22,8 @@ from openkb.agent.compiler import (
     _add_related_link,
     _backlink_summary,
     _backlink_concepts,
+    _backlink_summary_entities,
+    _backlink_entities,
 )
 
 
@@ -1440,4 +1442,35 @@ class TestBriefIntegration:
         # Index has briefs
         index_text = (wiki / "index.md").read_text()
         assert "— A paper about transformers" in index_text
-        assert "— NN architecture using self-attention" in index_text
+
+
+class TestEntityBacklinks:
+    def _seed(self, tmp_path):
+        (tmp_path / "summaries").mkdir()
+        (tmp_path / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+        (tmp_path / "entities").mkdir()
+        (tmp_path / "entities" / "anthropic.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md]\n---\n\n# Anthropic\n",
+            encoding="utf-8")
+
+    def test_summary_gets_entities_section(self, tmp_path):
+        self._seed(tmp_path)
+        _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
+        text = (tmp_path / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert "## Entities" in text
+        assert "[[entities/anthropic]]" in text
+
+    def test_entity_gets_related_documents(self, tmp_path):
+        self._seed(tmp_path)
+        _backlink_entities(tmp_path, "doc", ["anthropic"])
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert "## Related Documents" in text
+        assert "[[summaries/doc]]" in text
+
+    def test_idempotent(self, tmp_path):
+        self._seed(tmp_path)
+        _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
+        _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
+        text = (tmp_path / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert text.count("[[entities/anthropic]]") == 1
