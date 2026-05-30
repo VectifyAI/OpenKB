@@ -109,6 +109,7 @@ wiki/                                  │            ← the foundation
  ├── sources/            Full-text conversions
  ├── summaries/          Per-document summaries
  ├── concepts/           Cross-document synthesis ← the good stuff
+ ├── entities/           Specific named things (people, orgs, places, products)
  ├── explorations/       Saved query results
  └── reports/            Lint reports
                                        │
@@ -136,9 +137,10 @@ Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into 
 When you add a document, the LLM:
 
 1. Generates a **summary** page
-2. Reads existing **concept** pages
+2. Reads existing **concept** and **entity** pages
 3. Creates or updates concepts with cross-document synthesis
-4. Updates the **index** and **log**
+4. Creates or updates **entity** pages (people, orgs, places, products)
+5. Updates the **index** and **log**
 
 A single source might touch 10-15 wiki pages. Knowledge accumulates: each document enriches the existing wiki rather than sitting in isolation.
 
