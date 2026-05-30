@@ -10,6 +10,7 @@ AGENTS_MD = """\
 - sources/images/ — Extracted images from documents, referenced by sources.
 - summaries/ — One per source document. Summary of key content.
 - concepts/ — Cross-document topic synthesis. Created when a theme spans multiple documents.
+- entities/ — Specific named things: people, organizations, places, products, named works, events. One page per entity, accumulated across documents.
 - explorations/ — Saved query results, analyses, and comparisons worth keeping.
 - reports/ — Lint health check reports. Auto-generated.
 
@@ -20,6 +21,7 @@ AGENTS_MD = """\
 ## Page Types
 - **Summary Page** (summaries/): Key content of a single source document.
 - **Concept Page** (concepts/): Cross-document topic synthesis with [[wikilinks]].
+- **Entity Page** (entities/): A specific named thing (proper noun). Frontmatter `type:` is one of: person, organization, place, product, work, event, other. An entity differs from a concept: a concept is an abstract recurring idea; an entity is a specific named thing. Create an entity page only when the entity is central to a document or recurs across sources — do not page passing mentions.
 - **Exploration Page** (explorations/): Saved query results — analyses, comparisons, syntheses.
 - **Index Page** (index.md): One-liner summary of every page in the wiki. Auto-maintained.
 

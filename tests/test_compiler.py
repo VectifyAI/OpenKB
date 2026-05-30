@@ -1640,3 +1640,17 @@ class TestCompileEntitiesEndToEnd:
         # The pre-existing correct line must NOT have been downgraded to (other)
         assert "(organization)" in index, "index entry was downgraded from (organization) to (other)"
         assert "AI safety lab" in index, "index brief was stripped from the entry"
+
+
+# ---------------------------------------------------------------------------
+# Task 9: schema declares entities
+# ---------------------------------------------------------------------------
+
+from openkb.schema import AGENTS_MD
+
+
+def test_schema_declares_entities():
+    assert "entities/" in AGENTS_MD
+    assert "Entity Page" in AGENTS_MD
+    for t in ("person", "organization", "place", "product", "work", "event", "other"):
+        assert t in AGENTS_MD
