@@ -422,6 +422,52 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
+def _read_entity_briefs(wiki_dir: Path) -> str:
+    """Read existing entity pages as compact lines for the plan call.
+
+    Formats each as ``- {slug} ({type}, {n} sources) — {brief}``. The source
+    count is the cross-document recurrence signal the LLM uses to decide
+    create-vs-update and salience. Returns "(none yet)" when empty.
+    """
+    entities_dir = wiki_dir / "entities"
+    if not entities_dir.exists():
+        return "(none yet)"
+
+    md_files = sorted(entities_dir.glob("*.md"))
+    if not md_files:
+        return "(none yet)"
+
+    lines: list[str] = []
+    for path in md_files:
+        text = path.read_text(encoding="utf-8")
+        brief = ""
+        etype = "other"
+        n_sources = 0
+        body = text
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end != -1:
+                fm_text = text[3:end].strip("\n")
+                body = text[end + 3:]
+                try:
+                    fm = yaml.safe_load(fm_text)
+                except yaml.YAMLError:
+                    fm = None
+                if isinstance(fm, dict):
+                    if isinstance(fm.get("brief"), str):
+                        brief = fm["brief"].strip()
+                    if isinstance(fm.get("type"), str):
+                        etype = fm["type"].strip() or "other"
+                    if isinstance(fm.get("sources"), list):
+                        n_sources = len(fm["sources"])
+        if not brief:
+            brief = body.strip().replace("\n", " ")[:150]
+        suffix = f" — {brief}" if brief else ""
+        lines.append(f"- {path.stem} ({etype}, {n_sources} sources){suffix}")
+
+    return "\n".join(lines) or "(none yet)"
+
+
 def _iter_h2_headings(lines: list[str]) -> list[tuple[int, str]]:
     """Return ``[(line_index, normalized_heading), ...]`` for every ATX H2.
 

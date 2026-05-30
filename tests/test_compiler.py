@@ -17,6 +17,7 @@ from openkb.agent.compiler import (
     _update_index,
     _read_wiki_context,
     _read_concept_briefs,
+    _read_entity_briefs,
     _add_related_link,
     _backlink_summary,
     _backlink_concepts,
@@ -435,6 +436,25 @@ class TestReadConceptBriefs:
         )
         result = _read_concept_briefs(wiki)
         assert "- old: Old concept without brief field." in result
+
+
+class TestReadEntityBriefs:
+    def test_none_when_missing(self, tmp_path):
+        assert _read_entity_briefs(tmp_path) == "(none yet)"
+
+    def test_brief_type_and_source_count(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "anthropic.md").write_text(
+            "---\n"
+            "sources: [summaries/a.md, summaries/b.md]\n"
+            "type: organization\n"
+            "brief: AI lab behind Claude.\n"
+            "---\n\n# Anthropic\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        assert out == "- anthropic (organization, 2 sources) — AI lab behind Claude."
 
 
 class TestBacklinkSummary:
