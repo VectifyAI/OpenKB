@@ -1445,6 +1445,27 @@ class TestBriefIntegration:
         assert "— NN architecture using self-attention" in index_text
 
 
+class TestIndexEntities:
+    def test_entities_section_written(self, tmp_path):
+        _update_index(
+            tmp_path, "doc", [], doc_brief="d",
+            entity_names=["anthropic"],
+            entity_meta={"anthropic": ("organization", "AI lab behind Claude.")},
+        )
+        text = (tmp_path / "index.md").read_text(encoding="utf-8")
+        assert "## Entities" in text
+        assert "- [[entities/anthropic]] (organization) — AI lab behind Claude." in text
+
+    def test_entity_entry_replaced_on_update(self, tmp_path):
+        _update_index(tmp_path, "doc", [], entity_names=["anthropic"],
+                      entity_meta={"anthropic": ("organization", "old")})
+        _update_index(tmp_path, "doc2", [], entity_names=["anthropic"],
+                      entity_meta={"anthropic": ("organization", "new")})
+        text = (tmp_path / "index.md").read_text(encoding="utf-8")
+        assert text.count("[[entities/anthropic]]") == 1
+        assert "new" in text and "old" not in text
+
+
 class TestEntityBacklinks:
     def _seed(self, tmp_path):
         (tmp_path / "summaries").mkdir()

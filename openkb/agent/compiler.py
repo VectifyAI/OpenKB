@@ -1062,6 +1062,8 @@ def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
     doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
     doc_type: str = "short",
+    entity_names: list[str] | None = None,
+    entity_meta: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """Append document and concept entries to index.md.
 
@@ -1078,7 +1080,8 @@ def _update_index(
     index_path = wiki_dir / "index.md"
     if not index_path.exists():
         index_path.write_text(
-            "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n"
+            "## Entities\n\n## Explorations\n",
             encoding="utf-8",
         )
 
@@ -1105,6 +1108,21 @@ def _update_index(
                 _replace_section_entry(lines, "## Concepts", concept_link, concept_entry)
         else:
             _insert_section_entry(lines, "## Concepts", concept_entry)
+
+    entity_names = entity_names or []
+    entity_meta = entity_meta or {}
+    if entity_names:
+        _ensure_h2_section(lines, "## Entities")
+    for name in entity_names:
+        link = f"[[entities/{name}]]"
+        etype, brief = entity_meta.get(name, ("other", ""))
+        entry = f"- {link} ({etype})"
+        if brief:
+            entry += f" — {brief}"
+        if _section_contains_link(lines, "## Entities", link):
+            _replace_section_entry(lines, "## Entities", link, entry)
+        else:
+            _insert_section_entry(lines, "## Entities", entry)
 
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
