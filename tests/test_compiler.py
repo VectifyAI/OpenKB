@@ -1442,6 +1442,7 @@ class TestBriefIntegration:
         # Index has briefs
         index_text = (wiki / "index.md").read_text()
         assert "— A paper about transformers" in index_text
+        assert "— NN architecture using self-attention" in index_text
 
 
 class TestEntityBacklinks:
