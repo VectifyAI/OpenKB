@@ -69,28 +69,42 @@ Return ONLY valid JSON, no fences.
 
 
 _CONCEPTS_PLAN_USER = """\
-Based on the summary above, decide how to update the wiki's concept pages.
+Based on the summary above, decide how to update the wiki's CONCEPT pages and
+ENTITY pages.
+
+A CONCEPT is an abstract, recurring idea/pattern/mechanism (e.g. "agentic
+systems"). An ENTITY is a specific named thing — a person, organization,
+place, product, named work, or event (e.g. "Anthropic"). Each name goes in
+exactly ONE group. A topic may have both (entity "NVIDIA" and concept
+"ai-infrastructure-demand"); they cross-link, they do not merge.
 
 Existing concept pages:
 {concept_briefs}
 
-Return a JSON object with three keys:
+Existing entity pages (with source counts = how many docs already cite them):
+{entity_briefs}
 
-1. "create" — new concepts not covered by any existing page. Array of objects:
-   {{"name": "concept-slug", "title": "Human-Readable Title"}}
+Return a JSON object with two top-level keys, "concepts" and "entities".
 
-2. "update" — existing concepts that have significant new information from \
-this document worth integrating. Array of objects:
-   {{"name": "existing-slug", "title": "Existing Title"}}
+"concepts" is an object with:
+1. "create" — new concepts. Array of {{"name": "concept-slug", "title": "Title"}}
+2. "update" — existing concepts with significant new info. Same shape.
+3. "related" — existing concept slugs to cross-link only. Array of strings.
 
-3. "related" — existing concepts tangentially related to this document but \
-not needing content changes, just a cross-reference link. Array of slug strings.
+"entities" is an object with the same three keys, but create/update objects
+add a "type" field, one of: person, organization, place, product, work,
+event, other. Example:
+   {{"name": "anthropic", "title": "Anthropic", "type": "organization"}}
 
 Rules:
 - For the first few documents, create 2-3 foundational concepts at most.
-- Do NOT create a concept that overlaps with an existing one — use "update".
-- Do NOT create concepts that are just the document topic itself.
-- "related" is for lightweight cross-linking only, no content rewrite needed.
+- Create an ENTITY page only when the entity is (a) central to this document
+  or (b) likely to recur across sources. Do NOT page proper nouns mentioned
+  only in passing. Roughly 5-15 entities per document is typical; fewer for
+  sparse documents.
+- Prefer "update" over "create" for any concept or entity already listed above.
+- Do NOT create a concept/entity that overlaps an existing one — use "update".
+- "related" is lightweight cross-linking only, no content rewrite.
 
 Return ONLY valid JSON, no fences, no explanation.
 """
@@ -143,6 +157,41 @@ not invent new wikilink targets.
 Return a JSON object with two keys:
 - "brief": A single sentence (under 100 chars) defining this concept (may differ from before)
 - "content": The rewritten full concept page in Markdown
+
+Return ONLY valid JSON, no fences.
+"""
+
+_ENTITY_PAGE_USER = """\
+Write the entity page for: {title} (type: {type})
+
+This entity relates to the document "{doc_name}" summarized above.
+
+Return a JSON object with three keys:
+- "brief": A single sentence (under 100 chars) identifying this entity
+- "type": one of person, organization, place, product, work, event, other
+- "content": The full entity page in Markdown — what this entity is, the key
+  facts about it from this document, and [[wikilinks]] to related concepts,
+  other [[entities/...]], and [[summaries/{doc_name}]] — subject to the
+  whitelist rules from the message above.
+
+Return ONLY valid JSON, no fences.
+"""
+
+_ENTITY_UPDATE_USER = """\
+Update the entity page for: {title} (type: {type})
+
+Current content of this page:
+{existing_content}
+
+Integrate the new facts about this entity from document "{doc_name}"
+(summarized above). Rewrite the full page — do not just append. Preserve the
+existing structure and intent. Follow the whitelist rules from the message
+above for all [[wikilinks]].
+
+Return a JSON object with three keys:
+- "brief": A single sentence (under 100 chars) identifying this entity
+- "type": one of person, organization, place, product, work, event, other
+- "content": The rewritten full entity page in Markdown
 
 Return ONLY valid JSON, no fences.
 """
@@ -364,6 +413,53 @@ def _filter_related_slugs(items: list) -> list[str]:
             len(items) - len(valid), ", ".join(bad_types),
         )
     return valid
+
+
+_ENTITY_TYPES = {"person", "organization", "place", "product", "work", "event", "other"}
+
+
+def _filter_entity_items(items: object, label: str) -> list[dict]:
+    """Validate entity create/update objects: require name+title, coerce type.
+
+    Each kept item is normalized to ``{"name", "title", "type"}`` where
+    ``type`` falls back to ``"other"`` when missing or outside the entity
+    enum and ``title`` falls back to ``name``.
+    """
+    out: list[dict] = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        name = it.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        title = it.get("title") if isinstance(it.get("title"), str) else name
+        etype = it.get("type")
+        if not isinstance(etype, str) or etype not in _ENTITY_TYPES:
+            etype = "other"
+        out.append({"name": name, "title": title, "type": etype})
+    return out
+
+
+def _parse_entities_plan(parsed: object) -> dict:
+    """Extract the entities group from a plan dict, with graceful fallback.
+
+    Returns ``{"create": [...], "update": [...], "related": [...]}``. A
+    missing/malformed ``entities`` key yields empty lists, so older or
+    partial LLM responses never raise.
+    """
+    empty = {"create": [], "update": [], "related": []}
+    if not isinstance(parsed, dict):
+        return empty
+    group = parsed.get("entities")
+    if not isinstance(group, dict):
+        return empty
+    return {
+        "create": _filter_entity_items(group.get("create", []), "create"),
+        "update": _filter_entity_items(group.get("update", []), "update"),
+        "related": _filter_related_slugs(group.get("related", [])),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1218,6 +1314,7 @@ async def _compile_concepts(
 
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
+    entity_briefs = _read_entity_briefs(wiki_dir)
 
     # Second cache breakpoint: end of the assistant summary message. Covers
     # (system + doc + summary) for the plan call and every concept call.
@@ -1229,6 +1326,7 @@ async def _compile_concepts(
         summary_msg,
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
+            entity_briefs=entity_briefs,
         )},
     ], "concepts-plan", max_tokens=2048, response_format=_JSON_RESPONSE_FORMAT)
 
@@ -1272,26 +1370,39 @@ async def _compile_concepts(
         return
 
     # Fallback: if LLM returns a flat list, treat all items as "create".
+    # The new plan contract nests concepts under a "concepts" key alongside
+    # an "entities" key; the legacy flat shape (create/update/related at top
+    # level) is still honored by falling back to ``parsed`` itself.
     if isinstance(parsed, list):
         plan = {"create": _filter_concept_items(parsed, "list"),
                 "update": [], "related": []}
+        entities_plan = {"create": [], "update": [], "related": []}
     else:
+        concepts_group = (
+            parsed.get("concepts")
+            if isinstance(parsed.get("concepts"), dict)
+            else parsed
+        )
         plan = {
-            "create": _filter_concept_items(parsed.get("create", []), "create"),
-            "update": _filter_concept_items(parsed.get("update", []), "update"),
-            "related": _filter_related_slugs(parsed.get("related", [])),
+            "create": _filter_concept_items(concepts_group.get("create", []), "create"),
+            "update": _filter_concept_items(concepts_group.get("update", []), "update"),
+            "related": _filter_related_slugs(concepts_group.get("related", [])),
         }
+        entities_plan = _parse_entities_plan(parsed)
 
     create_items = plan["create"]
     update_items = plan["update"]
     related_items = plan["related"]
+    entity_create = entities_plan["create"]
+    entity_update = entities_plan["update"]
+    entity_related = entities_plan["related"]
 
     # Distinguish "filters dropped everything" from "LLM emitted an empty plan".
     if isinstance(parsed, list):
         original_total = len(parsed)
     else:
         original_total = sum(
-            len(parsed.get(k, [])) if isinstance(parsed.get(k), list) else 0
+            len(concepts_group.get(k, [])) if isinstance(concepts_group.get(k), list) else 0
             for k in ("create", "update", "related")
         )
     post_filter_total = len(create_items) + len(update_items) + len(related_items)
@@ -1302,7 +1413,8 @@ async def _compile_concepts(
         )
         sys.stdout.flush()
 
-    if not create_items and not update_items and not related_items:
+    if (not create_items and not update_items and not related_items
+            and not entity_create and not entity_update and not entity_related):
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
@@ -1317,9 +1429,15 @@ async def _compile_concepts(
     } | {
         _sanitize_concept_name(s) for s in related_items
     }
+    entity_planned = {
+        _sanitize_concept_name(e["name"]) for e in entity_create + entity_update
+    } | {
+        _sanitize_concept_name(s) for s in entity_related
+    }
     known_targets: set[str] = (
         list_existing_wiki_targets(wiki_dir)
         | {f"concepts/{s}" for s in planned_slugs}
+        | {f"entities/{s}" for s in entity_planned}
         | {f"summaries/{doc_name}"}
     )
     known_targets_str = _format_known_targets(known_targets)
@@ -1401,6 +1519,65 @@ async def _compile_concepts(
         _require_nonempty_content(content, name)
         return name, content, True, brief
 
+    async def _gen_entity_create(ent: dict) -> tuple[str, str, str, str]:
+        name = ent["name"]
+        title = ent.get("title", name)
+        etype = ent.get("type", "other")
+        async with semaphore:
+            raw = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
+                {"role": "user", "content": _ENTITY_PAGE_USER.format(
+                    title=title, type=etype, doc_name=doc_name,
+                )},
+            ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
+        try:
+            parsed = _parse_json(raw)
+            brief = parsed.get("brief", "")
+            etype_out = parsed.get("type") if parsed.get("type") in _ENTITY_TYPES else etype
+            content = parsed.get("content") or raw
+        except (json.JSONDecodeError, ValueError):
+            brief, etype_out, content = "", etype, raw
+        _require_nonempty_content(content, name)
+        return name, content, brief, etype_out
+
+    async def _gen_entity_update(ent: dict) -> tuple[str, str, str, str]:
+        name = ent["name"]
+        title = ent.get("title", name)
+        etype = ent.get("type", "other")
+        epath = wiki_dir / "entities" / f"{_sanitize_concept_name(name)}.md"
+        if epath.exists():
+            raw_text = epath.read_text(encoding="utf-8")
+            if raw_text.startswith("---"):
+                parts = raw_text.split("---", 2)
+                existing_content = parts[2].strip() if len(parts) >= 3 else raw_text
+            else:
+                existing_content = raw_text
+        else:
+            existing_content = "(page not found — create from scratch)"
+        async with semaphore:
+            raw = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
+                {"role": "user", "content": _ENTITY_UPDATE_USER.format(
+                    title=title, type=etype, doc_name=doc_name,
+                    existing_content=existing_content,
+                )},
+            ], f"entity-update: {name}", response_format=_JSON_RESPONSE_FORMAT)
+        try:
+            parsed = _parse_json(raw)
+            brief = parsed.get("brief", "")
+            etype_out = parsed.get("type") if parsed.get("type") in _ENTITY_TYPES else etype
+            content = parsed.get("content") or raw
+        except (json.JSONDecodeError, ValueError):
+            brief, etype_out, content = "", etype, raw
+        _require_nonempty_content(content, name)
+        return name, content, brief, etype_out
+
     tasks = []
     tasks.extend(_gen_create(c) for c in create_items)
     tasks.extend(_gen_update(c) for c in update_items)
@@ -1408,6 +1585,9 @@ async def _compile_concepts(
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
     pending_writes: list[tuple[str, str, bool, str]] = []
+    entity_names: list[str] = []
+    entity_meta: dict[str, tuple[str, str]] = {}
+    entity_pending: list[tuple[str, str, str, str]] = []
 
     if tasks:
         total = len(tasks)
@@ -1442,6 +1622,59 @@ async def _compile_concepts(
                 f"for {doc_name} ({reason}).\n"
             )
             sys.stdout.flush()
+
+    # --- Step 3 (entities): generate entity pages in their OWN gather ---
+    # Entity coroutines return 4-arity tuples (name, content, brief, type),
+    # so they are gathered separately from the concept tuples rather than
+    # mixed into one list with differing arities.
+    entity_tasks = []
+    entity_tasks.extend(_gen_entity_create(e) for e in entity_create)
+    entity_tasks.extend(_gen_entity_update(e) for e in entity_update)
+
+    if entity_tasks:
+        etotal = len(entity_tasks)
+        sys.stdout.write(
+            f"    Generating {etotal} entity(ies) (concurrency={max_concurrency})...\n"
+        )
+        sys.stdout.flush()
+
+        entity_results = await asyncio.gather(*entity_tasks, return_exceptions=True)
+
+        entity_failure_types: list[str] = []
+        for r in entity_results:
+            if isinstance(r, Exception):
+                logger.warning("Entity generation failed: %s", r)
+                entity_failure_types.append(type(r).__name__)
+                continue
+            name, page_content, brief, etype = r
+            entity_pending.append((name, page_content, brief, etype))
+
+        ewritten = len(entity_pending)
+        if ewritten < etotal:
+            reason = (
+                ", ".join(sorted(set(entity_failure_types)))
+                if entity_failure_types else "see log (stderr)"
+            )
+            sys.stdout.write(
+                f"    [WARN] {etotal} entity(ies) planned but only {ewritten} written "
+                f"for {doc_name} ({reason}).\n"
+            )
+            sys.stdout.flush()
+
+    # Strip ghost wikilinks from entity bodies and write each page.
+    for name, page_content, brief, etype in entity_pending:
+        cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
+        if ghosts:
+            logger.info(
+                "stripped %d ghost wikilink(s) from entity %s: %s",
+                len(ghosts), name, ghosts[:5],
+            )
+        safe = _sanitize_concept_name(name)
+        is_update = (wiki_dir / "entities" / f"{safe}.md").exists()
+        _write_entity(wiki_dir, name, cleaned, source_file, is_update,
+                      brief=brief, type_=etype)
+        entity_names.append(safe)
+        entity_meta[safe] = (etype, brief)
 
     # Strip unresolved wikilinks from concept bodies before writing. The
     # whitelist includes existing files + this round's planned slugs +
@@ -1535,10 +1768,27 @@ async def _compile_concepts(
         _backlink_summary(wiki_dir, doc_name, all_concept_slugs)
         _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
+    # --- Step 3d: Process entity related items + backlinks (code only) ---
+    for slug in [_sanitize_concept_name(s) for s in entity_related]:
+        epath = wiki_dir / "entities" / f"{slug}.md"
+        if epath.exists():
+            etext = epath.read_text(encoding="utf-8")
+            if f"[[summaries/{doc_name}]]" not in etext:
+                if source_file not in etext:
+                    etext = _prepend_source_to_frontmatter(etext, source_file)
+                etext += f"\n\nSee also: [[summaries/{doc_name}]]"
+                epath.write_text(etext, encoding="utf-8")
+            entity_names.append(slug)
+
+    if entity_names:
+        _backlink_summary_entities(wiki_dir, doc_name, entity_names)
+        _backlink_entities(wiki_dir, doc_name, entity_names)
+
     # --- Step 4: Update index (code only) ---
     _update_index(wiki_dir, doc_name, concept_names,
                   doc_brief=doc_brief, concept_briefs=concept_briefs_map,
-                  doc_type=doc_type)
+                  doc_type=doc_type, entity_names=entity_names,
+                  entity_meta=entity_meta)
 
 
 async def compile_short_doc(

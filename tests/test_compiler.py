@@ -24,6 +24,7 @@ from openkb.agent.compiler import (
     _backlink_concepts,
     _backlink_summary_entities,
     _backlink_entities,
+    _parse_entities_plan,
     remove_doc_from_entity_pages,
 )
 
@@ -64,6 +65,31 @@ class TestParseConceptsPlan:
         parsed = _parse_json(text)
         assert isinstance(parsed, dict)
         assert parsed["create"] == []
+
+
+class TestParseEntitiesPlan:
+    def test_extracts_entities_group(self):
+        parsed = {
+            "concepts": {"create": [{"name": "x", "title": "X"}], "update": [], "related": []},
+            "entities": {
+                "create": [{"name": "anthropic", "title": "Anthropic", "type": "organization"}],
+                "update": [],
+                "related": ["nvidia"],
+            },
+        }
+        ents = _parse_entities_plan(parsed)
+        assert ents["create"] == [{"name": "anthropic", "title": "Anthropic", "type": "organization"}]
+        assert ents["related"] == ["nvidia"]
+
+    def test_missing_entities_key_is_empty(self):
+        ents = _parse_entities_plan({"create": [], "update": [], "related": []})
+        assert ents == {"create": [], "update": [], "related": []}
+
+    def test_bad_type_falls_back_to_other(self):
+        parsed = {"entities": {"create": [{"name": "x", "title": "X", "type": "alien"}],
+                               "update": [], "related": []}}
+        ents = _parse_entities_plan(parsed)
+        assert ents["create"][0]["type"] == "other"
 
 
 class TestParseBriefContent:
@@ -1517,3 +1543,49 @@ class TestRemoveEntityPages:
         shared = (ent / "shared.md").read_text(encoding="utf-8")
         assert "summaries/doc" not in shared
         assert "summaries/other" in shared
+
+
+class TestCompileEntitiesEndToEnd:
+    @pytest.mark.asyncio
+    async def test_entity_and_concept_split(self, tmp_path, monkeypatch):
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        # Mocked LLM: plan call returns one concept + one entity; each
+        # generation call returns a tiny page.
+        def fake_llm(model, messages, label, **kw):
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [{"name": "ai-demand", "title": "AI Demand"}],
+                                 "update": [], "related": []},
+                    "entities": {"create": [{"name": "nvidia", "title": "NVIDIA",
+                                             "type": "organization"}],
+                                 "update": [], "related": []},
+                })
+            return json.dumps({"brief": "b", "type": "organization", "content": "# Page\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        sys_msg = {"role": "system", "content": "x"}
+        doc_msg = {"role": "user", "content": "x"}
+        await _compile_concepts(wiki, tmp_path, "m", sys_msg, doc_msg,
+                                "summary text", "doc", max_concurrency=2,
+                                doc_type="short", rewrite_summary=False)
+
+        assert (wiki / "concepts" / "ai-demand.md").exists()
+        assert (wiki / "entities" / "nvidia.md").exists()
+        ent = (wiki / "entities" / "nvidia.md").read_text(encoding="utf-8")
+        # Frontmatter values are JSON-quoted by _yaml_kv_line (see _write_entity,
+        # Task 2), matching the tolerant assertion style in TestWriteEntity.
+        assert "type:" in ent and "organization" in ent
+        index = (wiki / "index.md").read_text(encoding="utf-8")
+        assert "[[entities/nvidia]]" in index
+        summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert "[[entities/nvidia]]" in summary  # backlink
