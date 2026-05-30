@@ -1032,9 +1032,55 @@ def remove_doc_from_concept_pages(
     return {"modified": modified, "deleted": deleted}
 
 
-def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str]) -> None:
+def remove_doc_from_entity_pages(
+    wiki_dir: Path,
+    doc_name: str,
+    *,
+    keep_empty: bool = False,
+) -> dict[str, list[str]]:
+    """Update or delete entity pages affected by removing a document.
+
+    Mirrors ``remove_doc_from_concept_pages`` for the entities/ directory:
+    strips ``summaries/{doc_name}`` from each entity's ``sources:`` and from
+    its ``## Related Documents`` section; deletes the page when its sources
+    list empties (unless ``keep_empty``). Returns
+    ``{"modified": [...], "deleted": [...]}``.
+    """
+    entities_dir = wiki_dir / "entities"
+    if not entities_dir.is_dir():
+        return {"modified": [], "deleted": []}
+
+    source_file = f"summaries/{doc_name}.md"
+    bare_source = f"summaries/{doc_name}"
+    link = f"[[{bare_source}]]"
+
+    modified: list[str] = []
+    deleted: list[str] = []
+
+    for path in sorted(entities_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if source_file not in text and bare_source not in text:
+            continue
+        new_text, sources_empty = _remove_source_from_frontmatter(text, source_file)
+        if link in new_text:
+            lines = new_text.split("\n")
+            while _remove_section_entry(lines, "## Related Documents", link):
+                pass
+            new_text = "\n".join(lines)
+        if sources_empty and not keep_empty:
+            path.unlink()
+            deleted.append(path.stem)
+        elif new_text != text:
+            path.write_text(new_text, encoding="utf-8")
+            modified.append(path.stem)
+
+    return {"modified": modified, "deleted": deleted}
+
+
+def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str],
+                          entity_slugs_deleted: list[str] | None = None) -> None:
     """Remove the document's entry from ``index.md`` along with any concept
-    entries for concepts that were deleted as a side effect.
+    and entity entries for pages that were deleted as a side effect.
 
     No-op when ``index.md`` doesn't exist. Section headings are kept even
     when their last entry is removed — adding a new doc later repopulates
@@ -1053,6 +1099,11 @@ def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: 
     for slug in concept_slugs_deleted:
         concept_link = f"[[concepts/{slug}]]"
         while _remove_section_entry(lines, "## Concepts", concept_link):
+            pass
+
+    for slug in (entity_slugs_deleted or []):
+        entity_link = f"[[entities/{slug}]]"
+        while _remove_section_entry(lines, "## Entities", entity_link):
             pass
 
     index_path.write_text("\n".join(lines), encoding="utf-8")

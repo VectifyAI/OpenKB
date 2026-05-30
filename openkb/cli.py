@@ -800,6 +800,7 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     """
     from openkb.agent.compiler import (
         remove_doc_from_concept_pages,
+        remove_doc_from_entity_pages,
         remove_doc_from_index,
     )
     from openkb.lint import fix_broken_links
@@ -967,7 +968,12 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         wiki_dir, doc_name, keep_empty=keep_empty_concepts,
     )
 
-    remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"])
+    entity_result = remove_doc_from_entity_pages(
+        wiki_dir, doc_name, keep_empty=keep_empty_concepts,
+    )
+
+    remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"],
+                          entity_slugs_deleted=entity_result["deleted"])
 
     # Strip dangling wikilinks now so a retry (after a PageIndex
     # failure below) finds a clean wiki — no point in re-running this

@@ -24,6 +24,7 @@ from openkb.agent.compiler import (
     _backlink_concepts,
     _backlink_summary_entities,
     _backlink_entities,
+    remove_doc_from_entity_pages,
 )
 
 
@@ -1496,3 +1497,23 @@ class TestEntityBacklinks:
         _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
         text = (tmp_path / "summaries" / "doc.md").read_text(encoding="utf-8")
         assert text.count("[[entities/anthropic]]") == 1
+
+
+class TestRemoveEntityPages:
+    def test_strip_source_and_delete_when_empty(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "solo.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md]\n---\n\n"
+            "# Solo\n\n## Related Documents\n- [[summaries/doc]]\n",
+            encoding="utf-8")
+        (ent / "shared.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md, summaries/other.md]\n---\n\n"
+            "# Shared\n\n## Related Documents\n- [[summaries/doc]]\n- [[summaries/other]]\n",
+            encoding="utf-8")
+        result = remove_doc_from_entity_pages(tmp_path, "doc")
+        assert result == {"modified": ["shared"], "deleted": ["solo"]}
+        assert not (ent / "solo.md").exists()
+        shared = (ent / "shared.md").read_text(encoding="utf-8")
+        assert "summaries/doc" not in shared
+        assert "summaries/other" in shared
