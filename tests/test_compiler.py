@@ -525,6 +525,8 @@ class TestWriteEntity:
         )
         text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
         assert "summaries/b.md" in text and "summaries/a.md" in text
+        # _yaml_list_line uses json.dumps: b prepended before a, double-quoted
+        assert '"summaries/b.md", "summaries/a.md"' in text
         assert "type:" in text and "organization" in text
         assert "v2 richer." in text
         assert "v1." not in text

@@ -764,7 +764,7 @@ def _set_fm_line(fm: str, key: str, value: str) -> str:
     """
     line = _yaml_kv_line(key, value)
     if re.search(rf"^{re.escape(key)}:", fm, flags=re.MULTILINE):
-        return re.sub(rf"^{re.escape(key)}:.*", lambda _m: line, fm, flags=re.MULTILINE)
+        return re.sub(rf"^{re.escape(key)}:.*", lambda _m: line, fm, count=1, flags=re.MULTILINE)
     return fm.replace("---\n", f"---\n{line}\n", 1)
 
 
