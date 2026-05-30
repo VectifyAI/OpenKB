@@ -538,11 +538,12 @@ def init(model, language):
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
+    Path("wiki/entities").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
     Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
     Path("wiki/index.md").write_text(
-        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n",
         encoding="utf-8",
     )
     Path("wiki/log.md").write_text("# Operations Log\n\n", encoding="utf-8")
@@ -1307,7 +1308,7 @@ def list_cmd(ctx):
 def print_status(kb_dir: Path) -> None:
     """Print knowledge base status. Usable from CLI and chat REPL."""
     wiki_dir = kb_dir / "wiki"
-    subdirs = ["sources", "summaries", "concepts", "reports"]
+    subdirs = ["sources", "summaries", "concepts", "entities", "reports"]
 
     # Print the active KB path as the first line. Agents and scripts
     # parse this to locate the wiki without assuming cwd == KB root.

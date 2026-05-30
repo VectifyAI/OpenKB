@@ -17,6 +17,7 @@ def _setup_kb(tmp_path: Path) -> Path:
     (kb_dir / "wiki" / "sources" / "images").mkdir(parents=True)
     (kb_dir / "wiki" / "summaries").mkdir(parents=True)
     (kb_dir / "wiki" / "concepts").mkdir(parents=True)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
     (kb_dir / "wiki" / "reports").mkdir(parents=True)
     openkb_dir = kb_dir / ".openkb"
     openkb_dir.mkdir()
@@ -111,6 +112,7 @@ class TestStatusCommand:
         assert "sources" in result.output
         assert "summaries" in result.output
         assert "concepts" in result.output
+        assert "entities" in result.output
         assert "reports" in result.output
 
     def test_status_shows_total_indexed(self, tmp_path):
