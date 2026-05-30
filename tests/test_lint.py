@@ -12,6 +12,7 @@ from openkb.lint import (
     find_missing_entries,
     find_orphans,
     fix_broken_links,
+    list_existing_wiki_targets,
     run_structural_lint,
     strip_ghost_wikilinks,
 )
@@ -501,3 +502,10 @@ class TestFixBrokenLinksRestrictTo:
         assert "[[concepts/sibling]]" in text
         # Ghost link gets demoted.
         assert "[[concepts/ghost]]" not in text
+
+
+def test_whitelist_includes_entities(tmp_path):
+    (tmp_path / "entities").mkdir()
+    (tmp_path / "entities" / "anthropic.md").write_text("# A", encoding="utf-8")
+    targets = list_existing_wiki_targets(tmp_path)
+    assert "entities/anthropic" in targets

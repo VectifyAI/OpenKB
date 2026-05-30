@@ -171,6 +171,9 @@ def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
         targets.update(f"concepts/{p.stem}" for p in concepts_dir.glob("*.md"))
     if summaries_dir.is_dir():
         targets.update(f"summaries/{p.stem}" for p in summaries_dir.glob("*.md"))
+    entities_dir = wiki_dir / "entities"
+    if entities_dir.is_dir():
+        targets.update(f"entities/{p.stem}" for p in entities_dir.glob("*.md"))
     if (wiki_dir / "index.md").exists():
         targets.add("index")
     return targets
