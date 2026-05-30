@@ -68,6 +68,16 @@ Return ONLY valid JSON, no fences.
 """
 
 
+# Canonical entity-type enum — the single source of truth shared by the
+# plan prompt, the entity-page prompts, and create/update validation. The
+# prompt templates carry an ``__ENTITY_TYPES__`` token that is substituted
+# with this list once at import time (see below), so adding a type here
+# updates every place at once.
+_ENTITY_TYPE_LIST = ("person", "organization", "place", "product", "work", "event", "other")
+_ENTITY_TYPES = frozenset(_ENTITY_TYPE_LIST)
+_ENTITY_TYPES_STR = ", ".join(_ENTITY_TYPE_LIST)
+
+
 _CONCEPTS_PLAN_USER = """\
 Based on the summary above, decide how to update the wiki's CONCEPT pages and
 ENTITY pages.
@@ -92,8 +102,7 @@ Return a JSON object with two top-level keys, "concepts" and "entities".
 3. "related" — existing concept slugs to cross-link only. Array of strings.
 
 "entities" is an object with the same three keys, but create/update objects
-add a "type" field, one of: person, organization, place, product, work,
-event, other. Example:
+add a "type" field, one of: __ENTITY_TYPES__. Example:
    {{"name": "anthropic", "title": "Anthropic", "type": "organization"}}
 
 Rules:
@@ -168,7 +177,7 @@ This entity relates to the document "{doc_name}" summarized above.
 
 Return a JSON object with three keys:
 - "brief": A single sentence (under 100 chars) identifying this entity
-- "type": one of person, organization, place, product, work, event, other
+- "type": one of __ENTITY_TYPES__
 - "content": The full entity page in Markdown — what this entity is, the key
   facts about it from this document, and [[wikilinks]] to related concepts,
   other [[entities/...]], and [[summaries/{doc_name}]] — subject to the
@@ -190,11 +199,17 @@ above for all [[wikilinks]].
 
 Return a JSON object with three keys:
 - "brief": A single sentence (under 100 chars) identifying this entity
-- "type": one of person, organization, place, product, work, event, other
+- "type": one of __ENTITY_TYPES__
 - "content": The rewritten full entity page in Markdown
 
 Return ONLY valid JSON, no fences.
 """
+
+# Substitute the canonical entity-type list into every prompt that advertises
+# it, so the prompt text can never drift from ``_ENTITY_TYPES`` validation.
+_CONCEPTS_PLAN_USER = _CONCEPTS_PLAN_USER.replace("__ENTITY_TYPES__", _ENTITY_TYPES_STR)
+_ENTITY_PAGE_USER = _ENTITY_PAGE_USER.replace("__ENTITY_TYPES__", _ENTITY_TYPES_STR)
+_ENTITY_UPDATE_USER = _ENTITY_UPDATE_USER.replace("__ENTITY_TYPES__", _ENTITY_TYPES_STR)
 
 _SUMMARY_REWRITE_USER = """\
 Task: Rewrite the summary you wrote above into a final version that is \
@@ -413,9 +428,6 @@ def _filter_related_slugs(items: list) -> list[str]:
             len(items) - len(valid), ", ".join(bad_types),
         )
     return valid
-
-
-_ENTITY_TYPES = {"person", "organization", "place", "product", "work", "event", "other"}
 
 
 def _filter_entity_items(items: object, label: str) -> list[dict]:
@@ -934,119 +946,117 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
     return text, False
 
 
-def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_file: str) -> None:
-    """Add a cross-reference link to an existing concept page (no LLM call)."""
-    concepts_dir = wiki_dir / "concepts"
-    path = concepts_dir / f"{concept_slug}.md"
+def _add_related_link(
+    wiki_dir: Path, slug: str, doc_name: str, source_file: str,
+    page_dir: str = "concepts",
+) -> bool:
+    """Add a cross-reference link to an existing page (no LLM call).
+
+    Works for any page directory (``concepts`` or ``entities``). Returns True
+    when the page exists (whether or not a link was added), so callers can
+    track which related slugs are real pages. The standalone ``See also:``
+    paragraph it writes is symmetric with ``remove_doc_from_pages``' cleanup.
+    """
+    path = wiki_dir / page_dir / f"{slug}.md"
     if not path.exists():
-        return
+        return False
 
     text = path.read_text(encoding="utf-8")
     link = f"[[summaries/{doc_name}]]"
     if link in text:
-        return
+        return True
 
     if source_file not in text:
         text = _prepend_source_to_frontmatter(text, source_file)
 
     text += f"\n\nSee also: {link}"
     path.write_text(text, encoding="utf-8")
+    return True
+
+
+def _backlink_summary_pages(
+    wiki_dir: Path, doc_name: str, slugs: list[str],
+    *, page_dir: str, section: str,
+) -> None:
+    """Append missing ``[[{page_dir}/slug]]`` wikilinks to the summary page.
+
+    Closes the bidirectional link the pages already hold toward the summary,
+    inserting them under ``section`` (created if absent). Shared by the
+    concept and entity summary-backlink wrappers below.
+    """
+    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
+    if not summary_path.exists():
+        return
+
+    text = summary_path.read_text(encoding="utf-8")
+    missing = [slug for slug in slugs if f"[[{page_dir}/{slug}]]" not in text]
+    if not missing:
+        return
+
+    lines = text.split("\n")
+    _ensure_h2_section(lines, section)
+    for slug in reversed(missing):
+        _insert_section_entry(lines, section, f"- [[{page_dir}/{slug}]]")
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _backlink_pages(
+    wiki_dir: Path, doc_name: str, slugs: list[str], *, page_dir: str,
+) -> None:
+    """Append the source summary wikilink to each page under '## Related
+    Documents'. Shared by the concept and entity page-backlink wrappers."""
+    link = f"[[summaries/{doc_name}]]"
+    pages_dir = wiki_dir / page_dir
+
+    for slug in slugs:
+        path = pages_dir / f"{slug}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if link in text:
+            continue
+        lines = text.split("\n")
+        _ensure_h2_section(lines, "## Related Documents")
+        _insert_section_entry(lines, "## Related Documents", f"- {link}")
+        path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
-    """Append missing concept wikilinks to the summary page (no LLM call).
-
-    After all concepts are generated, this ensures the summary page links
-    back to every related concept — closing the bidirectional link that
-    concept pages already have toward the summary.
-
-    If a ``## Related Concepts`` section already exists, new links are
-    appended into it rather than creating a duplicate section.
-    """
-    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
-    if not summary_path.exists():
-        return
-
-    text = summary_path.read_text(encoding="utf-8")
-    missing = [slug for slug in concept_slugs if f"[[concepts/{slug}]]" not in text]
-    if not missing:
-        return
-
-    lines = text.split("\n")
-    _ensure_h2_section(lines, "## Related Concepts")
-    for slug in reversed(missing):
-        _insert_section_entry(lines, "## Related Concepts", f"- [[concepts/{slug}]]")
-    summary_path.write_text("\n".join(lines), encoding="utf-8")
+    """Link the summary page back to every related concept (no LLM call)."""
+    _backlink_summary_pages(
+        wiki_dir, doc_name, concept_slugs,
+        page_dir="concepts", section="## Related Concepts",
+    )
 
 
 def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
-    """Append missing summary wikilink to each concept page (no LLM call).
-
-    Ensures every concept page links back to the source document's summary,
-    regardless of whether the LLM included the link in its output.
-
-    If a ``## Related Documents`` section already exists, the link is
-    appended into it rather than creating a duplicate section.
-    """
-    link = f"[[summaries/{doc_name}]]"
-    concepts_dir = wiki_dir / "concepts"
-
-    for slug in concept_slugs:
-        path = concepts_dir / f"{slug}.md"
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8")
-        if link in text:
-            continue
-        lines = text.split("\n")
-        _ensure_h2_section(lines, "## Related Documents")
-        _insert_section_entry(lines, "## Related Documents", f"- {link}")
-        path.write_text("\n".join(lines), encoding="utf-8")
+    """Link every related concept page back to the source summary (no LLM call)."""
+    _backlink_pages(wiki_dir, doc_name, concept_slugs, page_dir="concepts")
 
 
 def _backlink_summary_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
-    """Append missing entity wikilinks to the summary page under '## Entities'."""
-    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
-    if not summary_path.exists():
-        return
-    text = summary_path.read_text(encoding="utf-8")
-    missing = [s for s in entity_slugs if f"[[entities/{s}]]" not in text]
-    if not missing:
-        return
-    lines = text.split("\n")
-    _ensure_h2_section(lines, "## Entities")
-    for slug in reversed(missing):
-        _insert_section_entry(lines, "## Entities", f"- [[entities/{slug}]]")
-    summary_path.write_text("\n".join(lines), encoding="utf-8")
+    """Link the summary page back to every related entity under '## Entities'."""
+    _backlink_summary_pages(
+        wiki_dir, doc_name, entity_slugs,
+        page_dir="entities", section="## Entities",
+    )
 
 
 def _backlink_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
-    """Append the source summary wikilink to each entity page under
-    '## Related Documents' (mirrors _backlink_concepts)."""
-    link = f"[[summaries/{doc_name}]]"
-    entities_dir = wiki_dir / "entities"
-    for slug in entity_slugs:
-        path = entities_dir / f"{slug}.md"
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8")
-        if link in text:
-            continue
-        lines = text.split("\n")
-        _ensure_h2_section(lines, "## Related Documents")
-        _insert_section_entry(lines, "## Related Documents", f"- {link}")
-        path.write_text("\n".join(lines), encoding="utf-8")
+    """Link every related entity page back to the source summary (no LLM call)."""
+    _backlink_pages(wiki_dir, doc_name, entity_slugs, page_dir="entities")
 
 
-def remove_doc_from_concept_pages(
+def _remove_doc_from_pages(
     wiki_dir: Path,
     doc_name: str,
     *,
+    page_dir: str,
     keep_empty: bool = False,
 ) -> dict[str, list[str]]:
-    """Update or delete concept pages affected by removing a document.
+    """Update or delete pages in ``page_dir`` affected by removing a document.
 
-    For each ``concepts/*.md`` whose frontmatter ``sources:`` lists
+    For each ``{page_dir}/*.md`` whose frontmatter ``sources:`` lists
     ``summaries/{doc_name}``:
 
     - Remove that source from the frontmatter list.
@@ -1055,24 +1065,16 @@ def remove_doc_from_concept_pages(
     - Remove any standalone ``See also: [[summaries/{doc_name}]]`` lines
       (left by ``_add_related_link``).
     - If the ``sources:`` list becomes empty AND ``keep_empty`` is False,
-      delete the concept page entirely.
+      delete the page entirely.
 
-    Args:
-        wiki_dir: Path to the wiki root directory.
-        doc_name: The summary slug being removed (e.g.
-            ``"attention-is-all-you-need"``).
-        keep_empty: When True, retains concept pages whose only source
-            was the removed doc — leaves their frontmatter with an empty
-            ``sources: []`` list. Useful when the doc is being replaced
-            by a newer version that will repopulate the source on the
-            next ``openkb add``.
+    Shared by the concept and entity removal wrappers so the cleanup (in
+    particular the standalone ``See also:`` strip) can never drift between
+    the two page types.
 
-    Returns:
-        ``{"modified": [slugs...], "deleted": [slugs...]}`` — concept
-        slugs whose pages were edited vs. deleted.
+    Returns ``{"modified": [slugs...], "deleted": [slugs...]}``.
     """
-    concepts_dir = wiki_dir / "concepts"
-    if not concepts_dir.is_dir():
+    pages_dir = wiki_dir / page_dir
+    if not pages_dir.is_dir():
         return {"modified": [], "deleted": []}
 
     source_file = f"summaries/{doc_name}.md"
@@ -1082,7 +1084,7 @@ def remove_doc_from_concept_pages(
     modified: list[str] = []
     deleted: list[str] = []
 
-    for path in sorted(concepts_dir.glob("*.md")):
+    for path in sorted(pages_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8")
         # Cheap filter: skip pages that don't reference the doc at all.
         if source_file not in text and bare_source not in text:
@@ -1128,6 +1130,24 @@ def remove_doc_from_concept_pages(
     return {"modified": modified, "deleted": deleted}
 
 
+def remove_doc_from_concept_pages(
+    wiki_dir: Path,
+    doc_name: str,
+    *,
+    keep_empty: bool = False,
+) -> dict[str, list[str]]:
+    """Update or delete concept pages affected by removing a document.
+
+    ``keep_empty`` retains concept pages whose only source was the removed
+    doc (leaving ``sources: []``) — useful when the doc is being replaced by
+    a newer version that will repopulate the source on the next ``openkb
+    add``. Returns ``{"modified": [slugs...], "deleted": [slugs...]}``.
+    """
+    return _remove_doc_from_pages(
+        wiki_dir, doc_name, page_dir="concepts", keep_empty=keep_empty,
+    )
+
+
 def remove_doc_from_entity_pages(
     wiki_dir: Path,
     doc_name: str,
@@ -1136,41 +1156,12 @@ def remove_doc_from_entity_pages(
 ) -> dict[str, list[str]]:
     """Update or delete entity pages affected by removing a document.
 
-    Mirrors ``remove_doc_from_concept_pages`` for the entities/ directory:
-    strips ``summaries/{doc_name}`` from each entity's ``sources:`` and from
-    its ``## Related Documents`` section; deletes the page when its sources
-    list empties (unless ``keep_empty``). Returns
-    ``{"modified": [...], "deleted": [...]}``.
+    Mirrors ``remove_doc_from_concept_pages`` for the entities/ directory.
+    Returns ``{"modified": [...], "deleted": [...]}``.
     """
-    entities_dir = wiki_dir / "entities"
-    if not entities_dir.is_dir():
-        return {"modified": [], "deleted": []}
-
-    source_file = f"summaries/{doc_name}.md"
-    bare_source = f"summaries/{doc_name}"
-    link = f"[[{bare_source}]]"
-
-    modified: list[str] = []
-    deleted: list[str] = []
-
-    for path in sorted(entities_dir.glob("*.md")):
-        text = path.read_text(encoding="utf-8")
-        if source_file not in text and bare_source not in text:
-            continue
-        new_text, sources_empty = _remove_source_from_frontmatter(text, source_file)
-        if link in new_text:
-            lines = new_text.split("\n")
-            while _remove_section_entry(lines, "## Related Documents", link):
-                pass
-            new_text = "\n".join(lines)
-        if sources_empty and not keep_empty:
-            path.unlink()
-            deleted.append(path.stem)
-        elif new_text != text:
-            path.write_text(new_text, encoding="utf-8")
-            modified.append(path.stem)
-
-    return {"modified": modified, "deleted": deleted}
+    return _remove_doc_from_pages(
+        wiki_dir, doc_name, page_dir="entities", keep_empty=keep_empty,
+    )
 
 
 def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str],
@@ -1262,19 +1253,16 @@ def _update_index(
         _ensure_h2_section(lines, "## Entities")
     for name in entity_names:
         link = f"[[entities/{name}]]"
-        if name in entity_meta:
-            etype, brief = entity_meta[name]
-            entry = f"- {link} ({etype})"
-            if brief:
-                entry += f" — {brief}"
-            if _section_contains_link(lines, "## Entities", link):
-                _replace_section_entry(lines, "## Entities", link, entry)
-            else:
-                _insert_section_entry(lines, "## Entities", entry)
+        # Callers always populate entity_meta alongside entity_names; the
+        # default is a defensive fallback, never hit in practice.
+        etype, brief = entity_meta.get(name, ("other", ""))
+        entry = f"- {link} ({etype})"
+        if brief:
+            entry += f" — {brief}"
+        if _section_contains_link(lines, "## Entities", link):
+            _replace_section_entry(lines, "## Entities", link, entry)
         else:
-            if not _section_contains_link(lines, "## Entities", link):
-                entry = f"- {link} (other)"
-                _insert_section_entry(lines, "## Entities", entry)
+            _insert_section_entry(lines, "## Entities", entry)
 
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -1403,17 +1391,27 @@ async def _compile_concepts(
     entity_related = entities_plan["related"]
 
     # Distinguish "filters dropped everything" from "LLM emitted an empty plan".
+    # Count entity items too, so a plan that emitted only entities — all of
+    # which were dropped as malformed — still surfaces the warning.
+    def _raw_group_count(group: object) -> int:
+        if not isinstance(group, dict):
+            return 0
+        return sum(
+            len(group.get(k, [])) if isinstance(group.get(k), list) else 0
+            for k in ("create", "update", "related")
+        )
+
     if isinstance(parsed, list):
         original_total = len(parsed)
     else:
-        original_total = sum(
-            len(concepts_group.get(k, [])) if isinstance(concepts_group.get(k), list) else 0
-            for k in ("create", "update", "related")
-        )
-    post_filter_total = len(create_items) + len(update_items) + len(related_items)
+        original_total = _raw_group_count(concepts_group) + _raw_group_count(parsed.get("entities"))
+    post_filter_total = (
+        len(create_items) + len(update_items) + len(related_items)
+        + len(entity_create) + len(entity_update) + len(entity_related)
+    )
     if original_total > 0 and post_filter_total == 0:
         sys.stdout.write(
-            f"    [WARN] concepts plan for {doc_name} had {original_total} "
+            f"    [WARN] plan for {doc_name} had {original_total} "
             f"item(s), all dropped as malformed — see log (stderr).\n"
         )
         sys.stdout.flush()
@@ -1774,17 +1772,13 @@ async def _compile_concepts(
         _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
     # --- Step 3d: Process entity related items + backlinks (code only) ---
-    entity_related_slugs = []
-    for slug in [_sanitize_concept_name(s) for s in entity_related]:
-        epath = wiki_dir / "entities" / f"{slug}.md"
-        if epath.exists():
-            etext = epath.read_text(encoding="utf-8")
-            if f"[[summaries/{doc_name}]]" not in etext:
-                if source_file not in etext:
-                    etext = _prepend_source_to_frontmatter(etext, source_file)
-                etext += f"\n\nSee also: [[summaries/{doc_name}]]"
-                epath.write_text(etext, encoding="utf-8")
-            entity_related_slugs.append(slug)
+    # Reuse _add_related_link (page_dir="entities") so related-entity
+    # cross-refs are written in the same "See also:" form the concept path
+    # uses — and torn down symmetrically by _remove_doc_from_pages.
+    entity_related_slugs = [
+        slug for slug in (_sanitize_concept_name(s) for s in entity_related)
+        if _add_related_link(wiki_dir, slug, doc_name, source_file, page_dir="entities")
+    ]
 
     entity_backlink_slugs = entity_names + entity_related_slugs
     if entity_backlink_slugs:

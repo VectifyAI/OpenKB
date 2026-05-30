@@ -1544,6 +1544,24 @@ class TestRemoveEntityPages:
         assert "summaries/doc" not in shared
         assert "summaries/other" in shared
 
+    def test_strips_standalone_see_also_line(self, tmp_path):
+        # A related entity (linked via _add_related_link) carries a
+        # standalone "See also:" paragraph, not a "## Related Documents"
+        # section. Removing the doc must strip it so no dangling wikilink
+        # survives on an entity that has other sources.
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "shared.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md, summaries/other.md]\n---\n\n"
+            "# Shared\n\nSee also: [[summaries/doc]]",
+            encoding="utf-8")
+        result = remove_doc_from_entity_pages(tmp_path, "doc")
+        assert result == {"modified": ["shared"], "deleted": []}
+        shared = (ent / "shared.md").read_text(encoding="utf-8")
+        assert "summaries/doc" not in shared
+        assert "See also" not in shared
+        assert "summaries/other" in shared
+
 
 class TestCompileEntitiesEndToEnd:
     @pytest.mark.asyncio

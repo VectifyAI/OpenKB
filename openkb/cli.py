@@ -981,14 +981,18 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     # on every attempt.
     #
     # Scope: only the pages this remove actually touched (modified
-    # concept pages ∪ index.md). Previously this swept the whole wiki
-    # via ``fix_broken_links(wiki_dir)``, which silently stripped
+    # concept + entity pages ∪ index.md). Previously this swept the whole
+    # wiki via ``fix_broken_links(wiki_dir)``, which silently stripped
     # pre-existing dangling links in unrelated pages — see issue #58
     # (Bug 2). Users who want a wiki-wide sweep can still run
     # ``openkb lint --fix`` explicitly.
     lint_scope: list[Path] = [
         wiki_dir / "concepts" / f"{slug}.md"
         for slug in concept_result["modified"]
+    ]
+    lint_scope += [
+        wiki_dir / "entities" / f"{slug}.md"
+        for slug in entity_result["modified"]
     ]
     index_md = wiki_dir / "index.md"
     if index_md.exists():
