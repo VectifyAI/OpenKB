@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 
 
-from openkb.images import copy_relative_images, extract_base64_images
+from openkb.images import copy_relative_images, extract_base64_images, localize_images
 
 
 # ---------------------------------------------------------------------------
@@ -164,3 +164,33 @@ class TestCopyRelativeImages:
         assert "![b](sources/images/doc/b.jpg)" in result
         assert (images_dir / "a.png").exists()
         assert (images_dir / "b.jpg").exists()
+
+
+# ---------------------------------------------------------------------------
+# localize_images
+# ---------------------------------------------------------------------------
+
+
+def test_localize_images_writes_bytes_and_rewrites_bare_refs(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    md = "Before\n\n![fig](p1_img1.png)\n\nAfter"
+    out = localize_images(md, {"p1_img1.png": b"PNGDATA"}, "doc", images_dir)
+    assert "![fig](sources/images/doc/p1_img1.png)" in out
+    assert (images_dir / "p1_img1.png").read_bytes() == b"PNGDATA"
+
+
+def test_localize_images_handles_inline_base64(tmp_path):
+    import base64
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    payload = base64.b64encode(b"JPEGDATA").decode()
+    md = f"![x](data:image/jpeg;base64,{payload})"
+    out = localize_images(md, {}, "doc", images_dir)
+    assert "sources/images/doc/img_001.jpeg" in out
+    assert (images_dir / "img_001.jpeg").read_bytes() == b"JPEGDATA"
+
+
+def test_localize_images_leaves_unreferenced_bytes_on_disk(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images("no images here", {"orphan.png": b"X"}, "doc", images_dir)
+    assert out == "no images here"
+    assert (images_dir / "orphan.png").read_bytes() == b"X"

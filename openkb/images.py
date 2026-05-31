@@ -211,6 +211,35 @@ def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str
     return result
 
 
+def localize_images(
+    markdown: str,
+    images: dict[str, bytes],
+    doc_name: str,
+    images_dir: Path,
+) -> str:
+    """Persist parser-supplied images and normalize all image links.
+
+    1. Write every ``images`` entry (filename -> bytes) into ``images_dir``.
+    2. Rewrite bare-filename references ``![alt](filename)`` (filename present
+       in ``images``) to the canonical ``sources/images/{doc_name}/{filename}``.
+    3. Run :func:`extract_base64_images` to localize any inline base64 images.
+
+    Returns the normalized markdown.
+    """
+    images_dir.mkdir(parents=True, exist_ok=True)
+    result = markdown
+    for filename, data in images.items():
+        (images_dir / filename).write_bytes(data)
+        # Rewrite a bare ![alt](filename) reference to the canonical KB path.
+        result = re.sub(
+            r"(!\[[^\]]*\]\()" + re.escape(filename) + r"(\))",
+            r"\g<1>" + f"sources/images/{doc_name}/{filename}" + r"\g<2>",
+            result,
+        )
+    result = extract_base64_images(result, doc_name, images_dir)
+    return result
+
+
 def copy_relative_images(
     markdown: str, source_dir: Path, doc_name: str, images_dir: Path
 ) -> str:
