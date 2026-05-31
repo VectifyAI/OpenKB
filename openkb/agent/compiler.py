@@ -613,20 +613,26 @@ def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | Non
     return None
 
 
-def _ensure_h2_section(lines: list[str], heading: str) -> None:
+def _ensure_h2_section(lines: list[str], heading: str, *, quiet: bool = False) -> None:
     """Ensure an H2 section ``heading`` exists in ``lines``; append if missing.
 
     Recovers from hand-edited or drifted index.md files where the expected
     section was removed or renamed — without this, downstream inserts would
     silently no-op and entries would be dropped.
+
+    ``quiet=True`` suppresses the drift warning. Use it when adding a section
+    is the normal, expected operation (e.g. a backlink helper creating a
+    ``## Related Documents`` / ``## Entities`` section on a page for the first
+    time), as opposed to repairing a drifted index.
     """
     if _get_section_bounds(lines, heading) is not None:
         return
-    logger.warning(
-        "Wiki page is missing %r section; appending it. "
-        "Check whether the file was hand-edited away from the canonical layout.",
-        heading,
-    )
+    if not quiet:
+        logger.warning(
+            "Wiki page is missing %r section; appending it. "
+            "Check whether the file was hand-edited away from the canonical layout.",
+            heading,
+        )
     while lines and lines[-1] == "":
         lines.pop()
     if lines:
@@ -1028,7 +1034,7 @@ def _backlink_summary_pages(
         return
 
     lines = text.split("\n")
-    _ensure_h2_section(lines, section)
+    _ensure_h2_section(lines, section, quiet=True)
     for slug in reversed(missing):
         _insert_section_entry(lines, section, f"- [[{page_dir}/{slug}]]")
     summary_path.write_text("\n".join(lines), encoding="utf-8")
@@ -1050,7 +1056,7 @@ def _backlink_pages(
         if link in text:
             continue
         lines = text.split("\n")
-        _ensure_h2_section(lines, "## Related Documents")
+        _ensure_h2_section(lines, "## Related Documents", quiet=True)
         _insert_section_entry(lines, "## Related Documents", f"- {link}")
         path.write_text("\n".join(lines), encoding="utf-8")
 

@@ -1788,6 +1788,23 @@ def test_schema_declares_entities():
         assert t in AGENTS_MD
 
 
+def test_ensure_h2_section_quiet_suppresses_drift_warning(caplog):
+    """Backlink helpers create sections as a normal operation, so quiet=True
+    must not emit the 'hand-edited' drift warning; default still warns."""
+    import logging
+
+    from openkb.agent.compiler import _ensure_h2_section
+
+    with caplog.at_level(logging.WARNING, logger="openkb.agent.compiler"):
+        lines = ["# Doc", ""]
+        _ensure_h2_section(lines, "## Entities", quiet=True)
+        assert "## Entities" in lines
+        assert caplog.records == []
+
+        _ensure_h2_section(["# Doc", ""], "## Entities")  # default warns
+        assert any("missing" in r.getMessage() for r in caplog.records)
+
+
 def test_known_targets_prompt_has_entities_rule():
     """The whitelist message must tell the LLM the [[entities/X]] rule, since
     entity-page prompts instruct writing such links; otherwise entity links
