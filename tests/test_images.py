@@ -203,3 +203,22 @@ def test_localize_images_filename_with_regex_metachars(tmp_path):
     out = localize_images(md, {weird: b"DATA"}, "doc", images_dir)
     assert f"sources/images/doc/{weird}" in out
     assert (images_dir / weird).read_bytes() == b"DATA"
+
+
+def test_localize_images_strips_path_traversal_in_filename(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    md = "![bad](../../evil.png)"
+    out = localize_images(md, {"../../evil.png": b"DATA"}, "doc", images_dir)
+    # bytes written INSIDE images_dir under the basename only — no escape
+    assert (images_dir / "evil.png").read_bytes() == b"DATA"
+    assert not (tmp_path / "evil.png").exists()
+    assert not (images_dir.parent.parent / "evil.png").exists()
+    # the original ref is rewritten to the sanitized canonical path
+    assert "sources/images/doc/evil.png" in out
+
+
+def test_localize_images_absolute_filename_stays_inside(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images("![x](/etc/x.png)", {"/etc/x.png": b"D"}, "doc", images_dir)
+    assert (images_dir / "x.png").read_bytes() == b"D"
+    assert "sources/images/doc/x.png" in out

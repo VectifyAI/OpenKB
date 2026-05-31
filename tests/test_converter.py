@@ -164,3 +164,16 @@ class TestConvertDocumentParserSelection:
             LP.return_value.parse.return_value = ParseResult(markdown="# md")
             convert_document(src, kb_dir)
         LP.assert_called_once()  # fell back to LocalParser
+
+    def test_local_parser_skips_redundant_localize(self, kb_dir):
+        src = kb_dir / "raw" / "notes.md"
+        src.write_text("# md", encoding="utf-8")
+        local = MagicMock()
+        local.name = "local"
+        local.supports.return_value = True
+        local.parse.return_value = ParseResult(markdown="# md final")
+        with patch("openkb.converter.get_parser", return_value=local), \
+             patch("openkb.converter.localize_images") as li:
+            result = convert_document(src, kb_dir)
+        li.assert_not_called()                      # local path skips localize_images
+        assert result.source_path.read_text(encoding="utf-8") == "# md final"

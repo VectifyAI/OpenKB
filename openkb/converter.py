@@ -106,7 +106,11 @@ def convert_document(src: Path, kb_dir: Path, parser_override: str | None = None
         parser = LocalParser(doc_name=doc_name, images_dir=images_dir, source_dir=src.parent)
 
     parse_result = parser.parse(src)
-    markdown = localize_images(parse_result.markdown, parse_result.images, doc_name, images_dir)
+    if parser.name == "local":
+        # LocalParser already persisted images and produced canonical links.
+        markdown = parse_result.markdown
+    else:
+        markdown = localize_images(parse_result.markdown, parse_result.images, doc_name, images_dir)
 
     dest_md = sources_dir / f"{doc_name}.md"
     dest_md.write_text(markdown, encoding="utf-8")

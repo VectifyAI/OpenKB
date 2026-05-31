@@ -229,12 +229,13 @@ def localize_images(
     images_dir.mkdir(parents=True, exist_ok=True)
     result = markdown
     for filename, data in images.items():
-        (images_dir / filename).write_bytes(data)
-        # Rewrite a bare ![alt](filename) reference to the canonical KB path.
-        # Use a replacement *function* (not a replacement string) so a filename
-        # containing regex-escape sequences (e.g. "\g<1>") can't corrupt the
-        # substitution — localize_images handles arbitrary parser-supplied names.
-        canonical = f"sources/images/{doc_name}/{filename}"
+        # Strip any directory components from parser-supplied names so a
+        # malicious/odd filename (e.g. "../x.png", "/abs/x.png") can never
+        # write outside images_dir. The markdown still references the original
+        # `filename`, so rewrite that ref to the sanitized canonical path.
+        safe_name = Path(filename).name or "image"
+        (images_dir / safe_name).write_bytes(data)
+        canonical = f"sources/images/{doc_name}/{safe_name}"
         pattern = re.compile(r"(!\[[^\]]*\]\()" + re.escape(filename) + r"(\))")
         result = pattern.sub(lambda m, c=canonical: m.group(1) + c + m.group(2), result)
     result = extract_base64_images(result, doc_name, images_dir)
