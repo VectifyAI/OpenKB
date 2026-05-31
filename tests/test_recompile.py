@@ -224,15 +224,19 @@ def test_recompile_skips_long_missing_summary(kb_dir):
 
 def test_recompile_requires_doc_or_all(kb_dir):
     _seed_short(kb_dir)
-    result = _invoke(kb_dir, ["recompile"])
-    assert result.exit_code != 0 or "Specify" in result.output or "--all" in result.output
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+        result = _invoke(kb_dir, ["recompile"])
+    # Usage guard echoes a message and returns (exit 0); no compile runs.
+    assert "Specify a document name or pass --all" in result.output
+    short.assert_not_called()
 
 
 def test_recompile_doc_and_all_conflict(kb_dir):
     _seed_short(kb_dir)
-    result = _invoke(kb_dir, ["recompile", "notes.md", "--all"])
-    assert "both" in result.output.lower() or "either" in result.output.lower() \
-        or result.exit_code != 0
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+        result = _invoke(kb_dir, ["recompile", "notes.md", "--all"])
+    assert "not both" in result.output.lower()
+    short.assert_not_called()
 
 
 def test_recompile_unknown_doc_friendly_error(kb_dir):
@@ -293,4 +297,18 @@ def test_recompile_no_refresh_schema_by_default(kb_dir):
     assert result.exit_code == 0, result.output
     # Untouched without the flag
     assert agents.read_text(encoding="utf-8") == "OLD CUSTOM SCHEMA\n"
+    assert not (kb_dir / "wiki" / "AGENTS.md.bak").exists()
+
+
+def test_recompile_refresh_schema_noop_when_agents_missing(kb_dir):
+    """Spec: --refresh-schema is a no-op when AGENTS.md is absent (runtime
+    already falls back to the bundled default), so nothing is written."""
+    _seed_short(kb_dir)
+    agents = kb_dir / "wiki" / "AGENTS.md"
+    agents.unlink(missing_ok=True)
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+        result = _invoke(kb_dir, ["recompile", "notes.md", "--refresh-schema"])
+
+    assert result.exit_code == 0, result.output
+    assert not agents.exists()  # not materialized
     assert not (kb_dir / "wiki" / "AGENTS.md.bak").exists()

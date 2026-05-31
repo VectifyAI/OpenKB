@@ -1083,13 +1083,16 @@ def _refresh_schema(wiki_dir: Path) -> bool:
     file is missing or already identical. Returns True if it overwrote.
     """
     agents_file = wiki_dir / "AGENTS.md"
-    current = agents_file.read_text(encoding="utf-8") if agents_file.exists() else ""
+    if not agents_file.exists():
+        # No-op when missing: get_agents_md() already falls back to the
+        # bundled AGENTS_MD default at runtime, so there is nothing to refresh.
+        return False
+    current = agents_file.read_text(encoding="utf-8")
     if current == AGENTS_MD:
         return False
-    if agents_file.exists():
-        backup = wiki_dir / "AGENTS.md.bak"
-        backup.write_text(current, encoding="utf-8")
-        click.echo(f"  Backed up existing schema to {backup.relative_to(wiki_dir.parent)}")
+    backup = wiki_dir / "AGENTS.md.bak"
+    backup.write_text(current, encoding="utf-8")
+    click.echo(f"  Backed up existing schema to {backup.relative_to(wiki_dir.parent)}")
     agents_file.write_text(AGENTS_MD, encoding="utf-8")
     click.echo("  Refreshed wiki/AGENTS.md to the current schema.")
     return True
