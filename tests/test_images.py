@@ -194,3 +194,12 @@ def test_localize_images_leaves_unreferenced_bytes_on_disk(tmp_path):
     out = localize_images("no images here", {"orphan.png": b"X"}, "doc", images_dir)
     assert out == "no images here"
     assert (images_dir / "orphan.png").read_bytes() == b"X"
+
+
+def test_localize_images_filename_with_regex_metachars(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    weird = r"img\g<9>.png"  # backslash-escape-like name must not crash re.sub
+    md = f"![f]({weird})"
+    out = localize_images(md, {weird: b"DATA"}, "doc", images_dir)
+    assert f"sources/images/doc/{weird}" in out
+    assert (images_dir / weird).read_bytes() == b"DATA"
