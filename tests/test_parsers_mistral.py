@@ -67,3 +67,22 @@ def test_missing_package_raises_install_hint(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError) as exc:
         p.parse(src)
     assert "openkb[mistral]" in str(exc.value)
+
+
+def test_undecodable_image_logged_and_skipped(monkeypatch, tmp_path, caplog):
+    import logging as _logging
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-1")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    page = MagicMock()
+    page.markdown = "Text ![bad.png](bad.png)"
+    page.images = [MagicMock(id="bad.png", image_base64="!!!not-base64!!!")]
+    client.ocr.process.return_value = MagicMock(pages=[page])
+    _install_fake_mistralai(monkeypatch, client)
+    from openkb.parsers.mistral import MistralParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    with caplog.at_level(_logging.WARNING):
+        result = MistralParser({}).parse(src)
+    assert "bad.png" not in result.images
+    assert any("bad.png" in r.message for r in caplog.records)

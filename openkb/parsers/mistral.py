@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
 
 from openkb.parsers.base import ParseResult, Parser
+
+logger = logging.getLogger(__name__)
 
 _SUPPORTED = {".pdf"}
 _DATA_URI_RE = re.compile(r"^data:[^;]+;base64,", re.IGNORECASE)
@@ -59,5 +62,6 @@ class MistralParser(Parser):
                 try:
                     images[img.id] = base64.b64decode(raw, validate=True)
                 except Exception:
+                    logger.warning("Skipping undecodable Mistral image: %s", getattr(img, "id", "?"))
                     continue
         return ParseResult(markdown="\n\n".join(parts), images=images)
