@@ -6,7 +6,31 @@ from typing import Any
 from openkb.parsers.base import Parser
 from openkb.parsers.local import LocalParser
 
-VALID_PARSERS = ("local", "mineru", "mistral", "vlm")
+
+def _make_mistral(opts, config):
+    from openkb.parsers.mistral import MistralParser
+    return MistralParser(opts)
+
+
+def _make_vlm(opts, config):
+    from openkb.parsers.vlm import VLMParser
+    return VLMParser(opts, model=config.get("model"))
+
+
+def _make_mineru(opts, config):
+    from openkb.parsers.mineru import MineruParser
+    return MineruParser(opts)
+
+
+# Single source of truth: online-parser name -> lazy factory.
+_ONLINE_PARSERS = {
+    "mineru": _make_mineru,
+    "mistral": _make_mistral,
+    "vlm": _make_vlm,
+}
+
+# Valid parser names (drives the CLI --parser choice and error messages).
+VALID_PARSERS = ("local", *_ONLINE_PARSERS)
 
 
 def get_parser(
@@ -21,18 +45,10 @@ def get_parser(
     name = (override or config.get("parser") or "local").lower()
     if name == "local":
         return LocalParser(doc_name=doc_name, images_dir=images_dir, source_dir=source_dir)
-
-    parsers_cfg = config.get("parsers", {}) or {}
-    opts = parsers_cfg.get(name, {}) or {}
-    if name == "mistral":
-        from openkb.parsers.mistral import MistralParser
-        return MistralParser(opts)
-    if name == "vlm":
-        from openkb.parsers.vlm import VLMParser
-        return VLMParser(opts, model=config.get("model"))
-    if name == "mineru":
-        from openkb.parsers.mineru import MineruParser
-        return MineruParser(opts)
-    raise ValueError(
-        f"Unknown parser {name!r}. Valid options: {', '.join(VALID_PARSERS)}."
-    )
+    factory = _ONLINE_PARSERS.get(name)
+    if factory is None:
+        raise ValueError(
+            f"Unknown parser {name!r}. Valid options: {', '.join(VALID_PARSERS)}."
+        )
+    opts = (config.get("parsers", {}) or {}).get(name, {}) or {}
+    return factory(opts, config)

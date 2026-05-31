@@ -31,3 +31,10 @@ def test_unknown_name_raises_with_valid_options():
         get_parser({"parser": "nope"}, **_kwargs())
     assert "nope" in str(exc.value)
     assert "local" in str(exc.value)
+
+
+def test_valid_parsers_matches_dispatch():
+    from openkb.parsers.registry import VALID_PARSERS, _ONLINE_PARSERS
+    # local + every online factory key, no drift
+    assert set(VALID_PARSERS) == {"local", *_ONLINE_PARSERS}
+    assert VALID_PARSERS[0] == "local"

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from openkb.parsers.base import ParseResult, Parser
 from openkb.parsers.vlm_client import transcribe_to_markdown
+
+logger = logging.getLogger(__name__)
 
 _SUPPORTED = {".pdf"}
 
@@ -18,6 +21,13 @@ class VLMParser(Parser):
         opts = opts or {}
         # parsers.vlm.model overrides the global model; else use the global model.
         self.model = opts.get("model") or model
+        if not opts.get("model"):
+            logger.warning(
+                "VLM parser: 'parsers.vlm.model' is not set; using the global model "
+                "%r for vision parsing. If that model is not vision-capable, set "
+                "'parsers.vlm.model' to one (e.g. gemini/gemini-2.5-pro).",
+                self.model,
+            )
 
     def supports(self, suffix: str) -> bool:
         return suffix.lower() in _SUPPORTED

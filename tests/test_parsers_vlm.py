@@ -31,3 +31,17 @@ def test_parse_falls_back_to_global_model(tmp_path):
     with patch("openkb.parsers.vlm.transcribe_to_markdown", return_value="x") as t:
         p.parse(src)
     t.assert_called_once_with(src, model="global-model")
+
+
+def test_warns_when_falling_back_to_global_model(caplog):
+    import logging as _logging
+    with caplog.at_level(_logging.WARNING):
+        VLMParser({}, model="gpt-5.4-mini")
+    assert any("parsers.vlm.model" in r.message for r in caplog.records)
+
+
+def test_no_warning_when_vlm_model_set(caplog):
+    import logging as _logging
+    with caplog.at_level(_logging.WARNING):
+        VLMParser({"model": "gemini/gemini-2.5-pro"}, model="gpt-5.4-mini")
+    assert not any("parsers.vlm.model" in r.message for r in caplog.records)
