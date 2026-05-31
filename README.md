@@ -155,6 +155,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | `openkb init` | Initialize a new knowledge base (interactive) |
 | <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add documents and compile to wiki. URL ingest auto-detects PDF (saved as `.pdf` → PageIndex / markitdown) vs HTML (trafilatura main-content extract → `.md`) |
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty-concepts` to retain artifacts) |
+| <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the current compile pipeline on already-indexed docs (e.g. to backfill the `entities/` layer) without re-indexing. Regenerates summaries and rewrites concept pages — manual edits are overwritten. Use `--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md` |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
