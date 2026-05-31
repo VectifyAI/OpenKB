@@ -838,32 +838,37 @@ def _write_entity(
         if end != -1:
             clean = clean[end + 3:].lstrip("\n")
 
+    def _build_frontmatter(sources: list[str]) -> str:
+        fm_lines = [_yaml_list_line("sources", sources)]
+        fm_lines.append(_yaml_kv_line("type", type_ or "other"))
+        if brief:
+            fm_lines.append(_yaml_kv_line("brief", brief))
+        if aliases:
+            fm_lines.append(_yaml_list_line("aliases", aliases))
+        return "---\n" + "\n".join(fm_lines) + "\n---\n\n"
+
     if is_update and path.exists():
         existing = path.read_text(encoding="utf-8")
         if source_file not in existing:
             existing = _prepend_source_to_frontmatter(existing, source_file)
-        if existing.startswith("---"):
-            end = existing.find("---", 3)
-            if end != -1:
-                fm = existing[:end + 3]
-                fm = _set_fm_line(fm, "brief", brief) if brief else fm
-                fm = _set_fm_line(fm, "type", type_) if type_ else fm
-                existing = fm + "\n\n" + clean
-            else:
-                existing = clean
+        end = existing.find("---", 3) if existing.startswith("---") else -1
+        if end != -1:
+            fm = existing[:end + 3]
+            fm = _set_fm_line(fm, "brief", brief) if brief else fm
+            fm = _set_fm_line(fm, "type", type_) if type_ else fm
+            existing = fm + "\n\n" + clean
         else:
-            existing = clean
+            # Malformed/absent frontmatter (opening ``---`` with no closing
+            # delimiter, or no frontmatter at all): rebuild valid frontmatter
+            # rather than writing a body-only page and dropping sources/type/
+            # brief. ``_prepend_source_to_frontmatter`` already ensured the
+            # new source is present in the (still-malformed) block, so seed
+            # with it here.
+            existing = _build_frontmatter([source_file]) + clean
         path.write_text(existing, encoding="utf-8")
         return
 
-    fm_lines = [_yaml_list_line("sources", [source_file])]
-    fm_lines.append(_yaml_kv_line("type", type_ or "other"))
-    if brief:
-        fm_lines.append(_yaml_kv_line("brief", brief))
-    if aliases:
-        fm_lines.append(_yaml_list_line("aliases", aliases))
-    frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
-    path.write_text(frontmatter + clean, encoding="utf-8")
+    path.write_text(_build_frontmatter([source_file]) + clean, encoding="utf-8")
 
 
 def _set_fm_line(fm: str, key: str, value: str) -> str:
@@ -1364,6 +1369,21 @@ async def _compile_concepts(
     # The new plan contract nests concepts under a "concepts" key alongside
     # an "entities" key; the legacy flat shape (create/update/related at top
     # level) is still honored by falling back to ``parsed`` itself.
+    if not isinstance(parsed, (list, dict)):
+        # A JSON scalar (int/str/None/bool) is valid JSON but not a usable
+        # plan. ``_parse_json`` normally rejects scalars, but guard here too
+        # so ``parsed.get(...)`` can never raise AttributeError and abort the
+        # compile — treat it as an empty/unparseable plan.
+        logger.warning(
+            "Concepts plan parsed to a %s scalar, not an object/array — "
+            "treating as empty plan for %s.",
+            type(parsed).__name__, doc_name,
+        )
+        if rewrite_summary:
+            _write_v1_summary_stripped()
+        _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
+        return
+
     if isinstance(parsed, list):
         plan = {"create": _filter_concept_items(parsed, "list"),
                 "update": [], "related": []}
