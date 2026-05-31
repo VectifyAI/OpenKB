@@ -1479,10 +1479,13 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            # ``or raw``: ``.get("content", raw)`` returns None for
-            # ``{"content": null}`` (legal under json_object mode).
-            content = parsed.get("content") or raw
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            # An empty/None ``content`` field yields "" so
+            # ``_require_nonempty_content`` raises and the page is skipped,
+            # rather than writing the raw JSON as the markdown body.
+            content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
             brief, content = "", raw
         _require_nonempty_content(content, name)
         return name, content, False, brief
@@ -1514,8 +1517,10 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            content = parsed.get("content") or raw
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
             brief, content = "", raw
         _require_nonempty_content(content, name)
         return name, content, True, brief
@@ -1538,8 +1543,10 @@ async def _compile_concepts(
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
             etype_out = parsed.get("type") if parsed.get("type") in _ENTITY_TYPES else etype
-            content = parsed.get("content") or raw
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
             brief, etype_out, content = "", etype, raw
         _require_nonempty_content(content, name)
         return name, content, brief, etype_out
@@ -1573,8 +1580,10 @@ async def _compile_concepts(
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
             etype_out = parsed.get("type") if parsed.get("type") in _ENTITY_TYPES else etype
-            content = parsed.get("content") or raw
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
             brief, etype_out, content = "", etype, raw
         _require_nonempty_content(content, name)
         return name, content, brief, etype_out
