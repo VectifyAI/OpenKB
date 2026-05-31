@@ -266,6 +266,7 @@ Settings are initialized by `openkb init`, and stored in `.openkb/config.yaml`:
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+parser: local                    # Document parser: local | mineru | mistral | vlm
 ```
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
@@ -275,6 +276,46 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | OpenAI | `gpt-5.4` |
 | Anthropic | `anthropic/claude-sonnet-4-6` |
 | Gemini | `gemini/gemini-3.1-pro-preview` |
+
+### Document parsers
+
+By default OpenKB extracts Markdown locally (pymupdf for PDFs, markitdown for
+Office/HTML) — no extra dependencies, unchanged behavior. For higher accuracy on
+complex documents you can route the file → Markdown step through an online or
+self-hosted parser:
+
+```yaml
+# .openkb/config.yaml
+parser: mineru          # local (default) | mineru | mistral | vlm
+parsers:
+  mineru:
+    mode: cloud         # cloud | self_hosted
+    base_url: http://localhost:8000   # required when mode is self_hosted
+  vlm:
+    model: gemini/gemini-2.5-pro      # any LiteLLM vision model (Gemini, GPT-4o, Claude, …)
+```
+
+Install the optional dependency for your parser:
+
+```bash
+pip install openkb[mistral]   # Mistral OCR
+pip install openkb[mineru]    # MinerU (HTTP)
+pip install openkb[parsers]   # all online parsers
+# vlm uses the existing LiteLLM dependency — no extra needed
+```
+
+Set the API key via environment variable: `MINERU_API_KEY` (MinerU cloud mode),
+`MISTRAL_API_KEY`; the `vlm` parser reuses the existing `LLM_API_KEY`. Override
+the parser for a single run with `openkb add --parser mistral file.pdf`
+(`local | mineru | mistral | vlm`).
+
+Each parser handles a subset of formats — `mineru` covers PDF, Word, PPT, Excel,
+and HTML; `mistral` and `vlm` cover PDF. `.md` and any unsupported format always
+fall back to the local parser.
+
+> **Note:** Long PDFs (≥ `pageindex_threshold` pages, default 20) continue to be
+> indexed with PageIndex and are **not** affected by the `parser` setting. The
+> parser governs the file → Markdown step for shorter documents and non-PDF files.
 
 ### PageIndex Integration
 
