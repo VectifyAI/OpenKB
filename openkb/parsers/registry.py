@@ -6,7 +6,7 @@ from typing import Any
 from openkb.parsers.base import Parser
 from openkb.parsers.local import LocalParser
 
-_VALID = ("local", "mineru", "mistral", "vlm")
+VALID_PARSERS = ("local", "mineru", "mistral", "vlm")
 
 
 def get_parser(
@@ -34,5 +34,5 @@ def get_parser(
         from openkb.parsers.mineru import MineruParser
         return MineruParser(opts)
     raise ValueError(
-        f"Unknown parser {name!r}. Valid options: {', '.join(_VALID)}."
+        f"Unknown parser {name!r}. Valid options: {', '.join(VALID_PARSERS)}."
     )

@@ -43,6 +43,7 @@ from dotenv import load_dotenv
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import convert_document
 from openkb.log import append_log
+from openkb.parsers.registry import VALID_PARSERS
 from openkb.schema import AGENTS_MD
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
@@ -576,7 +577,8 @@ def init(model, language):
 @cli.command()
 @click.argument("path")
 @click.option("--parser", "parser_override", default=None,
-              help="Override the configured parser for this run (local|mineru|mistral|vlm).")
+              type=click.Choice(VALID_PARSERS),
+              help="Override the configured parser for this run.")
 @click.pass_context
 def add(ctx, path, parser_override):
     """Add a document or directory of documents at PATH to the knowledge base.

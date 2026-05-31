@@ -164,3 +164,12 @@ def test_add_single_file_threads_parser_override(tmp_path):
     # parser_override must reach convert_document
     assert cd.call_args.kwargs.get("parser_override") == "mistral" \
         or (len(cd.call_args.args) >= 3 and cd.call_args.args[2] == "mistral")
+
+
+def test_add_parser_option_rejects_invalid_choice(tmp_path):
+    from click.testing import CliRunner
+    from openkb.cli import cli
+    runner = CliRunner()
+    result = runner.invoke(cli, ["add", "--parser", "bogus", str(tmp_path / "x.pdf")])
+    assert result.exit_code != 0
+    assert "bogus" in result.output or "Invalid value" in result.output
