@@ -21,9 +21,14 @@ def transcribe_to_markdown(src: Path, model: str | None = None, prompt: str | No
     mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
     b64 = base64.b64encode(src.read_bytes()).decode()
     data_uri = f"data:{mime};base64,{b64}"
+    if mime == "application/pdf":
+        # litellm's document/file content part (image_url is only for raster images).
+        media_part = {"type": "file", "file": {"file_data": data_uri}}
+    else:
+        media_part = {"type": "image_url", "image_url": {"url": data_uri}}
     content = [
         {"type": "text", "text": prompt or _PROMPT},
-        {"type": "image_url", "image_url": {"url": data_uri}},
+        media_part,
     ]
     resp = litellm.completion(model=model, messages=[{"role": "user", "content": content}])
     return resp.choices[0].message.content or ""
