@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# The compiled page-type subdirectories under wiki/. Shared source of truth
+# for surfaces that enumerate page content (list, lint, status, skill gate).
+PAGE_CONTENT_DIRS = ("summaries", "concepts", "entities")
+
+# Canonical empty index.md seed. Used by `openkb init` and the compiler's
+# lazy-create path so they never drift.
+INDEX_SEED = "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n"
+
 AGENTS_MD = """\
 # Wiki Schema
 
@@ -26,9 +34,10 @@ AGENTS_MD = """\
 - **Index Page** (index.md): One-liner summary of every page in the wiki. Auto-maintained.
 
 ## Index Page Format
-index.md lists all documents, concepts, and explorations with metadata:
+index.md lists all documents, concepts, entities, and explorations with metadata:
 - Documents: name, one-liner description, type (short|pageindex), detail access path
 - Concepts: name, one-liner description
+- Entities: name, type, one-liner description
 - Explorations: name, one-liner description
 
 ## Log Format

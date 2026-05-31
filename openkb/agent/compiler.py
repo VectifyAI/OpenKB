@@ -30,7 +30,7 @@ import litellm
 import yaml
 
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
-from openkb.schema import get_agents_md
+from openkb.schema import INDEX_SEED, get_agents_md
 
 logger = logging.getLogger(__name__)
 
@@ -1219,11 +1219,7 @@ def _update_index(
 
     index_path = wiki_dir / "index.md"
     if not index_path.exists():
-        index_path.write_text(
-            "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n"
-            "## Entities\n\n## Explorations\n",
-            encoding="utf-8",
-        )
+        index_path.write_text(INDEX_SEED, encoding="utf-8")
 
     lines = index_path.read_text(encoding="utf-8").split("\n")
 

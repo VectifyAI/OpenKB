@@ -185,6 +185,22 @@ class TestCheckIndexSync:
 
         assert any("unlisted" in issue for issue in result)
 
+    def test_entity_page_not_in_index(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "entities").mkdir()
+        (wiki / "entities" / "ada-lovelace.md").write_text("# Ada Lovelace")
+        # index.md has no mention of the entity
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Entities\n"
+        )
+
+        result = check_index_sync(wiki)
+
+        assert any(
+            "entities/ada-lovelace.md not mentioned in index.md" in issue
+            for issue in result
+        )
+
     def test_missing_index_md(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml
 
+from openkb.schema import PAGE_CONTENT_DIRS
+
 # Matches [[wikilink]] or [[subdir/link]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
@@ -368,7 +370,7 @@ def check_index_sync(wiki: Path) -> list[str]:
 
     Returns issues for:
     - Links in index.md pointing to non-existent pages
-    - Pages in summaries/ or concepts/ not mentioned in index.md
+    - Pages in summaries/, concepts/, or entities/ not mentioned in index.md
 
     Args:
         wiki: Path to the wiki root directory.
@@ -392,11 +394,11 @@ def check_index_sync(wiki: Path) -> list[str]:
         if lnk_norm not in pages:
             issues.append(f"index.md links to missing page: [[{lnk}]]")
 
-    # Check that summaries and concepts pages are mentioned in index
+    # Check that summaries, concepts, and entities pages are mentioned in index
     index_stems = {Path(lnk.strip()).stem for lnk in index_links}
     index_text_lower = index_text.lower()
 
-    for subdir in ("summaries", "concepts"):
+    for subdir in PAGE_CONTENT_DIRS:
         subdir_path = wiki / subdir
         if not subdir_path.exists():
             continue

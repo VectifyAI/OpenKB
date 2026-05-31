@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import convert_document
 from openkb.log import append_log
-from openkb.schema import AGENTS_MD
+from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
 import warnings
@@ -217,7 +217,7 @@ def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
     Checks (in order):
       * skill name is a valid kebab-case slug
       * ``<kb>/wiki`` exists
-      * ``<kb>/wiki/concepts`` or ``<kb>/wiki/summaries`` has at least
+      * any of ``<kb>/wiki/{summaries,concepts,entities}`` has at least
         one file (i.e. some document has been ingested + compiled)
 
     Returns ``None`` if all gates pass, else a single-line error message
@@ -239,7 +239,7 @@ def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
 
     has_content = any(
         (wiki / sub).is_dir() and any((wiki / sub).iterdir())
-        for sub in ("concepts", "summaries")
+        for sub in PAGE_CONTENT_DIRS
     )
     if not has_content:
         return (
@@ -542,10 +542,7 @@ def init(model, language):
 
     # Write wiki files
     Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
-    Path("wiki/index.md").write_text(
-        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n",
-        encoding="utf-8",
-    )
+    Path("wiki/index.md").write_text(INDEX_SEED, encoding="utf-8")
     Path("wiki/log.md").write_text("# Operations Log\n\n", encoding="utf-8")
 
     # Create .openkb/ state directory
@@ -1288,6 +1285,15 @@ def print_list(kb_dir: Path) -> None:
             for c in concepts:
                 click.echo(f"  - {c}")
 
+    # Display entities
+    entities_dir = kb_dir / "wiki" / "entities"
+    if entities_dir.exists():
+        entities = sorted(p.stem for p in entities_dir.glob("*.md"))
+        if entities:
+            click.echo(f"\nEntities ({len(entities)}):")
+            for e in entities:
+                click.echo(f"  - {e}")
+
     # Display reports
     reports_dir = kb_dir / "wiki" / "reports"
     if reports_dir.exists():
@@ -1343,15 +1349,19 @@ def print_status(kb_dir: Path) -> None:
         hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
         click.echo(f"\n  Total indexed: {len(hashes)} document(s)")
 
-    # Last compile time: newest file in wiki/summaries/
-    summaries_dir = wiki_dir / "summaries"
-    if summaries_dir.exists():
-        summaries = list(summaries_dir.glob("*.md"))
-        if summaries:
-            newest_summary = max(summaries, key=lambda p: p.stat().st_mtime)
-            import datetime
-            mtime = datetime.datetime.fromtimestamp(newest_summary.stat().st_mtime)
-            click.echo(f"  Last compile:  {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+    # Last compile time: newest compiled page across summaries/, concepts/,
+    # and entities/ (an entity-only compile must still bump the shown time).
+    compiled_pages = [
+        p
+        for sub in PAGE_CONTENT_DIRS
+        for p in (wiki_dir / sub).glob("*.md")
+        if (wiki_dir / sub).exists()
+    ]
+    if compiled_pages:
+        newest_page = max(compiled_pages, key=lambda p: p.stat().st_mtime)
+        import datetime
+        mtime = datetime.datetime.fromtimestamp(newest_page.stat().st_mtime)
+        click.echo(f"  Last compile:  {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Last lint time: newest file in wiki/reports/
     reports_dir = wiki_dir / "reports"
