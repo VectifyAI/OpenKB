@@ -14,12 +14,17 @@ description: |
 
 The user has compiled their documents into a Markdown wiki at `wiki/`.
 
-The wiki holds three kinds of pages:
+The wiki holds these kinds of pages:
 
 - **Concept pages** at `wiki/concepts/*.md` — cross-document synthesis
   on specific topics. This is where OpenKB's value compounds: a
   concept with multiple sources represents knowledge merged across
   documents the user has ingested.
+- **Entity pages** at `wiki/entities/*.md` — one per specific named
+  thing (people, organizations, places, products, named works,
+  events), accumulated across documents. Each has a `type:`
+  frontmatter field. For "who is X" / "what is X" questions about a
+  named thing, read the matching `entities/` page first.
 - **Summary pages** at `wiki/summaries/*.md` — one per ingested
   document, linking to the concepts that document touches.
 - **Source files** at `wiki/sources/*.{md,json}` — full text for short
@@ -76,8 +81,9 @@ After capturing the KB path from `openkb status`, drill in via:
 
 - `openkb list` — table of ingested documents (name, type, page count)
   plus the concept list.
-- Read `<kb>/wiki/index.md` — the compiled table of contents. Every
-  document and concept has a one-line `brief`. Scan this and pick the
+- Read `<kb>/wiki/index.md` — the compiled table of contents. It has
+  `## Documents`, `## Concepts`, `## Entities`, and `## Explorations`
+  sections; every entry has a one-line `brief`. Scan this and pick the
   slugs that semantically match the user's question.
 
 ## Read content
@@ -90,6 +96,7 @@ calls these `Read` / `Grep` / `Bash`; Gemini CLI uses `read_file` /
 | Goal | Action |
 |---|---|
 | Read a concept page | read the file at `<kb>/wiki/concepts/<slug>.md` |
+| Answer "who/what is X" about a named thing | read `<kb>/wiki/entities/<slug>.md` |
 | Read a document's summary | read `<kb>/wiki/summaries/<doc>.md` |
 | Read a short doc's full text | read `<kb>/wiki/sources/<doc>.md` |
 | Read a long doc's specific page | shell: `jq '.[N-1]' <kb>/wiki/sources/<doc>.json` (N = 1-indexed PDF page; `.[0]` is page 1) |
