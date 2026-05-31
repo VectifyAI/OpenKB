@@ -361,6 +361,27 @@ class TestUpdateIndex:
         assert "[[concepts/attention]] — Focus" in text
         assert "[[summaries/my-doc]]" in text
 
+    def test_entities_inserted_before_explorations(self, tmp_path):
+        """#8: an old index.md predating ## Entities must get it inserted
+        before ## Explorations, not appended after it (canonical order)."""
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Old order: no ## Entities section yet.
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(
+            wiki, "my-doc", [],
+            entity_names=["anthropic"],
+            entity_meta={"anthropic": ("organization", "AI lab.")},
+        )
+        text = (wiki / "index.md").read_text()
+        assert "## Entities" in text
+        # Canonical order: Entities before Explorations.
+        assert text.index("## Entities") < text.index("## Explorations")
+        assert "[[entities/anthropic]] (organization) — AI lab." in text
+
 
 class TestReadWikiContext:
     def test_empty_wiki(self, tmp_path):
@@ -560,6 +581,31 @@ class TestWriteEntity:
         assert "v2 richer." in text
         assert "v1." not in text
         assert "brief:" in text and "b2" in text
+
+    def test_update_rebuilds_frontmatter_when_no_closing_delim(self, tmp_path):
+        """#11: malformed existing file (opening --- but no closing ---) must
+        not drop frontmatter; rebuild valid sources/type/brief on update."""
+        entities = tmp_path / "entities"
+        entities.mkdir(parents=True)
+        # Opening delimiter, NO closing delimiter — find("---", 3) == -1.
+        (entities / "anthropic.md").write_text(
+            "---\nsources: [\"summaries/a.md\"]\ntype: organization\n"
+            "# Anthropic (no closing fence)\n\nOld body.",
+            encoding="utf-8",
+        )
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nv2 rewritten.",
+            "summaries/b.md", is_update=True,
+            brief="AI lab.", type_="organization", aliases=None,
+        )
+        text = (entities / "anthropic.md").read_text(encoding="utf-8")
+        # Frontmatter rebuilt with a proper closing delimiter, not body-only.
+        assert text.startswith("---\n")
+        assert text.count("---") == 2
+        assert "sources:" in text and "summaries/b.md" in text
+        assert "type:" in text and "organization" in text
+        assert "brief:" in text and "AI lab." in text
+        assert "v2 rewritten." in text
 
 
 class TestBacklinkSummary:
@@ -1051,6 +1097,33 @@ class TestCompileShortDocFallbacks:
         assert "[[concepts/imaginary]]" not in text
         assert "imaginary" in text  # plain text preserved
 
+    @pytest.mark.asyncio
+    async def test_scalar_plan_handled_gracefully(self, tmp_path):
+        """#10: a JSON scalar plan (valid JSON, not object/array) must not
+        crash with AttributeError; it takes the graceful empty-plan path —
+        v1 summary written, index updated, no concept/entity pages."""
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        summary_response = json.dumps({
+            "brief": "B", "content": "# Summary\n\nPlain body, no links.",
+        })
+        # Plan call returns a bare JSON scalar (an integer).
+        scalar_plan_response = "42"
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, scalar_plan_response])
+            )
+            # Must not raise (AttributeError) and must complete.
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+
+        # Summary still written, index updated with the document.
+        assert (wiki / "summaries" / "doc.md").exists()
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/doc]]" in index_text
+        # No concept pages produced from the unusable plan.
+        assert not list((wiki / "concepts").glob("*.md"))
+
 
 class TestCacheControl:
     """Verify cache_control breakpoints are emitted on the right messages
@@ -1345,6 +1418,47 @@ class TestCompileConceptsPlan:
         index_text = (wiki / "index.md").read_text()
         assert "[[concepts/flash-attention]]" in index_text
         assert "[[concepts/attention]]" in index_text
+
+    @pytest.mark.asyncio
+    async def test_empty_content_skips_page_no_json_body(self, tmp_path):
+        """#9: when the page LLM returns parseable JSON with empty content
+        ({"content": ""}), the page is skipped (not written as raw JSON)."""
+        wiki = self._setup_wiki(tmp_path)
+
+        plan_response = json.dumps({
+            "create": [{"name": "ghost-concept", "title": "Ghost Concept"}],
+            "update": [],
+            "related": [],
+        })
+        # Parseable JSON, but empty content — old code fell back to raw JSON.
+        empty_content_response = json.dumps({"brief": "B", "content": ""})
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document content."}
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_completion([empty_content_response])
+            )
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                "Summary.", "test-doc", 5,
+            )
+
+        # The concept page must NOT be written (generation raised + dropped).
+        page = wiki / "concepts" / "ghost-concept.md"
+        assert not page.exists()
+        # And no concept index entry either.
+        index_text = (wiki / "index.md").read_text()
+        assert "[[concepts/ghost-concept]]" not in index_text
+        # Definitely no raw JSON written anywhere as a body.
+        assert not any(
+            '"content":' in p.read_text()
+            for p in (wiki / "concepts").glob("*.md")
+        )
 
     @pytest.mark.asyncio
     async def test_related_adds_link_no_llm(self, tmp_path):
