@@ -1773,6 +1773,49 @@ class TestCompileEntitiesEndToEnd:
         assert "(organization)" in index, "index entry was downgraded from (organization) to (other)"
         assert "AI safety lab" in index, "index brief was stripped from the entry"
 
+    @pytest.mark.asyncio
+    async def test_related_to_nonexistent_concept_does_not_create_dangling_links(self, tmp_path, monkeypatch):
+        """A plan 'related' slug whose page does NOT exist must be dropped, not
+        whitelisted+back-linked — otherwise every page gets a dangling
+        [[concepts/<ghost>]] link to a page that is never created."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        def fake_llm(model, messages, label, **kw):
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [{"name": "real-concept", "title": "Real"}],
+                                 "update": [], "related": ["ghost-concept"]},
+                    "entities": {"create": [], "update": [], "related": []},
+                })
+            if label == "summary-rewrite":
+                return "# Doc\n\nSee [[concepts/real-concept]] and [[concepts/ghost-concept]].\n"
+            # concept generation body references the non-existent ghost concept
+            return json.dumps({"brief": "b", "content": "# Real\n\nLinks [[concepts/ghost-concept]].\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        await _compile_concepts(wiki, tmp_path, "m", {"role": "system", "content": "x"},
+                                {"role": "user", "content": "x"}, "summary text", "doc",
+                                max_concurrency=2, doc_type="short", rewrite_summary=True)
+
+        # ghost-concept never existed and was only "related" → never created
+        assert not (wiki / "concepts" / "ghost-concept.md").exists()
+        # ...and no page should link to it (stripped as a ghost, since not whitelisted)
+        real = (wiki / "concepts" / "real-concept.md").read_text(encoding="utf-8")
+        assert "[[concepts/ghost-concept]]" not in real
+        summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert "[[concepts/ghost-concept]]" not in summary
+        # the genuinely-created concept must still be linked
+        assert "[[concepts/real-concept]]" in summary
+
 
 # ---------------------------------------------------------------------------
 # Task 9: schema declares entities

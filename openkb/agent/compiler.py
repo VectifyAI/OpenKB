@@ -1444,6 +1444,22 @@ async def _compile_concepts(
     entity_update = entities_plan["update"]
     entity_related = entities_plan["related"]
 
+    # "related" must reference pages that ALREADY exist on disk (the plan
+    # prompt asks for existing slugs). The LLM sometimes lists non-existent
+    # slugs here; keeping them would whitelist [[concepts/...]] /
+    # [[entities/...]] links as valid AND back-link them into the summary, yet
+    # no page is ever created (related items are linked, never generated) —
+    # producing a flood of dangling wikilinks. Drop the non-existent ones so
+    # body references to them are stripped as ghosts instead.
+    related_items = [
+        s for s in related_items
+        if (wiki_dir / "concepts" / f"{_sanitize_concept_name(s)}.md").exists()
+    ]
+    entity_related = [
+        s for s in entity_related
+        if (wiki_dir / "entities" / f"{_sanitize_concept_name(s)}.md").exists()
+    ]
+
     # Distinguish "filters dropped everything" from "LLM emitted an empty plan".
     # Count entity items too, so a plan that emitted only entities — all of
     # which were dropped as malformed — still surfaces the warning.
