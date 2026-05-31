@@ -894,6 +894,42 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     for slug in concept_edits:
         actions.append(("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
 
+    # Scan entity pages with the same frontmatter logic as concepts. The
+    # executor calls ``remove_doc_from_entity_pages``; this only makes the
+    # preview/summary truthful about what it will delete vs. edit.
+    affected_entities: list[tuple[str, int]] = []  # (slug, remaining_sources)
+    entities_dir = wiki_dir / "entities"
+    if entities_dir.is_dir():
+        for path in sorted(entities_dir.glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            if not text.startswith("---"):
+                continue
+            fm_end = text.find("---", 3)
+            if fm_end == -1:
+                continue
+            sources_count = 0
+            source_in_frontmatter = False
+            for line in text[:fm_end].split("\n"):
+                if line.lstrip().startswith("sources:"):
+                    lb = line.find("[")
+                    rb = line.rfind("]")
+                    if lb != -1 and rb != -1 and rb > lb:
+                        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
+                        sources_count = len(items)
+                        source_in_frontmatter = source_file_marker in items
+                    break
+            if not source_in_frontmatter:
+                continue
+            remaining = max(sources_count - 1, 0)
+            affected_entities.append((path.stem, remaining))
+
+    entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty_concepts]
+    entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty_concepts]
+    for slug in entity_deletes:
+        actions.append(("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
+    for slug in entity_edits:
+        actions.append(("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)"))
+
     if (wiki_dir / "index.md").exists():
         actions.append(("MODIFY", "wiki/index.md  (remove Documents entry)"))
 
@@ -933,6 +969,12 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         click.echo("")
         click.echo(
             f"  {len(concept_deletes)} concept(s) will be DELETED because this is their only source."
+        )
+        click.echo("  Pass --keep-empty-concepts to retain them instead.")
+    if entity_deletes:
+        click.echo("")
+        click.echo(
+            f"  {len(entity_deletes)} entity(s) will be DELETED because this is their only source."
         )
         click.echo("  Pass --keep-empty-concepts to retain them instead.")
     click.echo("")

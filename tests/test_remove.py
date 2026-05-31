@@ -390,6 +390,34 @@ def test_cli_remove_dry_run_does_nothing(kb_dir):
     assert "h_a" in hashes
 
 
+def test_cli_remove_preview_lists_entity_actions(kb_dir):
+    """The dry-run preview must enumerate entity-page DELETE/MODIFY actions
+    and report an 'N entity(s) will be DELETED' summary line."""
+    _seed_two_doc_kb(kb_dir)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
+    # Single-source entity (only attention) -> will be DELETED
+    (kb_dir / "wiki" / "entities" / "vaswani.md").write_text(
+        "---\nsources: [summaries/attention-h_a.md]\ntype: person\nbrief: V\n---\n"
+        "# Vaswani\n\n## Related Documents\n- [[summaries/attention-h_a]]\n",
+        encoding="utf-8",
+    )
+    # Multi-source entity (both) -> will be MODIFIED
+    (kb_dir / "wiki" / "entities" / "google.md").write_text(
+        "---\nsources: [summaries/attention-h_a.md, summaries/llm-h_l.md]\n"
+        "type: organization\nbrief: G\n---\n# Google\n",
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "DELETE   wiki/entities/vaswani.md" in result.output
+    assert "MODIFY   wiki/entities/google.md" in result.output
+    assert "1 entity(s) will be DELETED" in result.output
+    # Nothing actually removed in dry-run.
+    assert (kb_dir / "wiki" / "entities" / "vaswani.md").exists()
+
+
 def test_cli_remove_yes_executes_full_plan(kb_dir):
     _seed_two_doc_kb(kb_dir)
     result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
