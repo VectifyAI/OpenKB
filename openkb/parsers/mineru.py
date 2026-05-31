@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import time
 import zipfile
 from pathlib import Path
@@ -38,7 +39,11 @@ def _result_from_zip(zip_bytes: bytes) -> ParseResult:
     # Markdown references images as 'images/<file>'; localize_images matches on
     # the bare filename, so rewrite 'images/fig.png' -> 'fig.png'.
     for fname in images:
-        markdown = markdown.replace(f"images/{fname}", fname)
+        # Rewrite only `![alt](images/<fname>)` links (anchored on markdown image
+        # syntax) to the bare filename, for localize_images to canonicalize. A
+        # replacement function avoids regex-escape injection from arbitrary names.
+        pattern = re.compile(r"(!\[[^\]]*\]\()" + re.escape("images/" + fname) + r"(\))")
+        markdown = pattern.sub(lambda m, f=fname: m.group(1) + f + m.group(2), markdown)
     return ParseResult(markdown=markdown, images=images)
 
 
@@ -51,7 +56,8 @@ class MineruParser(Parser):
         self.opts = opts or {}
         self.mode = self.opts.get("mode", "cloud")
         self.base_url = self.opts.get("base_url")
-        self.poll_interval = self.opts.get("poll_interval", 3)
+        pi = self.opts.get("poll_interval", 3)
+        self.poll_interval = pi if isinstance(pi, (int, float)) and pi > 0 else 3
         self.timeout = self.opts.get("timeout", 600)
 
     def supports(self, suffix: str) -> bool:
@@ -105,6 +111,10 @@ class MineruParser(Parser):
                 )
                 pr.raise_for_status()
                 results = pr.json()["data"]["extract_result"]
+                if not results:
+                    time.sleep(self.poll_interval)
+                    elapsed += self.poll_interval
+                    continue
                 state = results[0].get("state")
                 if state == "done":
                     zip_url = results[0]["full_zip_url"]

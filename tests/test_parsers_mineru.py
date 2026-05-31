@@ -128,3 +128,61 @@ def test_cloud_flow_polls_then_downloads(monkeypatch, tmp_path):
     assert "![p](fig.png)" in result.markdown
     # drove the full poll loop: running once, then done
     assert _get.calls == 2
+
+
+def test_poll_interval_zero_is_clamped_to_positive():
+    from openkb.parsers.mineru import MineruParser
+    assert MineruParser({"poll_interval": 0}).poll_interval > 0
+    assert MineruParser({"poll_interval": -5}).poll_interval > 0
+    assert MineruParser({"poll_interval": 2}).poll_interval == 2
+
+
+def test_image_prefix_rewrite_is_anchored(tmp_path):
+    import io, sys, types, zipfile
+    from unittest.mock import MagicMock
+    # markdown has a real image link AND an unrelated 'images/fig.png' substring in prose
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("full.md", "See path other_images/fig.png in text.\n\n![p](images/fig.png)")
+        zf.writestr("images/fig.png", b"PNG")
+    from openkb.parsers.mineru import _result_from_zip
+    result = _result_from_zip(buf.getvalue())
+    assert "![p](fig.png)" in result.markdown          # link rewritten
+    assert "other_images/fig.png" in result.markdown    # unrelated prose untouched
+    assert result.images["fig.png"] == b"PNG"
+
+
+def test_cloud_empty_extract_result_then_done(monkeypatch, tmp_path):
+    import io, sys, types, zipfile
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("MINERU_API_KEY", "key")
+    monkeypatch.setattr("openkb.parsers.mineru.time.sleep", lambda *a, **k: None)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("full.md", "# Ok")
+    zip_bytes = buf.getvalue()
+
+    def _resp(json_data=None, content=None):
+        r = MagicMock(); r.raise_for_status = MagicMock()
+        if json_data is not None: r.json.return_value = json_data
+        if content is not None: r.content = content
+        return r
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client); client.__exit__ = MagicMock(return_value=False)
+    client.post.return_value = _resp(json_data={"data": {"batch_id": "b1", "file_urls": ["https://up"]}})
+    client.put.return_value = _resp()
+    empty = _resp(json_data={"data": {"extract_result": []}})            # queued: empty list
+    done = _resp(json_data={"data": {"extract_result": [{"state": "done", "full_zip_url": "https://zip"}]}})
+    zipr = _resp(content=zip_bytes)
+    def _get(url, *a, **k):
+        if url == "https://zip": return zipr
+        _get.n += 1
+        return empty if _get.n == 1 else done
+    _get.n = 0
+    client.get.side_effect = _get
+    httpx_mod = types.ModuleType("httpx"); httpx_mod.Client = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "httpx", httpx_mod)
+    from openkb.parsers.mineru import MineruParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    result = MineruParser({"mode": "cloud", "poll_interval": 1}).parse(src)
+    assert "Ok" in result.markdown   # survived the empty-list poll without crashing
