@@ -432,7 +432,7 @@ def _filter_related_slugs(items: list) -> list[str]:
     return valid
 
 
-def _filter_entity_items(items: object, label: str) -> list[dict]:
+def _filter_entity_items(items: object) -> list[dict]:
     """Validate entity create/update objects: require name+title, coerce type.
 
     Each kept item is normalized to ``{"name", "title", "type"}`` where
@@ -470,8 +470,8 @@ def _parse_entities_plan(parsed: object) -> dict:
     if not isinstance(group, dict):
         return empty
     return {
-        "create": _filter_entity_items(group.get("create", []), "create"),
-        "update": _filter_entity_items(group.get("update", []), "update"),
+        "create": _filter_entity_items(group.get("create", [])),
+        "update": _filter_entity_items(group.get("update", [])),
         "related": _filter_related_slugs(group.get("related", [])),
     }
 
@@ -633,6 +633,33 @@ def _ensure_h2_section(lines: list[str], heading: str) -> None:
         lines.append("")
     lines.append(heading)
     lines.append("")
+
+
+def _ensure_h2_section_before(
+    lines: list[str], heading: str, before: str,
+) -> None:
+    """Ensure H2 ``heading`` exists, inserting it just before ``before``.
+
+    If ``heading`` is already present, no-op. If ``before`` is absent, fall
+    back to :func:`_ensure_h2_section` (append at end). This keeps the
+    canonical index order (e.g. ``## Entities`` ahead of ``## Explorations``)
+    when recovering an older index.md that predates the section.
+    """
+    if _get_section_bounds(lines, heading) is not None:
+        return
+    before_bounds = _get_section_bounds(lines, before)
+    if before_bounds is None:
+        _ensure_h2_section(lines, heading)
+        return
+    # ``start`` is the line after the ``before`` heading; insert the new
+    # section (heading + blank line) right before that heading line.
+    insert_at = before_bounds[0] - 1
+    logger.warning(
+        "Wiki index is missing %r section; inserting it before %r. "
+        "Check whether the file was hand-edited away from the canonical layout.",
+        heading, before,
+    )
+    lines[insert_at:insert_at] = [heading, ""]
 
 
 def _section_contains_link(lines: list[str], heading: str, link: str) -> bool:
@@ -1253,7 +1280,10 @@ def _update_index(
     entity_names = entity_names or []
     entity_meta = entity_meta or {}
     if entity_names:
-        _ensure_h2_section(lines, "## Entities")
+        # Keep canonical order: Entities sits before Explorations. On an older
+        # index.md that predates the Entities section, plain ``_ensure_h2_section``
+        # would append it after Explorations.
+        _ensure_h2_section_before(lines, "## Entities", "## Explorations")
     for name in entity_names:
         link = f"[[entities/{name}]]"
         # Callers always populate entity_meta alongside entity_names; the
@@ -1612,6 +1642,14 @@ async def _compile_concepts(
     tasks.extend(_gen_create(c) for c in create_items)
     tasks.extend(_gen_update(c) for c in update_items)
 
+    # --- Step 3 (entities): build the entity task list up front so it can be
+    # gathered concurrently with the concept tasks below. Entity coroutines
+    # return 4-arity tuples (name, content, brief, type), so their results are
+    # processed in their own loop rather than mixed with the concept tuples.
+    entity_tasks = []
+    entity_tasks.extend(_gen_entity_create(e) for e in entity_create)
+    entity_tasks.extend(_gen_entity_update(e) for e in entity_update)
+
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
     pending_writes: list[tuple[str, str, bool, str]] = []
@@ -1619,13 +1657,28 @@ async def _compile_concepts(
     entity_meta: dict[str, tuple[str, str]] = {}
     entity_pending: list[tuple[str, str, str, str]] = []
 
+    # Concepts and entities are independent and share the cached prompt
+    # context + the same concurrency ``semaphore``, so overlap them in one
+    # outer gather instead of running entities only after concepts finish.
+    total = len(tasks)
+    etotal = len(entity_tasks)
     if tasks:
-        total = len(tasks)
         sys.stdout.write(f"    Generating {total} concept(s) (concurrency={max_concurrency})...\n")
         sys.stdout.flush()
+    if entity_tasks:
+        sys.stdout.write(
+            f"    Generating {etotal} entity(ies) (concurrency={max_concurrency})...\n"
+        )
+        sys.stdout.flush()
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    results, entity_results = ([], [])
+    if tasks or entity_tasks:
+        results, entity_results = await asyncio.gather(
+            asyncio.gather(*tasks, return_exceptions=True),
+            asyncio.gather(*entity_tasks, return_exceptions=True),
+        )
 
+    if tasks:
         failure_types: list[str] = []
         for r in results:
             if isinstance(r, Exception):
@@ -1653,23 +1706,7 @@ async def _compile_concepts(
             )
             sys.stdout.flush()
 
-    # --- Step 3 (entities): generate entity pages in their OWN gather ---
-    # Entity coroutines return 4-arity tuples (name, content, brief, type),
-    # so they are gathered separately from the concept tuples rather than
-    # mixed into one list with differing arities.
-    entity_tasks = []
-    entity_tasks.extend(_gen_entity_create(e) for e in entity_create)
-    entity_tasks.extend(_gen_entity_update(e) for e in entity_update)
-
     if entity_tasks:
-        etotal = len(entity_tasks)
-        sys.stdout.write(
-            f"    Generating {etotal} entity(ies) (concurrency={max_concurrency})...\n"
-        )
-        sys.stdout.flush()
-
-        entity_results = await asyncio.gather(*entity_tasks, return_exceptions=True)
-
         entity_failure_types: list[str] = []
         for r in entity_results:
             if isinstance(r, Exception):
