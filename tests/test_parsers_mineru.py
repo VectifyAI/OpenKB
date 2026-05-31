@@ -66,3 +66,65 @@ def test_self_hosted_parses_zip(monkeypatch, tmp_path):
     # the images/ prefix should be rewritten to the bare filename for localize_images
     assert "images/fig.png" not in result.markdown
     assert "![p](fig.png)" in result.markdown
+
+
+def test_cloud_flow_polls_then_downloads(monkeypatch, tmp_path):
+    monkeypatch.setenv("MINERU_API_KEY", "key")
+    monkeypatch.setattr("openkb.parsers.mineru.time.sleep", lambda *a, **k: None)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("full.md", "# Cloud\n\n![p](images/fig.png)")
+        zf.writestr("images/fig.png", b"ZBYTES")
+    zip_bytes = buf.getvalue()
+
+    def _resp(json_data=None, content=None):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        if json_data is not None:
+            r.json.return_value = json_data
+        if content is not None:
+            r.content = content
+        return r
+
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    client.post.return_value = _resp(
+        json_data={"data": {"batch_id": "b1", "file_urls": ["https://upload"]}}
+    )
+    client.put.return_value = _resp()
+
+    poll_url = "https://mineru.net/api/v4/extract-results/batch/b1"
+    poll_running = _resp(json_data={"data": {"extract_result": [{"state": "running"}]}})
+    poll_done = _resp(
+        json_data={"data": {"extract_result": [{"state": "done", "full_zip_url": "https://zip"}]}}
+    )
+    zip_resp = _resp(content=zip_bytes)
+
+    def _get(url, *a, **k):
+        if url == "https://zip":
+            return zip_resp
+        assert url == poll_url
+        _get.calls += 1
+        return poll_running if _get.calls == 1 else poll_done
+
+    _get.calls = 0
+    client.get.side_effect = _get
+
+    httpx_mod = types.ModuleType("httpx")
+    httpx_mod.Client = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "httpx", httpx_mod)
+
+    from openkb.parsers.mineru import MineruParser
+    p = MineruParser({"mode": "cloud", "poll_interval": 0})
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    result = p.parse(src)
+
+    assert isinstance(result, ParseResult)
+    assert "Cloud" in result.markdown
+    assert result.images["fig.png"] == b"ZBYTES"
+    assert "images/fig.png" not in result.markdown
+    assert "![p](fig.png)" in result.markdown
+    # drove the full poll loop: running once, then done
+    assert _get.calls == 2
