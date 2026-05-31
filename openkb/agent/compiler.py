@@ -113,6 +113,7 @@ Rules:
   sparse documents.
 - Prefer "update" over "create" for any concept or entity already listed above.
 - Do NOT create a concept/entity that overlaps an existing one — use "update".
+- Do NOT create concepts that are just the document topic itself.
 - "related" is lightweight cross-linking only, no content rewrite.
 
 Return ONLY valid JSON, no fences, no explanation.
@@ -127,8 +128,9 @@ valid [[wikilink]] targets you may use in the responses that follow:
 Rules for [[wikilinks]] in all subsequent responses:
 - For [[concepts/X]]: X must appear in the whitelist above.
 - For [[summaries/Y]]: Y must appear in the whitelist above.
+- For [[entities/Z]]: Z must appear in the whitelist above.
 - Do NOT invent new wikilink targets. If you want to mention a concept \
-that is not in the whitelist, write it as plain text without brackets.
+or entity that is not in the whitelist, write it as plain text without brackets.
 """
 
 _CONCEPT_PAGE_USER = """\

@@ -1672,3 +1672,21 @@ def test_schema_declares_entities():
     assert "Entity Page" in AGENTS_MD
     for t in ("person", "organization", "place", "product", "work", "event", "other"):
         assert t in AGENTS_MD
+
+
+def test_known_targets_prompt_has_entities_rule():
+    """The whitelist message must tell the LLM the [[entities/X]] rule, since
+    entity-page prompts instruct writing such links; otherwise entity links
+    are generated freely and then stripped as ghosts."""
+    from openkb.agent.compiler import _KNOWN_TARGETS_USER
+
+    assert "[[entities/" in _KNOWN_TARGETS_USER
+
+
+def test_plan_prompt_keeps_topic_itself_guard():
+    """The concept-plan prompt must retain the guard against creating a concept
+    that merely mirrors the document's own topic."""
+    from openkb.agent.compiler import _CONCEPTS_PLAN_USER
+
+    assert "just the document topic itself" in _CONCEPTS_PLAN_USER
+
