@@ -41,9 +41,10 @@ def convert_document(src: Path, kb_dir: Path, parser_override: str | None = None
     1. Hash-check — skip if already known.
     2. Copy source to ``raw/``.
     3. If PDF and page count >= threshold → return :attr:`ConvertResult.is_long_doc`.
-    4. If ``.md`` — read, process relative images, save to ``wiki/sources/``.
-    5. Otherwise — run MarkItDown, extract base64 images, save to ``wiki/sources/``.
-    6. Register hash in the registry.
+    4. Select a parser via :func:`get_parser` (falling back to
+       :class:`LocalParser` for unsupported suffixes like ``.md``), parse the
+       file to Markdown, localize images, and save to ``wiki/sources/``.
+    5. Register hash in the registry.
     """
     # ------------------------------------------------------------------
     # Load config & state
@@ -85,7 +86,7 @@ def convert_document(src: Path, kb_dir: Path, parser_override: str | None = None
             return ConvertResult(raw_path=raw_dest, is_long_doc=True, file_hash=file_hash)
 
     # ------------------------------------------------------------------
-    # 4/5. Convert to Markdown
+    # 4. Select parser, convert to Markdown, localize images
     # ------------------------------------------------------------------
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)

@@ -148,6 +148,8 @@ class TestConvertDocumentParserSelection:
             result = convert_document(src, kb_dir)
 
         gp.assert_called_once()
+        assert gp.call_args.kwargs["doc_name"] == "paper"
+        assert gp.call_args.kwargs["images_dir"] is not None
         li.assert_called_once()
         assert result.source_path.read_text(encoding="utf-8") == "HELLO-LOCALIZED"
 
