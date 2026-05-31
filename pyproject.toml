@@ -53,6 +53,9 @@ testpaths = ["tests"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
+mistral = ["mistralai"]
+mineru = ["httpx"]
+parsers = ["mistralai", "httpx"]
 
 [tool.hatch.version]
 source = "vcs"
