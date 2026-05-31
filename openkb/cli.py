@@ -1075,6 +1075,194 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     click.echo(f"  [OK] {name} removed from knowledge base.")
 
 
+def _refresh_schema(wiki_dir: Path) -> bool:
+    """Back up + overwrite ``wiki/AGENTS.md`` with the current ``AGENTS_MD``.
+
+    If the on-disk schema differs from the bundled default, copy it to
+    ``wiki/AGENTS.md.bak`` then overwrite with ``AGENTS_MD``. No-op when the
+    file is missing or already identical. Returns True if it overwrote.
+    """
+    agents_file = wiki_dir / "AGENTS.md"
+    current = agents_file.read_text(encoding="utf-8") if agents_file.exists() else ""
+    if current == AGENTS_MD:
+        return False
+    if agents_file.exists():
+        backup = wiki_dir / "AGENTS.md.bak"
+        backup.write_text(current, encoding="utf-8")
+        click.echo(f"  Backed up existing schema to {backup.relative_to(wiki_dir.parent)}")
+    agents_file.write_text(AGENTS_MD, encoding="utf-8")
+    click.echo("  Refreshed wiki/AGENTS.md to the current schema.")
+    return True
+
+
+@cli.command()
+@click.argument("doc_name", required=False)
+@click.option("--all", "all_docs", is_flag=True, default=False,
+              help="Recompile every indexed document.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="List the docs that would be recompiled; no LLM calls, no writes.")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip the --all confirmation prompt.")
+@click.option("--refresh-schema", "refresh_schema", is_flag=True, default=False,
+              help="Overwrite wiki/AGENTS.md with the bundled schema (backs up "
+                   "the old one to AGENTS.md.bak) if it differs.")
+@click.pass_context
+def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
+    """Re-run the current compile pipeline on already-indexed documents.
+
+    Recompiling re-runs the same ``compile_short_doc`` / ``compile_long_doc``
+    that ``openkb add`` uses, so pre-feature KBs gain the ``entities/`` layer
+    and pages refresh to the current format. It does NOT re-run PageIndex or
+    re-convert raw files — it reuses the on-disk ``wiki/sources/`` and
+    ``wiki/summaries/`` content (and the registry's PageIndex ``doc_id``).
+
+    DOC_NAME recompiles one doc (resolved like ``openkb remove`` — filename,
+    slug, or unique substring). ``--all`` recompiles every indexed doc.
+    Exactly one of DOC_NAME or ``--all`` is required.
+
+    Side effect: this regenerates summaries (short docs) and rewrites concept
+    pages with the current logic — manual edits to those pages are overwritten.
+    """
+    from openkb.state import HashRegistry
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    if all_docs and doc_name:
+        click.echo("Specify either a DOC_NAME or --all, not both.")
+        return
+    if not all_docs and not doc_name:
+        click.echo("Specify a document name or pass --all to recompile every doc.")
+        return
+
+    openkb_dir = kb_dir / ".openkb"
+    wiki_dir = kb_dir / "wiki"
+    registry = HashRegistry(openkb_dir / "hashes.json")
+
+    # Resolve the set of docs to recompile.
+    if all_docs:
+        entries = list(registry.all_entries().values())
+        if not entries:
+            click.echo("No documents indexed yet. Run `openkb add` first.")
+            return
+        targets = entries
+    else:
+        matches = _resolve_doc_identifier(registry, doc_name)
+        if not matches:
+            click.echo(f"No document matching '{doc_name}' found in the KB.")
+            click.echo("Try `openkb list` to see indexed documents.")
+            return
+        if len(matches) > 1:
+            click.echo(f"'{doc_name}' matches multiple documents:")
+            for _, m in matches:
+                click.echo(f"  - {m.get('name', '?')}  (doc_name: {m.get('doc_name', '?')})")
+            click.echo("Use a more specific name or the exact doc_name slug.")
+            return
+        targets = [matches[0][1]]
+
+    def _classify(meta: dict) -> str:
+        return "long" if meta.get("type") == "long_pdf" else "short"
+
+    # --dry-run: enumerate only, no LLM calls, no writes.
+    if dry_run:
+        click.echo(f"Would recompile {len(targets)} document(s):")
+        for meta in targets:
+            name = meta.get("doc_name") or meta.get("name", "?")
+            click.echo(f"  - {name}  ({_classify(meta)})")
+        click.echo(
+            "\nNote: recompiling regenerates summaries (short docs) and rewrites "
+            "concept pages — manual edits would be overwritten."
+        )
+        click.echo("(dry-run — nothing modified)")
+        return
+
+    # --all confirmation (the summary/concept-regeneration side effect).
+    if all_docs and not yes:
+        click.echo(
+            f"This will recompile {len(targets)} document(s), regenerating "
+            "summaries and rewriting concept pages with the current logic.\n"
+            "Manual edits to those pages will be overwritten."
+        )
+        if not click.confirm("Proceed?", default=False):
+            click.echo("Aborted.")
+            return
+
+    if refresh_schema:
+        _refresh_schema(wiki_dir)
+
+    _setup_llm_key(kb_dir)
+    config = load_config(openkb_dir / "config.yaml")
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Import lazily and reference via the module so tests can patch
+    # ``openkb.agent.compiler.compile_*`` and see the call.
+    from openkb.agent import compiler
+
+    recompiled = 0
+    skipped = 0
+    total = len(targets)
+    for i, meta in enumerate(targets, 1):
+        name = meta.get("doc_name") or Path(meta.get("name", "")).stem
+        if not name:
+            click.echo(f"[{i}/{total}] [SKIP] registry entry has no doc_name.")
+            skipped += 1
+            continue
+
+        if meta.get("type") == "long_pdf":
+            summary_path = wiki_dir / "summaries" / f"{name}.md"
+            doc_id = meta.get("doc_id")
+            if not doc_id:
+                click.echo(
+                    f"[{i}/{total}] [SKIP] {name}: legacy long-doc entry without a "
+                    "doc_id — re-add to refresh."
+                )
+                skipped += 1
+                continue
+            if not summary_path.exists():
+                click.echo(
+                    f"[{i}/{total}] [SKIP] {name}: missing summary at "
+                    f"{summary_path.relative_to(kb_dir)}."
+                )
+                skipped += 1
+                continue
+            click.echo(f"[{i}/{total}] Recompiling long doc {name}...")
+            start = time.time()
+            try:
+                asyncio.run(compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model))
+            except Exception as exc:
+                click.echo(f"  [ERROR] Compilation failed: {exc}")
+                logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
+                skipped += 1
+                continue
+            click.echo(f"  [OK] {name} ({time.time() - start:.1f}s)")
+            recompiled += 1
+        else:
+            source_path = wiki_dir / "sources" / f"{name}.md"
+            if not source_path.exists():
+                click.echo(
+                    f"[{i}/{total}] [SKIP] {name}: missing source at "
+                    f"{source_path.relative_to(kb_dir)}."
+                )
+                skipped += 1
+                continue
+            click.echo(f"[{i}/{total}] Recompiling short doc {name}...")
+            start = time.time()
+            try:
+                asyncio.run(compiler.compile_short_doc(name, source_path, kb_dir, model))
+            except Exception as exc:
+                click.echo(f"  [ERROR] Compilation failed: {exc}")
+                logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
+                skipped += 1
+                continue
+            click.echo(f"  [OK] {name} ({time.time() - start:.1f}s)")
+            recompiled += 1
+
+    click.echo(f"\nDone: recompiled {recompiled}, skipped {skipped}.")
+    append_log(wiki_dir, "recompile", f"recompiled {recompiled}, skipped {skipped}")
+
+
 @cli.command()
 @click.option(
     "--resume", "-r", "resume",
