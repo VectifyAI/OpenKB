@@ -125,17 +125,19 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     else:
         litellm.api_key = api_key
 
-        # Dynamically set the provider-specific env var when possible
         if provider:
+            # Active provider is known — set only its key, so LLM_API_KEY is not
+            # sprayed into unrelated provider keys (e.g. MISTRAL_API_KEY, which the
+            # Mistral parser treats as a real Mistral credential).
             provider_env = f"{provider.upper()}_API_KEY"
             if not os.environ.get(provider_env):
                 os.environ[provider_env] = api_key
-
-        # Fallback: also set common provider keys so multi-provider
-        # configs (e.g. PageIndex Cloud) still work
-        for env_var in _KNOWN_PROVIDER_KEYS:
-            if not os.environ.get(env_var):
-                os.environ[env_var] = api_key
+        else:
+            # Provider couldn't be determined — fall back to setting the common
+            # provider keys so multi-provider configs still work.
+            for env_var in _KNOWN_PROVIDER_KEYS:
+                if not os.environ.get(env_var):
+                    os.environ[env_var] = api_key
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
