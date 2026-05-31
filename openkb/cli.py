@@ -259,7 +259,7 @@ def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
         shutil.rmtree(target)
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
+def add_single_file(file_path: Path, kb_dir: Path, parser_override: str | None = None) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -289,7 +289,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
     # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
     try:
-        result = convert_document(file_path, kb_dir)
+        result = convert_document(file_path, kb_dir, parser_override=parser_override)
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
         logger.debug("Conversion traceback:", exc_info=True)
@@ -575,8 +575,10 @@ def init(model, language):
 
 @cli.command()
 @click.argument("path")
+@click.option("--parser", "parser_override", default=None,
+              help="Override the configured parser for this run (local|mineru|mistral|vlm).")
 @click.pass_context
-def add(ctx, path):
+def add(ctx, path, parser_override):
     """Add a document or directory of documents at PATH to the knowledge base.
 
     PATH may be a local file, a local directory (which is walked
@@ -600,7 +602,7 @@ def add(ctx, path):
         fetched = fetch_url_to_raw(path, kb_dir)
         if fetched is None:
             return
-        outcome = add_single_file(fetched, kb_dir)
+        outcome = add_single_file(fetched, kb_dir, parser_override=parser_override)
         # Only clean up on dedup-skip. On "failed" we keep the file so
         # the user can retry (e.g. transient LLM error during compile)
         # without re-downloading — and so they don't lose data when
@@ -626,7 +628,7 @@ def add(ctx, path):
         click.echo(f"Found {total} supported file(s) in {path}.")
         for i, f in enumerate(files, 1):
             click.echo(f"\n[{i}/{total}] ", nl=False)
-            add_single_file(f, kb_dir)
+            add_single_file(f, kb_dir, parser_override=parser_override)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(
@@ -634,7 +636,7 @@ def add(ctx, path):
                 f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
             return
-        add_single_file(target, kb_dir)
+        add_single_file(target, kb_dir, parser_override=parser_override)
 
 
 def _stream_to_tty() -> bool:
