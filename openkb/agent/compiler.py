@@ -68,14 +68,13 @@ Return ONLY valid JSON, no fences.
 """
 
 
-# Canonical entity-type enum — the single source of truth shared by the
-# plan prompt, the entity-page prompts, and create/update validation. The
-# prompt templates carry an ``__ENTITY_TYPES__`` token that is substituted
-# with this list once at import time (see below), so adding a type here
-# updates every place at once.
+# Default entity-type enum. The EFFECTIVE set is resolved per-KB from config
+# (see ``_resolve_entity_types``) and substituted into the plan + entity-page
+# prompts at call time inside ``_compile_concepts`` via the ``__ENTITY_TYPES__``
+# token. ``_ENTITY_TYPES`` is the default validation set used when no
+# config-driven set is threaded through.
 _ENTITY_TYPE_LIST = ("person", "organization", "place", "product", "work", "event", "other")
 _ENTITY_TYPES = frozenset(_ENTITY_TYPE_LIST)
-_ENTITY_TYPES_STR = ", ".join(_ENTITY_TYPE_LIST)
 
 
 def _resolve_entity_types(config: dict) -> list[str]:
@@ -101,7 +100,11 @@ def _resolve_entity_types(config: dict) -> list[str]:
         return list(_ENTITY_TYPE_LIST)
     cleaned: list[str] = []
     for x in raw:
-        s = str(x).strip().lower()
+        if not isinstance(x, str):
+            continue  # skip YAML nulls/numbers (str(None) would become "none")
+        # Restrict to a safe label charset so a stray '{'/'}' or punctuation
+        # can't leak into a prompt template or a frontmatter value.
+        s = re.sub(r"[^a-z0-9 _-]+", "", x.strip().lower()).strip()
         if s and s not in cleaned:
             cleaned.append(s)
     if not cleaned:
@@ -1416,12 +1419,10 @@ async def _compile_concepts(
         system_msg,
         doc_msg,
         summary_msg,
-        {"role": "user", "content": _CONCEPTS_PLAN_USER.replace(
-            "__ENTITY_TYPES__", types_str,
-        ).format(
+        {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
             entity_briefs=entity_briefs,
-        )},
+        ).replace("__ENTITY_TYPES__", types_str)},
     ], "concepts-plan", max_tokens=2048, response_format=_JSON_RESPONSE_FORMAT)
 
     def _write_v1_summary_stripped() -> None:
@@ -1669,11 +1670,9 @@ async def _compile_concepts(
                 doc_msg,             # cached (BP1)
                 summary_msg,         # cached (BP2)
                 known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _ENTITY_PAGE_USER.replace(
-                    "__ENTITY_TYPES__", types_str,
-                ).format(
+                {"role": "user", "content": _ENTITY_PAGE_USER.format(
                     title=title, type=etype, doc_name=doc_name,
-                )},
+                ).replace("__ENTITY_TYPES__", types_str)},
             ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
@@ -1707,12 +1706,10 @@ async def _compile_concepts(
                 doc_msg,             # cached (BP1)
                 summary_msg,         # cached (BP2)
                 known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _ENTITY_UPDATE_USER.replace(
-                    "__ENTITY_TYPES__", types_str,
-                ).format(
+                {"role": "user", "content": _ENTITY_UPDATE_USER.format(
                     title=title, type=etype, doc_name=doc_name,
                     existing_content=existing_content,
-                )},
+                ).replace("__ENTITY_TYPES__", types_str)},
             ], f"entity-update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)

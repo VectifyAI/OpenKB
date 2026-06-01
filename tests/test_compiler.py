@@ -123,6 +123,15 @@ class TestResolveEntityTypes:
     def test_all_empty_strings_falls_back_to_default(self):
         assert _resolve_entity_types({"entity_types": ["", "  "]}) == list(_ENTITY_TYPE_LIST)
 
+    def test_sanitizes_punctuation_and_skips_non_strings(self):
+        # '{'/'}' and other punctuation are stripped (so they can't leak into a
+        # prompt template's .format()); non-string items (YAML null, ints) are
+        # skipped (str(None) must NOT become the type "none").
+        out = _resolve_entity_types(
+            {"entity_types": ["Per{son}", None, 123, "data set!"]}
+        )
+        assert out == ["person", "data set", "other"]
+
 
 class TestFilterEntityItemsCustomTypes:
     def test_custom_type_in_valid_types_is_kept(self):
@@ -1918,6 +1927,38 @@ class TestCompileEntitiesEndToEnd:
         plan_user = plan_msgs[0][-1]["content"]
         assert "dataset" in plan_user
         assert "__ENTITY_TYPES__" not in plan_user  # token was substituted
+
+    @pytest.mark.asyncio
+    async def test_brace_in_entity_type_does_not_crash_format(self, tmp_path, monkeypatch):
+        """Defense-in-depth: even if a '{'/'}' reaches types_str (bypassing
+        _resolve_entity_types sanitization), the prompt build must not raise —
+        the token is substituted AFTER .format(), so braces are inert."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        def fake_llm(model, messages, label, **kw):
+            return json.dumps({
+                "concepts": {"create": [], "update": [], "related": []},
+                "entities": {"create": [], "update": [], "related": []},
+            })
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        # entity_types deliberately contains brace chars to exercise the
+        # format/replace ordering — this must NOT raise KeyError/ValueError.
+        await _compile_concepts(
+            wiki, tmp_path, "m", {"role": "system", "content": "x"},
+            {"role": "user", "content": "x"}, "summary text", "doc",
+            max_concurrency=2, doc_type="short", rewrite_summary=False,
+            entity_types=["wei{rd}", "other"],
+        )  # reaching here without an exception is the assertion
 
     @pytest.mark.asyncio
     async def test_default_path_plan_prompt_has_default_types(self, tmp_path, monkeypatch):
