@@ -85,7 +85,7 @@ class TestConvertDocumentPdfShort:
 
         with (
             patch("openkb.converter.pymupdf.open") as mock_mu,
-            patch("openkb.converter.convert_pdf_with_images", return_value="# Short PDF\n\nConverted.") as mock_cpwi,
+            patch("openkb.parsers.local.convert_pdf_with_images", return_value="# Short PDF\n\nConverted.") as mock_cpwi,
         ):
             fake_doc = MagicMock()
             fake_doc.page_count = 5  # below default threshold of 20
@@ -128,3 +128,67 @@ class TestConvertDocumentPdfLong:
         assert result.source_path is None
         assert result.skipped is False
         assert result.raw_path is not None
+
+
+from openkb.parsers.base import ParseResult
+
+
+class TestConvertDocumentParserSelection:
+    def test_uses_get_parser_and_localizes(self, kb_dir):
+        src = kb_dir / "raw" / "paper.pdf"
+        src.write_bytes(b"%PDF-1.4 fake")
+
+        fake = MagicMock()
+        fake.supports.return_value = True
+        fake.parse.return_value = ParseResult(markdown="HELLO", images={"a.png": b"X"})
+
+        with patch("openkb.converter.get_pdf_page_count", return_value=1), \
+             patch("openkb.converter.get_parser", return_value=fake) as gp, \
+             patch("openkb.converter.localize_images", return_value="HELLO-LOCALIZED") as li:
+            result = convert_document(src, kb_dir)
+
+        gp.assert_called_once()
+        assert gp.call_args.kwargs["doc_name"] == "paper"
+        assert gp.call_args.kwargs["images_dir"] is not None
+        li.assert_called_once()
+        assert result.source_path.read_text(encoding="utf-8") == "HELLO-LOCALIZED"
+
+    def test_falls_back_to_local_for_unsupported_suffix(self, kb_dir):
+        src = kb_dir / "raw" / "notes.md"
+        src.write_text("# md", encoding="utf-8")
+
+        online = MagicMock()
+        online.supports.return_value = False  # online parser can't do .md
+        with patch("openkb.converter.get_parser", return_value=online), \
+             patch("openkb.converter.LocalParser") as LP:
+            LP.return_value.parse.return_value = ParseResult(markdown="# md")
+            convert_document(src, kb_dir)
+        LP.assert_called_once()  # fell back to LocalParser
+
+    def test_local_parser_skips_redundant_localize(self, kb_dir):
+        src = kb_dir / "raw" / "notes.md"
+        src.write_text("# md", encoding="utf-8")
+        local = MagicMock()
+        local.name = "local"
+        local.supports.return_value = True
+        local.parse.return_value = ParseResult(markdown="# md final")
+        with patch("openkb.converter.get_parser", return_value=local), \
+             patch("openkb.converter.localize_images") as li:
+            result = convert_document(src, kb_dir)
+        li.assert_not_called()                      # local path skips localize_images
+        assert result.source_path.read_text(encoding="utf-8") == "# md final"
+
+    def test_warns_on_silent_downgrade(self, kb_dir, caplog):
+        import logging as _logging
+        src = kb_dir / "raw" / "notes.md"
+        src.write_text("# md", encoding="utf-8")
+        online = MagicMock()
+        online.name = "mistral"
+        online.supports.return_value = False
+        with patch("openkb.converter.get_parser", return_value=online), \
+             patch("openkb.converter.LocalParser") as LP:
+            LP.return_value.name = "local"
+            LP.return_value.parse.return_value = ParseResult(markdown="# md")
+            with caplog.at_level(_logging.WARNING):
+                convert_document(src, kb_dir)
+        assert any("falling back to the local parser" in r.message for r in caplog.records)

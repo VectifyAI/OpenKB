@@ -70,7 +70,7 @@ class TestAddCommand:
         with patch("openkb.cli.add_single_file") as mock_add, \
              patch("openkb.cli._find_kb_dir", return_value=kb_dir):
             runner.invoke(cli, ["add", str(doc)])
-            mock_add.assert_called_once_with(doc, kb_dir)
+            mock_add.assert_called_once_with(doc, kb_dir, parser_override=None)
 
     def test_add_directory_calls_helper_for_each_file(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
@@ -147,3 +147,29 @@ class TestAddCommand:
             result = runner.invoke(cli, ["add", str(doc)])
             mock_arun.assert_called_once()
             assert "OK" in result.output
+
+
+def test_add_single_file_threads_parser_override(tmp_path):
+    from unittest.mock import patch
+    from pathlib import Path
+    from openkb.cli import add_single_file
+
+    fake_result = type("R", (), {"skipped": True, "is_long_doc": False,
+                                 "file_hash": None, "raw_path": None,
+                                 "source_path": None})()
+    with patch("openkb.cli.convert_document", return_value=fake_result) as cd, \
+         patch("openkb.cli._setup_llm_key"), \
+         patch("openkb.cli.load_config", return_value={"model": "m"}):
+        add_single_file(Path("x.pdf"), tmp_path, parser_override="mistral")
+    # parser_override must reach convert_document
+    assert cd.call_args.kwargs.get("parser_override") == "mistral" \
+        or (len(cd.call_args.args) >= 3 and cd.call_args.args[2] == "mistral")
+
+
+def test_add_parser_option_rejects_invalid_choice(tmp_path):
+    from click.testing import CliRunner
+    from openkb.cli import cli
+    runner = CliRunner()
+    result = runner.invoke(cli, ["add", "--parser", "bogus", str(tmp_path / "x.pdf")])
+    assert result.exit_code != 0
+    assert "bogus" in result.output or "Invalid value" in result.output

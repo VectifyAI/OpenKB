@@ -45,3 +45,8 @@ def test_load_overrides_defaults(tmp_path):
     assert loaded["pageindex_threshold"] == 100
     # Non-overridden defaults still present
     assert loaded["language"] == "en"
+
+
+def test_default_parser_is_local():
+    from openkb.config import DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["parser"] == "local"

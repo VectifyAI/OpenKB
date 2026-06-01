@@ -43,6 +43,7 @@ from dotenv import load_dotenv
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import convert_document
 from openkb.log import append_log
+from openkb.parsers.registry import VALID_PARSERS
 from openkb.schema import AGENTS_MD
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
@@ -124,17 +125,19 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     else:
         litellm.api_key = api_key
 
-        # Dynamically set the provider-specific env var when possible
         if provider:
+            # Active provider is known — set only its key, so LLM_API_KEY is not
+            # sprayed into unrelated provider keys (e.g. MISTRAL_API_KEY, which the
+            # Mistral parser treats as a real Mistral credential).
             provider_env = f"{provider.upper()}_API_KEY"
             if not os.environ.get(provider_env):
                 os.environ[provider_env] = api_key
-
-        # Fallback: also set common provider keys so multi-provider
-        # configs (e.g. PageIndex Cloud) still work
-        for env_var in _KNOWN_PROVIDER_KEYS:
-            if not os.environ.get(env_var):
-                os.environ[env_var] = api_key
+        else:
+            # Provider couldn't be determined — fall back to setting the common
+            # provider keys so multi-provider configs still work.
+            for env_var in _KNOWN_PROVIDER_KEYS:
+                if not os.environ.get(env_var):
+                    os.environ[env_var] = api_key
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
@@ -259,7 +262,7 @@ def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
         shutil.rmtree(target)
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
+def add_single_file(file_path: Path, kb_dir: Path, parser_override: str | None = None) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -289,7 +292,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
     # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
     try:
-        result = convert_document(file_path, kb_dir)
+        result = convert_document(file_path, kb_dir, parser_override=parser_override)
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
         logger.debug("Conversion traceback:", exc_info=True)
@@ -575,8 +578,11 @@ def init(model, language):
 
 @cli.command()
 @click.argument("path")
+@click.option("--parser", "parser_override", default=None,
+              type=click.Choice(VALID_PARSERS),
+              help="Override the configured parser for this run.")
 @click.pass_context
-def add(ctx, path):
+def add(ctx, path, parser_override):
     """Add a document or directory of documents at PATH to the knowledge base.
 
     PATH may be a local file, a local directory (which is walked
@@ -600,7 +606,7 @@ def add(ctx, path):
         fetched = fetch_url_to_raw(path, kb_dir)
         if fetched is None:
             return
-        outcome = add_single_file(fetched, kb_dir)
+        outcome = add_single_file(fetched, kb_dir, parser_override=parser_override)
         # Only clean up on dedup-skip. On "failed" we keep the file so
         # the user can retry (e.g. transient LLM error during compile)
         # without re-downloading — and so they don't lose data when
@@ -626,7 +632,7 @@ def add(ctx, path):
         click.echo(f"Found {total} supported file(s) in {path}.")
         for i, f in enumerate(files, 1):
             click.echo(f"\n[{i}/{total}] ", nl=False)
-            add_single_file(f, kb_dir)
+            add_single_file(f, kb_dir, parser_override=parser_override)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(
@@ -634,7 +640,7 @@ def add(ctx, path):
                 f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
             return
-        add_single_file(target, kb_dir)
+        add_single_file(target, kb_dir, parser_override=parser_override)
 
 
 def _stream_to_tty() -> bool:

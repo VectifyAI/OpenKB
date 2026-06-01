@@ -365,3 +365,17 @@ class TestQuerySaveGhostStrip:
         assert "rnn" in saved
         assert "[[concepts/multi-head-attention]]" not in saved
         assert "multi head attention" in saved
+
+
+def test_setup_llm_key_does_not_spray_unrelated_provider_keys(tmp_path, monkeypatch):
+    import os
+    from openkb.cli import _setup_llm_key
+    # KB with an openai model (known provider)
+    openkb_dir = tmp_path / ".openkb"; openkb_dir.mkdir()
+    (openkb_dir / "config.yaml").write_text("model: openai/gpt-4o\n")
+    for k in ("MISTRAL_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    _setup_llm_key(tmp_path)
+    assert os.environ.get("OPENAI_API_KEY") == "sk-test"   # active provider set
+    assert os.environ.get("MISTRAL_API_KEY") is None        # unrelated provider NOT sprayed

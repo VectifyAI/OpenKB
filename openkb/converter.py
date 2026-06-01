@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
-from markitdown import MarkItDown
 
 from openkb.config import load_config
-from openkb.images import copy_relative_images, extract_base64_images, convert_pdf_with_images
+from openkb.images import localize_images
+from openkb.parsers import get_parser
+from openkb.parsers.local import LocalParser
 from openkb.state import HashRegistry
 
 logger = logging.getLogger(__name__)
@@ -33,16 +34,17 @@ def get_pdf_page_count(path: Path) -> int:
         return doc.page_count
 
 
-def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
+def convert_document(src: Path, kb_dir: Path, parser_override: str | None = None) -> ConvertResult:
     """Convert a document and integrate it into the knowledge base.
 
     Steps:
     1. Hash-check — skip if already known.
     2. Copy source to ``raw/``.
     3. If PDF and page count >= threshold → return :attr:`ConvertResult.is_long_doc`.
-    4. If ``.md`` — read, process relative images, save to ``wiki/sources/``.
-    5. Otherwise — run MarkItDown, extract base64 images, save to ``wiki/sources/``.
-    6. Register hash in the registry.
+    4. Select a parser via :func:`get_parser` (falling back to
+       :class:`LocalParser` for unsupported suffixes like ``.md``), parse the
+       file to Markdown, localize images, and save to ``wiki/sources/``.
+    5. Register hash in the registry.
     """
     # ------------------------------------------------------------------
     # Load config & state
@@ -84,7 +86,7 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
             return ConvertResult(raw_path=raw_dest, is_long_doc=True, file_hash=file_hash)
 
     # ------------------------------------------------------------------
-    # 4/5. Convert to Markdown
+    # 4. Select parser, convert to Markdown, localize images
     # ------------------------------------------------------------------
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
@@ -93,18 +95,27 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
 
     doc_name = src.stem
 
-    if src.suffix.lower() == ".md":
-        markdown = src.read_text(encoding="utf-8")
-        markdown = copy_relative_images(markdown, src.parent, doc_name, images_dir)
-    elif src.suffix.lower() == ".pdf":
-        # Use pymupdf dict-mode for PDFs: text + images inline at correct positions
-        markdown = convert_pdf_with_images(src, doc_name, images_dir)
+    parser = get_parser(
+        config,
+        override=parser_override,
+        doc_name=doc_name,
+        images_dir=images_dir,
+        source_dir=src.parent,
+    )
+    if not parser.supports(src.suffix):
+        if parser.name != "local":
+            logger.warning(
+                "Parser %r does not support %r; falling back to the local parser for %s.",
+                parser.name, src.suffix, src.name,
+            )
+        parser = LocalParser(doc_name=doc_name, images_dir=images_dir, source_dir=src.parent)
+
+    parse_result = parser.parse(src)
+    if parser.name == "local":
+        # LocalParser already persisted images and produced canonical links.
+        markdown = parse_result.markdown
     else:
-        # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
-        mid = MarkItDown()
-        result = mid.convert(str(src))
-        markdown = result.text_content
-        markdown = extract_base64_images(markdown, doc_name, images_dir)
+        markdown = localize_images(parse_result.markdown, parse_result.images, doc_name, images_dir)
 
     dest_md = sources_dir / f"{doc_name}.md"
     dest_md.write_text(markdown, encoding="utf-8")

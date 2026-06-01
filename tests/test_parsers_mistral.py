@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import base64
+import sys
+import types
+from unittest.mock import MagicMock
+
+import pytest
+
+from openkb.parsers.base import ParseResult
+
+
+def _install_fake_mistralai(monkeypatch, client_instance):
+    mod = types.ModuleType("mistralai")
+    mod.Mistral = MagicMock(return_value=client_instance)
+    monkeypatch.setitem(sys.modules, "mistralai", mod)
+    return mod
+
+
+def test_supports_pdf():
+    from openkb.parsers.mistral import MistralParser
+    p = MistralParser({})
+    assert p.supports(".pdf") is True
+    assert p.supports(".docx") is False
+
+
+def test_missing_key_raises_actionable(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    from openkb.parsers.mistral import MistralParser
+    p = MistralParser({})
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    with pytest.raises(RuntimeError) as exc:
+        p.parse(src)
+    assert "MISTRAL_API_KEY" in str(exc.value)
+
+
+def test_parse_collects_markdown_and_decodes_images(monkeypatch, tmp_path):
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    img_bytes = b"IMGDATA"
+    img_b64 = base64.b64encode(img_bytes).decode()
+
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-1")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    page = MagicMock()
+    page.markdown = "Text ![img-0.png](img-0.png)"
+    page.images = [MagicMock(id="img-0.png", image_base64=f"data:image/png;base64,{img_b64}")]
+    client.ocr.process.return_value = MagicMock(pages=[page])
+
+    _install_fake_mistralai(monkeypatch, client)
+    from openkb.parsers.mistral import MistralParser
+    p = MistralParser({})
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    result = p.parse(src)
+
+    assert isinstance(result, ParseResult)
+    assert "img-0.png" in result.markdown
+    assert result.images["img-0.png"] == img_bytes
+
+
+def test_missing_package_raises_install_hint(monkeypatch, tmp_path):
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    monkeypatch.setitem(sys.modules, "mistralai", None)  # force ImportError
+    from openkb.parsers.mistral import MistralParser
+    p = MistralParser({})
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    with pytest.raises(RuntimeError) as exc:
+        p.parse(src)
+    assert "openkb[mistral]" in str(exc.value)
+
+
+def test_undecodable_image_logged_and_skipped(monkeypatch, tmp_path, caplog):
+    import logging as _logging
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-1")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    page = MagicMock()
+    page.markdown = "Text ![bad.png](bad.png)"
+    page.images = [MagicMock(id="bad.png", image_base64="!!!not-base64!!!")]
+    client.ocr.process.return_value = MagicMock(pages=[page])
+    _install_fake_mistralai(monkeypatch, client)
+    from openkb.parsers.mistral import MistralParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    with caplog.at_level(_logging.WARNING):
+        result = MistralParser({}).parse(src)
+    assert "bad.png" not in result.images
+    assert any("bad.png" in r.message for r in caplog.records)
+
+
+def test_uploaded_file_is_deleted(monkeypatch, tmp_path):
+    import sys, types
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-1")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    client.ocr.process.return_value = MagicMock(pages=[])
+    mod = types.ModuleType("mistralai"); mod.Mistral = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "mistralai", mod)
+    from openkb.parsers.mistral import MistralParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    MistralParser({}).parse(src)
+    client.files.delete.assert_called_once_with(file_id="file-1")
+
+
+def test_uploaded_file_deleted_even_on_ocr_error(monkeypatch, tmp_path):
+    import sys, types
+    from unittest.mock import MagicMock
+    import pytest
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-2")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    client.ocr.process.side_effect = RuntimeError("ocr boom")
+    mod = types.ModuleType("mistralai"); mod.Mistral = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "mistralai", mod)
+    from openkb.parsers.mistral import MistralParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    with pytest.raises(RuntimeError):
+        MistralParser({}).parse(src)
+    client.files.delete.assert_called_once_with(file_id="file-2")

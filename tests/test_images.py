@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 
 
-from openkb.images import copy_relative_images, extract_base64_images
+from openkb.images import copy_relative_images, extract_base64_images, localize_images
 
 
 # ---------------------------------------------------------------------------
@@ -164,3 +164,83 @@ class TestCopyRelativeImages:
         assert "![b](sources/images/doc/b.jpg)" in result
         assert (images_dir / "a.png").exists()
         assert (images_dir / "b.jpg").exists()
+
+
+# ---------------------------------------------------------------------------
+# localize_images
+# ---------------------------------------------------------------------------
+
+
+def test_localize_images_writes_bytes_and_rewrites_bare_refs(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    md = "Before\n\n![fig](p1_img1.png)\n\nAfter"
+    out = localize_images(md, {"p1_img1.png": b"PNGDATA"}, "doc", images_dir)
+    assert "![fig](sources/images/doc/p1_img1.png)" in out
+    assert (images_dir / "p1_img1.png").read_bytes() == b"PNGDATA"
+
+
+def test_localize_images_handles_inline_base64(tmp_path):
+    import base64
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    payload = base64.b64encode(b"JPEGDATA").decode()
+    md = f"![x](data:image/jpeg;base64,{payload})"
+    out = localize_images(md, {}, "doc", images_dir)
+    assert "sources/images/doc/img_001.jpeg" in out
+    assert (images_dir / "img_001.jpeg").read_bytes() == b"JPEGDATA"
+
+
+def test_localize_images_leaves_unreferenced_bytes_on_disk(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images("no images here", {"orphan.png": b"X"}, "doc", images_dir)
+    assert out == "no images here"
+    assert (images_dir / "orphan.png").read_bytes() == b"X"
+
+
+def test_localize_images_filename_with_regex_metachars(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    weird = r"img\g<9>.png"  # backslash-escape-like name must not crash re.sub
+    md = f"![f]({weird})"
+    out = localize_images(md, {weird: b"DATA"}, "doc", images_dir)
+    assert f"sources/images/doc/{weird}" in out
+    assert (images_dir / weird).read_bytes() == b"DATA"
+
+
+def test_localize_images_strips_path_traversal_in_filename(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    md = "![bad](../../evil.png)"
+    out = localize_images(md, {"../../evil.png": b"DATA"}, "doc", images_dir)
+    # bytes written INSIDE images_dir under the basename only — no escape
+    assert (images_dir / "evil.png").read_bytes() == b"DATA"
+    assert not (tmp_path / "evil.png").exists()
+    assert not (images_dir.parent.parent / "evil.png").exists()
+    # the original ref is rewritten to the sanitized canonical path
+    assert "sources/images/doc/evil.png" in out
+
+
+def test_localize_images_absolute_filename_stays_inside(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images("![x](/etc/x.png)", {"/etc/x.png": b"D"}, "doc", images_dir)
+    assert (images_dir / "x.png").read_bytes() == b"D"
+    assert "sources/images/doc/x.png" in out
+
+
+def test_localize_images_rewrites_directory_prefixed_target(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    md = "![p](images/fig.png)\n\n![q](./sub/images/other.png)"
+    out = localize_images(md, {"fig.png": b"A", "other.png": b"B"}, "doc", images_dir)
+    assert "![p](sources/images/doc/fig.png)" in out
+    assert "![q](sources/images/doc/other.png)" in out
+    assert (images_dir / "fig.png").read_bytes() == b"A"
+    assert (images_dir / "other.png").read_bytes() == b"B"
+
+
+def test_localize_images_preserves_title_attribute(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images('![a](fig.png "Figure 1")', {"fig.png": b"X"}, "doc", images_dir)
+    assert '![a](sources/images/doc/fig.png "Figure 1")' in out
+
+
+def test_localize_images_inner_whitespace(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images("![a]( fig.png )", {"fig.png": b"X"}, "doc", images_dir)
+    assert "sources/images/doc/fig.png" in out
