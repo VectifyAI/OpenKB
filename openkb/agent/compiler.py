@@ -78,6 +78,43 @@ _ENTITY_TYPES = frozenset(_ENTITY_TYPE_LIST)
 _ENTITY_TYPES_STR = ", ".join(_ENTITY_TYPE_LIST)
 
 
+def _resolve_entity_types(config: dict) -> list[str]:
+    """Resolve the effective entity-type list from config.
+
+    If ``config["entity_types"]`` is a non-empty list, each item is cleaned
+    (``str(x).strip().lower()``, empties dropped); if anything survives, that
+    cleaned list is used (de-duped, order-preserving) with ``"other"`` always
+    appended when missing (it's the coercion fallback). Otherwise — the key is
+    absent, not a list, empty, or fully malformed — the default
+    ``_ENTITY_TYPE_LIST`` is returned, so behavior is byte-identical to today.
+    A warning is logged only when ``entity_types`` was present-but-malformed.
+    """
+    raw = config.get("entity_types")
+    if raw is None:
+        return list(_ENTITY_TYPE_LIST)
+    if not isinstance(raw, list):
+        logger.warning(
+            "config: 'entity_types' must be a list of strings, got %s — "
+            "falling back to the default entity types.",
+            type(raw).__name__,
+        )
+        return list(_ENTITY_TYPE_LIST)
+    cleaned: list[str] = []
+    for x in raw:
+        s = str(x).strip().lower()
+        if s and s not in cleaned:
+            cleaned.append(s)
+    if not cleaned:
+        logger.warning(
+            "config: 'entity_types' was present but yielded no usable values — "
+            "falling back to the default entity types.",
+        )
+        return list(_ENTITY_TYPE_LIST)
+    if "other" not in cleaned:
+        cleaned.append("other")
+    return cleaned
+
+
 _CONCEPTS_PLAN_USER = """\
 Based on the summary above, decide how to update the wiki's CONCEPT pages and
 ENTITY pages.
@@ -207,11 +244,13 @@ Return a JSON object with three keys:
 Return ONLY valid JSON, no fences.
 """
 
-# Substitute the canonical entity-type list into every prompt that advertises
-# it, so the prompt text can never drift from ``_ENTITY_TYPES`` validation.
-_CONCEPTS_PLAN_USER = _CONCEPTS_PLAN_USER.replace("__ENTITY_TYPES__", _ENTITY_TYPES_STR)
-_ENTITY_PAGE_USER = _ENTITY_PAGE_USER.replace("__ENTITY_TYPES__", _ENTITY_TYPES_STR)
-_ENTITY_UPDATE_USER = _ENTITY_UPDATE_USER.replace("__ENTITY_TYPES__", _ENTITY_TYPES_STR)
+# NOTE: the prompt templates intentionally KEEP the literal ``__ENTITY_TYPES__``
+# token at import time. The effective entity-type list is resolved per-compile
+# from config (see ``_resolve_entity_types``) and substituted via ``str.replace``
+# at call time inside ``_compile_concepts``. This lets ``entity_types:`` in
+# ``.openkb/config.yaml`` override the default enum everywhere at once. The
+# token is a plain string (not a ``{}`` placeholder) so it does not collide with
+# the ``{{ }}`` JSON braces these templates feed to ``str.format``.
 
 _SUMMARY_REWRITE_USER = """\
 Task: Rewrite the summary you wrote above into a final version that is \
@@ -432,13 +471,19 @@ def _filter_related_slugs(items: list) -> list[str]:
     return valid
 
 
-def _filter_entity_items(items: object) -> list[dict]:
+def _filter_entity_items(
+    items: object, valid_types: frozenset | None = None
+) -> list[dict]:
     """Validate entity create/update objects: require name+title, coerce type.
 
     Each kept item is normalized to ``{"name", "title", "type"}`` where
-    ``type`` falls back to ``"other"`` when missing or outside the entity
-    enum and ``title`` falls back to ``name``.
+    ``type`` falls back to ``"other"`` when missing or outside ``valid_types``
+    and ``title`` falls back to ``name``. ``valid_types`` defaults to the
+    module-level ``_ENTITY_TYPES`` so callers that don't thread a config-driven
+    set keep today's behavior.
     """
+    if valid_types is None:
+        valid_types = _ENTITY_TYPES
     out: list[dict] = []
     if not isinstance(items, list):
         return out
@@ -450,13 +495,13 @@ def _filter_entity_items(items: object) -> list[dict]:
             continue
         title = it.get("title") if isinstance(it.get("title"), str) else name
         etype = it.get("type")
-        if not isinstance(etype, str) or etype not in _ENTITY_TYPES:
+        if not isinstance(etype, str) or etype not in valid_types:
             etype = "other"
         out.append({"name": name, "title": title, "type": etype})
     return out
 
 
-def _parse_entities_plan(parsed: object) -> dict:
+def _parse_entities_plan(parsed: object, valid_types: frozenset | None = None) -> dict:
     """Extract the entities group from a plan dict, with graceful fallback.
 
     Returns ``{"create": [...], "update": [...], "related": [...]}``. A
@@ -470,8 +515,8 @@ def _parse_entities_plan(parsed: object) -> dict:
     if not isinstance(group, dict):
         return empty
     return {
-        "create": _filter_entity_items(group.get("create", [])),
-        "update": _filter_entity_items(group.get("update", [])),
+        "create": _filter_entity_items(group.get("create", []), valid_types),
+        "update": _filter_entity_items(group.get("update", []), valid_types),
         "related": _filter_related_slugs(group.get("related", [])),
     }
 
@@ -1339,6 +1384,7 @@ async def _compile_concepts(
     doc_brief: str = "",
     doc_type: str = "short",
     rewrite_summary: bool = False,
+    entity_types: list[str] | None = None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1350,6 +1396,13 @@ async def _compile_concepts(
     wikilinks reflect the actual concept pages on disk.
     """
     source_file = f"summaries/{doc_name}.md"
+
+    # Effective entity types for this compile (config-driven; defaults to the
+    # canonical enum when unset, keeping behavior byte-identical to today).
+    if entity_types is None:
+        entity_types = list(_ENTITY_TYPE_LIST)
+    types_str = ", ".join(entity_types)
+    valid_types = frozenset(entity_types)
 
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
@@ -1363,7 +1416,9 @@ async def _compile_concepts(
         system_msg,
         doc_msg,
         summary_msg,
-        {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
+        {"role": "user", "content": _CONCEPTS_PLAN_USER.replace(
+            "__ENTITY_TYPES__", types_str,
+        ).format(
             concept_briefs=concept_briefs,
             entity_briefs=entity_briefs,
         )},
@@ -1442,7 +1497,7 @@ async def _compile_concepts(
             "update": _filter_concept_items(concepts_group.get("update", []), "update"),
             "related": _filter_related_slugs(concepts_group.get("related", [])),
         }
-        entities_plan = _parse_entities_plan(parsed)
+        entities_plan = _parse_entities_plan(parsed, valid_types)
 
     create_items = plan["create"]
     update_items = plan["update"]
@@ -1614,14 +1669,16 @@ async def _compile_concepts(
                 doc_msg,             # cached (BP1)
                 summary_msg,         # cached (BP2)
                 known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _ENTITY_PAGE_USER.format(
+                {"role": "user", "content": _ENTITY_PAGE_USER.replace(
+                    "__ENTITY_TYPES__", types_str,
+                ).format(
                     title=title, type=etype, doc_name=doc_name,
                 )},
             ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            etype_out = parsed.get("type") if parsed.get("type") in _ENTITY_TYPES else etype
+            etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
@@ -1650,7 +1707,9 @@ async def _compile_concepts(
                 doc_msg,             # cached (BP1)
                 summary_msg,         # cached (BP2)
                 known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _ENTITY_UPDATE_USER.format(
+                {"role": "user", "content": _ENTITY_UPDATE_USER.replace(
+                    "__ENTITY_TYPES__", types_str,
+                ).format(
                     title=title, type=etype, doc_name=doc_name,
                     existing_content=existing_content,
                 )},
@@ -1658,7 +1717,7 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            etype_out = parsed.get("type") if parsed.get("type") in _ENTITY_TYPES else etype
+            etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
@@ -1902,6 +1961,7 @@ async def compile_short_doc(
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
+    entity_types = _resolve_entity_types(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -1936,7 +1996,7 @@ async def compile_short_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         summary, doc_name, max_concurrency, doc_brief=doc_brief,
-        doc_type="short", rewrite_summary=True,
+        doc_type="short", rewrite_summary=True, entity_types=entity_types,
     )
 
 
@@ -1959,6 +2019,7 @@ async def compile_long_doc(
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
+    entity_types = _resolve_entity_types(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -1980,5 +2041,5 @@ async def compile_long_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         overview, doc_name, max_concurrency, doc_brief=doc_description,
-        doc_type="pageindex",
+        doc_type="pageindex", entity_types=entity_types,
     )

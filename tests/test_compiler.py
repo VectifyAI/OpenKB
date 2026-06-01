@@ -25,6 +25,9 @@ from openkb.agent.compiler import (
     _backlink_summary_entities,
     _backlink_entities,
     _parse_entities_plan,
+    _filter_entity_items,
+    _resolve_entity_types,
+    _ENTITY_TYPE_LIST,
     remove_doc_from_entity_pages,
 )
 
@@ -90,6 +93,55 @@ class TestParseEntitiesPlan:
                                "update": [], "related": []}}
         ents = _parse_entities_plan(parsed)
         assert ents["create"][0]["type"] == "other"
+
+
+class TestResolveEntityTypes:
+    def test_default_when_key_absent(self):
+        assert _resolve_entity_types({}) == list(_ENTITY_TYPE_LIST)
+
+    def test_custom_list_is_used_and_normalized(self):
+        out = _resolve_entity_types({"entity_types": ["Person", " Dataset ", "MODEL"]})
+        assert out == ["person", "dataset", "model", "other"]
+
+    def test_always_includes_other(self):
+        out = _resolve_entity_types({"entity_types": ["person", "dataset"]})
+        assert "other" in out
+        # already-present "other" is not duplicated
+        out2 = _resolve_entity_types({"entity_types": ["dataset", "other"]})
+        assert out2.count("other") == 1
+
+    def test_dedupes_preserving_order(self):
+        out = _resolve_entity_types({"entity_types": ["a", "a", "b"]})
+        assert out == ["a", "b", "other"]
+
+    def test_malformed_string_falls_back_to_default(self):
+        assert _resolve_entity_types({"entity_types": "person"}) == list(_ENTITY_TYPE_LIST)
+
+    def test_empty_list_falls_back_to_default(self):
+        assert _resolve_entity_types({"entity_types": []}) == list(_ENTITY_TYPE_LIST)
+
+    def test_all_empty_strings_falls_back_to_default(self):
+        assert _resolve_entity_types({"entity_types": ["", "  "]}) == list(_ENTITY_TYPE_LIST)
+
+
+class TestFilterEntityItemsCustomTypes:
+    def test_custom_type_in_valid_types_is_kept(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "imagenet", "title": "ImageNet", "type": "dataset"}]
+        out = _filter_entity_items(items, valid)
+        assert out == [{"name": "imagenet", "title": "ImageNet", "type": "dataset"}]
+
+    def test_type_not_in_valid_types_is_coerced_to_other(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "x", "title": "X", "type": "organization"}]
+        out = _filter_entity_items(items, valid)
+        assert out[0]["type"] == "other"
+
+    def test_default_valid_types_backward_compat(self):
+        # No valid_types arg → module default enum is used.
+        items = [{"name": "x", "title": "X", "type": "organization"}]
+        out = _filter_entity_items(items)
+        assert out[0]["type"] == "organization"
 
 
 class TestParseBriefContent:
@@ -1817,6 +1869,93 @@ class TestCompileEntitiesEndToEnd:
         assert "[[concepts/ghost-concept]]" not in summary
         # the genuinely-created concept must still be linked
         assert "[[concepts/real-concept]]" in summary
+
+    @pytest.mark.asyncio
+    async def test_custom_entity_type_is_not_coerced(self, tmp_path, monkeypatch):
+        """With a config-driven entity_types that includes 'dataset', a plan
+        entity typed 'dataset' is written as 'dataset' (not coerced to other),
+        and the plan prompt the mock receives advertises the custom type."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        seen_messages: list = []
+
+        def fake_llm(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [], "update": [], "related": []},
+                    "entities": {"create": [{"name": "imagenet", "title": "ImageNet",
+                                             "type": "dataset"}],
+                                 "update": [], "related": []},
+                })
+            return json.dumps({"brief": "b", "type": "dataset", "content": "# Page\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        sys_msg = {"role": "system", "content": "x"}
+        doc_msg = {"role": "user", "content": "x"}
+        await _compile_concepts(
+            wiki, tmp_path, "m", sys_msg, doc_msg,
+            "summary text", "doc", max_concurrency=2,
+            doc_type="short", rewrite_summary=False,
+            entity_types=["person", "organization", "dataset", "other"],
+        )
+
+        ent = (wiki / "entities" / "imagenet.md").read_text(encoding="utf-8")
+        assert "type:" in ent and "dataset" in ent
+        # The custom type must reach the plan prompt the mock saw.
+        plan_msgs = [m for (label, m) in seen_messages if label == "concepts-plan"]
+        assert plan_msgs, "plan call was not made"
+        plan_user = plan_msgs[0][-1]["content"]
+        assert "dataset" in plan_user
+        assert "__ENTITY_TYPES__" not in plan_user  # token was substituted
+
+    @pytest.mark.asyncio
+    async def test_default_path_plan_prompt_has_default_types(self, tmp_path, monkeypatch):
+        """When entity_types is omitted, the plan prompt still advertises the
+        default enum at call time (byte-identical to today)."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        seen_messages: list = []
+
+        def fake_llm(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            return json.dumps({
+                "concepts": {"create": [], "update": [], "related": []},
+                "entities": {"create": [], "update": [], "related": []},
+            })
+
+        async def fake_llm_async(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        await _compile_concepts(
+            wiki, tmp_path, "m", {"role": "system", "content": "x"},
+            {"role": "user", "content": "x"}, "summary text", "doc",
+            max_concurrency=2, doc_type="short", rewrite_summary=False,
+        )
+
+        plan_msgs = [m for (label, m) in seen_messages if label == "concepts-plan"]
+        plan_user = plan_msgs[0][-1]["content"]
+        for t in _ENTITY_TYPE_LIST:
+            assert t in plan_user
+        assert "__ENTITY_TYPES__" not in plan_user
 
 
 # ---------------------------------------------------------------------------

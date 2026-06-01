@@ -271,6 +271,8 @@ language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 ```
 
+`entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
+
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
 
 | Provider | Model example |
