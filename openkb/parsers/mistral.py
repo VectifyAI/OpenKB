@@ -42,26 +42,37 @@ class MistralParser(Parser):
             ) from exc
 
         client = Mistral(api_key=api_key)
-        uploaded = client.files.upload(
-            file={"file_name": src.name, "content": src.read_bytes()}, purpose="ocr"
-        )
-        signed = client.files.get_signed_url(file_id=uploaded.id)
-        resp = client.ocr.process(
-            model=self.model,
-            document={"type": "document_url", "document_url": signed.url},
-            include_image_base64=True,
-        )
+        uploaded = None
+        try:
+            uploaded = client.files.upload(
+                file={"file_name": src.name, "content": src.read_bytes()}, purpose="ocr"
+            )
+            signed = client.files.get_signed_url(file_id=uploaded.id)
+            resp = client.ocr.process(
+                model=self.model,
+                document={"type": "document_url", "document_url": signed.url},
+                include_image_base64=True,
+            )
 
-        parts: list[str] = []
-        images: dict[str, bytes] = {}
-        for page in resp.pages:
-            parts.append(page.markdown or "")
-            for img in getattr(page, "images", None) or []:
-                raw = img.image_base64 or ""
-                raw = _DATA_URI_RE.sub("", raw)
+            parts: list[str] = []
+            images: dict[str, bytes] = {}
+            for page in resp.pages:
+                parts.append(page.markdown or "")
+                for img in getattr(page, "images", None) or []:
+                    raw = img.image_base64 or ""
+                    raw = _DATA_URI_RE.sub("", raw)
+                    try:
+                        images[img.id] = base64.b64decode(raw, validate=True)
+                    except Exception:
+                        logger.warning("Skipping undecodable Mistral image: %s", getattr(img, "id", "?"))
+                        continue
+            return ParseResult(markdown="\n\n".join(parts), images=images)
+        finally:
+            if uploaded is not None:
                 try:
-                    images[img.id] = base64.b64decode(raw, validate=True)
+                    client.files.delete(file_id=uploaded.id)
                 except Exception:
-                    logger.warning("Skipping undecodable Mistral image: %s", getattr(img, "id", "?"))
-                    continue
-        return ParseResult(markdown="\n\n".join(parts), images=images)
+                    logger.warning(
+                        "Failed to delete uploaded Mistral OCR file %s",
+                        getattr(uploaded, "id", "?"),
+                    )

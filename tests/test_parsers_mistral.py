@@ -86,3 +86,37 @@ def test_undecodable_image_logged_and_skipped(monkeypatch, tmp_path, caplog):
         result = MistralParser({}).parse(src)
     assert "bad.png" not in result.images
     assert any("bad.png" in r.message for r in caplog.records)
+
+
+def test_uploaded_file_is_deleted(monkeypatch, tmp_path):
+    import sys, types
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-1")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    client.ocr.process.return_value = MagicMock(pages=[])
+    mod = types.ModuleType("mistralai"); mod.Mistral = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "mistralai", mod)
+    from openkb.parsers.mistral import MistralParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    MistralParser({}).parse(src)
+    client.files.delete.assert_called_once_with(file_id="file-1")
+
+
+def test_uploaded_file_deleted_even_on_ocr_error(monkeypatch, tmp_path):
+    import sys, types
+    from unittest.mock import MagicMock
+    import pytest
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    client = MagicMock()
+    client.files.upload.return_value = MagicMock(id="file-2")
+    client.files.get_signed_url.return_value = MagicMock(url="https://signed")
+    client.ocr.process.side_effect = RuntimeError("ocr boom")
+    mod = types.ModuleType("mistralai"); mod.Mistral = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "mistralai", mod)
+    from openkb.parsers.mistral import MistralParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    with pytest.raises(RuntimeError):
+        MistralParser({}).parse(src)
+    client.files.delete.assert_called_once_with(file_id="file-2")

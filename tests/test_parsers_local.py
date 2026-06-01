@@ -39,13 +39,10 @@ def test_parse_other_uses_markitdown_and_extracts_base64(tmp_path):
     src = tmp_path / "deck.pptx"
     src.write_bytes(b"PK fake")
     images_dir = tmp_path / "img" / "deck"
-    fake_mid = patch("openkb.parsers.local.MarkItDown").start()
-    fake_mid.return_value.convert.return_value.text_content = "MARKITDOWN MD"
-    try:
-        with patch("openkb.parsers.local.extract_base64_images", return_value="CLEANED") as ex:
-            p = LocalParser(doc_name="deck", images_dir=images_dir, source_dir=tmp_path)
-            result = p.parse(src)
-        ex.assert_called_once_with("MARKITDOWN MD", "deck", images_dir)
-        assert result.markdown == "CLEANED"
-    finally:
-        patch.stopall()
+    with patch("openkb.parsers.local.MarkItDown") as fake_mid, \
+         patch("openkb.parsers.local.extract_base64_images", return_value="CLEANED") as ex:
+        fake_mid.return_value.convert.return_value.text_content = "MARKITDOWN MD"
+        p = LocalParser(doc_name="deck", images_dir=images_dir, source_dir=tmp_path)
+        result = p.parse(src)
+    ex.assert_called_once_with("MARKITDOWN MD", "deck", images_dir)
+    assert result.markdown == "CLEANED"
