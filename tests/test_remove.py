@@ -489,6 +489,7 @@ def test_cli_remove_keep_raw_preserves_file(kb_dir):
 
 
 def test_cli_remove_keep_empty_concepts(kb_dir):
+    """The --keep-empty-concepts alias is still accepted (backward compat)."""
     _seed_two_doc_kb(kb_dir)
     result = _invoke(
         kb_dir, ["remove", "attention.pdf", "--keep-empty-concepts", "--yes"],
@@ -496,6 +497,29 @@ def test_cli_remove_keep_empty_concepts(kb_dir):
 
     assert result.exit_code == 0, result.output
     # transformer.md retained with empty sources
+    transformer = kb_dir / "wiki" / "concepts" / "transformer.md"
+    assert transformer.exists()
+    assert "sources: []" in transformer.read_text()
+
+
+def test_cli_remove_keep_empty_retains_concepts_and_entities(kb_dir):
+    """The unified --keep-empty flag retains BOTH concept and entity pages
+    whose only source was the removed doc (not just concepts)."""
+    _seed_two_doc_kb(kb_dir)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
+    (kb_dir / "wiki" / "entities" / "vaswani.md").write_text(
+        '---\nsources: ["summaries/attention-h_a.md"]\ntype: person\nbrief: V\n---\n# Vaswani\n',
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--keep-empty", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    # single-source entity retained (not deleted), with emptied sources
+    vaswani = kb_dir / "wiki" / "entities" / "vaswani.md"
+    assert vaswani.exists()
+    assert "sources: []" in vaswani.read_text()
+    # single-source concept retained too
     transformer = kb_dir / "wiki" / "concepts" / "transformer.md"
     assert transformer.exists()
     assert "sources: []" in transformer.read_text()

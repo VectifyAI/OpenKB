@@ -804,28 +804,30 @@ def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]
 @click.argument("identifier")
 @click.option("--keep-raw", is_flag=True, default=False,
               help="Don't delete the original file from raw/.")
-@click.option("--keep-empty-concepts", is_flag=True, default=False,
-              help="Keep concept pages whose only source was the removed doc "
-                   "(with empty sources frontmatter). Useful when replacing "
-                   "the doc with a newer version.")
+@click.option("--keep-empty", "--keep-empty-concepts", "keep_empty",
+              is_flag=True, default=False,
+              help="Keep concept AND entity pages whose only source was the "
+                   "removed doc (leaving an empty sources: [] list). Useful "
+                   "when replacing the doc with a newer version. "
+                   "(--keep-empty-concepts is a backward-compatible alias.)")
 @click.option("--dry-run", is_flag=True, default=False,
               help="Print what would be done without modifying anything.")
 @click.option("--yes", "-y", is_flag=True, default=False,
               help="Skip the confirmation prompt.")
 @click.pass_context
-def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
+def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     """Remove a document from the knowledge base.
 
     IDENTIFIER may be the original filename ("paper.pdf"), the doc_name
     slug ("paper-a1b2c3d4e5f6"), or a substring that uniquely matches one.
 
     Deletes the doc's summary and source files, prunes the doc from
-    concept-page frontmatter and Related Documents sections, drops the
-    Documents entry from index.md, removes the hash entry, and finally
-    runs `lint --fix` to clean any dangling wikilinks.
+    concept- and entity-page frontmatter and Related Documents sections,
+    drops the Documents entry from index.md, removes the hash entry, and
+    finally runs `lint --fix` to clean any dangling wikilinks.
 
-    Concept pages whose only source was this doc are deleted by default;
-    use --keep-empty-concepts to retain them.
+    Concept and entity pages whose only source was this doc are deleted by
+    default; use --keep-empty to retain them.
     """
     from openkb.agent.compiler import (
         remove_doc_from_concept_pages,
@@ -894,8 +896,8 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     source_file_marker = f"summaries/{doc_name}.md"
     affected_concepts = _scan_affected_pages(wiki_dir / "concepts", source_file_marker)
 
-    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty_concepts]
-    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty_concepts]
+    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty]
+    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty]
     for slug in concept_deletes:
         actions.append(("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
     for slug in concept_edits:
@@ -906,8 +908,8 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     # preview/summary truthful about what it will delete vs. edit.
     affected_entities = _scan_affected_pages(wiki_dir / "entities", source_file_marker)
 
-    entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty_concepts]
-    entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty_concepts]
+    entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty]
+    entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty]
     for slug in entity_deletes:
         actions.append(("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
     for slug in entity_edits:
@@ -953,13 +955,13 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         click.echo(
             f"  {len(concept_deletes)} concept(s) will be DELETED because this is their only source."
         )
-        click.echo("  Pass --keep-empty-concepts to retain them instead.")
+        click.echo("  Pass --keep-empty to retain them instead.")
     if entity_deletes:
         click.echo("")
         click.echo(
             f"  {len(entity_deletes)} entity(s) will be DELETED because this is their only source."
         )
-        click.echo("  Pass --keep-empty-concepts to retain them instead.")
+        click.echo("  Pass --keep-empty to retain them instead.")
     click.echo("")
 
     if dry_run:
@@ -988,11 +990,11 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         shutil.rmtree(images_dir, ignore_errors=True)
 
     concept_result = remove_doc_from_concept_pages(
-        wiki_dir, doc_name, keep_empty=keep_empty_concepts,
+        wiki_dir, doc_name, keep_empty=keep_empty,
     )
 
     entity_result = remove_doc_from_entity_pages(
-        wiki_dir, doc_name, keep_empty=keep_empty_concepts,
+        wiki_dir, doc_name, keep_empty=keep_empty,
     )
 
     remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"],
