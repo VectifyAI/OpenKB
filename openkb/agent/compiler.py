@@ -29,6 +29,7 @@ from pathlib import Path
 import litellm
 import yaml
 
+from openkb.config import DEFAULT_ENTITY_TYPES, resolve_entity_types
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import INDEX_SEED, get_agents_md
 
@@ -68,54 +69,15 @@ Return ONLY valid JSON, no fences.
 """
 
 
-# Default entity-type enum. The EFFECTIVE set is resolved per-KB from config
-# (see ``_resolve_entity_types``) and substituted into the plan + entity-page
-# prompts at call time inside ``_compile_concepts`` via the ``__ENTITY_TYPES__``
-# token. ``_ENTITY_TYPES`` is the default validation set used when no
-# config-driven set is threaded through.
-_ENTITY_TYPE_LIST = ("person", "organization", "place", "product", "work", "event", "other")
+# Default entity-type enum lives in the config layer (so config validation is
+# centralized there and reusable by any command). ``_ENTITY_TYPE_LIST`` /
+# ``_ENTITY_TYPES`` are the default name + validation set used when no
+# config-driven set is threaded through; the EFFECTIVE set is resolved per-KB
+# via ``resolve_entity_types(config)`` and substituted into the plan +
+# entity-page prompts at call time inside ``_compile_concepts`` via the
+# ``__ENTITY_TYPES__`` token.
+_ENTITY_TYPE_LIST = DEFAULT_ENTITY_TYPES
 _ENTITY_TYPES = frozenset(_ENTITY_TYPE_LIST)
-
-
-def _resolve_entity_types(config: dict) -> list[str]:
-    """Resolve the effective entity-type list from config.
-
-    If ``config["entity_types"]`` is a non-empty list, each item is cleaned
-    (``str(x).strip().lower()``, empties dropped); if anything survives, that
-    cleaned list is used (de-duped, order-preserving) with ``"other"`` always
-    appended when missing (it's the coercion fallback). Otherwise — the key is
-    absent, not a list, empty, or fully malformed — the default
-    ``_ENTITY_TYPE_LIST`` is returned, so behavior is byte-identical to today.
-    A warning is logged only when ``entity_types`` was present-but-malformed.
-    """
-    raw = config.get("entity_types")
-    if raw is None:
-        return list(_ENTITY_TYPE_LIST)
-    if not isinstance(raw, list):
-        logger.warning(
-            "config: 'entity_types' must be a list of strings, got %s — "
-            "falling back to the default entity types.",
-            type(raw).__name__,
-        )
-        return list(_ENTITY_TYPE_LIST)
-    cleaned: list[str] = []
-    for x in raw:
-        if not isinstance(x, str):
-            continue  # skip YAML nulls/numbers (str(None) would become "none")
-        # Restrict to a safe label charset so a stray '{'/'}' or punctuation
-        # can't leak into a prompt template or a frontmatter value.
-        s = re.sub(r"[^a-z0-9 _-]+", "", x.strip().lower()).strip()
-        if s and s not in cleaned:
-            cleaned.append(s)
-    if not cleaned:
-        logger.warning(
-            "config: 'entity_types' was present but yielded no usable values — "
-            "falling back to the default entity types.",
-        )
-        return list(_ENTITY_TYPE_LIST)
-    if "other" not in cleaned:
-        cleaned.append("other")
-    return cleaned
 
 
 _CONCEPTS_PLAN_USER = """\
@@ -249,7 +211,7 @@ Return ONLY valid JSON, no fences.
 
 # NOTE: the prompt templates intentionally KEEP the literal ``__ENTITY_TYPES__``
 # token at import time. The effective entity-type list is resolved per-compile
-# from config (see ``_resolve_entity_types``) and substituted via ``str.replace``
+# from config (see ``resolve_entity_types``) and substituted via ``str.replace``
 # at call time inside ``_compile_concepts``. This lets ``entity_types:`` in
 # ``.openkb/config.yaml`` override the default enum everywhere at once. The
 # token is a plain string (not a ``{}`` placeholder) so it does not collide with
@@ -1225,6 +1187,35 @@ def _remove_doc_from_pages(
     return {"modified": modified, "deleted": deleted}
 
 
+def scan_affected_pages(pages_dir: Path, source_file_marker: str) -> list[tuple[str, int]]:
+    """Return ``(slug, remaining_sources)`` for pages under ``pages_dir`` whose
+    frontmatter ``sources:`` list contains ``source_file_marker``.
+
+    Used by the ``openkb remove`` dry-run preview. Lives here, beside
+    ``remove_doc_from_concept_pages`` / ``remove_doc_from_entity_pages`` and
+    sharing ``_parse_yaml_list_value`` with them, so the preview and the
+    executor can't drift apart on how the sources list is parsed (a hand-rolled
+    comma-split here once kept the JSON quotes and matched nothing).
+    """
+    affected: list[tuple[str, int]] = []
+    if not pages_dir.is_dir():
+        return affected
+    for path in sorted(pages_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        fm_end = text.find("---", 3)
+        if fm_end == -1:
+            continue
+        for line in text[:fm_end].split("\n"):
+            if line.lstrip().startswith("sources:"):
+                items = _parse_yaml_list_value(line)
+                if items is not None and source_file_marker in items:
+                    affected.append((path.stem, max(len(items) - 1, 0)))
+                break
+    return affected
+
+
 def remove_doc_from_concept_pages(
     wiki_dir: Path,
     doc_name: str,
@@ -1958,7 +1949,7 @@ async def compile_short_doc(
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
-    entity_types = _resolve_entity_types(config)
+    entity_types = resolve_entity_types(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -2016,7 +2007,7 @@ async def compile_long_doc(
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
-    entity_types = _resolve_entity_types(config)
+    entity_types = resolve_entity_types(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)

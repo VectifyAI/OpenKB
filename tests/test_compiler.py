@@ -26,10 +26,10 @@ from openkb.agent.compiler import (
     _backlink_entities,
     _parse_entities_plan,
     _filter_entity_items,
-    _resolve_entity_types,
     _ENTITY_TYPE_LIST,
     remove_doc_from_entity_pages,
 )
+from openkb.config import resolve_entity_types
 
 
 class TestParseJson:
@@ -97,37 +97,37 @@ class TestParseEntitiesPlan:
 
 class TestResolveEntityTypes:
     def test_default_when_key_absent(self):
-        assert _resolve_entity_types({}) == list(_ENTITY_TYPE_LIST)
+        assert resolve_entity_types({}) == list(_ENTITY_TYPE_LIST)
 
     def test_custom_list_is_used_and_normalized(self):
-        out = _resolve_entity_types({"entity_types": ["Person", " Dataset ", "MODEL"]})
+        out = resolve_entity_types({"entity_types": ["Person", " Dataset ", "MODEL"]})
         assert out == ["person", "dataset", "model", "other"]
 
     def test_always_includes_other(self):
-        out = _resolve_entity_types({"entity_types": ["person", "dataset"]})
+        out = resolve_entity_types({"entity_types": ["person", "dataset"]})
         assert "other" in out
         # already-present "other" is not duplicated
-        out2 = _resolve_entity_types({"entity_types": ["dataset", "other"]})
+        out2 = resolve_entity_types({"entity_types": ["dataset", "other"]})
         assert out2.count("other") == 1
 
     def test_dedupes_preserving_order(self):
-        out = _resolve_entity_types({"entity_types": ["a", "a", "b"]})
+        out = resolve_entity_types({"entity_types": ["a", "a", "b"]})
         assert out == ["a", "b", "other"]
 
     def test_malformed_string_falls_back_to_default(self):
-        assert _resolve_entity_types({"entity_types": "person"}) == list(_ENTITY_TYPE_LIST)
+        assert resolve_entity_types({"entity_types": "person"}) == list(_ENTITY_TYPE_LIST)
 
     def test_empty_list_falls_back_to_default(self):
-        assert _resolve_entity_types({"entity_types": []}) == list(_ENTITY_TYPE_LIST)
+        assert resolve_entity_types({"entity_types": []}) == list(_ENTITY_TYPE_LIST)
 
     def test_all_empty_strings_falls_back_to_default(self):
-        assert _resolve_entity_types({"entity_types": ["", "  "]}) == list(_ENTITY_TYPE_LIST)
+        assert resolve_entity_types({"entity_types": ["", "  "]}) == list(_ENTITY_TYPE_LIST)
 
     def test_sanitizes_punctuation_and_skips_non_strings(self):
         # '{'/'}' and other punctuation are stripped (so they can't leak into a
         # prompt template's .format()); non-string items (YAML null, ints) are
         # skipped (str(None) must NOT become the type "none").
-        out = _resolve_entity_types(
+        out = resolve_entity_types(
             {"entity_types": ["Per{son}", None, 123, "data set!"]}
         )
         assert out == ["person", "data set", "other"]
@@ -1931,7 +1931,7 @@ class TestCompileEntitiesEndToEnd:
     @pytest.mark.asyncio
     async def test_brace_in_entity_type_does_not_crash_format(self, tmp_path, monkeypatch):
         """Defense-in-depth: even if a '{'/'}' reaches types_str (bypassing
-        _resolve_entity_types sanitization), the prompt build must not raise —
+        resolve_entity_types sanitization), the prompt build must not raise —
         the token is substituted AFTER .format(), so braces are inert."""
         wiki = tmp_path / "wiki"
         (wiki / "summaries").mkdir(parents=True)
