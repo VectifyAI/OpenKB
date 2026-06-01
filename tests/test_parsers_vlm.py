@@ -45,3 +45,14 @@ def test_no_warning_when_vlm_model_set(caplog):
     with caplog.at_level(_logging.WARNING):
         VLMParser({"model": "gemini/gemini-2.5-pro"}, model="gpt-5.4-mini")
     assert not any("parsers.vlm.model" in r.message for r in caplog.records)
+
+
+def test_parse_warns_text_only(tmp_path, caplog):
+    import logging as _logging
+    from unittest.mock import patch
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    p = VLMParser({"model": "gemini/gemini-2.5-pro"})
+    with patch("openkb.parsers.vlm.transcribe_to_markdown", return_value="# md"):
+        with caplog.at_level(_logging.WARNING):
+            p.parse(src)
+    assert any("text only" in r.message for r in caplog.records)

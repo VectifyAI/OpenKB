@@ -313,6 +313,10 @@ Each parser handles a subset of formats — `mineru` covers PDF, Word, PPT, Exce
 and HTML; `mistral` and `vlm` cover PDF. `.md` and any unsupported format always
 fall back to the local parser.
 
+The `vlm` parser is **text-only**: it transcribes a document's text via a vision
+LLM but does **not** extract embedded figures/images. Use `mineru`, `mistral`, or
+`local` if you need image extraction.
+
 > **Note:** Long PDFs (≥ `pageindex_threshold` pages, default 20) continue to be
 > indexed with PageIndex and are **not** affected by the `parser` setting. The
 > parser governs the file → Markdown step for shorter documents and non-PDF files.

@@ -34,4 +34,9 @@ class VLMParser(Parser):
 
     def parse(self, src: Path) -> ParseResult:
         markdown = transcribe_to_markdown(src, model=self.model)
+        logger.warning(
+            "VLM parser transcribes %s to text only; embedded figures/images are "
+            "not extracted. Use a parser like 'mineru' if you need figure extraction.",
+            src.name,
+        )
         return ParseResult(markdown=markdown)

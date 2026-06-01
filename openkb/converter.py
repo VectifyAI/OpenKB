@@ -103,6 +103,11 @@ def convert_document(src: Path, kb_dir: Path, parser_override: str | None = None
         source_dir=src.parent,
     )
     if not parser.supports(src.suffix):
+        if parser.name != "local":
+            logger.warning(
+                "Parser %r does not support %r; falling back to the local parser for %s.",
+                parser.name, src.suffix, src.name,
+            )
         parser = LocalParser(doc_name=doc_name, images_dir=images_dir, source_dir=src.parent)
 
     parse_result = parser.parse(src)

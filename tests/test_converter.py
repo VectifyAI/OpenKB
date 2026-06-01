@@ -177,3 +177,18 @@ class TestConvertDocumentParserSelection:
             result = convert_document(src, kb_dir)
         li.assert_not_called()                      # local path skips localize_images
         assert result.source_path.read_text(encoding="utf-8") == "# md final"
+
+    def test_warns_on_silent_downgrade(self, kb_dir, caplog):
+        import logging as _logging
+        src = kb_dir / "raw" / "notes.md"
+        src.write_text("# md", encoding="utf-8")
+        online = MagicMock()
+        online.name = "mistral"
+        online.supports.return_value = False
+        with patch("openkb.converter.get_parser", return_value=online), \
+             patch("openkb.converter.LocalParser") as LP:
+            LP.return_value.name = "local"
+            LP.return_value.parse.return_value = ParseResult(markdown="# md")
+            with caplog.at_level(_logging.WARNING):
+                convert_document(src, kb_dir)
+        assert any("falling back to the local parser" in r.message for r in caplog.records)
