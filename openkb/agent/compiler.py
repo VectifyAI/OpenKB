@@ -893,11 +893,18 @@ def _write_entity(
         else:
             # Malformed/absent frontmatter (opening ``---`` with no closing
             # delimiter, or no frontmatter at all): rebuild valid frontmatter
-            # rather than writing a body-only page and dropping sources/type/
-            # brief. ``_prepend_source_to_frontmatter`` already ensured the
-            # new source is present in the (still-malformed) block, so seed
-            # with it here.
-            existing = _build_frontmatter([source_file]) + clean
+            # rather than writing a body-only page. Recover any sources already
+            # listed in the broken block first — otherwise a multi-source
+            # entity would be truncated to just this document.
+            recovered: list[str] = []
+            for ln in existing.split("\n"):
+                if ln.lstrip().startswith("sources:"):
+                    parsed = _parse_yaml_list_value(ln)
+                    if parsed:
+                        recovered = parsed
+                    break
+            merged = [source_file] + [s for s in recovered if s != source_file]
+            existing = _build_frontmatter(merged) + clean
         path.write_text(existing, encoding="utf-8")
         return
 

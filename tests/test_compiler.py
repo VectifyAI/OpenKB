@@ -603,6 +603,8 @@ class TestWriteEntity:
         assert text.startswith("---\n")
         assert text.count("---") == 2
         assert "sources:" in text and "summaries/b.md" in text
+        # The PRE-EXISTING source must be preserved, not dropped when rebuilding.
+        assert "summaries/a.md" in text
         assert "type:" in text and "organization" in text
         assert "brief:" in text and "AI lab." in text
         assert "v2 rewritten." in text

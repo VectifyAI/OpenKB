@@ -418,6 +418,31 @@ def test_cli_remove_preview_lists_entity_actions(kb_dir):
     assert (kb_dir / "wiki" / "entities" / "vaswani.md").exists()
 
 
+def test_cli_remove_preview_handles_json_quoted_sources(kb_dir):
+    """Regression: the real compiler writes sources JSON-quoted
+    (sources: ["summaries/x.md"]). The old preview parser comma-split the line
+    keeping the quotes, so the marker never matched and the preview silently
+    reported 0 affected pages even though the executor would delete/edit them."""
+    _seed_two_doc_kb(kb_dir)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
+    # JSON-quoted single source (exactly how _yaml_list_line writes it) -> DELETE
+    (kb_dir / "wiki" / "entities" / "vaswani.md").write_text(
+        '---\nsources: ["summaries/attention-h_a.md"]\ntype: person\nbrief: V\n---\n# Vaswani\n',
+        encoding="utf-8",
+    )
+    # JSON-quoted multi-source concept -> MODIFY
+    (kb_dir / "wiki" / "concepts" / "quoted-concept.md").write_text(
+        '---\nsources: ["summaries/attention-h_a.md", "summaries/llm-h_l.md"]\nbrief: Q\n---\n# Q\n',
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "DELETE   wiki/entities/vaswani.md" in result.output
+    assert "MODIFY   wiki/concepts/quoted-concept.md" in result.output
+
+
 def test_cli_remove_yes_executes_full_plan(kb_dir):
     _seed_two_doc_kb(kb_dir)
     result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])

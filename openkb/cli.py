@@ -739,6 +739,37 @@ def _cleanup_pageindex(
     return True, f"deleted PageIndex doc ({doc_id[:12]}…)"
 
 
+def _scan_affected_pages(pages_dir: Path, source_file_marker: str) -> list[tuple[str, int]]:
+    """Return ``(slug, remaining_sources)`` for pages whose frontmatter
+    ``sources:`` list contains ``source_file_marker``.
+
+    Uses the same ``_parse_yaml_list_value`` parser the executor uses, so
+    JSON-quoted values (``sources: ["summaries/x.md"]`` — exactly how the
+    compiler writes them) are matched correctly. A hand-rolled comma-split
+    here previously kept the surrounding quotes, so the marker never matched
+    and the remove preview silently reported 0 affected pages.
+    """
+    from openkb.agent.compiler import _parse_yaml_list_value
+
+    affected: list[tuple[str, int]] = []
+    if not pages_dir.is_dir():
+        return affected
+    for path in sorted(pages_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        fm_end = text.find("---", 3)
+        if fm_end == -1:
+            continue
+        for line in text[:fm_end].split("\n"):
+            if line.lstrip().startswith("sources:"):
+                items = _parse_yaml_list_value(line)
+                if items is not None and source_file_marker in items:
+                    affected.append((path.stem, max(len(items) - 1, 0)))
+                break
+    return affected
+
+
 def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]:
     """Find registry entries matching ``identifier``.
 
@@ -861,31 +892,7 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     # affect the delete/edit classification, so the plan reflects what
     # the executor will actually do.
     source_file_marker = f"summaries/{doc_name}.md"
-    affected_concepts: list[tuple[str, int]] = []  # (slug, remaining_sources)
-    concepts_dir = wiki_dir / "concepts"
-    if concepts_dir.is_dir():
-        for path in sorted(concepts_dir.glob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            if not text.startswith("---"):
-                continue
-            fm_end = text.find("---", 3)
-            if fm_end == -1:
-                continue
-            sources_count = 0
-            source_in_frontmatter = False
-            for line in text[:fm_end].split("\n"):
-                if line.lstrip().startswith("sources:"):
-                    lb = line.find("[")
-                    rb = line.rfind("]")
-                    if lb != -1 and rb != -1 and rb > lb:
-                        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
-                        sources_count = len(items)
-                        source_in_frontmatter = source_file_marker in items
-                    break
-            if not source_in_frontmatter:
-                continue
-            remaining = max(sources_count - 1, 0)
-            affected_concepts.append((path.stem, remaining))
+    affected_concepts = _scan_affected_pages(wiki_dir / "concepts", source_file_marker)
 
     concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty_concepts]
     concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty_concepts]
@@ -897,31 +904,7 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     # Scan entity pages with the same frontmatter logic as concepts. The
     # executor calls ``remove_doc_from_entity_pages``; this only makes the
     # preview/summary truthful about what it will delete vs. edit.
-    affected_entities: list[tuple[str, int]] = []  # (slug, remaining_sources)
-    entities_dir = wiki_dir / "entities"
-    if entities_dir.is_dir():
-        for path in sorted(entities_dir.glob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            if not text.startswith("---"):
-                continue
-            fm_end = text.find("---", 3)
-            if fm_end == -1:
-                continue
-            sources_count = 0
-            source_in_frontmatter = False
-            for line in text[:fm_end].split("\n"):
-                if line.lstrip().startswith("sources:"):
-                    lb = line.find("[")
-                    rb = line.rfind("]")
-                    if lb != -1 and rb != -1 and rb > lb:
-                        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
-                        sources_count = len(items)
-                        source_in_frontmatter = source_file_marker in items
-                    break
-            if not source_in_frontmatter:
-                continue
-            remaining = max(sources_count - 1, 0)
-            affected_entities.append((path.stem, remaining))
+    affected_entities = _scan_affected_pages(wiki_dir / "entities", source_file_marker)
 
     entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty_concepts]
     entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty_concepts]
