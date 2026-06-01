@@ -29,8 +29,9 @@ from pathlib import Path
 import litellm
 import yaml
 
+from openkb.config import DEFAULT_ENTITY_TYPES, resolve_entity_types
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
-from openkb.schema import get_agents_md
+from openkb.schema import INDEX_SEED, get_agents_md
 
 logger = logging.getLogger(__name__)
 
@@ -68,29 +69,54 @@ Return ONLY valid JSON, no fences.
 """
 
 
+# Default entity-type enum lives in the config layer (so config validation is
+# centralized there and reusable by any command). ``_ENTITY_TYPE_LIST`` /
+# ``_ENTITY_TYPES`` are the default name + validation set used when no
+# config-driven set is threaded through; the EFFECTIVE set is resolved per-KB
+# via ``resolve_entity_types(config)`` and substituted into the plan +
+# entity-page prompts at call time inside ``_compile_concepts`` via the
+# ``__ENTITY_TYPES__`` token.
+_ENTITY_TYPE_LIST = DEFAULT_ENTITY_TYPES
+_ENTITY_TYPES = frozenset(_ENTITY_TYPE_LIST)
+
+
 _CONCEPTS_PLAN_USER = """\
-Based on the summary above, decide how to update the wiki's concept pages.
+Based on the summary above, decide how to update the wiki's CONCEPT pages and
+ENTITY pages.
+
+A CONCEPT is an abstract, recurring idea/pattern/mechanism (e.g. "agentic
+systems"). An ENTITY is a specific named thing — a person, organization,
+place, product, named work, or event (e.g. "Anthropic"). Each name goes in
+exactly ONE group. A topic may have both (entity "NVIDIA" and concept
+"ai-infrastructure-demand"); they cross-link, they do not merge.
 
 Existing concept pages:
 {concept_briefs}
 
-Return a JSON object with three keys:
+Existing entity pages (with source counts = how many docs already cite them):
+{entity_briefs}
 
-1. "create" — new concepts not covered by any existing page. Array of objects:
-   {{"name": "concept-slug", "title": "Human-Readable Title"}}
+Return a JSON object with two top-level keys, "concepts" and "entities".
 
-2. "update" — existing concepts that have significant new information from \
-this document worth integrating. Array of objects:
-   {{"name": "existing-slug", "title": "Existing Title"}}
+"concepts" is an object with:
+1. "create" — new concepts. Array of {{"name": "concept-slug", "title": "Title"}}
+2. "update" — existing concepts with significant new info. Same shape.
+3. "related" — existing concept slugs to cross-link only. Array of strings.
 
-3. "related" — existing concepts tangentially related to this document but \
-not needing content changes, just a cross-reference link. Array of slug strings.
+"entities" is an object with the same three keys, but create/update objects
+add a "type" field, one of: __ENTITY_TYPES__. Example:
+   {{"name": "anthropic", "title": "Anthropic", "type": "organization"}}
 
 Rules:
 - For the first few documents, create 2-3 foundational concepts at most.
-- Do NOT create a concept that overlaps with an existing one — use "update".
+- Create an ENTITY page only when the entity is (a) central to this document
+  or (b) likely to recur across sources. Do NOT page proper nouns mentioned
+  only in passing. Roughly 5-15 entities per document is typical; fewer for
+  sparse documents.
+- Prefer "update" over "create" for any concept or entity already listed above.
+- Do NOT create a concept/entity that overlaps an existing one — use "update".
 - Do NOT create concepts that are just the document topic itself.
-- "related" is for lightweight cross-linking only, no content rewrite needed.
+- "related" is lightweight cross-linking only, no content rewrite.
 
 Return ONLY valid JSON, no fences, no explanation.
 """
@@ -104,8 +130,9 @@ valid [[wikilink]] targets you may use in the responses that follow:
 Rules for [[wikilinks]] in all subsequent responses:
 - For [[concepts/X]]: X must appear in the whitelist above.
 - For [[summaries/Y]]: Y must appear in the whitelist above.
+- For [[entities/Z]]: Z must appear in the whitelist above.
 - Do NOT invent new wikilink targets. If you want to mention a concept \
-that is not in the whitelist, write it as plain text without brackets.
+or entity that is not in the whitelist, write it as plain text without brackets.
 """
 
 _CONCEPT_PAGE_USER = """\
@@ -146,6 +173,49 @@ Return a JSON object with two keys:
 
 Return ONLY valid JSON, no fences.
 """
+
+_ENTITY_PAGE_USER = """\
+Write the entity page for: {title} (type: {type})
+
+This entity relates to the document "{doc_name}" summarized above.
+
+Return a JSON object with three keys:
+- "brief": A single sentence (under 100 chars) identifying this entity
+- "type": one of __ENTITY_TYPES__
+- "content": The full entity page in Markdown — what this entity is, the key
+  facts about it from this document, and [[wikilinks]] to related concepts,
+  other [[entities/...]], and [[summaries/{doc_name}]] — subject to the
+  whitelist rules from the message above.
+
+Return ONLY valid JSON, no fences.
+"""
+
+_ENTITY_UPDATE_USER = """\
+Update the entity page for: {title} (type: {type})
+
+Current content of this page:
+{existing_content}
+
+Integrate the new facts about this entity from document "{doc_name}"
+(summarized above). Rewrite the full page — do not just append. Preserve the
+existing structure and intent. Follow the whitelist rules from the message
+above for all [[wikilinks]].
+
+Return a JSON object with three keys:
+- "brief": A single sentence (under 100 chars) identifying this entity
+- "type": one of __ENTITY_TYPES__
+- "content": The rewritten full entity page in Markdown
+
+Return ONLY valid JSON, no fences.
+"""
+
+# NOTE: the prompt templates intentionally KEEP the literal ``__ENTITY_TYPES__``
+# token at import time. The effective entity-type list is resolved per-compile
+# from config (see ``resolve_entity_types``) and substituted via ``str.replace``
+# at call time inside ``_compile_concepts``. This lets ``entity_types:`` in
+# ``.openkb/config.yaml`` override the default enum everywhere at once. The
+# token is a plain string (not a ``{}`` placeholder) so it does not collide with
+# the ``{{ }}`` JSON braces these templates feed to ``str.format``.
 
 _SUMMARY_REWRITE_USER = """\
 Task: Rewrite the summary you wrote above into a final version that is \
@@ -366,6 +436,56 @@ def _filter_related_slugs(items: list) -> list[str]:
     return valid
 
 
+def _filter_entity_items(
+    items: object, valid_types: frozenset | None = None
+) -> list[dict]:
+    """Validate entity create/update objects: require name+title, coerce type.
+
+    Each kept item is normalized to ``{"name", "title", "type"}`` where
+    ``type`` falls back to ``"other"`` when missing or outside ``valid_types``
+    and ``title`` falls back to ``name``. ``valid_types`` defaults to the
+    module-level ``_ENTITY_TYPES`` so callers that don't thread a config-driven
+    set keep today's behavior.
+    """
+    if valid_types is None:
+        valid_types = _ENTITY_TYPES
+    out: list[dict] = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        name = it.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        title = it.get("title") if isinstance(it.get("title"), str) else name
+        etype = it.get("type")
+        if not isinstance(etype, str) or etype not in valid_types:
+            etype = "other"
+        out.append({"name": name, "title": title, "type": etype})
+    return out
+
+
+def _parse_entities_plan(parsed: object, valid_types: frozenset | None = None) -> dict:
+    """Extract the entities group from a plan dict, with graceful fallback.
+
+    Returns ``{"create": [...], "update": [...], "related": [...]}``. A
+    missing/malformed ``entities`` key yields empty lists, so older or
+    partial LLM responses never raise.
+    """
+    empty = {"create": [], "update": [], "related": []}
+    if not isinstance(parsed, dict):
+        return empty
+    group = parsed.get("entities")
+    if not isinstance(group, dict):
+        return empty
+    return {
+        "create": _filter_entity_items(group.get("create", []), valid_types),
+        "update": _filter_entity_items(group.get("update", []), valid_types),
+        "related": _filter_related_slugs(group.get("related", [])),
+    }
+
+
 # ---------------------------------------------------------------------------
 # File I/O helpers
 # ---------------------------------------------------------------------------
@@ -422,6 +542,52 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
+def _read_entity_briefs(wiki_dir: Path) -> str:
+    """Read existing entity pages as compact lines for the plan call.
+
+    Formats each as ``- {slug} ({type}, {n} sources) — {brief}``. The source
+    count is the cross-document recurrence signal the LLM uses to decide
+    create-vs-update and salience. Returns "(none yet)" when empty.
+    """
+    entities_dir = wiki_dir / "entities"
+    if not entities_dir.exists():
+        return "(none yet)"
+
+    md_files = sorted(entities_dir.glob("*.md"))
+    if not md_files:
+        return "(none yet)"
+
+    lines: list[str] = []
+    for path in md_files:
+        text = path.read_text(encoding="utf-8")
+        brief = ""
+        etype = "other"
+        n_sources = 0
+        body = text
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end != -1:
+                fm_text = text[3:end].strip("\n")
+                body = text[end + 3:]
+                try:
+                    fm = yaml.safe_load(fm_text)
+                except yaml.YAMLError:
+                    fm = None
+                if isinstance(fm, dict):
+                    if isinstance(fm.get("brief"), str):
+                        brief = fm["brief"].strip()
+                    if isinstance(fm.get("type"), str):
+                        etype = fm["type"].strip() or "other"
+                    if isinstance(fm.get("sources"), list):
+                        n_sources = len(fm["sources"])
+        if not brief:
+            brief = body.strip().replace("\n", " ")[:150]
+        suffix = f" — {brief}" if brief else ""
+        lines.append(f"- {path.stem} ({etype}, {n_sources} sources){suffix}")
+
+    return "\n".join(lines) or "(none yet)"
+
+
 def _iter_h2_headings(lines: list[str]) -> list[tuple[int, str]]:
     """Return ``[(line_index, normalized_heading), ...]`` for every ATX H2.
 
@@ -457,26 +623,59 @@ def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | Non
     return None
 
 
-def _ensure_h2_section(lines: list[str], heading: str) -> None:
+def _ensure_h2_section(lines: list[str], heading: str, *, quiet: bool = False) -> None:
     """Ensure an H2 section ``heading`` exists in ``lines``; append if missing.
 
     Recovers from hand-edited or drifted index.md files where the expected
     section was removed or renamed — without this, downstream inserts would
     silently no-op and entries would be dropped.
+
+    ``quiet=True`` suppresses the drift warning. Use it when adding a section
+    is the normal, expected operation (e.g. a backlink helper creating a
+    ``## Related Documents`` / ``## Entities`` section on a page for the first
+    time), as opposed to repairing a drifted index.
     """
     if _get_section_bounds(lines, heading) is not None:
         return
-    logger.warning(
-        "Wiki page is missing %r section; appending it. "
-        "Check whether the file was hand-edited away from the canonical layout.",
-        heading,
-    )
+    if not quiet:
+        logger.warning(
+            "Wiki page is missing %r section; appending it. "
+            "Check whether the file was hand-edited away from the canonical layout.",
+            heading,
+        )
     while lines and lines[-1] == "":
         lines.pop()
     if lines:
         lines.append("")
     lines.append(heading)
     lines.append("")
+
+
+def _ensure_h2_section_before(
+    lines: list[str], heading: str, before: str,
+) -> None:
+    """Ensure H2 ``heading`` exists, inserting it just before ``before``.
+
+    If ``heading`` is already present, no-op. If ``before`` is absent, fall
+    back to :func:`_ensure_h2_section` (append at end). This keeps the
+    canonical index order (e.g. ``## Entities`` ahead of ``## Explorations``)
+    when recovering an older index.md that predates the section.
+    """
+    if _get_section_bounds(lines, heading) is not None:
+        return
+    before_bounds = _get_section_bounds(lines, before)
+    if before_bounds is None:
+        _ensure_h2_section(lines, heading)
+        return
+    # ``start`` is the line after the ``before`` heading; insert the new
+    # section (heading + blank line) right before that heading line.
+    insert_at = before_bounds[0] - 1
+    logger.warning(
+        "Wiki index is missing %r section; inserting it before %r. "
+        "Check whether the file was hand-edited away from the canonical layout.",
+        heading, before,
+    )
+    lines[insert_at:insert_at] = [heading, ""]
 
 
 def _section_contains_link(lines: list[str], heading: str, link: str) -> bool:
@@ -655,6 +854,85 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
         path.write_text(frontmatter + content, encoding="utf-8")
 
 
+def _write_entity(
+    wiki_dir: Path, name: str, content: str, source_file: str,
+    is_update: bool, brief: str = "", type_: str = "other",
+    aliases: list[str] | None = None,
+) -> None:
+    """Write or update an entity page in entities/, managing frontmatter.
+
+    Frontmatter fields: ``sources`` (list), ``type`` (one of the entity
+    enum), ``brief`` (one-liner), and optional ``aliases`` (list, omitted
+    when empty). On update the new source is prepended and the body replaced
+    with the LLM rewrite; ``type`` is preserved from the new write.
+    """
+    entities_dir = wiki_dir / "entities"
+    entities_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = _sanitize_concept_name(name)
+    path = (entities_dir / f"{safe_name}.md").resolve()
+    if not path.is_relative_to(entities_dir.resolve()):
+        logger.warning("Entity name escapes entities dir: %s", name)
+        return
+
+    # Strip any frontmatter the LLM body may carry.
+    clean = content
+    if clean.startswith("---"):
+        end = clean.find("---", 3)
+        if end != -1:
+            clean = clean[end + 3:].lstrip("\n")
+
+    def _build_frontmatter(sources: list[str]) -> str:
+        fm_lines = [_yaml_list_line("sources", sources)]
+        fm_lines.append(_yaml_kv_line("type", type_ or "other"))
+        if brief:
+            fm_lines.append(_yaml_kv_line("brief", brief))
+        if aliases:
+            fm_lines.append(_yaml_list_line("aliases", aliases))
+        return "---\n" + "\n".join(fm_lines) + "\n---\n\n"
+
+    if is_update and path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if source_file not in existing:
+            existing = _prepend_source_to_frontmatter(existing, source_file)
+        end = existing.find("---", 3) if existing.startswith("---") else -1
+        if end != -1:
+            fm = existing[:end + 3]
+            fm = _set_fm_line(fm, "brief", brief) if brief else fm
+            fm = _set_fm_line(fm, "type", type_) if type_ else fm
+            existing = fm + "\n\n" + clean
+        else:
+            # Malformed/absent frontmatter (opening ``---`` with no closing
+            # delimiter, or no frontmatter at all): rebuild valid frontmatter
+            # rather than writing a body-only page. Recover any sources already
+            # listed in the broken block first — otherwise a multi-source
+            # entity would be truncated to just this document.
+            recovered: list[str] = []
+            for ln in existing.split("\n"):
+                if ln.lstrip().startswith("sources:"):
+                    parsed = _parse_yaml_list_value(ln)
+                    if parsed:
+                        recovered = parsed
+                    break
+            merged = [source_file] + [s for s in recovered if s != source_file]
+            existing = _build_frontmatter(merged) + clean
+        path.write_text(existing, encoding="utf-8")
+        return
+
+    path.write_text(_build_frontmatter([source_file]) + clean, encoding="utf-8")
+
+
+def _set_fm_line(fm: str, key: str, value: str) -> str:
+    """Set or replace a single scalar ``key:`` line inside a frontmatter block.
+
+    ``fm`` includes the opening and closing ``---`` markers. Uses a lambda
+    replacement so values containing regex backrefs are inserted literally.
+    """
+    line = _yaml_kv_line(key, value)
+    if re.search(rf"^{re.escape(key)}:", fm, flags=re.MULTILINE):
+        return re.sub(rf"^{re.escape(key)}:.*", lambda _m: line, fm, count=1, flags=re.MULTILINE)
+    return fm.replace("---\n", f"---\n{line}\n", 1)
+
+
 def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     """Prepend ``source_file`` to the inline ``sources:`` list in YAML frontmatter.
 
@@ -725,85 +1003,117 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
     return text, False
 
 
-def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_file: str) -> None:
-    """Add a cross-reference link to an existing concept page (no LLM call)."""
-    concepts_dir = wiki_dir / "concepts"
-    path = concepts_dir / f"{concept_slug}.md"
+def _add_related_link(
+    wiki_dir: Path, slug: str, doc_name: str, source_file: str,
+    page_dir: str = "concepts",
+) -> bool:
+    """Add a cross-reference link to an existing page (no LLM call).
+
+    Works for any page directory (``concepts`` or ``entities``). Returns True
+    when the page exists (whether or not a link was added), so callers can
+    track which related slugs are real pages. The standalone ``See also:``
+    paragraph it writes is symmetric with ``remove_doc_from_pages``' cleanup.
+    """
+    path = wiki_dir / page_dir / f"{slug}.md"
     if not path.exists():
-        return
+        return False
 
     text = path.read_text(encoding="utf-8")
     link = f"[[summaries/{doc_name}]]"
     if link in text:
-        return
+        return True
 
     if source_file not in text:
         text = _prepend_source_to_frontmatter(text, source_file)
 
     text += f"\n\nSee also: {link}"
     path.write_text(text, encoding="utf-8")
+    return True
 
 
-def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
-    """Append missing concept wikilinks to the summary page (no LLM call).
+def _backlink_summary_pages(
+    wiki_dir: Path, doc_name: str, slugs: list[str],
+    *, page_dir: str, section: str,
+) -> None:
+    """Append missing ``[[{page_dir}/slug]]`` wikilinks to the summary page.
 
-    After all concepts are generated, this ensures the summary page links
-    back to every related concept — closing the bidirectional link that
-    concept pages already have toward the summary.
-
-    If a ``## Related Concepts`` section already exists, new links are
-    appended into it rather than creating a duplicate section.
+    Closes the bidirectional link the pages already hold toward the summary,
+    inserting them under ``section`` (created if absent). Shared by the
+    concept and entity summary-backlink wrappers below.
     """
     summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
     if not summary_path.exists():
         return
 
     text = summary_path.read_text(encoding="utf-8")
-    missing = [slug for slug in concept_slugs if f"[[concepts/{slug}]]" not in text]
+    missing = [slug for slug in slugs if f"[[{page_dir}/{slug}]]" not in text]
     if not missing:
         return
 
     lines = text.split("\n")
-    _ensure_h2_section(lines, "## Related Concepts")
+    _ensure_h2_section(lines, section, quiet=True)
     for slug in reversed(missing):
-        _insert_section_entry(lines, "## Related Concepts", f"- [[concepts/{slug}]]")
+        _insert_section_entry(lines, section, f"- [[{page_dir}/{slug}]]")
     summary_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
-    """Append missing summary wikilink to each concept page (no LLM call).
-
-    Ensures every concept page links back to the source document's summary,
-    regardless of whether the LLM included the link in its output.
-
-    If a ``## Related Documents`` section already exists, the link is
-    appended into it rather than creating a duplicate section.
-    """
+def _backlink_pages(
+    wiki_dir: Path, doc_name: str, slugs: list[str], *, page_dir: str,
+) -> None:
+    """Append the source summary wikilink to each page under '## Related
+    Documents'. Shared by the concept and entity page-backlink wrappers."""
     link = f"[[summaries/{doc_name}]]"
-    concepts_dir = wiki_dir / "concepts"
+    pages_dir = wiki_dir / page_dir
 
-    for slug in concept_slugs:
-        path = concepts_dir / f"{slug}.md"
+    for slug in slugs:
+        path = pages_dir / f"{slug}.md"
         if not path.exists():
             continue
         text = path.read_text(encoding="utf-8")
         if link in text:
             continue
         lines = text.split("\n")
-        _ensure_h2_section(lines, "## Related Documents")
+        _ensure_h2_section(lines, "## Related Documents", quiet=True)
         _insert_section_entry(lines, "## Related Documents", f"- {link}")
         path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def remove_doc_from_concept_pages(
+def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
+    """Link the summary page back to every related concept (no LLM call)."""
+    _backlink_summary_pages(
+        wiki_dir, doc_name, concept_slugs,
+        page_dir="concepts", section="## Related Concepts",
+    )
+
+
+def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
+    """Link every related concept page back to the source summary (no LLM call)."""
+    _backlink_pages(wiki_dir, doc_name, concept_slugs, page_dir="concepts")
+
+
+def _backlink_summary_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
+    """Link the summary page back to every related entity under '## Entities'."""
+    _backlink_summary_pages(
+        wiki_dir, doc_name, entity_slugs,
+        page_dir="entities", section="## Entities",
+    )
+
+
+def _backlink_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
+    """Link every related entity page back to the source summary (no LLM call)."""
+    _backlink_pages(wiki_dir, doc_name, entity_slugs, page_dir="entities")
+
+
+def _remove_doc_from_pages(
     wiki_dir: Path,
     doc_name: str,
     *,
+    page_dir: str,
     keep_empty: bool = False,
 ) -> dict[str, list[str]]:
-    """Update or delete concept pages affected by removing a document.
+    """Update or delete pages in ``page_dir`` affected by removing a document.
 
-    For each ``concepts/*.md`` whose frontmatter ``sources:`` lists
+    For each ``{page_dir}/*.md`` whose frontmatter ``sources:`` lists
     ``summaries/{doc_name}``:
 
     - Remove that source from the frontmatter list.
@@ -812,24 +1122,16 @@ def remove_doc_from_concept_pages(
     - Remove any standalone ``See also: [[summaries/{doc_name}]]`` lines
       (left by ``_add_related_link``).
     - If the ``sources:`` list becomes empty AND ``keep_empty`` is False,
-      delete the concept page entirely.
+      delete the page entirely.
 
-    Args:
-        wiki_dir: Path to the wiki root directory.
-        doc_name: The summary slug being removed (e.g.
-            ``"attention-is-all-you-need"``).
-        keep_empty: When True, retains concept pages whose only source
-            was the removed doc — leaves their frontmatter with an empty
-            ``sources: []`` list. Useful when the doc is being replaced
-            by a newer version that will repopulate the source on the
-            next ``openkb add``.
+    Shared by the concept and entity removal wrappers so the cleanup (in
+    particular the standalone ``See also:`` strip) can never drift between
+    the two page types.
 
-    Returns:
-        ``{"modified": [slugs...], "deleted": [slugs...]}`` — concept
-        slugs whose pages were edited vs. deleted.
+    Returns ``{"modified": [slugs...], "deleted": [slugs...]}``.
     """
-    concepts_dir = wiki_dir / "concepts"
-    if not concepts_dir.is_dir():
+    pages_dir = wiki_dir / page_dir
+    if not pages_dir.is_dir():
         return {"modified": [], "deleted": []}
 
     source_file = f"summaries/{doc_name}.md"
@@ -839,7 +1141,7 @@ def remove_doc_from_concept_pages(
     modified: list[str] = []
     deleted: list[str] = []
 
-    for path in sorted(concepts_dir.glob("*.md")):
+    for path in sorted(pages_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8")
         # Cheap filter: skip pages that don't reference the doc at all.
         if source_file not in text and bare_source not in text:
@@ -885,9 +1187,73 @@ def remove_doc_from_concept_pages(
     return {"modified": modified, "deleted": deleted}
 
 
-def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str]) -> None:
+def scan_affected_pages(pages_dir: Path, source_file_marker: str) -> list[tuple[str, int]]:
+    """Return ``(slug, remaining_sources)`` for pages under ``pages_dir`` whose
+    frontmatter ``sources:`` list contains ``source_file_marker``.
+
+    Used by the ``openkb remove`` dry-run preview. Lives here, beside
+    ``remove_doc_from_concept_pages`` / ``remove_doc_from_entity_pages`` and
+    sharing ``_parse_yaml_list_value`` with them, so the preview and the
+    executor can't drift apart on how the sources list is parsed (a hand-rolled
+    comma-split here once kept the JSON quotes and matched nothing).
+    """
+    affected: list[tuple[str, int]] = []
+    if not pages_dir.is_dir():
+        return affected
+    for path in sorted(pages_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        fm_end = text.find("---", 3)
+        if fm_end == -1:
+            continue
+        for line in text[:fm_end].split("\n"):
+            if line.lstrip().startswith("sources:"):
+                items = _parse_yaml_list_value(line)
+                if items is not None and source_file_marker in items:
+                    affected.append((path.stem, max(len(items) - 1, 0)))
+                break
+    return affected
+
+
+def remove_doc_from_concept_pages(
+    wiki_dir: Path,
+    doc_name: str,
+    *,
+    keep_empty: bool = False,
+) -> dict[str, list[str]]:
+    """Update or delete concept pages affected by removing a document.
+
+    ``keep_empty`` retains concept pages whose only source was the removed
+    doc (leaving ``sources: []``) — useful when the doc is being replaced by
+    a newer version that will repopulate the source on the next ``openkb
+    add``. Returns ``{"modified": [slugs...], "deleted": [slugs...]}``.
+    """
+    return _remove_doc_from_pages(
+        wiki_dir, doc_name, page_dir="concepts", keep_empty=keep_empty,
+    )
+
+
+def remove_doc_from_entity_pages(
+    wiki_dir: Path,
+    doc_name: str,
+    *,
+    keep_empty: bool = False,
+) -> dict[str, list[str]]:
+    """Update or delete entity pages affected by removing a document.
+
+    Mirrors ``remove_doc_from_concept_pages`` for the entities/ directory.
+    Returns ``{"modified": [...], "deleted": [...]}``.
+    """
+    return _remove_doc_from_pages(
+        wiki_dir, doc_name, page_dir="entities", keep_empty=keep_empty,
+    )
+
+
+def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str],
+                          entity_slugs_deleted: list[str] | None = None) -> None:
     """Remove the document's entry from ``index.md`` along with any concept
-    entries for concepts that were deleted as a side effect.
+    and entity entries for pages that were deleted as a side effect.
 
     No-op when ``index.md`` doesn't exist. Section headings are kept even
     when their last entry is removed — adding a new doc later repopulates
@@ -908,6 +1274,11 @@ def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: 
         while _remove_section_entry(lines, "## Concepts", concept_link):
             pass
 
+    for slug in (entity_slugs_deleted or []):
+        entity_link = f"[[entities/{slug}]]"
+        while _remove_section_entry(lines, "## Entities", entity_link):
+            pass
+
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -915,6 +1286,8 @@ def _update_index(
     wiki_dir: Path, doc_name: str, concept_names: list[str],
     doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
     doc_type: str = "short",
+    entity_names: list[str] | None = None,
+    entity_meta: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """Append document and concept entries to index.md.
 
@@ -930,10 +1303,7 @@ def _update_index(
 
     index_path = wiki_dir / "index.md"
     if not index_path.exists():
-        index_path.write_text(
-            "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
-            encoding="utf-8",
-        )
+        index_path.write_text(INDEX_SEED, encoding="utf-8")
 
     lines = index_path.read_text(encoding="utf-8").split("\n")
 
@@ -958,6 +1328,26 @@ def _update_index(
                 _replace_section_entry(lines, "## Concepts", concept_link, concept_entry)
         else:
             _insert_section_entry(lines, "## Concepts", concept_entry)
+
+    entity_names = entity_names or []
+    entity_meta = entity_meta or {}
+    if entity_names:
+        # Keep canonical order: Entities sits before Explorations. On an older
+        # index.md that predates the Entities section, plain ``_ensure_h2_section``
+        # would append it after Explorations.
+        _ensure_h2_section_before(lines, "## Entities", "## Explorations")
+    for name in entity_names:
+        link = f"[[entities/{name}]]"
+        # Callers always populate entity_meta alongside entity_names; the
+        # default is a defensive fallback, never hit in practice.
+        etype, brief = entity_meta.get(name, ("other", ""))
+        entry = f"- {link} ({etype})"
+        if brief:
+            entry += f" — {brief}"
+        if _section_contains_link(lines, "## Entities", link):
+            _replace_section_entry(lines, "## Entities", link, entry)
+        else:
+            _insert_section_entry(lines, "## Entities", entry)
 
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -988,6 +1378,7 @@ async def _compile_concepts(
     doc_brief: str = "",
     doc_type: str = "short",
     rewrite_summary: bool = False,
+    entity_types: list[str] | None = None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1000,8 +1391,16 @@ async def _compile_concepts(
     """
     source_file = f"summaries/{doc_name}.md"
 
+    # Effective entity types for this compile (config-driven; defaults to the
+    # canonical enum when unset, keeping behavior byte-identical to today).
+    if entity_types is None:
+        entity_types = list(_ENTITY_TYPE_LIST)
+    types_str = ", ".join(entity_types)
+    valid_types = frozenset(entity_types)
+
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
+    entity_briefs = _read_entity_briefs(wiki_dir)
 
     # Second cache breakpoint: end of the assistant summary message. Covers
     # (system + doc + summary) for the plan call and every concept call.
@@ -1013,7 +1412,8 @@ async def _compile_concepts(
         summary_msg,
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
-        )},
+            entity_briefs=entity_briefs,
+        ).replace("__ENTITY_TYPES__", types_str)},
     ], "concepts-plan", max_tokens=2048, response_format=_JSON_RESPONSE_FORMAT)
 
     def _write_v1_summary_stripped() -> None:
@@ -1056,37 +1456,92 @@ async def _compile_concepts(
         return
 
     # Fallback: if LLM returns a flat list, treat all items as "create".
+    # The new plan contract nests concepts under a "concepts" key alongside
+    # an "entities" key; the legacy flat shape (create/update/related at top
+    # level) is still honored by falling back to ``parsed`` itself.
+    if not isinstance(parsed, (list, dict)):
+        # A JSON scalar (int/str/None/bool) is valid JSON but not a usable
+        # plan. ``_parse_json`` normally rejects scalars, but guard here too
+        # so ``parsed.get(...)`` can never raise AttributeError and abort the
+        # compile — treat it as an empty/unparseable plan.
+        logger.warning(
+            "Concepts plan parsed to a %s scalar, not an object/array — "
+            "treating as empty plan for %s.",
+            type(parsed).__name__, doc_name,
+        )
+        if rewrite_summary:
+            _write_v1_summary_stripped()
+        _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
+        return
+
     if isinstance(parsed, list):
         plan = {"create": _filter_concept_items(parsed, "list"),
                 "update": [], "related": []}
+        entities_plan = {"create": [], "update": [], "related": []}
     else:
+        concepts_group = (
+            parsed.get("concepts")
+            if isinstance(parsed.get("concepts"), dict)
+            else parsed
+        )
         plan = {
-            "create": _filter_concept_items(parsed.get("create", []), "create"),
-            "update": _filter_concept_items(parsed.get("update", []), "update"),
-            "related": _filter_related_slugs(parsed.get("related", [])),
+            "create": _filter_concept_items(concepts_group.get("create", []), "create"),
+            "update": _filter_concept_items(concepts_group.get("update", []), "update"),
+            "related": _filter_related_slugs(concepts_group.get("related", [])),
         }
+        entities_plan = _parse_entities_plan(parsed, valid_types)
 
     create_items = plan["create"]
     update_items = plan["update"]
     related_items = plan["related"]
+    entity_create = entities_plan["create"]
+    entity_update = entities_plan["update"]
+    entity_related = entities_plan["related"]
+
+    # "related" must reference pages that ALREADY exist on disk (the plan
+    # prompt asks for existing slugs). The LLM sometimes lists non-existent
+    # slugs here; keeping them would whitelist [[concepts/...]] /
+    # [[entities/...]] links as valid AND back-link them into the summary, yet
+    # no page is ever created (related items are linked, never generated) —
+    # producing a flood of dangling wikilinks. Drop the non-existent ones so
+    # body references to them are stripped as ghosts instead.
+    related_items = [
+        s for s in related_items
+        if (wiki_dir / "concepts" / f"{_sanitize_concept_name(s)}.md").exists()
+    ]
+    entity_related = [
+        s for s in entity_related
+        if (wiki_dir / "entities" / f"{_sanitize_concept_name(s)}.md").exists()
+    ]
 
     # Distinguish "filters dropped everything" from "LLM emitted an empty plan".
+    # Count entity items too, so a plan that emitted only entities — all of
+    # which were dropped as malformed — still surfaces the warning.
+    def _raw_group_count(group: object) -> int:
+        if not isinstance(group, dict):
+            return 0
+        return sum(
+            len(group.get(k, [])) if isinstance(group.get(k), list) else 0
+            for k in ("create", "update", "related")
+        )
+
     if isinstance(parsed, list):
         original_total = len(parsed)
     else:
-        original_total = sum(
-            len(parsed.get(k, [])) if isinstance(parsed.get(k), list) else 0
-            for k in ("create", "update", "related")
-        )
-    post_filter_total = len(create_items) + len(update_items) + len(related_items)
+        original_total = _raw_group_count(concepts_group) + _raw_group_count(parsed.get("entities"))
+    post_filter_total = (
+        len(create_items) + len(update_items) + len(related_items)
+        + len(entity_create) + len(entity_update) + len(entity_related)
+    )
     if original_total > 0 and post_filter_total == 0:
         sys.stdout.write(
-            f"    [WARN] concepts plan for {doc_name} had {original_total} "
+            f"    [WARN] plan for {doc_name} had {original_total} "
             f"item(s), all dropped as malformed — see log (stderr).\n"
         )
         sys.stdout.flush()
 
-    if not create_items and not update_items and not related_items:
+    if (not create_items and not update_items and not related_items
+            and not entity_create and not entity_update and not entity_related):
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
@@ -1101,9 +1556,15 @@ async def _compile_concepts(
     } | {
         _sanitize_concept_name(s) for s in related_items
     }
+    entity_planned = {
+        _sanitize_concept_name(e["name"]) for e in entity_create + entity_update
+    } | {
+        _sanitize_concept_name(s) for s in entity_related
+    }
     known_targets: set[str] = (
         list_existing_wiki_targets(wiki_dir)
         | {f"concepts/{s}" for s in planned_slugs}
+        | {f"entities/{s}" for s in entity_planned}
         | {f"summaries/{doc_name}"}
     )
     known_targets_str = _format_known_targets(known_targets)
@@ -1144,10 +1605,13 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            # ``or raw``: ``.get("content", raw)`` returns None for
-            # ``{"content": null}`` (legal under json_object mode).
-            content = parsed.get("content") or raw
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            # An empty/None ``content`` field yields "" so
+            # ``_require_nonempty_content`` raises and the page is skipped,
+            # rather than writing the raw JSON as the markdown body.
+            content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
             brief, content = "", raw
         _require_nonempty_content(content, name)
         return name, content, False, brief
@@ -1179,27 +1643,118 @@ async def _compile_concepts(
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("brief", "")
-            content = parsed.get("content") or raw
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
             brief, content = "", raw
         _require_nonempty_content(content, name)
         return name, content, True, brief
+
+    async def _gen_entity_create(ent: dict) -> tuple[str, str, str, str]:
+        name = ent["name"]
+        title = ent.get("title", name)
+        etype = ent.get("type", "other")
+        async with semaphore:
+            raw = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
+                {"role": "user", "content": _ENTITY_PAGE_USER.format(
+                    title=title, type=etype, doc_name=doc_name,
+                ).replace("__ENTITY_TYPES__", types_str)},
+            ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
+        try:
+            parsed = _parse_json(raw)
+            brief = parsed.get("brief", "")
+            etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            content = parsed.get("content") or ""
+        except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
+            brief, etype_out, content = "", etype, raw
+        _require_nonempty_content(content, name)
+        return name, content, brief, etype_out
+
+    async def _gen_entity_update(ent: dict) -> tuple[str, str, str, str]:
+        name = ent["name"]
+        title = ent.get("title", name)
+        etype = ent.get("type", "other")
+        epath = wiki_dir / "entities" / f"{_sanitize_concept_name(name)}.md"
+        if epath.exists():
+            raw_text = epath.read_text(encoding="utf-8")
+            if raw_text.startswith("---"):
+                parts = raw_text.split("---", 2)
+                existing_content = parts[2].strip() if len(parts) >= 3 else raw_text
+            else:
+                existing_content = raw_text
+        else:
+            existing_content = "(page not found — create from scratch)"
+        async with semaphore:
+            raw = await _llm_call_async(model, [
+                system_msg,
+                doc_msg,             # cached (BP1)
+                summary_msg,         # cached (BP2)
+                known_targets_msg,   # cached (BP3) — whitelist
+                {"role": "user", "content": _ENTITY_UPDATE_USER.format(
+                    title=title, type=etype, doc_name=doc_name,
+                    existing_content=existing_content,
+                ).replace("__ENTITY_TYPES__", types_str)},
+            ], f"entity-update: {name}", response_format=_JSON_RESPONSE_FORMAT)
+        try:
+            parsed = _parse_json(raw)
+            brief = parsed.get("brief", "")
+            etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
+            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
+            content = parsed.get("content") or ""
+        except (json.JSONDecodeError, ValueError):
+            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
+            brief, etype_out, content = "", etype, raw
+        _require_nonempty_content(content, name)
+        return name, content, brief, etype_out
 
     tasks = []
     tasks.extend(_gen_create(c) for c in create_items)
     tasks.extend(_gen_update(c) for c in update_items)
 
+    # --- Step 3 (entities): build the entity task list up front so it can be
+    # gathered concurrently with the concept tasks below. Entity coroutines
+    # return 4-arity tuples (name, content, brief, type), so their results are
+    # processed in their own loop rather than mixed with the concept tuples.
+    entity_tasks = []
+    entity_tasks.extend(_gen_entity_create(e) for e in entity_create)
+    entity_tasks.extend(_gen_entity_update(e) for e in entity_update)
+
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
     pending_writes: list[tuple[str, str, bool, str]] = []
+    entity_names: list[str] = []
+    entity_meta: dict[str, tuple[str, str]] = {}
+    entity_pending: list[tuple[str, str, str, str]] = []
 
+    # Concepts and entities are independent and share the cached prompt
+    # context + the same concurrency ``semaphore``, so overlap them in one
+    # outer gather instead of running entities only after concepts finish.
+    total = len(tasks)
+    etotal = len(entity_tasks)
     if tasks:
-        total = len(tasks)
         sys.stdout.write(f"    Generating {total} concept(s) (concurrency={max_concurrency})...\n")
         sys.stdout.flush()
+    if entity_tasks:
+        sys.stdout.write(
+            f"    Generating {etotal} entity(ies) (concurrency={max_concurrency})...\n"
+        )
+        sys.stdout.flush()
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    results, entity_results = ([], [])
+    if tasks or entity_tasks:
+        results, entity_results = await asyncio.gather(
+            asyncio.gather(*tasks, return_exceptions=True),
+            asyncio.gather(*entity_tasks, return_exceptions=True),
+        )
 
+    if tasks:
         failure_types: list[str] = []
         for r in results:
             if isinstance(r, Exception):
@@ -1226,6 +1781,43 @@ async def _compile_concepts(
                 f"for {doc_name} ({reason}).\n"
             )
             sys.stdout.flush()
+
+    if entity_tasks:
+        entity_failure_types: list[str] = []
+        for r in entity_results:
+            if isinstance(r, Exception):
+                logger.warning("Entity generation failed: %s", r)
+                entity_failure_types.append(type(r).__name__)
+                continue
+            name, page_content, brief, etype = r
+            entity_pending.append((name, page_content, brief, etype))
+
+        ewritten = len(entity_pending)
+        if ewritten < etotal:
+            reason = (
+                ", ".join(sorted(set(entity_failure_types)))
+                if entity_failure_types else "see log (stderr)"
+            )
+            sys.stdout.write(
+                f"    [WARN] {etotal} entity(ies) planned but only {ewritten} written "
+                f"for {doc_name} ({reason}).\n"
+            )
+            sys.stdout.flush()
+
+    # Strip ghost wikilinks from entity bodies and write each page.
+    for name, page_content, brief, etype in entity_pending:
+        cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
+        if ghosts:
+            logger.info(
+                "stripped %d ghost wikilink(s) from entity %s: %s",
+                len(ghosts), name, ghosts[:5],
+            )
+        safe = _sanitize_concept_name(name)
+        is_update = (wiki_dir / "entities" / f"{safe}.md").exists()
+        _write_entity(wiki_dir, name, cleaned, source_file, is_update,
+                      brief=brief, type_=etype)
+        entity_names.append(safe)
+        entity_meta[safe] = (etype, brief)
 
     # Strip unresolved wikilinks from concept bodies before writing. The
     # whitelist includes existing files + this round's planned slugs +
@@ -1319,10 +1911,25 @@ async def _compile_concepts(
         _backlink_summary(wiki_dir, doc_name, all_concept_slugs)
         _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
+    # --- Step 3d: Process entity related items + backlinks (code only) ---
+    # Reuse _add_related_link (page_dir="entities") so related-entity
+    # cross-refs are written in the same "See also:" form the concept path
+    # uses — and torn down symmetrically by _remove_doc_from_pages.
+    entity_related_slugs = [
+        slug for slug in (_sanitize_concept_name(s) for s in entity_related)
+        if _add_related_link(wiki_dir, slug, doc_name, source_file, page_dir="entities")
+    ]
+
+    entity_backlink_slugs = entity_names + entity_related_slugs
+    if entity_backlink_slugs:
+        _backlink_summary_entities(wiki_dir, doc_name, entity_backlink_slugs)
+        _backlink_entities(wiki_dir, doc_name, entity_backlink_slugs)
+
     # --- Step 4: Update index (code only) ---
     _update_index(wiki_dir, doc_name, concept_names,
                   doc_brief=doc_brief, concept_briefs=concept_briefs_map,
-                  doc_type=doc_type)
+                  doc_type=doc_type, entity_names=entity_names,
+                  entity_meta=entity_meta)
 
 
 async def compile_short_doc(
@@ -1342,6 +1949,7 @@ async def compile_short_doc(
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
+    entity_types = resolve_entity_types(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -1376,7 +1984,7 @@ async def compile_short_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         summary, doc_name, max_concurrency, doc_brief=doc_brief,
-        doc_type="short", rewrite_summary=True,
+        doc_type="short", rewrite_summary=True, entity_types=entity_types,
     )
 
 
@@ -1399,6 +2007,7 @@ async def compile_long_doc(
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     language: str = config.get("language", "en")
+    entity_types = resolve_entity_types(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -1420,5 +2029,5 @@ async def compile_long_doc(
     await _compile_concepts(
         wiki_dir, kb_dir, model, system_msg, doc_msg,
         overview, doc_name, max_concurrency, doc_brief=doc_description,
-        doc_type="pageindex",
+        doc_type="pageindex", entity_types=entity_types,
     )

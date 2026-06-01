@@ -14,6 +14,7 @@ long-PDF JSON shape, wikilink resolution rules.
     ├── log.md               Chronological ingest/edit log
     ├── summaries/<doc>.md   One per ingested document
     ├── concepts/<slug>.md   Cross-document synthesis pages
+    ├── entities/<slug>.md   Named-thing pages (people/orgs/places/...)
     ├── sources/             Converted source content
     │   ├── <doc>.md         Short-doc full text
     │   ├── <doc>.json       Long-doc paginated content
@@ -28,7 +29,7 @@ registry, PageIndex DB). **Do not read these directly** — use
 
 ## `wiki/index.md`
 
-Three top-level sections, each entry has a one-line brief:
+Four top-level sections, each entry has a one-line brief:
 
 ```markdown
 ## Documents
@@ -37,6 +38,9 @@ Three top-level sections, each entry has a one-line brief:
 
 ## Concepts
 - [[concepts/attention]] — brief from frontmatter
+
+## Entities
+- [[entities/ada-lovelace]] (person) — brief from frontmatter
 
 ## Explorations
 - [[explorations/some-saved-query]] — saved query answer
@@ -75,6 +79,23 @@ brief: One-line summary.
 Body: free-form sections + `## Related Documents` listing
 contributing summaries. **Multi-source = cross-document synthesis**
 — this is the high-value output of OpenKB's compile pipeline.
+
+## `wiki/entities/<slug>.md`
+
+Frontmatter:
+
+```yaml
+---
+sources: [summaries/paper.md, summaries/notes.md]
+brief: One-line description.
+type: person                   # person | organization | place | product | work | event | other
+---
+```
+
+Body: free-form sections about the named thing + a `## Related
+Documents` section. One page per entity, accumulated as more
+documents mention it. For "who/what is X" questions about a named
+thing, read the matching entity page first.
 
 ## `wiki/sources/<doc>.md` (short docs)
 

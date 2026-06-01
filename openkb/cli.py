@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import convert_document
 from openkb.log import append_log
-from openkb.schema import AGENTS_MD
+from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
 import warnings
@@ -217,7 +217,7 @@ def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
     Checks (in order):
       * skill name is a valid kebab-case slug
       * ``<kb>/wiki`` exists
-      * ``<kb>/wiki/concepts`` or ``<kb>/wiki/summaries`` has at least
+      * any of ``<kb>/wiki/{summaries,concepts,entities}`` has at least
         one file (i.e. some document has been ingested + compiled)
 
     Returns ``None`` if all gates pass, else a single-line error message
@@ -239,7 +239,7 @@ def _preflight_skill_new(kb_dir: Path, name: str) -> str | None:
 
     has_content = any(
         (wiki / sub).is_dir() and any((wiki / sub).iterdir())
-        for sub in ("concepts", "summaries")
+        for sub in PAGE_CONTENT_DIRS
     )
     if not has_content:
         return (
@@ -538,13 +538,11 @@ def init(model, language):
     Path("wiki/sources/images").mkdir(parents=True, exist_ok=True)
     Path("wiki/summaries").mkdir(parents=True, exist_ok=True)
     Path("wiki/concepts").mkdir(parents=True, exist_ok=True)
+    Path("wiki/entities").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
     Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
-    Path("wiki/index.md").write_text(
-        "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
-        encoding="utf-8",
-    )
+    Path("wiki/index.md").write_text(INDEX_SEED, encoding="utf-8")
     Path("wiki/log.md").write_text("# Operations Log\n\n", encoding="utf-8")
 
     # Create .openkb/ state directory
@@ -775,32 +773,36 @@ def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]
 @click.argument("identifier")
 @click.option("--keep-raw", is_flag=True, default=False,
               help="Don't delete the original file from raw/.")
-@click.option("--keep-empty-concepts", is_flag=True, default=False,
-              help="Keep concept pages whose only source was the removed doc "
-                   "(with empty sources frontmatter). Useful when replacing "
-                   "the doc with a newer version.")
+@click.option("--keep-empty", "--keep-empty-concepts", "keep_empty",
+              is_flag=True, default=False,
+              help="Keep concept AND entity pages whose only source was the "
+                   "removed doc (leaving an empty sources: [] list). Useful "
+                   "when replacing the doc with a newer version. "
+                   "(--keep-empty-concepts is a backward-compatible alias.)")
 @click.option("--dry-run", is_flag=True, default=False,
               help="Print what would be done without modifying anything.")
 @click.option("--yes", "-y", is_flag=True, default=False,
               help="Skip the confirmation prompt.")
 @click.pass_context
-def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
+def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     """Remove a document from the knowledge base.
 
     IDENTIFIER may be the original filename ("paper.pdf"), the doc_name
     slug ("paper-a1b2c3d4e5f6"), or a substring that uniquely matches one.
 
     Deletes the doc's summary and source files, prunes the doc from
-    concept-page frontmatter and Related Documents sections, drops the
-    Documents entry from index.md, removes the hash entry, and finally
-    runs `lint --fix` to clean any dangling wikilinks.
+    concept- and entity-page frontmatter and Related Documents sections,
+    drops the Documents entry from index.md, removes the hash entry, and
+    finally runs `lint --fix` to clean any dangling wikilinks.
 
-    Concept pages whose only source was this doc are deleted by default;
-    use --keep-empty-concepts to retain them.
+    Concept and entity pages whose only source was this doc are deleted by
+    default; use --keep-empty to retain them.
     """
     from openkb.agent.compiler import (
         remove_doc_from_concept_pages,
+        remove_doc_from_entity_pages,
         remove_doc_from_index,
+        scan_affected_pages,
     )
     from openkb.lint import fix_broken_links
     from openkb.state import HashRegistry
@@ -862,38 +864,26 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
     # affect the delete/edit classification, so the plan reflects what
     # the executor will actually do.
     source_file_marker = f"summaries/{doc_name}.md"
-    affected_concepts: list[tuple[str, int]] = []  # (slug, remaining_sources)
-    concepts_dir = wiki_dir / "concepts"
-    if concepts_dir.is_dir():
-        for path in sorted(concepts_dir.glob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            if not text.startswith("---"):
-                continue
-            fm_end = text.find("---", 3)
-            if fm_end == -1:
-                continue
-            sources_count = 0
-            source_in_frontmatter = False
-            for line in text[:fm_end].split("\n"):
-                if line.lstrip().startswith("sources:"):
-                    lb = line.find("[")
-                    rb = line.rfind("]")
-                    if lb != -1 and rb != -1 and rb > lb:
-                        items = [s.strip() for s in line[lb + 1:rb].split(",") if s.strip()]
-                        sources_count = len(items)
-                        source_in_frontmatter = source_file_marker in items
-                    break
-            if not source_in_frontmatter:
-                continue
-            remaining = max(sources_count - 1, 0)
-            affected_concepts.append((path.stem, remaining))
+    affected_concepts = scan_affected_pages(wiki_dir / "concepts", source_file_marker)
 
-    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty_concepts]
-    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty_concepts]
+    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty]
+    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty]
     for slug in concept_deletes:
         actions.append(("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
     for slug in concept_edits:
         actions.append(("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
+
+    # Scan entity pages with the same frontmatter logic as concepts. The
+    # executor calls ``remove_doc_from_entity_pages``; this only makes the
+    # preview/summary truthful about what it will delete vs. edit.
+    affected_entities = scan_affected_pages(wiki_dir / "entities", source_file_marker)
+
+    entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty]
+    entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty]
+    for slug in entity_deletes:
+        actions.append(("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
+    for slug in entity_edits:
+        actions.append(("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)"))
 
     if (wiki_dir / "index.md").exists():
         actions.append(("MODIFY", "wiki/index.md  (remove Documents entry)"))
@@ -935,7 +925,13 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         click.echo(
             f"  {len(concept_deletes)} concept(s) will be DELETED because this is their only source."
         )
-        click.echo("  Pass --keep-empty-concepts to retain them instead.")
+        click.echo("  Pass --keep-empty to retain them instead.")
+    if entity_deletes:
+        click.echo("")
+        click.echo(
+            f"  {len(entity_deletes)} entity(s) will be DELETED because this is their only source."
+        )
+        click.echo("  Pass --keep-empty to retain them instead.")
     click.echo("")
 
     if dry_run:
@@ -964,24 +960,33 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
         shutil.rmtree(images_dir, ignore_errors=True)
 
     concept_result = remove_doc_from_concept_pages(
-        wiki_dir, doc_name, keep_empty=keep_empty_concepts,
+        wiki_dir, doc_name, keep_empty=keep_empty,
     )
 
-    remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"])
+    entity_result = remove_doc_from_entity_pages(
+        wiki_dir, doc_name, keep_empty=keep_empty,
+    )
+
+    remove_doc_from_index(wiki_dir, doc_name, concept_result["deleted"],
+                          entity_slugs_deleted=entity_result["deleted"])
 
     # Strip dangling wikilinks now so a retry (after a PageIndex
     # failure below) finds a clean wiki — no point in re-running this
     # on every attempt.
     #
     # Scope: only the pages this remove actually touched (modified
-    # concept pages ∪ index.md). Previously this swept the whole wiki
-    # via ``fix_broken_links(wiki_dir)``, which silently stripped
+    # concept + entity pages ∪ index.md). Previously this swept the whole
+    # wiki via ``fix_broken_links(wiki_dir)``, which silently stripped
     # pre-existing dangling links in unrelated pages — see issue #58
     # (Bug 2). Users who want a wiki-wide sweep can still run
     # ``openkb lint --fix`` explicitly.
     lint_scope: list[Path] = [
         wiki_dir / "concepts" / f"{slug}.md"
         for slug in concept_result["modified"]
+    ]
+    lint_scope += [
+        wiki_dir / "entities" / f"{slug}.md"
+        for slug in entity_result["modified"]
     ]
     index_md = wiki_dir / "index.md"
     if index_md.exists():
@@ -1023,6 +1028,197 @@ def remove(ctx, identifier, keep_raw, keep_empty_concepts, dry_run, yes):
 
     append_log(wiki_dir, "remove", name)
     click.echo(f"  [OK] {name} removed from knowledge base.")
+
+
+def _refresh_schema(wiki_dir: Path) -> bool:
+    """Back up + overwrite ``wiki/AGENTS.md`` with the current ``AGENTS_MD``.
+
+    If the on-disk schema differs from the bundled default, copy it to
+    ``wiki/AGENTS.md.bak`` then overwrite with ``AGENTS_MD``. No-op when the
+    file is missing or already identical. Returns True if it overwrote.
+    """
+    agents_file = wiki_dir / "AGENTS.md"
+    if not agents_file.exists():
+        # No-op when missing: get_agents_md() already falls back to the
+        # bundled AGENTS_MD default at runtime, so there is nothing to refresh.
+        return False
+    current = agents_file.read_text(encoding="utf-8")
+    if current == AGENTS_MD:
+        return False
+    backup = wiki_dir / "AGENTS.md.bak"
+    backup.write_text(current, encoding="utf-8")
+    click.echo(f"  Backed up existing schema to {backup.relative_to(wiki_dir.parent)}")
+    agents_file.write_text(AGENTS_MD, encoding="utf-8")
+    click.echo("  Refreshed wiki/AGENTS.md to the current schema.")
+    return True
+
+
+@cli.command()
+@click.argument("doc_name", required=False)
+@click.option("--all", "all_docs", is_flag=True, default=False,
+              help="Recompile every indexed document.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="List the docs that would be recompiled; no LLM calls, no writes.")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip the --all confirmation prompt.")
+@click.option("--refresh-schema", "refresh_schema", is_flag=True, default=False,
+              help="Overwrite wiki/AGENTS.md with the bundled schema (backs up "
+                   "the old one to AGENTS.md.bak) if it differs.")
+@click.pass_context
+def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
+    """Re-run the current compile pipeline on already-indexed documents.
+
+    Recompiling re-runs the same ``compile_short_doc`` / ``compile_long_doc``
+    that ``openkb add`` uses, so pre-feature KBs gain the ``entities/`` layer
+    and pages refresh to the current format. It does NOT re-run PageIndex or
+    re-convert raw files — it reuses the on-disk ``wiki/sources/`` and
+    ``wiki/summaries/`` content (and the registry's PageIndex ``doc_id``).
+
+    DOC_NAME recompiles one doc (resolved like ``openkb remove`` — filename,
+    slug, or unique substring). ``--all`` recompiles every indexed doc.
+    Exactly one of DOC_NAME or ``--all`` is required.
+
+    Side effect: this regenerates summaries (short docs) and rewrites concept
+    pages with the current logic — manual edits to those pages are overwritten.
+    """
+    from openkb.state import HashRegistry
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    if all_docs and doc_name:
+        click.echo("Specify either a DOC_NAME or --all, not both.")
+        return
+    if not all_docs and not doc_name:
+        click.echo("Specify a document name or pass --all to recompile every doc.")
+        return
+
+    openkb_dir = kb_dir / ".openkb"
+    wiki_dir = kb_dir / "wiki"
+    registry = HashRegistry(openkb_dir / "hashes.json")
+
+    # Resolve the set of docs to recompile.
+    if all_docs:
+        entries = list(registry.all_entries().values())
+        if not entries:
+            click.echo("No documents indexed yet. Run `openkb add` first.")
+            return
+        targets = entries
+    else:
+        matches = _resolve_doc_identifier(registry, doc_name)
+        if not matches:
+            click.echo(f"No document matching '{doc_name}' found in the KB.")
+            click.echo("Try `openkb list` to see indexed documents.")
+            return
+        if len(matches) > 1:
+            click.echo(f"'{doc_name}' matches multiple documents:")
+            for _, m in matches:
+                click.echo(f"  - {m.get('name', '?')}  (doc_name: {m.get('doc_name', '?')})")
+            click.echo("Use a more specific name or the exact doc_name slug.")
+            return
+        targets = [matches[0][1]]
+
+    def _classify(meta: dict) -> str:
+        return "long" if meta.get("type") == "long_pdf" else "short"
+
+    # --dry-run: enumerate only, no LLM calls, no writes.
+    if dry_run:
+        click.echo(f"Would recompile {len(targets)} document(s):")
+        for meta in targets:
+            name = meta.get("doc_name") or meta.get("name", "?")
+            click.echo(f"  - {name}  ({_classify(meta)})")
+        click.echo(
+            "\nNote: recompiling regenerates summaries (short docs) and rewrites "
+            "concept pages — manual edits would be overwritten."
+        )
+        click.echo("(dry-run — nothing modified)")
+        return
+
+    # --all confirmation (the summary/concept-regeneration side effect).
+    if all_docs and not yes:
+        click.echo(
+            f"This will recompile {len(targets)} document(s), regenerating "
+            "summaries and rewriting concept pages with the current logic.\n"
+            "Manual edits to those pages will be overwritten."
+        )
+        if not click.confirm("Proceed?", default=False):
+            click.echo("Aborted.")
+            return
+
+    if refresh_schema:
+        _refresh_schema(wiki_dir)
+
+    _setup_llm_key(kb_dir)
+    config = load_config(openkb_dir / "config.yaml")
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    # Import lazily and reference via the module so tests can patch
+    # ``openkb.agent.compiler.compile_*`` and see the call.
+    from openkb.agent import compiler
+
+    recompiled = 0
+    skipped = 0
+    total = len(targets)
+    for i, meta in enumerate(targets, 1):
+        name = meta.get("doc_name") or Path(meta.get("name", "")).stem
+        if not name:
+            click.echo(f"[{i}/{total}] [SKIP] registry entry has no doc_name.")
+            skipped += 1
+            continue
+
+        if meta.get("type") == "long_pdf":
+            summary_path = wiki_dir / "summaries" / f"{name}.md"
+            doc_id = meta.get("doc_id")
+            if not doc_id:
+                click.echo(
+                    f"[{i}/{total}] [SKIP] {name}: legacy long-doc entry without a "
+                    "doc_id — re-add to refresh."
+                )
+                skipped += 1
+                continue
+            if not summary_path.exists():
+                click.echo(
+                    f"[{i}/{total}] [SKIP] {name}: missing summary at "
+                    f"{summary_path.relative_to(kb_dir)}."
+                )
+                skipped += 1
+                continue
+            click.echo(f"[{i}/{total}] Recompiling long doc {name}...")
+            start = time.time()
+            try:
+                asyncio.run(compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model))
+            except Exception as exc:
+                click.echo(f"  [ERROR] Compilation failed: {exc}")
+                logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
+                skipped += 1
+                continue
+            click.echo(f"  [OK] {name} ({time.time() - start:.1f}s)")
+            recompiled += 1
+        else:
+            source_path = wiki_dir / "sources" / f"{name}.md"
+            if not source_path.exists():
+                click.echo(
+                    f"[{i}/{total}] [SKIP] {name}: missing source at "
+                    f"{source_path.relative_to(kb_dir)}."
+                )
+                skipped += 1
+                continue
+            click.echo(f"[{i}/{total}] Recompiling short doc {name}...")
+            start = time.time()
+            try:
+                asyncio.run(compiler.compile_short_doc(name, source_path, kb_dir, model))
+            except Exception as exc:
+                click.echo(f"  [ERROR] Compilation failed: {exc}")
+                logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
+                skipped += 1
+                continue
+            click.echo(f"  [OK] {name} ({time.time() - start:.1f}s)")
+            recompiled += 1
+
+    click.echo(f"\nDone: recompiled {recompiled}, skipped {skipped}.")
+    append_log(wiki_dir, "recompile", f"recompiled {recompiled}, skipped {skipped}")
 
 
 @cli.command()
@@ -1277,6 +1473,15 @@ def print_list(kb_dir: Path) -> None:
             for c in concepts:
                 click.echo(f"  - {c}")
 
+    # Display entities
+    entities_dir = kb_dir / "wiki" / "entities"
+    if entities_dir.exists():
+        entities = sorted(p.stem for p in entities_dir.glob("*.md"))
+        if entities:
+            click.echo(f"\nEntities ({len(entities)}):")
+            for e in entities:
+                click.echo(f"  - {e}")
+
     # Display reports
     reports_dir = kb_dir / "wiki" / "reports"
     if reports_dir.exists():
@@ -1301,7 +1506,7 @@ def list_cmd(ctx):
 def print_status(kb_dir: Path) -> None:
     """Print knowledge base status. Usable from CLI and chat REPL."""
     wiki_dir = kb_dir / "wiki"
-    subdirs = ["sources", "summaries", "concepts", "reports"]
+    subdirs = ["sources", "summaries", "concepts", "entities", "reports"]
 
     # Print the active KB path as the first line. Agents and scripts
     # parse this to locate the wiki without assuming cwd == KB root.
@@ -1332,15 +1537,19 @@ def print_status(kb_dir: Path) -> None:
         hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
         click.echo(f"\n  Total indexed: {len(hashes)} document(s)")
 
-    # Last compile time: newest file in wiki/summaries/
-    summaries_dir = wiki_dir / "summaries"
-    if summaries_dir.exists():
-        summaries = list(summaries_dir.glob("*.md"))
-        if summaries:
-            newest_summary = max(summaries, key=lambda p: p.stat().st_mtime)
-            import datetime
-            mtime = datetime.datetime.fromtimestamp(newest_summary.stat().st_mtime)
-            click.echo(f"  Last compile:  {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+    # Last compile time: newest compiled page across summaries/, concepts/,
+    # and entities/ (an entity-only compile must still bump the shown time).
+    compiled_pages = [
+        p
+        for sub in PAGE_CONTENT_DIRS
+        for p in (wiki_dir / sub).glob("*.md")
+        if (wiki_dir / sub).exists()
+    ]
+    if compiled_pages:
+        newest_page = max(compiled_pages, key=lambda p: p.stat().st_mtime)
+        import datetime
+        mtime = datetime.datetime.fromtimestamp(newest_page.stat().st_mtime)
+        click.echo(f"  Last compile:  {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Last lint time: newest file in wiki/reports/
     reports_dir = wiki_dir / "reports"

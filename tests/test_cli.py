@@ -24,6 +24,7 @@ def test_init_creates_structure(tmp_path):
         assert (cwd / "wiki" / "sources" / "images").is_dir()
         assert (cwd / "wiki" / "summaries").is_dir()
         assert (cwd / "wiki" / "concepts").is_dir()
+        assert (cwd / "wiki" / "entities").is_dir()
         assert (cwd / ".openkb").is_dir()
 
         # Files
@@ -39,7 +40,7 @@ def test_init_creates_structure(tmp_path):
 
         # index.md header
         index_content = (cwd / "wiki" / "index.md").read_text()
-        assert index_content == "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n"
+        assert index_content == "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n"
 
 
 def test_init_schema_content(tmp_path):

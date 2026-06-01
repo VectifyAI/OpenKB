@@ -14,13 +14,22 @@ from openkb.agent.compiler import (
     _sanitize_concept_name,
     _write_summary,
     _write_concept,
+    _write_entity,
     _update_index,
     _read_wiki_context,
     _read_concept_briefs,
+    _read_entity_briefs,
     _add_related_link,
     _backlink_summary,
     _backlink_concepts,
+    _backlink_summary_entities,
+    _backlink_entities,
+    _parse_entities_plan,
+    _filter_entity_items,
+    _ENTITY_TYPE_LIST,
+    remove_doc_from_entity_pages,
 )
+from openkb.config import resolve_entity_types
 
 
 class TestParseJson:
@@ -59,6 +68,89 @@ class TestParseConceptsPlan:
         parsed = _parse_json(text)
         assert isinstance(parsed, dict)
         assert parsed["create"] == []
+
+
+class TestParseEntitiesPlan:
+    def test_extracts_entities_group(self):
+        parsed = {
+            "concepts": {"create": [{"name": "x", "title": "X"}], "update": [], "related": []},
+            "entities": {
+                "create": [{"name": "anthropic", "title": "Anthropic", "type": "organization"}],
+                "update": [],
+                "related": ["nvidia"],
+            },
+        }
+        ents = _parse_entities_plan(parsed)
+        assert ents["create"] == [{"name": "anthropic", "title": "Anthropic", "type": "organization"}]
+        assert ents["related"] == ["nvidia"]
+
+    def test_missing_entities_key_is_empty(self):
+        ents = _parse_entities_plan({"create": [], "update": [], "related": []})
+        assert ents == {"create": [], "update": [], "related": []}
+
+    def test_bad_type_falls_back_to_other(self):
+        parsed = {"entities": {"create": [{"name": "x", "title": "X", "type": "alien"}],
+                               "update": [], "related": []}}
+        ents = _parse_entities_plan(parsed)
+        assert ents["create"][0]["type"] == "other"
+
+
+class TestResolveEntityTypes:
+    def test_default_when_key_absent(self):
+        assert resolve_entity_types({}) == list(_ENTITY_TYPE_LIST)
+
+    def test_custom_list_is_used_and_normalized(self):
+        out = resolve_entity_types({"entity_types": ["Person", " Dataset ", "MODEL"]})
+        assert out == ["person", "dataset", "model", "other"]
+
+    def test_always_includes_other(self):
+        out = resolve_entity_types({"entity_types": ["person", "dataset"]})
+        assert "other" in out
+        # already-present "other" is not duplicated
+        out2 = resolve_entity_types({"entity_types": ["dataset", "other"]})
+        assert out2.count("other") == 1
+
+    def test_dedupes_preserving_order(self):
+        out = resolve_entity_types({"entity_types": ["a", "a", "b"]})
+        assert out == ["a", "b", "other"]
+
+    def test_malformed_string_falls_back_to_default(self):
+        assert resolve_entity_types({"entity_types": "person"}) == list(_ENTITY_TYPE_LIST)
+
+    def test_empty_list_falls_back_to_default(self):
+        assert resolve_entity_types({"entity_types": []}) == list(_ENTITY_TYPE_LIST)
+
+    def test_all_empty_strings_falls_back_to_default(self):
+        assert resolve_entity_types({"entity_types": ["", "  "]}) == list(_ENTITY_TYPE_LIST)
+
+    def test_sanitizes_punctuation_and_skips_non_strings(self):
+        # '{'/'}' and other punctuation are stripped (so they can't leak into a
+        # prompt template's .format()); non-string items (YAML null, ints) are
+        # skipped (str(None) must NOT become the type "none").
+        out = resolve_entity_types(
+            {"entity_types": ["Per{son}", None, 123, "data set!"]}
+        )
+        assert out == ["person", "data set", "other"]
+
+
+class TestFilterEntityItemsCustomTypes:
+    def test_custom_type_in_valid_types_is_kept(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "imagenet", "title": "ImageNet", "type": "dataset"}]
+        out = _filter_entity_items(items, valid)
+        assert out == [{"name": "imagenet", "title": "ImageNet", "type": "dataset"}]
+
+    def test_type_not_in_valid_types_is_coerced_to_other(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "x", "title": "X", "type": "organization"}]
+        out = _filter_entity_items(items, valid)
+        assert out[0]["type"] == "other"
+
+    def test_default_valid_types_backward_compat(self):
+        # No valid_types arg → module default enum is used.
+        items = [{"name": "x", "title": "X", "type": "organization"}]
+        out = _filter_entity_items(items)
+        assert out[0]["type"] == "organization"
 
 
 class TestParseBriefContent:
@@ -330,6 +422,27 @@ class TestUpdateIndex:
         assert "[[concepts/attention]] — Focus" in text
         assert "[[summaries/my-doc]]" in text
 
+    def test_entities_inserted_before_explorations(self, tmp_path):
+        """#8: an old index.md predating ## Entities must get it inserted
+        before ## Explorations, not appended after it (canonical order)."""
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Old order: no ## Entities section yet.
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        _update_index(
+            wiki, "my-doc", [],
+            entity_names=["anthropic"],
+            entity_meta={"anthropic": ("organization", "AI lab.")},
+        )
+        text = (wiki / "index.md").read_text()
+        assert "## Entities" in text
+        # Canonical order: Entities before Explorations.
+        assert text.index("## Entities") < text.index("## Explorations")
+        assert "[[entities/anthropic]] (organization) — AI lab." in text
+
 
 class TestReadWikiContext:
     def test_empty_wiki(self, tmp_path):
@@ -435,6 +548,127 @@ class TestReadConceptBriefs:
         )
         result = _read_concept_briefs(wiki)
         assert "- old: Old concept without brief field." in result
+
+
+class TestReadEntityBriefs:
+    def test_none_when_missing(self, tmp_path):
+        assert _read_entity_briefs(tmp_path) == "(none yet)"
+
+    def test_brief_type_and_source_count(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "anthropic.md").write_text(
+            "---\n"
+            "sources: [summaries/a.md, summaries/b.md]\n"
+            "type: organization\n"
+            "brief: AI lab behind Claude.\n"
+            "---\n\n# Anthropic\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        assert out == "- anthropic (organization, 2 sources) — AI lab behind Claude."
+
+    def test_empty_dir_returns_none(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        assert _read_entity_briefs(tmp_path) == "(none yet)"
+
+    def test_falls_back_to_body_when_no_brief(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        body_text = "OpenAI is a research lab focused on artificial general intelligence."
+        (ent / "openai.md").write_text(
+            "---\n"
+            "type: organization\n"
+            "sources: [summaries/a.md, summaries/b.md, summaries/c.md]\n"
+            "---\n\n" + body_text,
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        # Should use truncated body (first 150 chars) as the brief
+        expected_brief = body_text[:150]
+        assert f" — {expected_brief}" in out
+        # Should still include type and source count
+        assert "(organization, 3 sources)" in out
+
+    def test_sorted_alphabetically(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "zeta.md").write_text(
+            "---\ntype: person\nsources: [summaries/a.md]\nbrief: Last letter of Greek alphabet.\n---\n",
+            encoding="utf-8",
+        )
+        (ent / "alpha.md").write_text(
+            "---\ntype: concept\nsources: [summaries/b.md]\nbrief: First letter of Greek alphabet.\n---\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        lines = out.strip().splitlines()
+        assert lines[0].startswith("- alpha ")
+        assert lines[1].startswith("- zeta ")
+
+
+class TestWriteEntity:
+    def test_new_entity_frontmatter(self, tmp_path):
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nAI lab.",
+            "summaries/a.md", is_update=False,
+            brief="AI lab behind Claude.", type_="organization",
+            aliases=["Anthropic PBC"],
+        )
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert "type:" in text and "organization" in text
+        assert "brief:" in text and "AI lab behind Claude." in text
+        assert "sources:" in text and "summaries/a.md" in text
+        assert "Anthropic PBC" in text
+        assert text.count("---") == 2  # exactly one frontmatter block
+
+    def test_update_prepends_source_keeps_type(self, tmp_path):
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nv1.",
+            "summaries/a.md", is_update=False,
+            brief="b1", type_="organization", aliases=None,
+        )
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nv2 richer.",
+            "summaries/b.md", is_update=True,
+            brief="b2", type_="organization", aliases=None,
+        )
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert "summaries/b.md" in text and "summaries/a.md" in text
+        # _yaml_list_line uses json.dumps: b prepended before a, double-quoted
+        assert '"summaries/b.md", "summaries/a.md"' in text
+        assert "type:" in text and "organization" in text
+        assert "v2 richer." in text
+        assert "v1." not in text
+        assert "brief:" in text and "b2" in text
+
+    def test_update_rebuilds_frontmatter_when_no_closing_delim(self, tmp_path):
+        """#11: malformed existing file (opening --- but no closing ---) must
+        not drop frontmatter; rebuild valid sources/type/brief on update."""
+        entities = tmp_path / "entities"
+        entities.mkdir(parents=True)
+        # Opening delimiter, NO closing delimiter — find("---", 3) == -1.
+        (entities / "anthropic.md").write_text(
+            "---\nsources: [\"summaries/a.md\"]\ntype: organization\n"
+            "# Anthropic (no closing fence)\n\nOld body.",
+            encoding="utf-8",
+        )
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nv2 rewritten.",
+            "summaries/b.md", is_update=True,
+            brief="AI lab.", type_="organization", aliases=None,
+        )
+        text = (entities / "anthropic.md").read_text(encoding="utf-8")
+        # Frontmatter rebuilt with a proper closing delimiter, not body-only.
+        assert text.startswith("---\n")
+        assert text.count("---") == 2
+        assert "sources:" in text and "summaries/b.md" in text
+        # The PRE-EXISTING source must be preserved, not dropped when rebuilding.
+        assert "summaries/a.md" in text
+        assert "type:" in text and "organization" in text
+        assert "brief:" in text and "AI lab." in text
+        assert "v2 rewritten." in text
 
 
 class TestBacklinkSummary:
@@ -926,6 +1160,33 @@ class TestCompileShortDocFallbacks:
         assert "[[concepts/imaginary]]" not in text
         assert "imaginary" in text  # plain text preserved
 
+    @pytest.mark.asyncio
+    async def test_scalar_plan_handled_gracefully(self, tmp_path):
+        """#10: a JSON scalar plan (valid JSON, not object/array) must not
+        crash with AttributeError; it takes the graceful empty-plan path —
+        v1 summary written, index updated, no concept/entity pages."""
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        summary_response = json.dumps({
+            "brief": "B", "content": "# Summary\n\nPlain body, no links.",
+        })
+        # Plan call returns a bare JSON scalar (an integer).
+        scalar_plan_response = "42"
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, scalar_plan_response])
+            )
+            # Must not raise (AttributeError) and must complete.
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+
+        # Summary still written, index updated with the document.
+        assert (wiki / "summaries" / "doc.md").exists()
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/doc]]" in index_text
+        # No concept pages produced from the unusable plan.
+        assert not list((wiki / "concepts").glob("*.md"))
+
 
 class TestCacheControl:
     """Verify cache_control breakpoints are emitted on the right messages
@@ -1222,6 +1483,47 @@ class TestCompileConceptsPlan:
         assert "[[concepts/attention]]" in index_text
 
     @pytest.mark.asyncio
+    async def test_empty_content_skips_page_no_json_body(self, tmp_path):
+        """#9: when the page LLM returns parseable JSON with empty content
+        ({"content": ""}), the page is skipped (not written as raw JSON)."""
+        wiki = self._setup_wiki(tmp_path)
+
+        plan_response = json.dumps({
+            "create": [{"name": "ghost-concept", "title": "Ghost Concept"}],
+            "update": [],
+            "related": [],
+        })
+        # Parseable JSON, but empty content — old code fell back to raw JSON.
+        empty_content_response = json.dumps({"brief": "B", "content": ""})
+
+        system_msg = {"role": "system", "content": "You are a wiki agent."}
+        doc_msg = {"role": "user", "content": "Document content."}
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([plan_response])
+            )
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_mock_completion([empty_content_response])
+            )
+            await _compile_concepts(
+                wiki, tmp_path, "gpt-4o-mini", system_msg, doc_msg,
+                "Summary.", "test-doc", 5,
+            )
+
+        # The concept page must NOT be written (generation raised + dropped).
+        page = wiki / "concepts" / "ghost-concept.md"
+        assert not page.exists()
+        # And no concept index entry either.
+        index_text = (wiki / "index.md").read_text()
+        assert "[[concepts/ghost-concept]]" not in index_text
+        # Definitely no raw JSON written anywhere as a body.
+        assert not any(
+            '"content":' in p.read_text()
+            for p in (wiki / "concepts").glob("*.md")
+        )
+
+    @pytest.mark.asyncio
     async def test_related_adds_link_no_llm(self, tmp_path):
         """Plan has only related items. No acompletion calls should be made."""
         wiki = self._setup_wiki(tmp_path, existing_concepts={
@@ -1345,3 +1647,402 @@ class TestBriefIntegration:
         index_text = (wiki / "index.md").read_text()
         assert "— A paper about transformers" in index_text
         assert "— NN architecture using self-attention" in index_text
+
+
+class TestIndexEntities:
+    def test_entities_section_written(self, tmp_path):
+        _update_index(
+            tmp_path, "doc", [], doc_brief="d",
+            entity_names=["anthropic"],
+            entity_meta={"anthropic": ("organization", "AI lab behind Claude.")},
+        )
+        text = (tmp_path / "index.md").read_text(encoding="utf-8")
+        assert "## Entities" in text
+        assert "- [[entities/anthropic]] (organization) — AI lab behind Claude." in text
+
+    def test_entity_entry_replaced_on_update(self, tmp_path):
+        _update_index(tmp_path, "doc", [], entity_names=["anthropic"],
+                      entity_meta={"anthropic": ("organization", "old")})
+        _update_index(tmp_path, "doc2", [], entity_names=["anthropic"],
+                      entity_meta={"anthropic": ("organization", "new")})
+        text = (tmp_path / "index.md").read_text(encoding="utf-8")
+        assert text.count("[[entities/anthropic]]") == 1
+        assert "new" in text and "old" not in text
+
+
+class TestEntityBacklinks:
+    def _seed(self, tmp_path):
+        (tmp_path / "summaries").mkdir()
+        (tmp_path / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+        (tmp_path / "entities").mkdir()
+        (tmp_path / "entities" / "anthropic.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md]\n---\n\n# Anthropic\n",
+            encoding="utf-8")
+
+    def test_summary_gets_entities_section(self, tmp_path):
+        self._seed(tmp_path)
+        _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
+        text = (tmp_path / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert "## Entities" in text
+        assert "[[entities/anthropic]]" in text
+
+    def test_entity_gets_related_documents(self, tmp_path):
+        self._seed(tmp_path)
+        _backlink_entities(tmp_path, "doc", ["anthropic"])
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert "## Related Documents" in text
+        assert "[[summaries/doc]]" in text
+
+    def test_idempotent(self, tmp_path):
+        self._seed(tmp_path)
+        _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
+        _backlink_summary_entities(tmp_path, "doc", ["anthropic"])
+        text = (tmp_path / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert text.count("[[entities/anthropic]]") == 1
+
+
+class TestRemoveEntityPages:
+    def test_strip_source_and_delete_when_empty(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "solo.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md]\n---\n\n"
+            "# Solo\n\n## Related Documents\n- [[summaries/doc]]\n",
+            encoding="utf-8")
+        (ent / "shared.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md, summaries/other.md]\n---\n\n"
+            "# Shared\n\n## Related Documents\n- [[summaries/doc]]\n- [[summaries/other]]\n",
+            encoding="utf-8")
+        result = remove_doc_from_entity_pages(tmp_path, "doc")
+        assert result == {"modified": ["shared"], "deleted": ["solo"]}
+        assert not (ent / "solo.md").exists()
+        shared = (ent / "shared.md").read_text(encoding="utf-8")
+        assert "summaries/doc" not in shared
+        assert "summaries/other" in shared
+
+    def test_strips_standalone_see_also_line(self, tmp_path):
+        # A related entity (linked via _add_related_link) carries a
+        # standalone "See also:" paragraph, not a "## Related Documents"
+        # section. Removing the doc must strip it so no dangling wikilink
+        # survives on an entity that has other sources.
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "shared.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md, summaries/other.md]\n---\n\n"
+            "# Shared\n\nSee also: [[summaries/doc]]",
+            encoding="utf-8")
+        result = remove_doc_from_entity_pages(tmp_path, "doc")
+        assert result == {"modified": ["shared"], "deleted": []}
+        shared = (ent / "shared.md").read_text(encoding="utf-8")
+        assert "summaries/doc" not in shared
+        assert "See also" not in shared
+        assert "summaries/other" in shared
+
+
+class TestCompileEntitiesEndToEnd:
+    @pytest.mark.asyncio
+    async def test_entity_and_concept_split(self, tmp_path, monkeypatch):
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        # Mocked LLM: plan call returns one concept + one entity; each
+        # generation call returns a tiny page.
+        def fake_llm(model, messages, label, **kw):
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [{"name": "ai-demand", "title": "AI Demand"}],
+                                 "update": [], "related": []},
+                    "entities": {"create": [{"name": "nvidia", "title": "NVIDIA",
+                                             "type": "organization"}],
+                                 "update": [], "related": []},
+                })
+            return json.dumps({"brief": "b", "type": "organization", "content": "# Page\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        sys_msg = {"role": "system", "content": "x"}
+        doc_msg = {"role": "user", "content": "x"}
+        await _compile_concepts(wiki, tmp_path, "m", sys_msg, doc_msg,
+                                "summary text", "doc", max_concurrency=2,
+                                doc_type="short", rewrite_summary=False)
+
+        assert (wiki / "concepts" / "ai-demand.md").exists()
+        assert (wiki / "entities" / "nvidia.md").exists()
+        ent = (wiki / "entities" / "nvidia.md").read_text(encoding="utf-8")
+        # Frontmatter values are JSON-quoted by _yaml_kv_line (see _write_entity,
+        # Task 2), matching the tolerant assertion style in TestWriteEntity.
+        assert "type:" in ent and "organization" in ent
+        index = (wiki / "index.md").read_text(encoding="utf-8")
+        assert "[[entities/nvidia]]" in index
+        summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert "[[entities/nvidia]]" in summary  # backlink
+
+    @pytest.mark.asyncio
+    async def test_related_entity_does_not_downgrade_index_label(self, tmp_path, monkeypatch):
+        """Related-only entities must not overwrite a correct index entry with (other)."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "entities").mkdir(parents=True)
+
+        # Pre-seed summaries/doc.md
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        # Pre-seed index.md with a correct entry for anthropic
+        (wiki / "index.md").write_text(
+            "## Documents\n\n## Concepts\n\n## Entities\n\n"
+            "- [[entities/anthropic]] (organization) — AI safety lab\n",
+            encoding="utf-8",
+        )
+
+        # Pre-seed entities/anthropic.md with type frontmatter and a source
+        (wiki / "entities" / "anthropic.md").write_text(
+            "---\ntype: organization\nsources: []\n---\n\n# Anthropic\n",
+            encoding="utf-8",
+        )
+
+        # LLM plan: anthropic is ONLY under entities.related, not create/update
+        def fake_llm(model, messages, label, **kw):
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [], "update": [], "related": []},
+                    "entities": {"create": [], "update": [], "related": ["anthropic"]},
+                })
+            return json.dumps({"brief": "b", "type": "organization", "content": "# Page\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        sys_msg = {"role": "system", "content": "x"}
+        doc_msg = {"role": "user", "content": "x"}
+        await _compile_concepts(wiki, tmp_path, "m", sys_msg, doc_msg,
+                                "summary text", "doc", max_concurrency=2,
+                                doc_type="short", rewrite_summary=False)
+
+        index = (wiki / "index.md").read_text(encoding="utf-8")
+        # The pre-existing correct line must NOT have been downgraded to (other)
+        assert "(organization)" in index, "index entry was downgraded from (organization) to (other)"
+        assert "AI safety lab" in index, "index brief was stripped from the entry"
+
+    @pytest.mark.asyncio
+    async def test_related_to_nonexistent_concept_does_not_create_dangling_links(self, tmp_path, monkeypatch):
+        """A plan 'related' slug whose page does NOT exist must be dropped, not
+        whitelisted+back-linked — otherwise every page gets a dangling
+        [[concepts/<ghost>]] link to a page that is never created."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        def fake_llm(model, messages, label, **kw):
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [{"name": "real-concept", "title": "Real"}],
+                                 "update": [], "related": ["ghost-concept"]},
+                    "entities": {"create": [], "update": [], "related": []},
+                })
+            if label == "summary-rewrite":
+                return "# Doc\n\nSee [[concepts/real-concept]] and [[concepts/ghost-concept]].\n"
+            # concept generation body references the non-existent ghost concept
+            return json.dumps({"brief": "b", "content": "# Real\n\nLinks [[concepts/ghost-concept]].\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        await _compile_concepts(wiki, tmp_path, "m", {"role": "system", "content": "x"},
+                                {"role": "user", "content": "x"}, "summary text", "doc",
+                                max_concurrency=2, doc_type="short", rewrite_summary=True)
+
+        # ghost-concept never existed and was only "related" → never created
+        assert not (wiki / "concepts" / "ghost-concept.md").exists()
+        # ...and no page should link to it (stripped as a ghost, since not whitelisted)
+        real = (wiki / "concepts" / "real-concept.md").read_text(encoding="utf-8")
+        assert "[[concepts/ghost-concept]]" not in real
+        summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
+        assert "[[concepts/ghost-concept]]" not in summary
+        # the genuinely-created concept must still be linked
+        assert "[[concepts/real-concept]]" in summary
+
+    @pytest.mark.asyncio
+    async def test_custom_entity_type_is_not_coerced(self, tmp_path, monkeypatch):
+        """With a config-driven entity_types that includes 'dataset', a plan
+        entity typed 'dataset' is written as 'dataset' (not coerced to other),
+        and the plan prompt the mock receives advertises the custom type."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        seen_messages: list = []
+
+        def fake_llm(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            if label == "concepts-plan":
+                return json.dumps({
+                    "concepts": {"create": [], "update": [], "related": []},
+                    "entities": {"create": [{"name": "imagenet", "title": "ImageNet",
+                                             "type": "dataset"}],
+                                 "update": [], "related": []},
+                })
+            return json.dumps({"brief": "b", "type": "dataset", "content": "# Page\n"})
+
+        async def fake_llm_async(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        sys_msg = {"role": "system", "content": "x"}
+        doc_msg = {"role": "user", "content": "x"}
+        await _compile_concepts(
+            wiki, tmp_path, "m", sys_msg, doc_msg,
+            "summary text", "doc", max_concurrency=2,
+            doc_type="short", rewrite_summary=False,
+            entity_types=["person", "organization", "dataset", "other"],
+        )
+
+        ent = (wiki / "entities" / "imagenet.md").read_text(encoding="utf-8")
+        assert "type:" in ent and "dataset" in ent
+        # The custom type must reach the plan prompt the mock saw.
+        plan_msgs = [m for (label, m) in seen_messages if label == "concepts-plan"]
+        assert plan_msgs, "plan call was not made"
+        plan_user = plan_msgs[0][-1]["content"]
+        assert "dataset" in plan_user
+        assert "__ENTITY_TYPES__" not in plan_user  # token was substituted
+
+    @pytest.mark.asyncio
+    async def test_brace_in_entity_type_does_not_crash_format(self, tmp_path, monkeypatch):
+        """Defense-in-depth: even if a '{'/'}' reaches types_str (bypassing
+        resolve_entity_types sanitization), the prompt build must not raise —
+        the token is substituted AFTER .format(), so braces are inert."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        def fake_llm(model, messages, label, **kw):
+            return json.dumps({
+                "concepts": {"create": [], "update": [], "related": []},
+                "entities": {"create": [], "update": [], "related": []},
+            })
+
+        async def fake_llm_async(model, messages, label, **kw):
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        # entity_types deliberately contains brace chars to exercise the
+        # format/replace ordering — this must NOT raise KeyError/ValueError.
+        await _compile_concepts(
+            wiki, tmp_path, "m", {"role": "system", "content": "x"},
+            {"role": "user", "content": "x"}, "summary text", "doc",
+            max_concurrency=2, doc_type="short", rewrite_summary=False,
+            entity_types=["wei{rd}", "other"],
+        )  # reaching here without an exception is the assertion
+
+    @pytest.mark.asyncio
+    async def test_default_path_plan_prompt_has_default_types(self, tmp_path, monkeypatch):
+        """When entity_types is omitted, the plan prompt still advertises the
+        default enum at call time (byte-identical to today)."""
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "summaries" / "doc.md").write_text(
+            "---\nsources: []\n---\n\n# Doc\n", encoding="utf-8")
+
+        seen_messages: list = []
+
+        def fake_llm(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            return json.dumps({
+                "concepts": {"create": [], "update": [], "related": []},
+                "entities": {"create": [], "update": [], "related": []},
+            })
+
+        async def fake_llm_async(model, messages, label, **kw):
+            seen_messages.append((label, messages))
+            return fake_llm(model, messages, label, **kw)
+
+        monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
+        monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+
+        from openkb.agent.compiler import _compile_concepts
+        await _compile_concepts(
+            wiki, tmp_path, "m", {"role": "system", "content": "x"},
+            {"role": "user", "content": "x"}, "summary text", "doc",
+            max_concurrency=2, doc_type="short", rewrite_summary=False,
+        )
+
+        plan_msgs = [m for (label, m) in seen_messages if label == "concepts-plan"]
+        plan_user = plan_msgs[0][-1]["content"]
+        for t in _ENTITY_TYPE_LIST:
+            assert t in plan_user
+        assert "__ENTITY_TYPES__" not in plan_user
+
+
+# ---------------------------------------------------------------------------
+# Task 9: schema declares entities
+# ---------------------------------------------------------------------------
+
+from openkb.schema import AGENTS_MD
+
+
+def test_schema_declares_entities():
+    assert "entities/" in AGENTS_MD
+    assert "Entity Page" in AGENTS_MD
+    for t in ("person", "organization", "place", "product", "work", "event", "other"):
+        assert t in AGENTS_MD
+
+
+def test_ensure_h2_section_quiet_suppresses_drift_warning(caplog):
+    """Backlink helpers create sections as a normal operation, so quiet=True
+    must not emit the 'hand-edited' drift warning; default still warns."""
+    import logging
+
+    from openkb.agent.compiler import _ensure_h2_section
+
+    with caplog.at_level(logging.WARNING, logger="openkb.agent.compiler"):
+        lines = ["# Doc", ""]
+        _ensure_h2_section(lines, "## Entities", quiet=True)
+        assert "## Entities" in lines
+        assert caplog.records == []
+
+        _ensure_h2_section(["# Doc", ""], "## Entities")  # default warns
+        assert any("missing" in r.getMessage() for r in caplog.records)
+
+
+def test_known_targets_prompt_has_entities_rule():
+    """The whitelist message must tell the LLM the [[entities/X]] rule, since
+    entity-page prompts instruct writing such links; otherwise entity links
+    are generated freely and then stripped as ghosts."""
+    from openkb.agent.compiler import _KNOWN_TARGETS_USER
+
+    assert "[[entities/" in _KNOWN_TARGETS_USER
+
+
+def test_plan_prompt_keeps_topic_itself_guard():
+    """The concept-plan prompt must retain the guard against creating a concept
+    that merely mirrors the document's own topic."""
+    from openkb.agent.compiler import _CONCEPTS_PLAN_USER
+
+    assert "just the document topic itself" in _CONCEPTS_PLAN_USER
+

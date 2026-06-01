@@ -87,6 +87,19 @@ async def test_slash_skill_new_rejects_empty_wiki(tmp_path):
     assert not (kb / "output").exists()
 
 
+def test_preflight_gate_counts_entities(tmp_path):
+    """The wiki-content gate must accept a KB whose only compiled content
+    lives in entities/ (no concept or summary pages yet)."""
+    from openkb.cli import _preflight_skill_new
+
+    kb = tmp_path
+    (kb / "wiki" / "entities").mkdir(parents=True)
+    (kb / "wiki" / "entities" / "ada.md").write_text("# Ada\n")
+
+    # No error means the gate passed.
+    assert _preflight_skill_new(kb, "demo") is None
+
+
 @pytest.mark.asyncio
 async def test_slash_skill_new_rejects_when_target_exists(tmp_path):
     """Chat / slash command must not silently overwrite an existing skill."""

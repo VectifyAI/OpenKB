@@ -109,6 +109,7 @@ wiki/                                  │            ← the foundation
  ├── sources/            Full-text conversions
  ├── summaries/          Per-document summaries
  ├── concepts/           Cross-document synthesis ← the good stuff
+ ├── entities/           Specific named things (people, orgs, places, products)
  ├── explorations/       Saved query results
  └── reports/            Lint reports
                                        │
@@ -136,9 +137,10 @@ Short docs are read in full by the LLM. Long PDFs are indexed by PageIndex into 
 When you add a document, the LLM:
 
 1. Generates a **summary** page
-2. Reads existing **concept** pages
+2. Reads existing **concept** and **entity** pages
 3. Creates or updates concepts with cross-document synthesis
-4. Updates the **index** and **log**
+4. Creates or updates **entity** pages (people, orgs, places, products)
+5. Updates the **index** and **log**
 
 A single source might touch 10-15 wiki pages. Knowledge accumulates: each document enriches the existing wiki rather than sitting in isolation.
 
@@ -152,7 +154,8 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
 | <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add documents and compile to wiki. URL ingest auto-detects PDF (saved as `.pdf` → PageIndex / markitdown) vs HTML (trafilatura main-content extract → `.md`) |
-| <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty-concepts` to retain artifacts) |
+| <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts) |
+| <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the current compile pipeline on already-indexed docs (e.g. to backfill the `entities/` layer) without re-indexing. Regenerates summaries and rewrites concept pages — manual edits are overwritten. Use `--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md` |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
@@ -267,6 +270,8 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 ```
+
+`entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
 

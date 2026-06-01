@@ -390,6 +390,59 @@ def test_cli_remove_dry_run_does_nothing(kb_dir):
     assert "h_a" in hashes
 
 
+def test_cli_remove_preview_lists_entity_actions(kb_dir):
+    """The dry-run preview must enumerate entity-page DELETE/MODIFY actions
+    and report an 'N entity(s) will be DELETED' summary line."""
+    _seed_two_doc_kb(kb_dir)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
+    # Single-source entity (only attention) -> will be DELETED
+    (kb_dir / "wiki" / "entities" / "vaswani.md").write_text(
+        "---\nsources: [summaries/attention-h_a.md]\ntype: person\nbrief: V\n---\n"
+        "# Vaswani\n\n## Related Documents\n- [[summaries/attention-h_a]]\n",
+        encoding="utf-8",
+    )
+    # Multi-source entity (both) -> will be MODIFIED
+    (kb_dir / "wiki" / "entities" / "google.md").write_text(
+        "---\nsources: [summaries/attention-h_a.md, summaries/llm-h_l.md]\n"
+        "type: organization\nbrief: G\n---\n# Google\n",
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "DELETE   wiki/entities/vaswani.md" in result.output
+    assert "MODIFY   wiki/entities/google.md" in result.output
+    assert "1 entity(s) will be DELETED" in result.output
+    # Nothing actually removed in dry-run.
+    assert (kb_dir / "wiki" / "entities" / "vaswani.md").exists()
+
+
+def test_cli_remove_preview_handles_json_quoted_sources(kb_dir):
+    """Regression: the real compiler writes sources JSON-quoted
+    (sources: ["summaries/x.md"]). The old preview parser comma-split the line
+    keeping the quotes, so the marker never matched and the preview silently
+    reported 0 affected pages even though the executor would delete/edit them."""
+    _seed_two_doc_kb(kb_dir)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
+    # JSON-quoted single source (exactly how _yaml_list_line writes it) -> DELETE
+    (kb_dir / "wiki" / "entities" / "vaswani.md").write_text(
+        '---\nsources: ["summaries/attention-h_a.md"]\ntype: person\nbrief: V\n---\n# Vaswani\n',
+        encoding="utf-8",
+    )
+    # JSON-quoted multi-source concept -> MODIFY
+    (kb_dir / "wiki" / "concepts" / "quoted-concept.md").write_text(
+        '---\nsources: ["summaries/attention-h_a.md", "summaries/llm-h_l.md"]\nbrief: Q\n---\n# Q\n',
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "DELETE   wiki/entities/vaswani.md" in result.output
+    assert "MODIFY   wiki/concepts/quoted-concept.md" in result.output
+
+
 def test_cli_remove_yes_executes_full_plan(kb_dir):
     _seed_two_doc_kb(kb_dir)
     result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
@@ -436,6 +489,7 @@ def test_cli_remove_keep_raw_preserves_file(kb_dir):
 
 
 def test_cli_remove_keep_empty_concepts(kb_dir):
+    """The --keep-empty-concepts alias is still accepted (backward compat)."""
     _seed_two_doc_kb(kb_dir)
     result = _invoke(
         kb_dir, ["remove", "attention.pdf", "--keep-empty-concepts", "--yes"],
@@ -443,6 +497,29 @@ def test_cli_remove_keep_empty_concepts(kb_dir):
 
     assert result.exit_code == 0, result.output
     # transformer.md retained with empty sources
+    transformer = kb_dir / "wiki" / "concepts" / "transformer.md"
+    assert transformer.exists()
+    assert "sources: []" in transformer.read_text()
+
+
+def test_cli_remove_keep_empty_retains_concepts_and_entities(kb_dir):
+    """The unified --keep-empty flag retains BOTH concept and entity pages
+    whose only source was the removed doc (not just concepts)."""
+    _seed_two_doc_kb(kb_dir)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
+    (kb_dir / "wiki" / "entities" / "vaswani.md").write_text(
+        '---\nsources: ["summaries/attention-h_a.md"]\ntype: person\nbrief: V\n---\n# Vaswani\n',
+        encoding="utf-8",
+    )
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--keep-empty", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    # single-source entity retained (not deleted), with emptied sources
+    vaswani = kb_dir / "wiki" / "entities" / "vaswani.md"
+    assert vaswani.exists()
+    assert "sources: []" in vaswani.read_text()
+    # single-source concept retained too
     transformer = kb_dir / "wiki" / "concepts" / "transformer.md"
     assert transformer.exists()
     assert "sources: []" in transformer.read_text()

@@ -17,6 +17,7 @@ def _setup_kb(tmp_path: Path) -> Path:
     (kb_dir / "wiki" / "sources" / "images").mkdir(parents=True)
     (kb_dir / "wiki" / "summaries").mkdir(parents=True)
     (kb_dir / "wiki" / "concepts").mkdir(parents=True)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True)
     (kb_dir / "wiki" / "reports").mkdir(parents=True)
     openkb_dir = kb_dir / ".openkb"
     openkb_dir.mkdir()
@@ -87,6 +88,34 @@ class TestListCommand:
         # No concepts in output since none exist
         assert "Concepts:" not in result.output
 
+    def test_list_shows_entities(self, tmp_path):
+        kb_dir = _setup_kb(tmp_path)
+        hashes = {"abc": {"name": "paper.pdf", "type": "pdf"}}
+        (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
+        (kb_dir / "wiki" / "entities" / "ada-lovelace.md").write_text("# Ada")
+        (kb_dir / "wiki" / "entities" / "openai.md").write_text("# OpenAI")
+
+        runner = CliRunner()
+        with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["list"])
+
+        assert "Entities (2):" in result.output
+        assert "ada-lovelace" in result.output
+        assert "openai" in result.output
+
+    def test_list_no_entities_section_when_empty(self, tmp_path):
+        kb_dir = _setup_kb(tmp_path)
+        hashes = {"abc": {"name": "paper.pdf", "type": "pdf"}}
+        (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
+
+        runner = CliRunner()
+        with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["list"])
+
+        assert result.exit_code == 0
+        assert "Entities:" not in result.output
+        assert "Entities (" not in result.output
+
 
 class TestStatusCommand:
     def test_status_no_kb(self, tmp_path):
@@ -111,6 +140,7 @@ class TestStatusCommand:
         assert "sources" in result.output
         assert "summaries" in result.output
         assert "concepts" in result.output
+        assert "entities" in result.output
         assert "reports" in result.output
 
     def test_status_shows_total_indexed(self, tmp_path):

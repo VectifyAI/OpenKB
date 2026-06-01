@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# The compiled page-type subdirectories under wiki/. Shared source of truth
+# for surfaces that enumerate page content (list, lint, status, skill gate).
+PAGE_CONTENT_DIRS = ("summaries", "concepts", "entities")
+
+# Canonical empty index.md seed. Used by `openkb init` and the compiler's
+# lazy-create path so they never drift.
+INDEX_SEED = "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n"
+
 AGENTS_MD = """\
 # Wiki Schema
 
@@ -10,6 +18,7 @@ AGENTS_MD = """\
 - sources/images/ — Extracted images from documents, referenced by sources.
 - summaries/ — One per source document. Summary of key content.
 - concepts/ — Cross-document topic synthesis. Created when a theme spans multiple documents.
+- entities/ — Specific named things: people, organizations, places, products, named works, events. One page per entity, accumulated across documents.
 - explorations/ — Saved query results, analyses, and comparisons worth keeping.
 - reports/ — Lint health check reports. Auto-generated.
 
@@ -20,13 +29,15 @@ AGENTS_MD = """\
 ## Page Types
 - **Summary Page** (summaries/): Key content of a single source document.
 - **Concept Page** (concepts/): Cross-document topic synthesis with [[wikilinks]].
+- **Entity Page** (entities/): A specific named thing (proper noun) — e.g. a person, organization, place, product, named work, or event. Each page has a `type:` frontmatter field; the exact allowed type set is configurable (default: person, organization, place, product, work, event, other) and the authoritative set for this run is given in the compilation prompt. An entity differs from a concept: a concept is an abstract recurring idea; an entity is a specific named thing. Create an entity page only when the entity is central to a document or recurs across sources — do not page passing mentions.
 - **Exploration Page** (explorations/): Saved query results — analyses, comparisons, syntheses.
 - **Index Page** (index.md): One-liner summary of every page in the wiki. Auto-maintained.
 
 ## Index Page Format
-index.md lists all documents, concepts, and explorations with metadata:
+index.md lists all documents, concepts, entities, and explorations with metadata:
 - Documents: name, one-liner description, type (short|pageindex), detail access path
 - Concepts: name, one-liner description
+- Entities: name, type, one-liner description
 - Explorations: name, one-liner description
 
 ## Log Format
