@@ -222,3 +222,25 @@ def test_localize_images_absolute_filename_stays_inside(tmp_path):
     out = localize_images("![x](/etc/x.png)", {"/etc/x.png": b"D"}, "doc", images_dir)
     assert (images_dir / "x.png").read_bytes() == b"D"
     assert "sources/images/doc/x.png" in out
+
+
+def test_localize_images_rewrites_directory_prefixed_target(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    md = "![p](images/fig.png)\n\n![q](./sub/images/other.png)"
+    out = localize_images(md, {"fig.png": b"A", "other.png": b"B"}, "doc", images_dir)
+    assert "![p](sources/images/doc/fig.png)" in out
+    assert "![q](sources/images/doc/other.png)" in out
+    assert (images_dir / "fig.png").read_bytes() == b"A"
+    assert (images_dir / "other.png").read_bytes() == b"B"
+
+
+def test_localize_images_preserves_title_attribute(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images('![a](fig.png "Figure 1")', {"fig.png": b"X"}, "doc", images_dir)
+    assert '![a](sources/images/doc/fig.png "Figure 1")' in out
+
+
+def test_localize_images_inner_whitespace(tmp_path):
+    images_dir = tmp_path / "wiki" / "sources" / "images" / "doc"
+    out = localize_images("![a]( fig.png )", {"fig.png": b"X"}, "doc", images_dir)
+    assert "sources/images/doc/fig.png" in out

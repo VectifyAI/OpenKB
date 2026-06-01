@@ -17,6 +17,10 @@ _BASE64_RE = re.compile(r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)')
 # Matches: ![alt](relative/path) — excludes http(s):// and data: URIs
 _RELATIVE_RE = re.compile(r'!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)')
 
+# Matches an image link, capturing: (prefix `![alt](` + ws)(target)(optional
+# title + ws)(closing `)`). Used to rewrite links by their target's basename.
+_IMG_LINK_RE = re.compile(r'(!\[[^\]]*\]\(\s*)([^)\s]+)(\s*(?:"[^"]*"|\'[^\']*\')?\s*)(\))')
+
 
 # Minimum pixel dimension — skip icons, bullets, and tiny artifacts
 _MIN_IMAGE_DIM = 32
@@ -217,27 +221,34 @@ def localize_images(
     doc_name: str,
     images_dir: Path,
 ) -> str:
-    """Persist parser-supplied images and normalize all image links.
+    """Persist parser-supplied images and normalize image links.
 
-    1. Write every ``images`` entry (filename -> bytes) into ``images_dir``.
-    2. Rewrite bare-filename references ``![alt](filename)`` (filename present
-       in ``images``) to the canonical ``sources/images/{doc_name}/{filename}``.
-    3. Run :func:`extract_base64_images` to localize any inline base64 images.
+    1. Write every ``images`` entry to ``images_dir`` under its basename
+       (``Path(filename).name``), so a name with ``/`` directory components or
+       an absolute path can never write outside ``images_dir``.
+    2. Rewrite markdown image links whose target's basename matches a written
+       image to the canonical ``sources/images/{doc_name}/{basename}`` path —
+       this handles bare names, directory-prefixed targets (e.g.
+       ``images/fig.png``), and links carrying a title attribute.
+    3. Localize any inline base64 images via :func:`extract_base64_images`.
 
     Returns the normalized markdown.
     """
     images_dir.mkdir(parents=True, exist_ok=True)
-    result = markdown
+    safe_names: set[str] = set()
     for filename, data in images.items():
-        # Strip any directory components from parser-supplied names so a
-        # malicious/odd filename (e.g. "../x.png", "/abs/x.png") can never
-        # write outside images_dir. The markdown still references the original
-        # `filename`, so rewrite that ref to the sanitized canonical path.
-        safe_name = Path(filename).name or "image"
-        (images_dir / safe_name).write_bytes(data)
-        canonical = f"sources/images/{doc_name}/{safe_name}"
-        pattern = re.compile(r"(!\[[^\]]*\]\()" + re.escape(filename) + r"(\))")
-        result = pattern.sub(lambda m, c=canonical: m.group(1) + c + m.group(2), result)
+        safe = Path(filename).name or "image"
+        (images_dir / safe).write_bytes(data)
+        safe_names.add(safe)
+
+    def _rewrite(m: "re.Match[str]") -> str:
+        pre, target, title, close = m.group(1), m.group(2), m.group(3), m.group(4)
+        base = Path(target).name
+        if base in safe_names:
+            return f"{pre}sources/images/{doc_name}/{base}{title}{close}"
+        return m.group(0)
+
+    result = _IMG_LINK_RE.sub(_rewrite, markdown)
     result = extract_base64_images(result, doc_name, images_dir)
     return result
 
