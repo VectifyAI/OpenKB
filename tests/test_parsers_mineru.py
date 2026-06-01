@@ -63,9 +63,12 @@ def test_self_hosted_parses_zip(monkeypatch, tmp_path):
     assert isinstance(result, ParseResult)
     assert "Mineru" in result.markdown
     assert result.images["fig.png"] == b"PNGBYTES"
-    # the images/ prefix should be rewritten to the bare filename for localize_images
-    assert "images/fig.png" not in result.markdown
-    assert "![p](fig.png)" in result.markdown
+    # _result_from_zip no longer rewrites links; the raw 'images/fig.png' survives
+    assert "images/fig.png" in result.markdown
+    # localize_images (which now rewrites by basename) canonicalizes it
+    from openkb.images import localize_images
+    md2 = localize_images(result.markdown, result.images, "d", tmp_path / "imgs")
+    assert "sources/images/d/fig.png" in md2
 
 
 def test_cloud_flow_polls_then_downloads(monkeypatch, tmp_path):
@@ -74,7 +77,7 @@ def test_cloud_flow_polls_then_downloads(monkeypatch, tmp_path):
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("full.md", "# Cloud\n\n![p](images/fig.png)")
+        zf.writestr("full.md", "# Cloud")
         zf.writestr("images/fig.png", b"ZBYTES")
     zip_bytes = buf.getvalue()
 
@@ -124,8 +127,6 @@ def test_cloud_flow_polls_then_downloads(monkeypatch, tmp_path):
     assert isinstance(result, ParseResult)
     assert "Cloud" in result.markdown
     assert result.images["fig.png"] == b"ZBYTES"
-    assert "images/fig.png" not in result.markdown
-    assert "![p](fig.png)" in result.markdown
     # drove the full poll loop: running once, then done
     assert _get.calls == 2
 
@@ -137,19 +138,19 @@ def test_poll_interval_zero_is_clamped_to_positive():
     assert MineruParser({"poll_interval": 2}).poll_interval == 2
 
 
-def test_image_prefix_rewrite_is_anchored(tmp_path):
-    import io, sys, types, zipfile
-    from unittest.mock import MagicMock
-    # markdown has a real image link AND an unrelated 'images/fig.png' substring in prose
+def test_result_from_zip_does_not_rewrite_links(tmp_path):
+    import io, zipfile
+    # The images/ -> bare rewrite moved OUT of _result_from_zip into
+    # localize_images; _result_from_zip must leave the markdown link text intact.
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("full.md", "See path other_images/fig.png in text.\n\n![p](images/fig.png)")
         zf.writestr("images/fig.png", b"PNG")
     from openkb.parsers.mineru import _result_from_zip
     result = _result_from_zip(buf.getvalue())
-    assert "![p](fig.png)" in result.markdown          # link rewritten
+    assert "![p](images/fig.png)" in result.markdown   # link text unchanged
     assert "other_images/fig.png" in result.markdown    # unrelated prose untouched
-    assert result.images["fig.png"] == b"PNG"
+    assert result.images["fig.png"] == b"PNG"           # images keyed by basename
 
 
 def test_cloud_empty_extract_result_then_done(monkeypatch, tmp_path):
@@ -186,3 +187,73 @@ def test_cloud_empty_extract_result_then_done(monkeypatch, tmp_path):
     src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
     result = MineruParser({"mode": "cloud", "poll_interval": 1}).parse(src)
     assert "Ok" in result.markdown   # survived the empty-list poll without crashing
+
+
+def test_timeout_invalid_is_clamped():
+    from openkb.parsers.mineru import MineruParser
+    assert MineruParser({"timeout": 0}).timeout == 600
+    assert MineruParser({"timeout": "x"}).timeout == 600
+    assert MineruParser({"timeout": 30}).timeout == 30
+
+
+def test_cloud_api_error_envelope_raises(monkeypatch, tmp_path):
+    import sys, types
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("MINERU_API_KEY", "key")
+    r = MagicMock(); r.raise_for_status = MagicMock()
+    r.json.return_value = {"code": -10001, "msg": "token expired", "data": None}
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client); client.__exit__ = MagicMock(return_value=False)
+    client.post.return_value = r
+    httpx_mod = types.ModuleType("httpx"); httpx_mod.Client = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "httpx", httpx_mod)
+    from openkb.parsers.mineru import MineruParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    import pytest
+    with pytest.raises(RuntimeError) as exc:
+        MineruParser({"mode": "cloud"}).parse(src)
+    assert "token expired" in str(exc.value) or "-10001" in str(exc.value)
+
+
+def test_cloud_empty_file_urls_raises(monkeypatch, tmp_path):
+    import sys, types
+    from unittest.mock import MagicMock
+    monkeypatch.setenv("MINERU_API_KEY", "key")
+    r = MagicMock(); r.raise_for_status = MagicMock()
+    r.json.return_value = {"code": 0, "data": {"batch_id": "b1", "file_urls": []}}
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client); client.__exit__ = MagicMock(return_value=False)
+    client.post.return_value = r
+    httpx_mod = types.ModuleType("httpx"); httpx_mod.Client = MagicMock(return_value=client)
+    monkeypatch.setitem(sys.modules, "httpx", httpx_mod)
+    from openkb.parsers.mineru import MineruParser
+    src = tmp_path / "d.pdf"; src.write_bytes(b"%PDF")
+    import pytest
+    with pytest.raises(RuntimeError) as exc:
+        MineruParser({"mode": "cloud"}).parse(src)
+    assert "upload URL" in str(exc.value)
+
+
+def test_full_md_basename_preferred_over_endswith(tmp_path):
+    import io, zipfile
+    from openkb.parsers.mineru import _result_from_zip
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("careful.md", "# WRONG")     # ends with 'full.md' but isn't it
+        zf.writestr("full.md", "# RIGHT")
+    result = _result_from_zip(buf.getvalue())
+    assert "RIGHT" in result.markdown
+    assert "WRONG" not in result.markdown
+
+
+def test_image_basename_collision_warns(tmp_path, caplog):
+    import io, zipfile, logging as _logging
+    from openkb.parsers.mineru import _result_from_zip
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("full.md", "# x")
+        zf.writestr("images/fig.png", b"A")
+        zf.writestr("sub/fig.png", b"B")
+    with caplog.at_level(_logging.WARNING):
+        result = _result_from_zip(buf.getvalue())
+    assert any("fig.png" in r.message for r in caplog.records)
