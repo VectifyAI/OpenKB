@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import contextlib
 import json as _json
+import shutil
+import subprocess
 from pathlib import Path
+
+# grep_wiki_files tuning
+_GREP_MAX_LINES = 50
+_GREP_TIMEOUT_S = 10
 
 
 def list_wiki_files(directory: str, wiki_root: str) -> str:
@@ -52,6 +58,100 @@ def read_wiki_file(path: str, wiki_root: str) -> str:
     if not full_path.exists():
         return f"File not found: {path}"
     return full_path.read_text(encoding="utf-8")
+
+
+def grep_wiki_files(
+    pattern: str,
+    wiki_root: str,
+    *,
+    ignore_case: bool = True,
+    fixed_string: bool = False,
+) -> str:
+    """Lexically search the wiki's markdown layer for ``pattern``.
+
+    A completeness sweep: shells out to ripgrep (preferred) or grep
+    (fallback) over every ``*.md`` file under *wiki_root* — summaries,
+    concepts, entities, explorations, ``index.md``, and short-doc
+    ``sources/*.md``. Long-doc per-page ``*.json`` (PageIndex's domain) and
+    ``log.md`` bookkeeping are excluded.
+
+    Args:
+        pattern: Search pattern. Regex by default; literal when
+            *fixed_string* is True.
+        wiki_root: Absolute path to the wiki root directory.
+        ignore_case: Case-insensitive match (default True).
+        fixed_string: Treat *pattern* as a literal string, not a regex.
+
+    Returns:
+        Up to :data:`_GREP_MAX_LINES` matches as ``relative/path.md:LINE: text``
+        lines, plus a truncation notice if capped. On no match / missing
+        binary / timeout / error, returns an explicit message string. Never
+        raises and never invokes a shell (``shell=False``), so a hostile
+        *pattern* cannot inject commands.
+    """
+    root = Path(wiki_root).resolve()
+    if not root.exists():
+        return f"Wiki root not found: {wiki_root}"
+
+    rg = shutil.which("rg")
+    grep = shutil.which("grep")
+
+    if rg:
+        # --no-ignore: the wiki dir is often gitignored; without this rg
+        # silently returns zero matches inside a real OpenKB checkout.
+        cmd = [
+            rg, "--line-number", "--no-heading", "--color", "never",
+            "--no-ignore", "-g", "*.md", "-g", "!log.md",
+        ]
+        if ignore_case:
+            cmd.append("-i")
+        if fixed_string:
+            cmd.append("-F")
+        cmd += ["-e", pattern, str(root)]
+    elif grep:
+        cmd = [grep, "-rn", "--include=*.md", "--exclude-dir=images"]
+        if ignore_case:
+            cmd.append("-i")
+        if fixed_string:
+            cmd.append("-F")
+        cmd += ["-e", pattern, str(root)]
+    else:
+        return "grep unavailable on this system."
+
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=_GREP_TIMEOUT_S, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "grep timed out; narrow the pattern."
+
+    # rg/grep convention: 0 = matches, 1 = no matches, >=2 = real error.
+    if proc.returncode >= 2:
+        stderr_lines = (proc.stderr or "").strip().splitlines()
+        first = stderr_lines[0] if stderr_lines else "unknown error"
+        return f"grep error: {first}."
+
+    prefix = str(root) + "/"
+    results: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        rel = line[len(prefix):] if line.startswith(prefix) else line
+        path_part = rel.split(":", 1)[0]
+        # Defensive: grep --include=*.md still matches log.md; drop it.
+        if path_part == "log.md" or path_part.endswith("/log.md"):
+            continue
+        results.append(rel)
+
+    if not results:
+        return f"No matches for {pattern}."
+
+    truncated = len(results) > _GREP_MAX_LINES
+    out = "\n".join(results[:_GREP_MAX_LINES])
+    if truncated:
+        out += "\n… more matches; narrow the pattern."
+    return out
 
 
 def parse_pages(pages: str) -> list[int]:
