@@ -112,3 +112,75 @@ def test_shell_metacharacters_do_not_execute(tmp_path):
     sentinel = tmp_path / "pwned"
     grep_wiki_files("; touch " + str(sentinel), wiki)
     assert not sentinel.exists()
+
+
+def test_rg_branch_builds_expected_command(tmp_path, monkeypatch):
+    import subprocess as _sp
+    import openkb.agent.tools as tools_mod
+
+    wiki = _wiki(tmp_path)
+    monkeypatch.setattr(tools_mod.shutil, "which", lambda name: "/usr/bin/rg" if name == "rg" else None)
+
+    captured = {}
+
+    class _FakeProc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(cmd, *args, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell", False)
+        return _FakeProc()
+
+    monkeypatch.setattr(tools_mod.subprocess, "run", _fake_run)
+
+    tools_mod.grep_wiki_files("needle", wiki, ignore_case=True, fixed_string=True)
+
+    cmd = captured["cmd"]
+    # rg binary chosen, shell never used
+    assert cmd[0] == "/usr/bin/rg"
+    assert captured["shell"] is False
+    # load-bearing flags present
+    assert "--no-ignore" in cmd
+    assert "--line-number" in cmd
+    assert "--no-heading" in cmd
+    assert "-i" in cmd          # ignore_case
+    assert "-F" in cmd          # fixed_string
+    # md include + log.md exclude globs
+    assert cmd[cmd.index("-g") :].count("-g") == 2 or cmd.count("-g") == 2
+    assert "*.md" in cmd
+    assert "!log.md" in cmd
+    # pattern passed via -e as a separate argv (injection-safe), root last
+    assert cmd[-3] == "-e"
+    assert cmd[-2] == "needle"
+    assert cmd[-1] == str(__import__("pathlib").Path(wiki).resolve())
+
+
+def test_rg_branch_omits_flags_when_disabled(tmp_path, monkeypatch):
+    import openkb.agent.tools as tools_mod
+
+    wiki = _wiki(tmp_path)
+    monkeypatch.setattr(tools_mod.shutil, "which", lambda name: "/usr/bin/rg" if name == "rg" else None)
+    captured = {}
+
+    class _FakeProc:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(tools_mod.subprocess, "run", lambda cmd, *a, **k: (captured.__setitem__("cmd", cmd) or _FakeProc()))
+
+    tools_mod.grep_wiki_files("needle", wiki, ignore_case=False, fixed_string=False)
+    cmd = captured["cmd"]
+    assert "-i" not in cmd
+    assert "-F" not in cmd
+
+
+def test_finds_match_in_entities(tmp_path):
+    wiki = _wiki(tmp_path)
+    (tmp_path / "wiki" / "entities" / "vaswani.md").write_text(
+        "# Vaswani\nAshish Vaswani is a lead author.\n", encoding="utf-8",
+    )
+    out = grep_wiki_files("Ashish Vaswani", wiki)
+    assert "entities/vaswani.md:" in out
