@@ -15,13 +15,13 @@ from pathlib import Path
 
 import yaml
 
-from openkb.schema import PAGE_CONTENT_DIRS
+from openkb.schema import EXCLUDED_WIKI_FILES, PAGE_CONTENT_DIRS
 
 # Matches [[wikilink]] or [[subdir/link]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 # Files to exclude from lint scanning (schema, logs, etc.)
-_EXCLUDED_FILES = {"AGENTS.md", "SCHEMA.md", "log.md"}
+_EXCLUDED_FILES = EXCLUDED_WIKI_FILES
 
 
 def _normalize_target(target: str) -> str:

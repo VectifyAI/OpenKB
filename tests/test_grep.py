@@ -1,7 +1,15 @@
-"""Tests for openkb.agent.tools.grep_wiki_files — lexical wiki search."""
+"""Tests for openkb.agent.tools.grep_wiki_files — grep-based wiki search."""
 from __future__ import annotations
 
+import shutil
+
+import pytest
+
+import openkb.agent.tools as tools_mod
 from openkb.agent.tools import grep_wiki_files
+
+_HAS_GREP = shutil.which("grep") is not None
+requires_grep = pytest.mark.skipif(not _HAS_GREP, reason="system grep not available")
 
 
 def _wiki(tmp_path):
@@ -19,94 +27,178 @@ def _wiki(tmp_path):
         "# Attention\nScaled dot-product Attention is central.\n",
         encoding="utf-8",
     )
+    (root / "entities" / "vaswani.md").write_text(
+        "# Vaswani\nAshish Vaswani is a lead author.\n", encoding="utf-8",
+    )
     (root / "sources" / "note.md").write_text(
-        "Short note: the lottery ticket hypothesis appears here only.\n",
+        "Short note: the lottery ticket hypothesis appears here only.\n"
+        "It also discusses a large language model in passing.\n",
         encoding="utf-8",
     )
-    # Long-doc per-page JSON — must NEVER be grepped.
+    # Long-doc per-page JSON — never grepped (only *.md is searched).
     (root / "sources" / "book.json").write_text(
         '[{"page": 1, "text": "transformer secret in json"}]\n',
         encoding="utf-8",
     )
-    # Bookkeeping — must NEVER be grepped.
+    # Bookkeeping / scaffolding — never grepped.
     (root / "log.md").write_text(
         "# Operations Log\n## [2026-01-01] ingest | transformer\n",
         encoding="utf-8",
     )
+    (root / "AGENTS.md").write_text(
+        "# Schema\nThis schema describes synthesis and transformer concepts.\n",
+        encoding="utf-8",
+    )
+    (root / "SCHEMA.md").write_text(
+        "# Schema alias\nMentions transformer too.\n", encoding="utf-8",
+    )
     return str(root)
 
 
+# --- scope: what gets matched -------------------------------------------------
+
+@requires_grep
 def test_finds_match_in_summaries(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("self-attention", wiki)
+    out = grep_wiki_files("self-attention", _wiki(tmp_path))
     assert "summaries/paper.md:" in out
     assert "self-attention" in out
 
 
+@requires_grep
+def test_finds_match_in_concepts(tmp_path):
+    out = grep_wiki_files("Scaled dot-product", _wiki(tmp_path))
+    assert "concepts/attention.md:" in out
+
+
+@requires_grep
+def test_finds_match_in_entities(tmp_path):
+    out = grep_wiki_files("Ashish Vaswani", _wiki(tmp_path))
+    assert "entities/vaswani.md:" in out
+
+
+@requires_grep
 def test_finds_match_in_short_source_md(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("lottery ticket", wiki)
+    out = grep_wiki_files("lottery ticket", _wiki(tmp_path))
     assert "sources/note.md:" in out
 
 
+# --- scope: what gets excluded ------------------------------------------------
+
+@requires_grep
 def test_excludes_long_doc_json(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("transformer", wiki)
+    out = grep_wiki_files("transformer", _wiki(tmp_path))
     assert "book.json" not in out
 
 
+@requires_grep
 def test_excludes_log_md(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("transformer", wiki)
+    out = grep_wiki_files("transformer", _wiki(tmp_path))
     assert "log.md" not in out
 
 
-def test_case_insensitive_by_default(tmp_path):
+@requires_grep
+def test_excludes_agents_md(tmp_path):
+    # AGENTS.md contains 'synthesis' and 'transformer' but is scaffolding.
+    out = grep_wiki_files("synthesis", _wiki(tmp_path))
+    assert "AGENTS.md" not in out
+    assert out == "No matches for synthesis."
+
+
+@requires_grep
+def test_excludes_schema_md(tmp_path):
+    out = grep_wiki_files("transformer", _wiki(tmp_path))
+    assert "SCHEMA.md" not in out
+
+
+# --- regex dialect ------------------------------------------------------------
+
+@requires_grep
+def test_ere_alternation_matches(tmp_path):
+    # ERE alternation must work (regression for the BRE-vs-Rust-regex bug).
+    out = grep_wiki_files("LLM|large language model", _wiki(tmp_path))
+    assert "sources/note.md:" in out
+
+
+@requires_grep
+def test_fixed_string_treats_pipe_literally(tmp_path):
+    # As a literal, 'LLM|large language model' does not appear anywhere.
+    out = grep_wiki_files("LLM|large language model", _wiki(tmp_path), fixed_string=True)
+    assert out == "No matches for LLM|large language model."
+
+
+@requires_grep
+def test_fixed_string_vs_regex_dot(tmp_path):
     wiki = _wiki(tmp_path)
-    out = grep_wiki_files("TRANSFORMER", wiki)
+    # literal 'self.attention' does not appear (text has 'self-attention')
+    assert grep_wiki_files("self.attention", wiki, fixed_string=True) == \
+        "No matches for self.attention."
+    # as a regex, '.' matches the hyphen
+    assert "summaries/paper.md:" in grep_wiki_files("self.attention", wiki, fixed_string=False)
+
+
+# --- case sensitivity ---------------------------------------------------------
+
+@requires_grep
+def test_case_insensitive_by_default(tmp_path):
+    out = grep_wiki_files("TRANSFORMER", _wiki(tmp_path))
     assert "summaries/paper.md:" in out
 
 
+@requires_grep
 def test_case_sensitive_when_disabled(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("TRANSFORMER", wiki, ignore_case=False)
+    out = grep_wiki_files("TRANSFORMER", _wiki(tmp_path), ignore_case=False)
     assert out == "No matches for TRANSFORMER."
 
 
-def test_fixed_string_treats_regex_literally(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("self.attention", wiki, fixed_string=True)
-    # literal "self.attention" does not appear (text has "self-attention")
-    assert out == "No matches for self.attention."
-    # but as a regex, "." matches the hyphen
-    out2 = grep_wiki_files("self.attention", wiki, fixed_string=False)
-    assert "summaries/paper.md:" in out2
+# --- guards / messages --------------------------------------------------------
 
-
+@requires_grep
 def test_no_match_returns_message(tmp_path):
-    wiki = _wiki(tmp_path)
-    out = grep_wiki_files("nonexistentterm12345", wiki)
+    out = grep_wiki_files("nonexistentterm12345", _wiki(tmp_path))
     assert out == "No matches for nonexistentterm12345."
 
 
+def test_empty_pattern_guarded(tmp_path):
+    out = grep_wiki_files("", _wiki(tmp_path))
+    assert out == "Provide a non-empty search pattern."
+
+
+def test_whitespace_pattern_guarded(tmp_path):
+    out = grep_wiki_files("   ", _wiki(tmp_path))
+    assert out == "Provide a non-empty search pattern."
+
+
+def test_grep_unavailable_returns_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(tools_mod, "_grep_binary", lambda: None)
+    out = grep_wiki_files("transformer", _wiki(tmp_path))
+    assert out == "grep unavailable on this system."
+
+
+# --- paths --------------------------------------------------------------------
+
+@requires_grep
 def test_paths_are_relative_to_wiki_root(tmp_path):
     wiki = _wiki(tmp_path)
     out = grep_wiki_files("self-attention", wiki)
-    assert wiki not in out
-    assert out.splitlines()[0].startswith("summaries/")
+    assert wiki not in out  # no absolute-path leak
+    # order-independent: the summaries hit is present as a relative path
+    assert any(ln.startswith("summaries/paper.md:") for ln in out.splitlines())
 
 
+@requires_grep
 def test_result_cap_and_truncation_notice(tmp_path):
     wiki = _wiki(tmp_path)
-    root = tmp_path / "wiki" / "summaries"
     big = "\n".join(f"line {i} needle" for i in range(60))
-    (root / "big.md").write_text(big + "\n", encoding="utf-8")
+    (tmp_path / "wiki" / "summaries" / "big.md").write_text(big + "\n", encoding="utf-8")
     out = grep_wiki_files("needle", wiki)
     lines = out.splitlines()
     assert lines[-1] == "… more matches; narrow the pattern."
     assert len(lines) == 51
 
 
+# --- safety -------------------------------------------------------------------
+
+@requires_grep
 def test_shell_metacharacters_do_not_execute(tmp_path):
     wiki = _wiki(tmp_path)
     sentinel = tmp_path / "pwned"
@@ -114,17 +206,27 @@ def test_shell_metacharacters_do_not_execute(tmp_path):
     assert not sentinel.exists()
 
 
-def test_rg_branch_builds_expected_command(tmp_path, monkeypatch):
-    import subprocess as _sp
-    import openkb.agent.tools as tools_mod
-
+@requires_grep
+def test_non_utf8_bytes_do_not_raise(tmp_path):
     wiki = _wiki(tmp_path)
-    monkeypatch.setattr(tools_mod.shutil, "which", lambda name: "/usr/bin/rg" if name == "rg" else None)
+    # A matched line with a non-UTF-8 byte must not raise (errors='replace').
+    (tmp_path / "wiki" / "summaries" / "latin.md").write_bytes(
+        b"caf\xe9 transformer here\n"
+    )
+    out = grep_wiki_files("transformer", wiki)  # must return a string, not raise
+    assert isinstance(out, str)
+    assert "summaries/" in out
 
+
+# --- command construction (binary-agnostic, no real grep needed) --------------
+
+def test_grep_command_built_with_ere_and_excludes(tmp_path, monkeypatch):
+    wiki = _wiki(tmp_path)
+    monkeypatch.setattr(tools_mod, "_grep_binary", lambda: "/usr/bin/grep")
     captured = {}
 
     class _FakeProc:
-        returncode = 0
+        returncode = 1
         stdout = ""
         stderr = ""
 
@@ -134,34 +236,25 @@ def test_rg_branch_builds_expected_command(tmp_path, monkeypatch):
         return _FakeProc()
 
     monkeypatch.setattr(tools_mod.subprocess, "run", _fake_run)
-
-    tools_mod.grep_wiki_files("needle", wiki, ignore_case=True, fixed_string=True)
+    grep_wiki_files("needle", wiki, ignore_case=True, fixed_string=False)
 
     cmd = captured["cmd"]
-    # rg binary chosen, shell never used
-    assert cmd[0] == "/usr/bin/rg"
+    assert cmd[0] == "/usr/bin/grep"
     assert captured["shell"] is False
-    # load-bearing flags present
-    assert "--no-ignore" in cmd
-    assert "--line-number" in cmd
-    assert "--no-heading" in cmd
-    assert "-i" in cmd          # ignore_case
-    assert "-F" in cmd          # fixed_string
-    # md include + log.md exclude globs
-    assert cmd[cmd.index("-g") :].count("-g") == 2 or cmd.count("-g") == 2
-    assert "*.md" in cmd
-    assert "!log.md" in cmd
-    # pattern passed via -e as a separate argv (injection-safe), root last
+    assert "-rn" in cmd
+    assert "--include=*.md" in cmd
+    assert "-i" in cmd
+    assert "-E" in cmd and "-F" not in cmd
+    for name in ("AGENTS.md", "SCHEMA.md", "log.md"):
+        assert f"--exclude={name}" in cmd
     assert cmd[-3] == "-e"
     assert cmd[-2] == "needle"
-    assert cmd[-1] == str(__import__("pathlib").Path(wiki).resolve())
+    assert cmd[-1].endswith("wiki")
 
 
-def test_rg_branch_omits_flags_when_disabled(tmp_path, monkeypatch):
-    import openkb.agent.tools as tools_mod
-
+def test_grep_command_uses_F_when_fixed_and_omits_i(tmp_path, monkeypatch):
     wiki = _wiki(tmp_path)
-    monkeypatch.setattr(tools_mod.shutil, "which", lambda name: "/usr/bin/rg" if name == "rg" else None)
+    monkeypatch.setattr(tools_mod, "_grep_binary", lambda: "/usr/bin/grep")
     captured = {}
 
     class _FakeProc:
@@ -169,18 +262,57 @@ def test_rg_branch_omits_flags_when_disabled(tmp_path, monkeypatch):
         stdout = ""
         stderr = ""
 
-    monkeypatch.setattr(tools_mod.subprocess, "run", lambda cmd, *a, **k: (captured.__setitem__("cmd", cmd) or _FakeProc()))
-
-    tools_mod.grep_wiki_files("needle", wiki, ignore_case=False, fixed_string=False)
-    cmd = captured["cmd"]
-    assert "-i" not in cmd
-    assert "-F" not in cmd
-
-
-def test_finds_match_in_entities(tmp_path):
-    wiki = _wiki(tmp_path)
-    (tmp_path / "wiki" / "entities" / "vaswani.md").write_text(
-        "# Vaswani\nAshish Vaswani is a lead author.\n", encoding="utf-8",
+    monkeypatch.setattr(
+        tools_mod.subprocess, "run",
+        lambda cmd, *a, **k: (captured.__setitem__("cmd", cmd) or _FakeProc()),
     )
-    out = grep_wiki_files("Ashish Vaswani", wiki)
-    assert "entities/vaswani.md:" in out
+    grep_wiki_files("a|b", wiki, ignore_case=False, fixed_string=True)
+    cmd = captured["cmd"]
+    assert "-F" in cmd and "-E" not in cmd
+    assert "-i" not in cmd
+
+
+# --- returncode handling ------------------------------------------------------
+
+def test_partial_error_preserves_matches(tmp_path, monkeypatch):
+    """grep exit >=2 (e.g. one unreadable file) must NOT discard valid matches."""
+    wiki = _wiki(tmp_path)
+    root_str = str((tmp_path / "wiki").resolve())
+    monkeypatch.setattr(tools_mod, "_grep_binary", lambda: "/usr/bin/grep")
+
+    class _FakeProc:
+        returncode = 2
+        stdout = f"{root_str}/summaries/paper.md:2:self-attention here\n"
+        stderr = "grep: /x/locked: Permission denied"
+
+    monkeypatch.setattr(tools_mod.subprocess, "run", lambda *a, **k: _FakeProc())
+    out = grep_wiki_files("self-attention", wiki)
+    assert "summaries/paper.md:" in out
+    assert "grep error" not in out
+
+
+def test_error_with_no_results_returns_error(tmp_path, monkeypatch):
+    wiki = _wiki(tmp_path)
+    monkeypatch.setattr(tools_mod, "_grep_binary", lambda: "/usr/bin/grep")
+
+    class _FakeProc:
+        returncode = 2
+        stdout = ""
+        stderr = "grep: something broke\nsecond line"
+
+    monkeypatch.setattr(tools_mod.subprocess, "run", lambda *a, **k: _FakeProc())
+    out = grep_wiki_files("whatever", wiki)
+    assert out == "grep error: grep: something broke."
+
+
+def test_timeout_returns_message(tmp_path, monkeypatch):
+    import subprocess as _sp
+    wiki = _wiki(tmp_path)
+    monkeypatch.setattr(tools_mod, "_grep_binary", lambda: "/usr/bin/grep")
+
+    def _raise_timeout(*a, **k):
+        raise _sp.TimeoutExpired(cmd="grep", timeout=10)
+
+    monkeypatch.setattr(tools_mod.subprocess, "run", _raise_timeout)
+    out = grep_wiki_files("transformer", wiki)
+    assert out == "grep timed out; narrow the pattern."

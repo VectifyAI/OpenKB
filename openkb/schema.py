@@ -6,6 +6,11 @@ from pathlib import Path
 # for surfaces that enumerate page content (list, lint, status, skill gate).
 PAGE_CONTENT_DIRS = ("summaries", "concepts", "entities")
 
+# Bookkeeping / scaffolding files that live under wiki/ but are NOT content.
+# Single source of truth shared by the structural linter and the grep search
+# tool so their exclusion policy can never drift.
+EXCLUDED_WIKI_FILES: frozenset[str] = frozenset({"AGENTS.md", "SCHEMA.md", "log.md"})
+
 # Canonical empty index.md seed. Used by `openkb init` and the compiler's
 # lazy-create path so they never drift.
 INDEX_SEED = "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n"

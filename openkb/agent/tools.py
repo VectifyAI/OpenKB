@@ -7,10 +7,14 @@ tested in isolation without requiring the openai-agents runtime.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json as _json
+import os
 import shutil
 import subprocess
 from pathlib import Path
+
+from openkb.schema import EXCLUDED_WIKI_FILES
 
 # grep_wiki_files tuning
 _GREP_MAX_LINES = 50
@@ -60,6 +64,12 @@ def read_wiki_file(path: str, wiki_root: str) -> str:
     return full_path.read_text(encoding="utf-8")
 
 
+@functools.cache
+def _grep_binary() -> str | None:
+    """Locate the system grep once per process (PATH does not change at runtime)."""
+    return shutil.which("grep")
+
+
 def grep_wiki_files(
     pattern: str,
     wiki_root: str,
@@ -67,84 +77,86 @@ def grep_wiki_files(
     ignore_case: bool = True,
     fixed_string: bool = False,
 ) -> str:
-    """Lexically search the wiki's markdown layer for ``pattern``.
+    """Lexically search the wiki's markdown layer for ``pattern`` using grep.
 
-    A completeness sweep: shells out to ripgrep (preferred) or grep
-    (fallback) over every ``*.md`` file under *wiki_root* — summaries,
-    concepts, entities, explorations, ``index.md``, and short-doc
-    ``sources/*.md``. Long-doc per-page ``*.json`` (PageIndex's domain) and
-    ``log.md`` bookkeeping are excluded.
+    A completeness sweep over every ``*.md`` file under *wiki_root* —
+    summaries, concepts, entities, explorations, ``index.md``, and short-doc
+    ``sources/*.md``. Long-doc per-page ``*.json`` (PageIndex's domain) is
+    excluded (only ``*.md`` is searched), as are the wiki's bookkeeping /
+    scaffolding files (``log.md``, ``AGENTS.md``, ``SCHEMA.md`` — see
+    :data:`openkb.schema.EXCLUDED_WIKI_FILES`).
+
+    Shells out to the system ``grep`` (POSIX, ubiquitous on macOS/Linux) with
+    ``shell=False``, so a hostile *pattern* cannot inject commands. ``pattern``
+    is an **extended** regular expression (ERE) by default — alternation
+    ``a|b``, ``?``, ``+``, ``()`` all work — or a literal string when
+    *fixed_string* is True.
 
     Args:
-        pattern: Search pattern. Regex by default; literal when
-            *fixed_string* is True.
+        pattern: Search pattern. ERE by default; literal when *fixed_string*.
         wiki_root: Absolute path to the wiki root directory.
         ignore_case: Case-insensitive match (default True).
         fixed_string: Treat *pattern* as a literal string, not a regex.
 
     Returns:
-        Up to :data:`_GREP_MAX_LINES` matches as ``relative/path.md:LINE: text``
-        lines, plus a truncation notice if capped. On no match / missing
-        binary / timeout / error, returns an explicit message string. Never
-        raises and never invokes a shell (``shell=False``), so a hostile
-        *pattern* cannot inject commands.
+        Up to :data:`_GREP_MAX_LINES` matches, each line ``relative/path.md:LINE:text``
+        (the path is everything before the first colon), plus a truncation
+        notice if capped. On empty pattern / no match / missing grep / timeout /
+        error-with-no-results, returns an explicit message string. Never raises.
     """
+    if not pattern or not pattern.strip():
+        return "Provide a non-empty search pattern."
+
     root = Path(wiki_root).resolve()
     if not root.exists():
         return f"Wiki root not found: {wiki_root}"
 
-    rg = shutil.which("rg")
-    grep = shutil.which("grep")
-
-    if rg:
-        # --no-ignore: the wiki dir is often gitignored; without this rg
-        # silently returns zero matches inside a real OpenKB checkout.
-        cmd = [
-            rg, "--line-number", "--no-heading", "--color", "never",
-            "--no-ignore", "-g", "*.md", "-g", "!log.md",
-        ]
-        if ignore_case:
-            cmd.append("-i")
-        if fixed_string:
-            cmd.append("-F")
-        cmd += ["-e", pattern, str(root)]
-    elif grep:
-        cmd = [grep, "-rn", "--include=*.md", "--exclude-dir=images"]
-        if ignore_case:
-            cmd.append("-i")
-        if fixed_string:
-            cmd.append("-F")
-        cmd += ["-e", pattern, str(root)]
-    else:
+    grep = _grep_binary()
+    if not grep:
         return "grep unavailable on this system."
+
+    cmd = [grep, "-rn", "--include=*.md"]
+    for name in sorted(EXCLUDED_WIKI_FILES):
+        cmd.append(f"--exclude={name}")
+    if ignore_case:
+        cmd.append("-i")
+    cmd.append("-F" if fixed_string else "-E")
+    cmd += ["-e", pattern, str(root)]
 
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True,
+            cmd, capture_output=True, text=True, errors="replace",
             timeout=_GREP_TIMEOUT_S, check=False,
         )
     except subprocess.TimeoutExpired:
         return "grep timed out; narrow the pattern."
 
-    # rg/grep convention: 0 = matches, 1 = no matches, >=2 = real error.
-    if proc.returncode >= 2:
-        stderr_lines = (proc.stderr or "").strip().splitlines()
-        first = stderr_lines[0] if stderr_lines else "unknown error"
-        return f"grep error: {first}."
-
-    prefix = str(root) + "/"
+    prefix = str(root) + os.sep
     results: list[str] = []
     for line in proc.stdout.splitlines():
-        if not line.strip():
+        if not line:
             continue
-        rel = line[len(prefix):] if line.startswith(prefix) else line
+        if not line.startswith(prefix):
+            continue  # defensive: only surface paths under wiki_root
+        rel = line[len(prefix):]
         path_part = rel.split(":", 1)[0]
-        # Defensive: grep --include=*.md still matches log.md; drop it.
-        if path_part == "log.md" or path_part.endswith("/log.md"):
+        # Defense in depth: --exclude already drops these basenames; this also
+        # catches a same-named file in a subdirectory.
+        if Path(path_part).name in EXCLUDED_WIKI_FILES:
             continue
         results.append(rel)
+        if len(results) > _GREP_MAX_LINES:
+            break  # only need 51 to detect truncation; stop processing
 
     if not results:
+        # grep exit codes: 0 = match, 1 = no match, >=2 = error. grep can exit
+        # >=2 (e.g. one unreadable file) while still printing valid matches —
+        # those were collected above. Only report an error when nothing usable
+        # came back.
+        if proc.returncode >= 2:
+            stderr_lines = (proc.stderr or "").strip().splitlines()
+            first = stderr_lines[0] if stderr_lines else "unknown error"
+            return f"grep error: {first}."
         return f"No matches for {pattern}."
 
     truncated = len(results) > _GREP_MAX_LINES

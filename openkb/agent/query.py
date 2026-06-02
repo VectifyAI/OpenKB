@@ -46,7 +46,8 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
    yet seen on a wiki page. Because grep is lexical (not semantic), try a
    few term variants: acronym and expansion, singular/plural, close
    synonyms. For any matching page you have NOT already read, read_file it
-   and fold in relevant content. If grep surfaces a claim that contradicts
+   (grep_wiki lines are `path:line:text`; pass only the path, before the
+   first colon) and fold in relevant content. If grep surfaces a claim that contradicts
    your draft, note both claims with their citations rather than silently
    choosing one. Do at most 3 grep rounds (a round = one concept and its
    variants); stop once a round surfaces no new page. grep_wiki is a check,
@@ -111,12 +112,15 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         away, pages you never opened, or contradicting mentions. It does NOT
         search long-document page content (use get_page_content for that).
 
-        Returns up to 50 matches as 'relative/path.md:LINE: text'. Feed any
-        new path into read_file. Try a few term variants (acronym/expansion,
+        Returns up to 50 matches, one per line as 'path.md:LINE:text'. The
+        path is everything before the FIRST colon — pass only that path to
+        read_file (not the whole line). Pattern is an extended regex (ERE):
+        alternation 'a|b', '?', '+', '()' work; set fixed_string=True for a
+        literal search. Try a few term variants (acronym/expansion,
         singular/plural, synonyms) — this is lexical, not semantic.
 
         Args:
-            pattern: Search pattern (regex by default).
+            pattern: Search pattern (extended regex by default).
             ignore_case: Case-insensitive (default True).
             fixed_string: Treat pattern as a literal string, not a regex.
         """
