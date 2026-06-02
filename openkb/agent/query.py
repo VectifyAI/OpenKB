@@ -8,6 +8,7 @@ from agents import Agent, Runner, function_tool
 from agents import ToolOutputImage, ToolOutputText
 from openkb.agent.tools import (
     get_wiki_page_content,
+    grep_wiki_files,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
@@ -87,12 +88,36 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
             return ToolOutputImage(image_url=result["image_url"])
         return ToolOutputText(text=result["text"])
 
+    @function_tool
+    def grep_wiki(pattern: str, ignore_case: bool = True, fixed_string: bool = False) -> str:
+        """Lexically grep the wiki's markdown for a pattern.
+
+        Use this as a FINAL completeness check, after you have drafted an
+        answer from index.md / summaries / concepts / entities. It searches
+        every wiki .md file (including short-doc sources/) for the literal
+        terms of the question — catching details the summaries compressed
+        away, pages you never opened, or contradicting mentions. It does NOT
+        search long-document page content (use get_page_content for that).
+
+        Returns up to 50 matches as 'relative/path.md:LINE: text'. Feed any
+        new path into read_file. Try a few term variants (acronym/expansion,
+        singular/plural, synonyms) — this is lexical, not semantic.
+
+        Args:
+            pattern: Search pattern (regex by default).
+            ignore_case: Case-insensitive (default True).
+            fixed_string: Treat pattern as a literal string, not a regex.
+        """
+        return grep_wiki_files(
+            pattern, wiki_root, ignore_case=ignore_case, fixed_string=fixed_string,
+        )
+
     from agents.model_settings import ModelSettings
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=[read_file, get_page_content, get_image, grep_wiki],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
