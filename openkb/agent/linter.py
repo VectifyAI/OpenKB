@@ -24,12 +24,16 @@ for quality issues that structural tools cannot detect.
 4. **Redundancy** — Are there multiple pages that cover the same content and
    could be merged?
 5. **Concept coverage** — Are important themes in the summaries missing concept pages?
+6. **Entity coverage** — Are important named things (people, organizations, places,
+   products, works, events) in the summaries missing entity pages, or are existing
+   entity pages contradictory, redundant, or orphaned (unlinked from any source)?
 
 ## Process
 1. Start with index.md to understand scope.
 2. Read summary pages to understand document content.
 3. Read concept pages to check for contradictions and gaps.
-4. Produce a structured Markdown report listing issues found with references
+4. Read entity pages to check for contradictions, redundancy, coverage, and orphans.
+5. Produce a structured Markdown report listing issues found with references
    to the specific pages where each issue occurs.
 
 Be thorough but concise. If the wiki is small or sparse, say so.
@@ -99,9 +103,9 @@ async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
 
     prompt = (
         "Please audit this knowledge base wiki for semantic quality issues: "
-        "contradictions, gaps, staleness, redundancy, and missing concept pages. "
-        "Start with index.md, then read summaries and concepts as needed. "
-        "Produce a structured Markdown report."
+        "contradictions, gaps, staleness, redundancy, and missing concept and "
+        "entity pages. Start with index.md, then read summaries, concepts, and "
+        "entities as needed. Produce a structured Markdown report."
     )
 
     result = await Runner.run(agent, prompt, max_turns=MAX_TURNS)

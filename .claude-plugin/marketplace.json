@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Skills for navigating an OpenKB-compiled knowledge base from agent CLIs (Claude Code, Codex, Gemini CLI).",
-    "version": "0.1.4"
+    "version": "0.3.0"
   },
   "plugins": [
     {
@@ -14,7 +14,7 @@
       "description": "Navigate an OpenKB-compiled wiki: discover documents and concepts via openkb CLI commands, read concept and summary pages directly, and follow wikilinks across the knowledge graph.",
       "source": "./",
       "strict": false,
-      "version": "0.1.4",
+      "version": "0.3.0",
       "author": {
         "name": "Ray",
         "email": "ray@vectify.ai"

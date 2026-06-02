@@ -1,3 +1,12 @@
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+
+# Optional: override the entity-type vocabulary used for entity pages.
+# Omit this key to use the default 7 types
+# (person, organization, place, product, work, event, other).
+# entity_types:
+#   - person
+#   - organization
+#   - dataset
+#   - model

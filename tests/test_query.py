@@ -73,6 +73,14 @@ class TestRunQuery:
         assert "How does attention work?" in captured["message"]
 
 
+def test_query_strategy_mentions_entities():
+    """Task 10: query agent must direct who/what questions to entities/."""
+    from openkb.agent import query as query_mod
+
+    text = query_mod._QUERY_INSTRUCTIONS_TEMPLATE
+    assert "entities/" in text
+
+
 class TestFmtFallback:
     """Regression tests for issue #34.
 

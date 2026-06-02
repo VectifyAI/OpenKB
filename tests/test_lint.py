@@ -12,6 +12,7 @@ from openkb.lint import (
     find_missing_entries,
     find_orphans,
     fix_broken_links,
+    list_existing_wiki_targets,
     run_structural_lint,
     strip_ghost_wikilinks,
 )
@@ -183,6 +184,22 @@ class TestCheckIndexSync:
         result = check_index_sync(wiki)
 
         assert any("unlisted" in issue for issue in result)
+
+    def test_entity_page_not_in_index(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "entities").mkdir()
+        (wiki / "entities" / "ada-lovelace.md").write_text("# Ada Lovelace")
+        # index.md has no mention of the entity
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Entities\n"
+        )
+
+        result = check_index_sync(wiki)
+
+        assert any(
+            "entities/ada-lovelace.md not mentioned in index.md" in issue
+            for issue in result
+        )
 
     def test_missing_index_md(self, tmp_path):
         wiki = tmp_path / "wiki"
@@ -501,3 +518,10 @@ class TestFixBrokenLinksRestrictTo:
         assert "[[concepts/sibling]]" in text
         # Ghost link gets demoted.
         assert "[[concepts/ghost]]" not in text
+
+
+def test_whitelist_includes_entities(tmp_path):
+    (tmp_path / "entities").mkdir()
+    (tmp_path / "entities" / "anthropic.md").write_text("# A", encoding="utf-8")
+    targets = list_existing_wiki_targets(tmp_path)
+    assert "entities/anthropic" in targets
