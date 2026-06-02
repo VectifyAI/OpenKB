@@ -39,19 +39,20 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
      ranges to help you target. Never fetch the whole document.
 6. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
    Use the get_image tool to view them when needed.
-7. COMPLETENESS SWEEP (do this before finalizing): the summary layer is
-   lossy, so before you commit to an answer, call grep_wiki for the
-   question's salient terms — proper nouns, technical terms, numbers, key
-   entities — plus any claim you asserted in your draft that you have not
-   yet seen on a wiki page. Because grep is lexical (not semantic), try a
-   few term variants: acronym and expansion, singular/plural, close
-   synonyms. For any matching page you have NOT already read, read_file it
-   (grep_wiki lines are `path:line:text`; pass only the path, before the
-   first colon) and fold in relevant content. If grep surfaces a claim that contradicts
-   your draft, note both claims with their citations rather than silently
-   choosing one. Do at most 3 grep rounds (a round = one concept and its
-   variants); stop once a round surfaces no new page. grep_wiki is a check,
-   not the primary search — index.md and summaries still come first.
+7. DRILL FOR DETAIL with grep_wiki (after reading the curated pages above):
+   summaries are lossy, so when the question needs specifics they do not
+   fully contain — numbers, names, exact claims, edge cases — use grep_wiki
+   to LOCATE which pages hold them. grep is lexical, so try a few term
+   variants: acronym and expansion, singular/plural, close synonyms. Treat
+   the results as a reading list: each line is `path:line:text` — for every
+   relevant page you have NOT already read in full, read_file that path
+   (everything before the first colon) and extract the detail. Do NOT answer
+   from the grep line alone; open the page. If a page contradicts what you
+   already have, note both claims with their citations rather than silently
+   choosing one. Repeat locate-then-read until the pages that actually
+   contain the needed detail have been read (at most 3 grep rounds; stop once
+   a round surfaces no new relevant page). grep_wiki complements index.md and
+   summaries (your starting point) — it does not replace them.
 8. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
@@ -103,21 +104,21 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
 
     @function_tool
     def grep_wiki(pattern: str, ignore_case: bool = True, fixed_string: bool = False) -> str:
-        """Lexically grep the wiki's markdown for a pattern.
+        """Locate wiki pages that contain specific detail, by lexical grep.
 
-        Use this as a FINAL completeness check, after you have drafted an
-        answer from index.md / summaries / concepts / entities. It searches
-        every wiki .md file (including short-doc sources/) for the literal
-        terms of the question — catching details the summaries compressed
-        away, pages you never opened, or contradicting mentions. It does NOT
-        search long-document page content (use get_page_content for that).
+        Use this to FIND which pages hold specifics the summaries lack —
+        numbers, names, exact claims, edge cases — then read_file those pages
+        to extract the detail. It searches every wiki .md file (including
+        short-doc sources/); it does NOT search long-document page content
+        (use get_page_content for that).
 
-        Returns up to 50 matches, one per line as 'path.md:LINE:text'. The
-        path is everything before the FIRST colon — pass only that path to
-        read_file (not the whole line). Pattern is an extended regex (ERE):
-        alternation 'a|b', '?', '+', '()' work; set fixed_string=True for a
-        literal search. Try a few term variants (acronym/expansion,
-        singular/plural, synonyms) — this is lexical, not semantic.
+        Returns up to 50 matches, one per line as 'path.md:LINE:text'. Each
+        result is a page to OPEN, not an answer: take the path (everything
+        before the FIRST colon) and read_file it — do not answer from the grep
+        line alone. Pattern is an extended regex (ERE): alternation 'a|b', '?',
+        '+', '()' work; set fixed_string=True for a literal search. Try a few
+        term variants (acronym/expansion, singular/plural, synonyms) — this is
+        lexical, not semantic.
 
         Args:
             pattern: Search pattern (extended regex by default).
