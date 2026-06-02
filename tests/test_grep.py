@@ -110,6 +110,16 @@ def test_excludes_schema_md(tmp_path):
     assert "SCHEMA.md" not in out
 
 
+@requires_grep
+def test_excludes_images_dir(tmp_path):
+    wiki = _wiki(tmp_path)
+    (tmp_path / "wiki" / "sources" / "images" / "caption.md").write_text(
+        "transformer figure caption\n", encoding="utf-8",
+    )
+    out = grep_wiki_files("transformer", wiki)
+    assert "images/" not in out
+
+
 # --- regex dialect ------------------------------------------------------------
 
 @requires_grep
@@ -249,7 +259,10 @@ def test_grep_command_built_with_ere_and_excludes(tmp_path, monkeypatch):
         assert f"--exclude={name}" in cmd
     assert cmd[-3] == "-e"
     assert cmd[-2] == "needle"
-    assert cmd[-1].endswith("wiki")
+    from pathlib import Path as _P
+    assert cmd[-1] == str(_P(wiki).resolve())
+    assert "--exclude-dir=images" in cmd
+    assert "--exclude-dir=.git" in cmd
 
 
 def test_grep_command_uses_F_when_fixed_and_omits_i(tmp_path, monkeypatch):

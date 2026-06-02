@@ -115,7 +115,7 @@ def grep_wiki_files(
     if not grep:
         return "grep unavailable on this system."
 
-    cmd = [grep, "-rn", "--include=*.md"]
+    cmd = [grep, "-rn", "--include=*.md", "--exclude-dir=images", "--exclude-dir=.git"]
     for name in sorted(EXCLUDED_WIKI_FILES):
         cmd.append(f"--exclude={name}")
     if ignore_case:
