@@ -4,7 +4,36 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 
-from openkb.indexer import IndexResult, index_long_document
+from openkb.indexer import IndexResult, _normalize_page_content, index_long_document
+
+
+class TestNormalizePageContent:
+    def test_normalizes_pageindex_dicts(self):
+        pages = _normalize_page_content([
+            {"page_number": "2", "markdown": "  Page two  ", "images": [{"path": "sources/images/doc/a.png"}]},
+            {"page_num": 3, "text": "Page three", "images": "bad"},
+        ])
+
+        assert pages == [
+            {
+                "page": 2,
+                "content": "Page two",
+                "images": [{"path": "sources/images/doc/a.png"}],
+            },
+            {"page": 3, "content": "Page three", "images": []},
+        ]
+
+    def test_normalizes_string_pages(self):
+        pages = _normalize_page_content([" page one ", "", "page three"])
+
+        assert pages == [
+            {"page": 1, "content": "page one", "images": []},
+            {"page": 3, "content": "page three", "images": []},
+        ]
+
+    def test_rejects_unusable_shapes(self):
+        assert _normalize_page_content({"page": 1}) == []
+        assert _normalize_page_content([None, {}, {"content": ""}]) == []
 
 
 class TestIndexLongDocument:
@@ -123,3 +152,70 @@ class TestIndexLongDocument:
         assert ic.if_add_node_text is True
         assert ic.if_add_node_summary is True
         assert ic.if_add_doc_description is True
+
+    def test_cloud_page_content_is_normalized(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+        doc_id = "cloud-123"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+        fake_col.get_page_content.return_value = [
+            {"page_number": "1", "markdown": "Cloud page one."},
+            "Cloud page two.",
+        ]
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.indexer._get_pdf_page_count", return_value=2), \
+             patch("openkb.indexer._convert_pdf_to_pages") as local_pages:
+            index_long_document(pdf_path, kb_dir)
+
+        local_pages.assert_not_called()
+        json_file = kb_dir / "wiki" / "sources" / "sample.json"
+        assert '"content": "Cloud page one."' in json_file.read_text(encoding="utf-8")
+        assert '"content": "Cloud page two."' in json_file.read_text(encoding="utf-8")
+
+    def test_invalid_cloud_page_content_falls_back_to_local(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+        doc_id = "cloud-456"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+        fake_col.get_page_content.return_value = {"bad": "shape"}
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.indexer._get_pdf_page_count", return_value=2), \
+             patch("openkb.indexer._convert_pdf_to_pages", return_value=self._fake_pages()) as local_pages:
+            index_long_document(pdf_path, kb_dir)
+
+        local_pages.assert_called_once()
+        json_file = kb_dir / "wiki" / "sources" / "sample.json"
+        assert "Page one text." in json_file.read_text(encoding="utf-8")
+
+    def test_empty_cloud_and_local_pages_fail(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+        doc_id = "empty-123"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+             patch("openkb.indexer._get_pdf_page_count", return_value=2), \
+             patch("openkb.indexer._convert_pdf_to_pages", return_value=[]):
+            try:
+                index_long_document(pdf_path, kb_dir)
+            except RuntimeError as exc:
+                assert "No page content extracted" in str(exc)
+            else:
+                raise AssertionError("expected RuntimeError")

@@ -6,6 +6,7 @@ import logging
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import os
 
@@ -24,6 +25,65 @@ class IndexResult:
     doc_id: str
     description: str
     tree: dict
+
+
+def _normalize_page_content(raw_pages: Any) -> list[dict[str, Any]]:
+    """Normalize PageIndex/local PDF page content into OpenKB's JSON shape."""
+    if not isinstance(raw_pages, list):
+        return []
+
+    pages: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_pages, start=1):
+        if isinstance(item, str):
+            content = item.strip()
+            if content:
+                pages.append({"page": index, "content": content, "images": []})
+            continue
+
+        if not isinstance(item, dict):
+            continue
+
+        raw_page = item.get("page", item.get("page_number", item.get("page_num", index)))
+        try:
+            page_number = int(raw_page)
+        except (TypeError, ValueError):
+            page_number = index
+        if page_number < 1:
+            page_number = index
+
+        content = item.get("content", item.get("markdown", item.get("text", "")))
+        if content is None:
+            content = ""
+        content = str(content).strip()
+
+        images = item.get("images", [])
+        if not isinstance(images, list):
+            images = []
+        normalized_images = [
+            image for image in images
+            if isinstance(image, dict) and isinstance(image.get("path"), str)
+        ]
+
+        if content or normalized_images:
+            pages.append({
+                "page": page_number,
+                "content": content,
+                "images": normalized_images,
+            })
+
+    return pages
+
+
+def _get_pdf_page_count(pdf_path: Path) -> int:
+    from openkb.converter import get_pdf_page_count
+
+    return get_pdf_page_count(pdf_path)
+
+
+def _convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> list[dict[str, Any]]:
+    from openkb.images import convert_pdf_to_pages
+
+    return convert_pdf_to_pages(pdf_path, doc_name, images_dir)
 
 
 def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
@@ -82,23 +142,23 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     sources_dir.mkdir(parents=True, exist_ok=True)
     images_dir = sources_dir / "images" / pdf_path.stem
 
-    from openkb.images import convert_pdf_to_pages
-
-    all_pages: list = []
+    all_pages: list[dict[str, Any]] = []
     if pageindex_api_key:
         # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
         # requires a page range, so pass "1-N".
-        from openkb.converter import get_pdf_page_count
-        page_count = get_pdf_page_count(pdf_path)
+        page_count = _get_pdf_page_count(pdf_path)
         try:
-            all_pages = col.get_page_content(doc_id, f"1-{page_count}")
+            all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
         except Exception as exc:
             logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
 
     if not all_pages:
         if pageindex_api_key:
             logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
-        all_pages = convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir)
+        all_pages = _normalize_page_content(_convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir))
+
+    if not all_pages:
+        raise RuntimeError(f"No page content extracted for {pdf_path.name}")
 
     (sources_dir / f"{pdf_path.stem}.json").write_text(
         json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
