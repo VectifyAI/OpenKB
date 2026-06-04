@@ -145,8 +145,12 @@ Return a JSON object with two keys:
 - "brief": A single sentence (under 100 chars) defining this concept
 - "content": The full concept page in Markdown. Include clear explanation, \
 key details from the source document, and [[wikilinks]] to related concepts \
-and [[summaries/{doc_name}]] — subject to the wikilink rules from the \
-whitelist message above.
+and [[summaries/{doc_name}]].
+
+Linking to [[summaries/{doc_name}]] connects this concept back to the \
+original source document. The summary page contains a `full_text` frontmatter \
+field that points to the original document content, allowing readers to \
+trace concepts back to their source.
 
 Return ONLY valid JSON, no fences.
 """
@@ -184,8 +188,12 @@ Return a JSON object with three keys:
 - "type": one of __ENTITY_TYPES__
 - "content": The full entity page in Markdown — what this entity is, the key
   facts about it from this document, and [[wikilinks]] to related concepts,
-  other [[entities/...]], and [[summaries/{doc_name}]] — subject to the
-  whitelist rules from the message above.
+  other [[entities/...]], and [[summaries/{doc_name}]].
+
+Linking to [[summaries/{doc_name}]] connects this entity back to the \
+original source document. The summary page contains a `full_text` frontmatter \
+field that points to the original document content, allowing readers to \
+trace entities back to their source.
 
 Return ONLY valid JSON, no fences.
 """
