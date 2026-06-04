@@ -8,6 +8,7 @@ from agents import Agent, Runner, function_tool
 from agents import ToolOutputImage, ToolOutputText
 from openkb.agent.tools import (
     get_wiki_page_content,
+    grep_wiki_files,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
@@ -38,7 +39,21 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
      ranges to help you target. Never fetch the whole document.
 6. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
    Use the get_image tool to view them when needed.
-7. Synthesize a clear, concise, well-cited answer grounded in wiki content.
+7. DRILL FOR DETAIL with grep_wiki (after reading the curated pages above):
+   summaries are lossy, so when the question needs specifics they do not
+   fully contain — numbers, names, exact claims, edge cases — use grep_wiki
+   to LOCATE which pages hold them. grep is lexical, so try a few term
+   variants: acronym and expansion, singular/plural, close synonyms. Treat
+   the results as a reading list: each line is `path:line:text` — for every
+   relevant page you have NOT already read in full, read_file that path
+   (everything before the first colon) and extract the detail. Do NOT answer
+   from the grep line alone; open the page. If a page contradicts what you
+   already have, note both claims with their citations rather than silently
+   choosing one. Repeat locate-then-read until the pages that actually
+   contain the needed detail have been read (at most 3 grep rounds; stop once
+   a round surfaces no new relevant page). grep_wiki complements index.md and
+   summaries (your starting point) — it does not replace them.
+8. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
 Before each tool call, output one short sentence explaining the reason.
@@ -87,12 +102,39 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
             return ToolOutputImage(image_url=result["image_url"])
         return ToolOutputText(text=result["text"])
 
+    @function_tool
+    def grep_wiki(pattern: str, ignore_case: bool = True, fixed_string: bool = False) -> str:
+        """Locate wiki pages that contain specific detail, by lexical grep.
+
+        Use this to FIND which pages hold specifics the summaries lack —
+        numbers, names, exact claims, edge cases — then read_file those pages
+        to extract the detail. It searches every wiki .md file (including
+        short-doc sources/); it does NOT search long-document page content
+        (use get_page_content for that).
+
+        Returns up to 50 matches, one per line as 'path.md:LINE:text'. Each
+        result is a page to OPEN, not an answer: take the path (everything
+        before the FIRST colon) and read_file it — do not answer from the grep
+        line alone. Pattern is an extended regex (ERE): alternation 'a|b', '?',
+        '+', '()' work; set fixed_string=True for a literal search. Try a few
+        term variants (acronym/expansion, singular/plural, synonyms) — this is
+        lexical, not semantic.
+
+        Args:
+            pattern: Search pattern (extended regex by default).
+            ignore_case: Case-insensitive (default True).
+            fixed_string: Treat pattern as a literal string, not a regex.
+        """
+        return grep_wiki_files(
+            pattern, wiki_root, ignore_case=ignore_case, fixed_string=fixed_string,
+        )
+
     from agents.model_settings import ModelSettings
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=[read_file, get_page_content, get_image, grep_wiki],
         model=f"litellm/{model}",
         model_settings=ModelSettings(parallel_tool_calls=False),
     )
