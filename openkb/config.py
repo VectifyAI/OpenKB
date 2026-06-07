@@ -13,6 +13,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "language": "en",
     "pageindex_threshold": 20,
+    "storage_backend": "sqlite",
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional

@@ -24,7 +24,7 @@ from openkb.agent.compiler import (
     remove_doc_from_index,
 )
 from openkb.cli import _resolve_doc_identifier, cli
-from openkb.state import HashRegistry
+from openkb.state import HashRegistry, get_registry
 
 
 # ---------------------------------------------------------------------------
@@ -209,13 +209,16 @@ def test_hash_registry_remove_by_doc_name(tmp_path):
     path = tmp_path / "hashes.json"
     path.write_text(json.dumps({
         "h1": {"name": "a.pdf", "doc_name": "a-h1", "type": "short"},
+        "h1_old": {"name": "a.pdf", "doc_name": "a-h1", "type": "short"},
         "h2": {"name": "b.pdf", "doc_name": "b-h2", "type": "short"},
     }))
 
     reg = HashRegistry(path)
-    assert reg.remove_by_doc_name("a-h1") is True
-    assert reg.remove_by_doc_name("a-h1") is False  # already gone
-    assert "h2" in reg.all_entries() and "h1" not in reg.all_entries()
+    assert reg.remove_by_doc_name("a-h1") is None
+    assert reg.remove_by_doc_name("a-h1") is None
+    assert reg.all_entries() == {
+        "h2": {"name": "b.pdf", "doc_name": "b-h2", "type": "short"},
+    }
 
     # Persisted to disk
     saved = json.loads(path.read_text())
@@ -465,7 +468,7 @@ def test_cli_remove_yes_executes_full_plan(kb_dir):
     assert not (kb_dir / "raw" / "attention.pdf").exists()
 
     # Hash registry pruned
-    hashes = json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+    hashes = get_registry(kb_dir / ".openkb").all_entries()
     assert "h_a" not in hashes and "h_l" in hashes
 
     # Index updated
@@ -610,13 +613,12 @@ def test_cli_remove_prunes_legacy_registry_entry_without_doc_name(kb_dir):
     metadata shape doesn't matter.
     """
     _seed_legacy_kb(kb_dir)
-    hashes_path = kb_dir / ".openkb" / "hashes.json"
 
     result = _invoke(kb_dir, ["remove", "ollama.md", "--yes"])
 
     assert result.exit_code == 0, result.output
 
-    remaining = json.loads(hashes_path.read_text())
+    remaining = get_registry(kb_dir / ".openkb").all_entries()
     assert "h_legacy" not in remaining, (
         "legacy registry entry survived remove — see issue #58 Bug 1"
     )
@@ -748,7 +750,7 @@ def test_add_persists_doc_name_for_later_remove(tmp_path):
     assert add_res.exit_code == 0, add_res.output
 
     # The registry write contract: doc_name must be present.
-    hashes = json.loads((openkb_dir / "hashes.json").read_text())
+    hashes = get_registry(openkb_dir).all_entries()
     assert len(hashes) == 1
     (_, meta), = hashes.items()
     assert meta["name"] == "paper.md"
@@ -760,7 +762,7 @@ def test_add_persists_doc_name_for_later_remove(tmp_path):
         cli, ["--kb-dir", str(tmp_path), "remove", "paper.md", "--keep-raw", "--yes"],
     )
     assert rm_res.exit_code == 0, rm_res.output
-    assert json.loads((openkb_dir / "hashes.json").read_text()) == {}
+    assert get_registry(openkb_dir).all_entries() == {}
 
 
 # ---------------------------------------------------------------------------
@@ -991,7 +993,7 @@ def test_add_long_pdf_persists_doc_id_to_registry(tmp_path):
         result = runner.invoke(cli, ["add", str(pdf)])
 
     assert result.exit_code == 0, result.output
-    hashes = json.loads((openkb_dir / "hashes.json").read_text())
+    hashes = get_registry(openkb_dir).all_entries()
     (_, meta), = hashes.items()
     assert meta["type"] == "long_pdf"
     assert meta["doc_id"] == "pi-doc-abc123"
@@ -1151,7 +1153,7 @@ def test_cli_remove_pageindex_failure_preserves_registry_for_retry(kb_dir):
     assert "re-run" in result.output
 
     # Registry entry is intact for retry.
-    hashes = json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+    hashes = get_registry(kb_dir / ".openkb").all_entries()
     assert "h_paper" in hashes
     assert hashes["h_paper"]["doc_id"] == "pi-doc-xyz"
 
@@ -1176,7 +1178,7 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
     assert first.exit_code == 0
     assert "[WARN]" in first.output
     # Registry entry survived for retry.
-    assert "h_paper" in json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+    assert "h_paper" in get_registry(kb_dir / ".openkb").all_entries()
 
     # Second attempt: PageIndex succeeds. Same doc_id must drive the
     # delete since it's still in the registry.
@@ -1191,5 +1193,5 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
     working_col.delete_document.assert_called_once_with("pi-doc-xyz")
 
     # Registry now empty; wiki cleanup remains complete.
-    assert json.loads((kb_dir / ".openkb" / "hashes.json").read_text()) == {}
+    assert get_registry(kb_dir / ".openkb").all_entries() == {}
     assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()

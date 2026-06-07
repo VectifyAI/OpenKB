@@ -1,5 +1,5 @@
 import json
-from openkb.state import HashRegistry
+from openkb.state import HashRegistry, get_registry
 
 
 def test_empty_registry_is_known_false(tmp_path):
@@ -80,3 +80,71 @@ def test_load_existing_json(tmp_path):
     registry = HashRegistry(path)
     assert registry.is_known("existinghash") is True
     assert registry.get("existinghash") == {"file": "pre.pdf"}
+
+
+def test_get_by_path(tmp_path):
+    registry = HashRegistry(tmp_path / "hashes.json")
+    metadata = {
+        "name": "doc.pdf",
+        "doc_name": "doc-abc123",
+        "path": "inputs/doc.pdf",
+        "raw_path": "raw/doc-abc123.pdf",
+        "source_path": "wiki/sources/doc-abc123.md",
+    }
+    registry.add("h1", metadata)
+    assert registry.get_by_path("inputs/doc.pdf") == metadata
+    assert registry.get_by_path("raw/doc-abc123.pdf") == metadata
+    assert registry.get_by_path("wiki/sources/doc-abc123.md") == metadata
+    assert registry.get_by_path("missing") is None
+
+
+def test_remove_by_doc_name(tmp_path):
+    registry = HashRegistry(tmp_path / "hashes.json")
+    registry.add("h1", {"name": "doc.pdf", "doc_name": "doc-abc123"})
+    registry.add("h2", {"name": "doc.pdf", "doc_name": "doc-abc123"})
+    registry.add("h3", {"name": "other.pdf", "doc_name": "other-def456"})
+    assert registry.remove_by_doc_name("doc-abc123") is None
+    assert not registry.is_known("h1")
+    assert not registry.is_known("h2")
+    assert registry.is_known("h3")
+    assert registry.remove_by_doc_name("missing") is None
+
+
+def test_get_registry_returns_db_registry_by_default(tmp_path):
+    """get_registry should return DbRegistry by default."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+
+    registry = get_registry(openkb_dir)
+    assert type(registry).__name__ == "DbRegistry"
+
+
+def test_get_registry_returns_hash_registry_for_json_backend(tmp_path):
+    """get_registry should return HashRegistry when backend is 'json'."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+
+    registry = get_registry(openkb_dir, backend="json")
+    assert type(registry).__name__ == "HashRegistry"
+
+
+def test_get_registry_returns_db_registry_for_sqlite_backend(tmp_path):
+    """get_registry should return DbRegistry when backend is 'sqlite'."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+
+    registry = get_registry(openkb_dir, backend="sqlite")
+    assert type(registry).__name__ == "DbRegistry"
+
+
+def test_get_registry_migrates_json_to_sqlite(tmp_path):
+    """get_registry should migrate existing JSON when switching to sqlite."""
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+
+    json_path = openkb_dir / "hashes.json"
+    json_path.write_text('{"hash1": {"name": "doc.pdf"}}', encoding="utf-8")
+
+    registry = get_registry(openkb_dir, backend="sqlite")
+    assert registry.is_known("hash1")
+    assert registry.get("hash1") == {"name": "doc.pdf"}
