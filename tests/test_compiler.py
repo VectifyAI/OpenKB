@@ -11,6 +11,7 @@ from openkb.agent.compiler import (
     compile_short_doc,
     _compile_concepts,
     _parse_json,
+    _as_obj,
     _sanitize_concept_name,
     _write_summary,
     _write_concept,
@@ -43,6 +44,27 @@ class TestParseJson:
     def test_invalid_json(self):
         with pytest.raises((json.JSONDecodeError, ValueError)):
             _parse_json("not json")
+
+
+class TestAsObj:
+    def test_dict_passthrough(self):
+        assert _as_obj({"brief": "x"}) == {"brief": "x"}
+
+    def test_unwraps_single_element_list(self):
+        # Models sometimes wrap the page object in a one-element array.
+        assert _as_obj([{"content": "body", "brief": "b"}]) == {"content": "body", "brief": "b"}
+
+    def test_unwraps_first_dict_in_list(self):
+        assert _as_obj(["junk", {"content": "body"}]) == {"content": "body"}
+
+    def test_list_without_dict_raises(self):
+        # Falls through to callers' (JSONDecodeError, ValueError) raw-body fallback.
+        with pytest.raises(ValueError):
+            _as_obj(["a", "b"])
+
+    def test_empty_list_raises(self):
+        with pytest.raises(ValueError):
+            _as_obj([])
 
 
 class TestParseConceptsPlan:
