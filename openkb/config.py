@@ -13,6 +13,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "language": "en",
     "pageindex_threshold": 20,
+    # Scaling prototype (opt-in): when true, the concepts-plan step ranks
+    # existing concept/entity briefs against the doc summary and injects only
+    # the top-K, instead of all of them. Bounds the plan prompt as the KB grows.
+    "concepts_plan_retrieval": False,
+    "concepts_plan_retrieval_k": 40,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional

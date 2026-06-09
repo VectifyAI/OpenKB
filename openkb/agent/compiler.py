@@ -1402,6 +1402,18 @@ async def _compile_concepts(
     concept_briefs = _read_concept_briefs(wiki_dir)
     entity_briefs = _read_entity_briefs(wiki_dir)
 
+    # Opt-in scaling prototype: instead of injecting every brief (O(N) prompt
+    # growth + worse reconciliation as the KB grows), keep only the top-K
+    # briefs most relevant to this document's summary. Off by default, so
+    # behaviour is byte-identical unless explicitly enabled in config.
+    from openkb.config import load_config
+    _cfg = load_config(kb_dir / ".openkb" / "config.yaml")
+    if _cfg.get("concepts_plan_retrieval", False):
+        from openkb.retrieval import select_relevant_briefs
+        _k = int(_cfg.get("concepts_plan_retrieval_k", 40))
+        concept_briefs = select_relevant_briefs(summary, concept_briefs, _k)
+        entity_briefs = select_relevant_briefs(summary, entity_briefs, _k)
+
     # Second cache breakpoint: end of the assistant summary message. Covers
     # (system + doc + summary) for the plan call and every concept call.
     summary_msg = {"role": "assistant", "content": _cached_text(summary)}
