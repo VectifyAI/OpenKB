@@ -393,6 +393,23 @@ def _parse_json(text: str) -> list | dict:
     return result
 
 
+def _as_obj(parsed: list | dict) -> dict:
+    """Coerce a parsed JSON result to a dict.
+
+    The page/entity generators expect a JSON object, but the LLM sometimes
+    wraps that single object in a one-element array. Unwrap the first dict
+    element so ``.get(...)`` doesn't blow up with AttributeError on a list.
+    Raises ValueError when no dict is recoverable, so callers' existing
+    ``except (json.JSONDecodeError, ValueError)`` falls back to the raw body.
+    """
+    if isinstance(parsed, dict):
+        return parsed
+    for item in parsed:
+        if isinstance(item, dict):
+            return item
+    raise ValueError("Expected JSON object, got list with no dict element")
+
+
 def _filter_concept_items(items: list, label: str) -> list[dict]:
     """Keep only dicts that carry a non-empty ``name``; warn about anything else."""
     if not isinstance(items, list):
@@ -1603,7 +1620,7 @@ async def _compile_concepts(
                 )},
             ], f"concept: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
-            parsed = _parse_json(raw)
+            parsed = _as_obj(_parse_json(raw))
             brief = parsed.get("brief", "")
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             # An empty/None ``content`` field yields "" so
@@ -1641,7 +1658,7 @@ async def _compile_concepts(
                 )},
             ], f"update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
-            parsed = _parse_json(raw)
+            parsed = _as_obj(_parse_json(raw))
             brief = parsed.get("brief", "")
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             content = parsed.get("content") or ""
@@ -1666,7 +1683,7 @@ async def _compile_concepts(
                 ).replace("__ENTITY_TYPES__", types_str)},
             ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
-            parsed = _parse_json(raw)
+            parsed = _as_obj(_parse_json(raw))
             brief = parsed.get("brief", "")
             etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
@@ -1703,7 +1720,7 @@ async def _compile_concepts(
                 ).replace("__ENTITY_TYPES__", types_str)},
             ], f"entity-update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
-            parsed = _parse_json(raw)
+            parsed = _as_obj(_parse_json(raw))
             brief = parsed.get("brief", "")
             etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
