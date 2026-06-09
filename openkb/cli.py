@@ -259,6 +259,20 @@ def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
         shutil.rmtree(target)
 
 
+def _close_litellm_async_clients() -> None:
+    """Best-effort cleanup of cached LiteLLM async clients.
+
+    LiteLLM caches aiohttp clients per event loop; with ``asyncio.run`` creating
+    a fresh loop per doc, the old clients' connections linger in CLOSE-WAIT and
+    accumulate sockets/FDs over a long ingest. Closing them after each
+    compile/index frees those connections. Cleanup must never break ingest.
+    """
+    try:
+        asyncio.run(litellm.close_litellm_async_clients())
+    except Exception:
+        pass
+
+
 def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
@@ -307,7 +321,10 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
         click.echo(f"  Long document detected — indexing with PageIndex...")
         try:
             from openkb.indexer import index_long_document
-            index_result = index_long_document(result.raw_path, kb_dir)
+            try:
+                index_result = index_long_document(result.raw_path, kb_dir)
+            finally:
+                _close_litellm_async_clients()
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
             logger.debug("Indexing traceback:", exc_info=True)
@@ -317,10 +334,13 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
         click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
         for attempt in range(2):
             try:
-                asyncio.run(
-                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
-                                     doc_description=index_result.description)
-                )
+                try:
+                    asyncio.run(
+                        compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
+                                         doc_description=index_result.description)
+                    )
+                finally:
+                    _close_litellm_async_clients()
                 break
             except Exception as exc:
                 if attempt == 0:
@@ -334,7 +354,10 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
         click.echo(f"  Compiling short doc...")
         for attempt in range(2):
             try:
-                asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+                try:
+                    asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+                finally:
+                    _close_litellm_async_clients()
                 break
             except Exception as exc:
                 if attempt == 0:

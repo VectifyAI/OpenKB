@@ -145,5 +145,10 @@ class TestAddCommand:
              patch("openkb.cli.convert_document", return_value=mock_result), \
              patch("openkb.cli.asyncio.run") as mock_arun:
             result = runner.invoke(cli, ["add", str(doc)])
-            mock_arun.assert_called_once()
+            # asyncio.run drives both the compile and the post-compile
+            # litellm async-client cleanup, so it is called more than once;
+            # assert the compiler coroutine itself was run.
+            assert mock_arun.called
+            ran = [c.args[0] for c in mock_arun.call_args_list if c.args]
+            assert any(getattr(co, "__name__", "") == "compile_short_doc" for co in ran)
             assert "OK" in result.output
