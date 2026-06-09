@@ -77,3 +77,34 @@ def select_relevant_briefs(query: str, briefs_block: str, k: int) -> str:
     )
     keep = sorted(scored[:k])  # restore original (stable) order for the prompt
     return "\n".join(lines[i] for i in keep)
+
+
+# --- Embedding-based ranker (optional, provider-agnostic) ----------------
+# TF-IDF is dependency-free but lexical: it misses paraphrase/synonym overlap
+# ("LLM" vs "language model"). An embedding ranker captures semantic
+# similarity. The provider is injected (embed_fn) so this module stays free of
+# any SDK dependency; the caller supplies e.g. litellm.embedding.
+
+def _cosine_dense(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def select_relevant_briefs_embed(query: str, briefs_block: str, k: int, embed_fn) -> str:
+    """Top-K brief lines by embedding cosine similarity to ``query``.
+
+    ``embed_fn(texts: list[str]) -> list[list[float]]`` returns one vector per
+    input (batch). Same no-op semantics as :func:`select_relevant_briefs`.
+    """
+    if not briefs_block or briefs_block.strip() == _NONE:
+        return briefs_block
+    lines = [ln for ln in briefs_block.splitlines() if ln.strip()]
+    if k <= 0 or len(lines) <= k:
+        return briefs_block
+    vecs = embed_fn(lines + [query])
+    q_vec = vecs[-1]
+    scored = sorted(range(len(lines)), key=lambda i: _cosine_dense(vecs[i], q_vec), reverse=True)
+    keep = sorted(scored[:k])
+    return "\n".join(lines[i] for i in keep)
