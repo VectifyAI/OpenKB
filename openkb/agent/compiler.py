@@ -1414,7 +1414,7 @@ async def _compile_concepts(
             concept_briefs=concept_briefs,
             entity_briefs=entity_briefs,
         ).replace("__ENTITY_TYPES__", types_str)},
-    ], "concepts-plan", max_tokens=2048, response_format=_JSON_RESPONSE_FORMAT)
+    ], "concepts-plan", response_format=_JSON_RESPONSE_FORMAT)
 
     def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
