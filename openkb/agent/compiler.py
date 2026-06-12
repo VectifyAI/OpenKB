@@ -359,6 +359,23 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
     return content.strip()
 
 
+async def _close_async_llm_clients() -> None:
+    """Close LiteLLM's cached async (aiohttp) clients for the current loop.
+
+    LiteLLM caches its async clients per event loop. ``add_single_file`` runs
+    each doc in its own ``asyncio.run`` loop, so without this the clients are
+    orphaned when the loop is torn down and their connections pile up in
+    CLOSE-WAIT, leaking sockets/FDs across a long ingest. Call this from a
+    ``finally`` inside the compile coroutines so the clients are closed in the
+    same loop that created them. Best-effort: never raises, so cleanup can't
+    mask a real compilation error or break ingest.
+    """
+    try:
+        await litellm.close_litellm_async_clients()
+    except Exception:
+        logger.debug("litellm async client cleanup failed", exc_info=True)
+
+
 def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None:
     """Emit a warning when the LLM hit the max_tokens cap.
 
@@ -1981,11 +1998,16 @@ async def compile_short_doc(
         summary = summary_raw
 
     # --- Steps 2-4: Concept plan → generate/update → summary rewrite → index ---
-    await _compile_concepts(
-        wiki_dir, kb_dir, model, system_msg, doc_msg,
-        summary, doc_name, max_concurrency, doc_brief=doc_brief,
-        doc_type="short", rewrite_summary=True, entity_types=entity_types,
-    )
+    try:
+        await _compile_concepts(
+            wiki_dir, kb_dir, model, system_msg, doc_msg,
+            summary, doc_name, max_concurrency, doc_brief=doc_brief,
+            doc_type="short", rewrite_summary=True, entity_types=entity_types,
+        )
+    finally:
+        # Close per-loop litellm async clients before asyncio.run tears this
+        # loop down, to avoid the CLOSE-WAIT/FD leak across a long ingest.
+        await _close_async_llm_clients()
 
 
 async def compile_long_doc(
@@ -2026,8 +2048,13 @@ async def compile_long_doc(
     overview = _llm_call(model, [system_msg, doc_msg], "overview")
 
     # --- Steps 2-4: Concept plan → generate/update → index ---
-    await _compile_concepts(
-        wiki_dir, kb_dir, model, system_msg, doc_msg,
-        overview, doc_name, max_concurrency, doc_brief=doc_description,
-        doc_type="pageindex", entity_types=entity_types,
-    )
+    try:
+        await _compile_concepts(
+            wiki_dir, kb_dir, model, system_msg, doc_msg,
+            overview, doc_name, max_concurrency, doc_brief=doc_description,
+            doc_type="pageindex", entity_types=entity_types,
+        )
+    finally:
+        # Close per-loop litellm async clients before asyncio.run tears this
+        # loop down, to avoid the CLOSE-WAIT/FD leak across a long ingest.
+        await _close_async_llm_clients()
