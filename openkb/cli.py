@@ -41,7 +41,7 @@ litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
-from openkb.converter import convert_document
+from openkb.converter import _registry_path, convert_document
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
 
@@ -299,7 +299,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
         return "skipped"
 
-    doc_name = file_path.stem
+    doc_name = result.doc_name or file_path.stem
     index_result = None  # populated only on the long-doc branch
 
     # 3/4. Index and compile
@@ -307,7 +307,7 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
         click.echo(f"  Long document detected — indexing with PageIndex...")
         try:
             from openkb.indexer import index_long_document
-            index_result = index_long_document(result.raw_path, kb_dir)
+            index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
         except Exception as exc:
             click.echo(f"  [ERROR] Indexing failed: {exc}")
             logger.debug("Indexing traceback:", exc_info=True)
@@ -352,12 +352,21 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
             "name": file_path.name,
             "doc_name": doc_name,
             "type": doc_type,
+            "path": _registry_path(file_path, kb_dir),
         }
+        if result.raw_path is not None:
+            meta["raw_path"] = _registry_path(result.raw_path, kb_dir)
+        if result.source_path is not None:
+            meta["source_path"] = _registry_path(result.source_path, kb_dir)
         # For long PDFs we also persist the PageIndex doc_id so `openkb
         # remove` can later call ``Collection.delete_document(doc_id)``
         # to free the managed PDF copy + SQLite row.
         if index_result is not None:
             meta["doc_id"] = index_result.doc_id
+        # An edited document arrives with a new content hash; drop the
+        # stale entry for the same doc_name so the registry keeps exactly
+        # one entry per document.
+        registry.remove_by_doc_name(doc_name)
         registry.add(result.file_hash, meta)
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)

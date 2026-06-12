@@ -138,6 +138,15 @@ class TestAddCommand:
             raw_path=kb_dir / "raw" / "test.md",
             source_path=source_path,
             is_long_doc=False,
+            file_hash="deadbeef00" * 8,
+            doc_name="test",
+        )
+
+        # An edited doc arrives with a new content hash; the stale entry
+        # for the same doc_name must be replaced, leaving exactly ONE entry.
+        from openkb.state import HashRegistry
+        HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
+            "stale-old-hash", {"name": "test.md", "doc_name": "test", "type": "md"}
         )
 
         runner = CliRunner()
@@ -147,3 +156,14 @@ class TestAddCommand:
             result = runner.invoke(cli, ["add", str(doc)])
             mock_arun.assert_called_once()
             assert "OK" in result.output
+
+        import json as json_mod
+        hashes = json_mod.loads(
+            (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8")
+        )
+        meta = hashes[mock_result.file_hash]
+        assert meta["doc_name"] == "test"
+        assert meta["raw_path"] == "raw/test.md"
+        assert meta["source_path"] == "wiki/sources/test.md"
+        assert "path" in meta
+        assert "stale-old-hash" not in hashes
