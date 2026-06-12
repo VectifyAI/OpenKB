@@ -219,3 +219,33 @@ class TestIndexLongDocument:
                 assert "No page content extracted" in str(exc)
             else:
                 raise AssertionError("expected RuntimeError")
+
+
+def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
+    monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
+
+    fake_col = MagicMock()
+    fake_col.add.return_value = "doc-123"
+    fake_col.get_document.return_value = {
+        "doc_name": "original.pdf",
+        "doc_description": "desc",
+        "structure": [],
+    }
+    fake_client = MagicMock()
+    fake_client.collection.return_value = fake_col
+
+    pdf = kb_dir / "raw" / "original.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+
+    with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
+         patch("openkb.indexer._get_pdf_page_count", return_value=30), \
+         patch("openkb.indexer._convert_pdf_to_pages",
+               return_value=[{"page": 1, "text": "p1"}]):
+        result = index_long_document(pdf, kb_dir, doc_name="original-abc12345")
+
+    assert result.doc_id == "doc-123"
+    assert (kb_dir / "wiki" / "sources" / "original-abc12345.json").exists()
+    assert (kb_dir / "wiki" / "summaries" / "original-abc12345.md").exists()
+    # nothing written under the raw stem
+    assert not (kb_dir / "wiki" / "sources" / "original.json").exists()
+    assert not (kb_dir / "wiki" / "summaries" / "original.md").exists()
