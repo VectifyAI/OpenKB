@@ -54,21 +54,20 @@ def _sanitize_stem(stem: str) -> str:
     return _SAFE_STEM_RE.sub("-", normalized).strip("-") or "document"
 
 
-def _name_taken(candidate: str, registry: HashRegistry, kb_dir: Path) -> bool:
-    """True when ``candidate`` already names another document's artifacts.
+def _name_taken(candidate: str, registry: HashRegistry) -> bool:
+    """True when ``candidate`` is claimed by another registered document.
 
-    ``candidate`` is always already NFKC-normalized by :func:`_sanitize_stem`
-    at the call site; registry entry names are normalized here so NFD and NFC
-    forms of the same name compare equal.
+    The registry is the single authority on ownership: artifacts on disk
+    without a registry entry are either leftovers of a failed ingest of
+    this same source (must be adoptable so a retry keeps its clean name)
+    or out-of-contract manual drops — both are overwritten, matching
+    pre-collision-fix behaviour for unclaimed files.
     """
     for meta in registry.all_entries().values():
         entry_name = meta.get("doc_name") or Path(meta.get("name", "")).stem
         if unicodedata.normalize("NFKC", entry_name) == candidate:
             return True
-    sources_dir = kb_dir / "wiki" / "sources"
-    return (sources_dir / f"{candidate}.md").exists() or (
-        sources_dir / f"{candidate}.json"
-    ).exists()
+    return False
 
 
 def resolve_doc_name(src: Path, kb_dir: Path, registry: HashRegistry) -> str:
@@ -100,7 +99,7 @@ def resolve_doc_name(src: Path, kb_dir: Path, registry: HashRegistry) -> str:
         return name
 
     candidate = _sanitize_stem(src.stem)
-    if _name_taken(candidate, registry, kb_dir):
+    if _name_taken(candidate, registry):
         digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:_SUFFIX_LEN]
         return f"{candidate}-{digest}"
     return candidate
@@ -135,15 +134,15 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     # 1. Hash check + identity resolution
     # ------------------------------------------------------------------
     file_hash = HashRegistry.hash_file(src)
-    doc_name = resolve_doc_name(src, kb_dir, registry)
     if registry.is_known(file_hash):
         logger.info("Skipping already-known file: %s", src.name)
         stored = registry.get(file_hash) or {}
         return ConvertResult(
             skipped=True,
             file_hash=file_hash,
-            doc_name=stored.get("doc_name") or doc_name,
+            doc_name=stored.get("doc_name") or Path(stored.get("name", src.name)).stem,
         )
+    doc_name = resolve_doc_name(src, kb_dir, registry)
 
     # ------------------------------------------------------------------
     # 2. Copy to raw/

@@ -190,16 +190,16 @@ class TestResolveDocName:
         ).hexdigest()[:8]
         assert resolve_doc_name(src, kb_dir, reg) == f"report-{expected_suffix}"
 
-    def test_collision_with_on_disk_source_file(self, kb_dir):
-        # Pre-upgrade docs may exist on disk without any registry entry.
+    def test_unclaimed_on_disk_artifact_is_adopted(self, kb_dir):
+        # An on-disk sources file with NO registry entry is a leftover of a
+        # failed ingest (or an out-of-contract manual drop): the registry is
+        # the authority, so the clean name is reused and the artifact will
+        # be overwritten — this is what keeps retry-after-failure stable.
         from openkb.converter import resolve_doc_name
         (kb_dir / "wiki" / "sources" / "report.md").write_text("old", encoding="utf-8")
         src = kb_dir / "raw" / "report.md"
-        src.write_text("new other doc", encoding="utf-8")
-        # With an empty registry there is no legacy entry to claim the name,
-        # so the on-disk file makes this a genuine collision: suffix expected.
-        name = resolve_doc_name(src, kb_dir, self._registry(kb_dir))
-        assert name.startswith("report-") and len(name) == len("report-") + 8
+        src.write_text("new attempt", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "report"
 
     def test_legacy_entry_is_reused_and_backfilled(self, kb_dir):
         from openkb.converter import _registry_path, resolve_doc_name
@@ -255,14 +255,14 @@ class TestResolveDocName:
         name = resolve_doc_name(second, kb_dir, reg)
         assert name.startswith("document-") and len(name) == len("document-") + 8
 
-    def test_collision_with_on_disk_long_doc_json(self, kb_dir):
-        # Long docs leave wiki/sources/{name}.json — also counts as taken.
+    def test_unclaimed_on_disk_long_doc_json_is_adopted(self, kb_dir):
+        # Long docs leave wiki/sources/{name}.json — without a registry
+        # entry it is likewise an unclaimed leftover: clean name is reused.
         from openkb.converter import resolve_doc_name
         (kb_dir / "wiki" / "sources" / "report.json").write_text("[]", encoding="utf-8")
         src = kb_dir / "raw" / "report.md"
         src.write_text("x", encoding="utf-8")
-        name = resolve_doc_name(src, kb_dir, self._registry(kb_dir))
-        assert name.startswith("report-") and name != "report"
+        assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "report"
 
 
 # ---------------------------------------------------------------------------
@@ -323,3 +323,43 @@ class TestConvertDocumentCollision:
         assert result.doc_name == "my-report-final"
         assert result.source_path.name == "my-report-final.md"
         assert (kb_dir / "wiki" / "sources" / "images" / "my-report-final").is_dir()
+        assert result.raw_path == src  # watch mode: no copy, no rename
+        assert not (kb_dir / "raw" / "my-report-final.md").exists()
+
+    def test_retry_after_failed_compile_keeps_clean_name(self, kb_dir):
+        # convert succeeded but compile failed → nothing registered. The
+        # retry must resolve to the SAME clean name, not a suffixed one.
+        from openkb.converter import convert_document
+        src = kb_dir / "inputs" / "report.md"
+        src.parent.mkdir(parents=True)
+        src.write_text("# R", encoding="utf-8")
+        first = convert_document(src, kb_dir)   # artifacts written, no registration
+        retry = convert_document(src, kb_dir)
+        assert first.doc_name == "report"
+        assert retry.doc_name == "report"
+        assert retry.source_path == first.source_path
+
+    def test_duplicate_copy_skip_does_not_backfill_path(self, kb_dir):
+        # Re-adding an identical copy from another dir must dedup-skip
+        # WITHOUT poisoning the legacy entry's path with the copy's path.
+        from openkb.converter import convert_document
+        from openkb.state import HashRegistry
+        src_a = kb_dir / "in" / "a" / "notes.md"
+        src_a.parent.mkdir(parents=True)
+        src_a.write_text("# Notes", encoding="utf-8")
+        first = convert_document(src_a, kb_dir)
+        reg = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+        # legacy-shaped entry: no path field (pre-upgrade registry)
+        reg.add(first.file_hash, {"name": "notes.md", "doc_name": "notes", "type": "md"})
+
+        src_b = kb_dir / "in" / "b" / "notes.md"
+        src_b.parent.mkdir(parents=True)
+        src_b.write_text("# Notes", encoding="utf-8")  # identical content
+        again = convert_document(src_b, kb_dir)
+
+        assert again.skipped is True
+        assert again.doc_name == "notes"
+        # re-read from disk: the add() above persisted; convert must not
+        # have backfilled the copy's path onto the legacy entry
+        reg2 = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+        assert "path" not in reg2.get(first.file_hash)  # not poisoned
