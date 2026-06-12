@@ -147,3 +147,84 @@ class TestRegistryPath:
         result = _registry_path(outside, kb_dir)
         assert result == outside.resolve().as_posix()
         assert result.startswith("/")
+
+
+# ---------------------------------------------------------------------------
+# resolve_doc_name
+# ---------------------------------------------------------------------------
+
+
+class TestResolveDocName:
+    def _registry(self, kb_dir):
+        from openkb.state import HashRegistry
+        return HashRegistry(kb_dir / ".openkb" / "hashes.json")
+
+    def test_unique_name_stays_clean(self, kb_dir):
+        from openkb.converter import resolve_doc_name
+        src = kb_dir / "raw" / "report.md"
+        src.write_text("x", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "report"
+
+    def test_known_path_reuses_stored_doc_name(self, kb_dir):
+        from openkb.converter import resolve_doc_name
+        reg = self._registry(kb_dir)
+        reg.add("h1", {"name": "report.md", "doc_name": "report-x1",
+                       "path": "inputs/report.md"})
+        src = kb_dir / "inputs" / "report.md"
+        src.parent.mkdir(parents=True)
+        src.write_text("edited", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, reg) == "report-x1"
+
+    def test_collision_gets_deterministic_suffix(self, kb_dir):
+        from openkb.converter import _registry_path, resolve_doc_name
+        import hashlib
+        reg = self._registry(kb_dir)
+        # "report" already taken by a different, path-indexed source
+        reg.add("h1", {"name": "report.md", "doc_name": "report",
+                       "path": "inputs/first/report.md"})
+        src = kb_dir / "inputs" / "second" / "report.md"
+        src.parent.mkdir(parents=True)
+        src.write_text("y", encoding="utf-8")
+        expected_suffix = hashlib.sha256(
+            _registry_path(src, kb_dir).encode("utf-8")
+        ).hexdigest()[:8]
+        assert resolve_doc_name(src, kb_dir, reg) == f"report-{expected_suffix}"
+
+    def test_collision_with_on_disk_source_file(self, kb_dir):
+        # Pre-upgrade docs may exist on disk without any registry entry.
+        from openkb.converter import resolve_doc_name
+        (kb_dir / "wiki" / "sources" / "report.md").write_text("old", encoding="utf-8")
+        src = kb_dir / "raw" / "report.md"
+        src.write_text("new other doc", encoding="utf-8")
+        # With an empty registry there is no legacy entry to claim the name,
+        # so the on-disk file makes this a genuine collision: suffix expected.
+        name = resolve_doc_name(src, kb_dir, self._registry(kb_dir))
+        assert name.startswith("report-") and len(name) == len("report-") + 8
+
+    def test_legacy_entry_is_reused_and_backfilled(self, kb_dir):
+        from openkb.converter import _registry_path, resolve_doc_name
+        reg = self._registry(kb_dir)
+        reg.add("h_old", {"name": "notes.md", "doc_name": "notes", "type": "md"})
+        src = kb_dir / "raw" / "notes.md"
+        src.write_text("edited content", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, reg) == "notes"
+        # path backfilled onto the legacy entry
+        assert reg.get("h_old")["path"] == _registry_path(src, kb_dir)
+
+    def test_stem_is_sanitized(self, kb_dir):
+        from openkb.converter import resolve_doc_name
+        src = kb_dir / "raw" / "my report (final).md"
+        src.write_text("x", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "my-report-final"
+
+    def test_same_stem_different_extension_collides(self, kb_dir):
+        # report.pdf vs an existing "report" (from report.md) — extension
+        # does not disambiguate; the second source gets a suffix.
+        from openkb.converter import resolve_doc_name
+        reg = self._registry(kb_dir)
+        reg.add("h1", {"name": "report.md", "doc_name": "report",
+                       "path": "inputs/report.md"})
+        src = kb_dir / "raw" / "report.pdf"
+        src.write_bytes(b"%PDF-1.4 fake")
+        name = resolve_doc_name(src, kb_dir, reg)
+        assert name.startswith("report-") and name != "report"

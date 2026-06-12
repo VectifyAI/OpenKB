@@ -1,8 +1,11 @@
 """Document conversion pipeline for OpenKB."""
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import shutil
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,13 +34,70 @@ def _registry_path(path: Path, kb_dir: Path) -> str:
     """Portable path string used as the registry's identity key.
 
     Relative-to-KB posix when the file lives inside the KB (stable across
-    machines/checkouts), absolute posix otherwise.
+    machines/checkouts), absolute posix otherwise. Both paths are fully
+    resolved (symlinks followed) before comparison.
     """
     resolved_path = path.resolve()
     resolved_kb = kb_dir.resolve()
     if resolved_path.is_relative_to(resolved_kb):
         return resolved_path.relative_to(resolved_kb).as_posix()
     return resolved_path.as_posix()
+
+
+_SAFE_STEM_RE = re.compile(r"[^\w\-]+")
+_SUFFIX_LEN = 8
+
+
+def _sanitize_stem(stem: str) -> str:
+    normalized = unicodedata.normalize("NFKC", stem)
+    return _SAFE_STEM_RE.sub("-", normalized).strip("-") or "document"
+
+
+def _name_taken(candidate: str, registry: HashRegistry, kb_dir: Path) -> bool:
+    """True when ``candidate`` already names another document's artifacts."""
+    for meta in registry.all_entries().values():
+        entry_name = meta.get("doc_name") or Path(meta.get("name", "")).stem
+        if entry_name == candidate:
+            return True
+    sources_dir = kb_dir / "wiki" / "sources"
+    return (sources_dir / f"{candidate}.md").exists() or (
+        sources_dir / f"{candidate}.json"
+    ).exists()
+
+
+def resolve_doc_name(src: Path, kb_dir: Path, registry: HashRegistry) -> str:
+    """Resolve the stable wiki name for ``src`` (Scheme A).
+
+    Identity is keyed by path: a source we've seen before (same path, even
+    with new content) keeps its name so re-ingest overwrites in place.
+    Legacy registry entries (written before the path index) are matched by
+    stem and backfilled with the path. A brand-new source keeps the clean
+    sanitized stem unless another document already owns that name, in which
+    case it gets a deterministic ``-{sha256(path)[:8]}`` suffix.
+    """
+    path_key = _registry_path(src, kb_dir)
+
+    known = registry.get_by_path(path_key)
+    if known is not None:
+        stored = known.get("doc_name") or Path(known.get("name", "")).stem
+        if stored:
+            return stored
+
+    legacy = registry.find_legacy_by_stem(src.stem)
+    if legacy is not None:
+        file_hash, meta = legacy
+        meta = dict(meta)
+        name = meta.get("doc_name") or Path(meta.get("name", "")).stem
+        meta["doc_name"] = name
+        meta["path"] = path_key
+        registry.add(file_hash, meta)  # backfill + persist
+        return name
+
+    candidate = _sanitize_stem(src.stem)
+    if _name_taken(candidate, registry, kb_dir):
+        digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:_SUFFIX_LEN]
+        return f"{candidate}-{digest}"
+    return candidate
 
 
 def get_pdf_page_count(path: Path) -> int:
