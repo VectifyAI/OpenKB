@@ -80,3 +80,29 @@ def test_load_existing_json(tmp_path):
     registry = HashRegistry(path)
     assert registry.is_known("existinghash") is True
     assert registry.get("existinghash") == {"file": "pre.pdf"}
+
+
+def test_get_by_path_matches_path_raw_path_and_source_path(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {
+        "name": "report.md",
+        "doc_name": "report",
+        "path": "inputs/report.md",
+        "raw_path": "raw/report.md",
+        "source_path": "wiki/sources/report.md",
+    })
+    assert reg.get_by_path("inputs/report.md")["doc_name"] == "report"
+    assert reg.get_by_path("raw/report.md")["doc_name"] == "report"
+    assert reg.get_by_path("wiki/sources/report.md")["doc_name"] == "report"
+
+
+def test_get_by_path_miss_returns_none(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "a.md", "doc_name": "a", "path": "a.md"})
+    assert reg.get_by_path("elsewhere/a.md") is None
+
+
+def test_get_by_path_legacy_entry_without_path_fields_is_not_matched(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "old.md", "doc_name": "old"})
+    assert reg.get_by_path("raw/old.md") is None

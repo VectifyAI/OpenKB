@@ -32,6 +32,23 @@ class HashRegistry:
         """Return a shallow copy of all hash -> metadata entries."""
         return dict(self._data)
 
+    def get_by_path(self, path: str) -> dict | None:
+        """Return metadata whose path/raw_path/source_path equals ``path``.
+
+        ``path`` is a registry path string (posix, relative to the KB dir
+        when inside it) as produced by ``converter._registry_path``. Entries
+        written before the path index existed carry none of these fields and
+        never match.
+        """
+        for metadata in self._data.values():
+            if path in (
+                metadata.get("path"),
+                metadata.get("raw_path"),
+                metadata.get("source_path"),
+            ):
+                return metadata
+        return None
+
     # ------------------------------------------------------------------
     # Mutation
     # ------------------------------------------------------------------
