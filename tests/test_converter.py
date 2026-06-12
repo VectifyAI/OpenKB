@@ -263,3 +263,63 @@ class TestResolveDocName:
         src.write_text("x", encoding="utf-8")
         name = resolve_doc_name(src, kb_dir, self._registry(kb_dir))
         assert name.startswith("report-") and name != "report"
+
+
+# ---------------------------------------------------------------------------
+# convert_document — doc_name collision handling
+# ---------------------------------------------------------------------------
+
+
+class TestConvertDocumentCollision:
+    def test_same_basename_different_dirs_get_distinct_outputs(self, kb_dir):
+        from openkb.converter import convert_document
+        from openkb.state import HashRegistry
+        first = kb_dir / "inputs" / "first" / "report.md"
+        second = kb_dir / "inputs" / "second" / "report.md"
+        first.parent.mkdir(parents=True)
+        second.parent.mkdir(parents=True)
+        first.write_text("# First\n\nAlpha.", encoding="utf-8")
+        second.write_text("# Second\n\nBeta.", encoding="utf-8")
+
+        r1 = convert_document(first, kb_dir)
+        # Simulate add_single_file's registration so the second ingest
+        # sees "report" as taken.
+        HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
+            r1.file_hash,
+            {"name": "report.md", "doc_name": r1.doc_name,
+             "path": "inputs/first/report.md"},
+        )
+        r2 = convert_document(second, kb_dir)
+
+        assert r1.doc_name == "report"
+        assert r2.doc_name.startswith("report-") and r2.doc_name != "report"
+        assert r1.source_path != r2.source_path
+        assert r1.source_path.read_text(encoding="utf-8").startswith("# First")
+        assert r2.source_path.read_text(encoding="utf-8").startswith("# Second")
+        assert r1.raw_path != r2.raw_path
+
+    def test_skipped_dedup_carries_stored_doc_name(self, kb_dir):
+        from openkb.converter import convert_document
+        from openkb.state import HashRegistry
+        src = kb_dir / "inputs" / "notes.md"
+        src.parent.mkdir(parents=True)
+        src.write_text("# Notes", encoding="utf-8")
+        first = convert_document(src, kb_dir)
+        HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
+            first.file_hash,
+            {"name": "notes.md", "doc_name": first.doc_name,
+             "path": "inputs/notes.md"},
+        )
+        again = convert_document(src, kb_dir)
+        assert again.skipped is True
+        assert again.doc_name == first.doc_name
+        assert again.file_hash == first.file_hash
+
+    def test_outputs_named_by_doc_name(self, kb_dir):
+        from openkb.converter import convert_document
+        src = kb_dir / "raw" / "my report (final).md"
+        src.write_text("# R", encoding="utf-8")
+        result = convert_document(src, kb_dir)
+        assert result.doc_name == "my-report-final"
+        assert result.source_path.name == "my-report-final.md"
+        assert (kb_dir / "wiki" / "sources" / "images" / "my-report-final").is_dir()
