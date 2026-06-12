@@ -128,3 +128,22 @@ class TestConvertDocumentPdfLong:
         assert result.source_path is None
         assert result.skipped is False
         assert result.raw_path is not None
+
+
+# ---------------------------------------------------------------------------
+# _registry_path
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryPath:
+    def test_inside_kb_is_relative_posix(self, kb_dir):
+        from openkb.converter import _registry_path
+        p = kb_dir / "raw" / "sub" / "doc.md"
+        assert _registry_path(p, kb_dir) == "raw/sub/doc.md"
+
+    def test_outside_kb_is_absolute_posix(self, kb_dir, tmp_path_factory):
+        from openkb.converter import _registry_path
+        outside = tmp_path_factory.mktemp("elsewhere") / "doc.md"
+        result = _registry_path(outside, kb_dir)
+        assert result == outside.resolve().as_posix()
+        assert result.startswith("/")

@@ -27,6 +27,19 @@ class ConvertResult:
     file_hash: str | None = None  # For deferred hash registration
 
 
+def _registry_path(path: Path, kb_dir: Path) -> str:
+    """Portable path string used as the registry's identity key.
+
+    Relative-to-KB posix when the file lives inside the KB (stable across
+    machines/checkouts), absolute posix otherwise.
+    """
+    resolved_path = path.resolve()
+    resolved_kb = kb_dir.resolve()
+    if resolved_path.is_relative_to(resolved_kb):
+        return resolved_path.relative_to(resolved_kb).as_posix()
+    return resolved_path.as_posix()
+
+
 def get_pdf_page_count(path: Path) -> int:
     """Return the number of pages in the PDF at *path* using pymupdf."""
     with pymupdf.open(str(path)) as doc:
