@@ -106,3 +106,34 @@ def test_get_by_path_legacy_entry_without_path_fields_is_not_matched(tmp_path):
     reg = HashRegistry(tmp_path / "hashes.json")
     reg.add("h1", {"name": "old.md", "doc_name": "old"})
     assert reg.get_by_path("raw/old.md") is None
+
+
+def test_find_legacy_by_stem_matches_doc_name_entry_without_path(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "report.md", "doc_name": "report", "type": "md"})
+    hit = reg.find_legacy_by_stem("report")
+    assert hit is not None
+    file_hash, meta = hit
+    assert file_hash == "h1"
+    assert meta["doc_name"] == "report"
+
+
+def test_find_legacy_by_stem_matches_pre_doc_name_entry_by_filename_stem(tmp_path):
+    # Entries written before doc_name existed carry only {name, type}.
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "notes.md", "type": "md"})
+    hit = reg.find_legacy_by_stem("notes")
+    assert hit is not None
+    assert hit[0] == "h1"
+
+
+def test_find_legacy_by_stem_entry_with_path_is_not_legacy(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "report.md", "doc_name": "report",
+                   "path": "inputs/report.md"})
+    assert reg.find_legacy_by_stem("report") is None
+
+
+def test_find_legacy_by_stem_miss_returns_none(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    assert reg.find_legacy_by_stem("anything") is None
