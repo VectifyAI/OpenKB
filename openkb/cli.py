@@ -923,18 +923,18 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     raw_path = None
     if not keep_raw:
         raw_dir = kb_dir / "raw"
-        # Raw copies are named by doc_name since the collision fix; prefer
-        # the recorded raw_path and fall back to the original filename for
-        # pre-upgrade entries.
-        candidates = []
+        # Raw copies are named by doc_name since the collision fix: use the
+        # recorded raw_path when present. Only pre-upgrade entries (no
+        # raw_path field) fall back to the original filename — a recorded
+        # path that no longer exists must NOT fall through, or it could
+        # delete a same-named raw file belonging to another document.
         if meta.get("raw_path"):
-            candidates.append(kb_dir / meta["raw_path"])
-        candidates.append(raw_dir / name)
-        for candidate in candidates:
-            if candidate.exists():
-                raw_path = candidate
-                actions.append(("DELETE", str(candidate.relative_to(kb_dir))))
-                break
+            candidate = kb_dir / meta["raw_path"]
+        else:
+            candidate = raw_dir / name
+        if candidate.exists():
+            raw_path = candidate
+            actions.append(("DELETE", str(candidate.relative_to(kb_dir))))
 
     # ----- Print the plan -----
     click.echo(f"Removing '{name}' (doc_name: {doc_name}, type: {doc_type or '?'}).")
