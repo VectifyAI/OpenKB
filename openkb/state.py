@@ -52,11 +52,14 @@ class HashRegistry:
     def find_legacy_by_stem(self, stem: str) -> tuple[str, dict] | None:
         """Find a pre-path-index entry matching ``stem``.
 
-        Returns ``(file_hash, metadata)`` for an entry that has no ``path``
-        field and whose ``doc_name`` — or, for even older entries lacking
-        ``doc_name``, the stem of its ``name`` — equals ``stem``. Callers
-        use the hash to backfill ``path`` via :meth:`add`. Returns None
-        when every matching name is already path-indexed.
+        Returns ``(file_hash, metadata)`` for an entry that has no truthy
+        ``path`` (a missing or empty ``path`` is treated as unindexed) and
+        whose ``doc_name`` — or, for even older entries lacking
+        ``doc_name``, the stem of its ``name`` — equals ``stem``. When
+        several legacy entries match (pre-fix registries can hold
+        same-named entries), the first in insertion order is returned.
+        Callers use the hash to backfill ``path`` via :meth:`add`. Returns
+        None when every matching name is already path-indexed.
         """
         for file_hash, metadata in self._data.items():
             if metadata.get("path"):

@@ -137,3 +137,14 @@ def test_find_legacy_by_stem_entry_with_path_is_not_legacy(tmp_path):
 def test_find_legacy_by_stem_miss_returns_none(tmp_path):
     reg = HashRegistry(tmp_path / "hashes.json")
     assert reg.find_legacy_by_stem("anything") is None
+
+
+def test_find_legacy_by_stem_first_match_wins_on_duplicates(tmp_path):
+    # Pre-fix registries can hold two same-named legacy entries (the
+    # collision bug); the resolver backfills the first in insertion order.
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h_first", {"name": "report.md", "doc_name": "report", "type": "md"})
+    reg.add("h_second", {"name": "report.md", "doc_name": "report", "type": "md"})
+    hit = reg.find_legacy_by_stem("report")
+    assert hit is not None
+    assert hit[0] == "h_first"
