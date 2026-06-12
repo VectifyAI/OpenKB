@@ -284,7 +284,6 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
-    registry = HashRegistry(openkb_dir / "hashes.json")
 
     # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
@@ -347,6 +346,11 @@ def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped"
 
     # Register hash only after successful compilation
     if result.file_hash:
+        # Construct the registry NOW, not earlier: convert_document may have
+        # backfilled a legacy entry (doc_name/path) on disk via its own
+        # instance, and an earlier snapshot would clobber that backfill on
+        # the full rewrite in add().
+        registry = HashRegistry(openkb_dir / "hashes.json")
         doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
         meta = {
             "name": file_path.name,
