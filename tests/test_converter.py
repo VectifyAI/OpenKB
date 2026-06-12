@@ -228,3 +228,38 @@ class TestResolveDocName:
         src.write_bytes(b"%PDF-1.4 fake")
         name = resolve_doc_name(src, kb_dir, reg)
         assert name.startswith("report-") and name != "report"
+
+    def test_cjk_stem_with_fullwidth_punctuation(self, kb_dir):
+        from openkb.converter import resolve_doc_name
+        src = kb_dir / "raw" / "技术报告（最终版）.md"
+        src.write_text("x", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "技术报告-最终版"
+
+    def test_all_symbol_stem_falls_back_to_document(self, kb_dir):
+        from openkb.converter import resolve_doc_name
+        src = kb_dir / "raw" / "!!!.md"
+        src.write_text("x", encoding="utf-8")
+        assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "document"
+
+    def test_two_all_symbol_stems_second_gets_suffix(self, kb_dir):
+        from openkb.converter import resolve_doc_name
+        reg = self._registry(kb_dir)
+        first = kb_dir / "raw" / "!!!.md"
+        first.write_text("x", encoding="utf-8")
+        assert resolve_doc_name(first, kb_dir, reg) == "document"
+        reg.add("h1", {"name": "!!!.md", "doc_name": "document",
+                       "path": "raw/!!!.md"})
+        second = kb_dir / "inputs" / "###.md"
+        second.parent.mkdir(parents=True)
+        second.write_text("y", encoding="utf-8")
+        name = resolve_doc_name(second, kb_dir, reg)
+        assert name.startswith("document-") and len(name) == len("document-") + 8
+
+    def test_collision_with_on_disk_long_doc_json(self, kb_dir):
+        # Long docs leave wiki/sources/{name}.json — also counts as taken.
+        from openkb.converter import resolve_doc_name
+        (kb_dir / "wiki" / "sources" / "report.json").write_text("[]", encoding="utf-8")
+        src = kb_dir / "raw" / "report.md"
+        src.write_text("x", encoding="utf-8")
+        name = resolve_doc_name(src, kb_dir, self._registry(kb_dir))
+        assert name.startswith("report-") and name != "report"

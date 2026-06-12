@@ -54,10 +54,15 @@ def _sanitize_stem(stem: str) -> str:
 
 
 def _name_taken(candidate: str, registry: HashRegistry, kb_dir: Path) -> bool:
-    """True when ``candidate`` already names another document's artifacts."""
+    """True when ``candidate`` already names another document's artifacts.
+
+    ``candidate`` is always already NFKC-normalized by :func:`_sanitize_stem`
+    at the call site; registry entry names are normalized here so NFD and NFC
+    forms of the same name compare equal.
+    """
     for meta in registry.all_entries().values():
         entry_name = meta.get("doc_name") or Path(meta.get("name", "")).stem
-        if entry_name == candidate:
+        if unicodedata.normalize("NFKC", entry_name) == candidate:
             return True
     sources_dir = kb_dir / "wiki" / "sources"
     return (sources_dir / f"{candidate}.md").exists() or (

@@ -148,3 +148,14 @@ def test_find_legacy_by_stem_first_match_wins_on_duplicates(tmp_path):
     hit = reg.find_legacy_by_stem("report")
     assert hit is not None
     assert hit[0] == "h_first"
+
+
+def test_find_legacy_by_stem_nfkc_normalizes_both_sides(tmp_path):
+    # macOS hands back NFD filenames; registry may hold NFC. Both must match.
+    import unicodedata
+    reg = HashRegistry(tmp_path / "hashes.json")
+    nfc = unicodedata.normalize("NFC", "café")
+    nfd = unicodedata.normalize("NFD", "café")
+    reg.add("h1", {"name": f"{nfc}.md", "doc_name": nfc, "type": "md"})
+    hit = reg.find_legacy_by_stem(nfd)
+    assert hit is not None and hit[0] == "h1"

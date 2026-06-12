@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from pathlib import Path
 
 
@@ -59,7 +60,9 @@ class HashRegistry:
         several legacy entries match (pre-fix registries can hold
         same-named entries), the first in insertion order is returned.
         Callers use the hash to backfill ``path`` via :meth:`add`. Returns
-        None when every matching name is already path-indexed.
+        None when every matching name is already path-indexed. The
+        comparison is NFKC-normalized on both sides, so macOS NFD
+        filenames match their NFC registry entries.
         """
         for file_hash, metadata in self._data.items():
             if metadata.get("path"):
@@ -67,7 +70,9 @@ class HashRegistry:
             entry_name = metadata.get("doc_name") or Path(
                 metadata.get("name", "")
             ).stem
-            if entry_name == stem:
+            if unicodedata.normalize("NFKC", entry_name) == unicodedata.normalize(
+                "NFKC", stem
+            ):
                 return file_hash, metadata
         return None
 
