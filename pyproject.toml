@@ -26,7 +26,7 @@ classifiers = [
 ]
 keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "agents", "document"]
 dependencies = [
-    "pageindex==0.3.0.dev1",
+    "pageindex @ git+https://github.com/VectifyAI/PageIndex.git@dev",
     "markitdown[docx,pptx,xlsx,xls]>=0.1.5",
     "trafilatura>=2.0",
     "click>=8.0",
@@ -53,6 +53,9 @@ testpaths = ["tests"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.version]
 source = "vcs"
