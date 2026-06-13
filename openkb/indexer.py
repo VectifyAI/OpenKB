@@ -27,6 +27,16 @@ class IndexResult:
     tree: dict
 
 
+@dataclass
+class CloudImportResult:
+    """Result of importing an existing PageIndex Cloud document."""
+
+    doc_id: str
+    doc_name: str   # collision-resistant wiki slug
+    name: str       # cloud display name (original filename in the cloud)
+    description: str
+
+
 def _normalize_page_content(raw_pages: Any) -> list[dict[str, Any]]:
     """Normalize PageIndex/local PDF page content into OpenKB's JSON shape."""
     if not isinstance(raw_pages, list):
@@ -192,3 +202,78 @@ def index_long_document(
 
     _write_long_doc_artifacts(tree, all_pages, source_name, doc_id, kb_dir)
     return IndexResult(doc_id=doc_id, description=description, tree=tree)
+
+
+def _max_page_index(structure: list, default: int = 100000) -> int:
+    """Largest start/end page index across the (possibly nested) tree.
+
+    Cloud tree nodes carry ``start_index``/``end_index`` page numbers; this
+    bounds ``get_page_content``'s page range without a local PDF. Falls back
+    to ``default`` (a wide range the cloud filters anyway) when no integer
+    indices are present.
+    """
+    best = 0
+
+    def _walk(nodes: list) -> None:
+        nonlocal best
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            for key in ("end_index", "start_index"):
+                val = node.get(key)
+                if isinstance(val, int):
+                    best = max(best, val)
+            _walk(node.get("nodes"))
+
+    _walk(structure)
+    return best or default
+
+
+def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImportResult:
+    """Import an already-indexed PageIndex Cloud document by ``doc_id``.
+
+    Fetches structure + OCR'd page content from the cloud (no local PDF) and
+    writes the same wiki artifacts as :func:`index_long_document`. Requires
+    ``PAGEINDEX_API_KEY``. ``path_key`` is the synthetic identity key
+    (``pageindex-cloud:<doc_id>``) used to resolve a collision-resistant
+    wiki name.
+    """
+    from openkb.converter import resolve_doc_name_from_key
+    from openkb.state import HashRegistry
+
+    pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
+    if not pageindex_api_key:
+        raise RuntimeError(
+            "Importing from PageIndex Cloud requires the PAGEINDEX_API_KEY "
+            "environment variable."
+        )
+
+    client = PageIndexClient(api_key=pageindex_api_key)
+    col = client.collection()
+
+    doc = col.get_document(doc_id, include_text=True)
+    cloud_name: str = doc.get("doc_name") or doc_id
+    description: str = doc.get("doc_description", "")
+    structure: list = doc.get("structure", [])
+
+    registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+    stem = Path(cloud_name).stem or doc_id
+    doc_name = resolve_doc_name_from_key(stem, path_key, registry)
+
+    tree = {
+        "doc_name": cloud_name,
+        "doc_description": description,
+        "structure": structure,
+    }
+
+    page_count = _max_page_index(structure)
+    all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
+    if not all_pages:
+        raise RuntimeError(
+            f"No page content returned from PageIndex Cloud for doc_id={doc_id}"
+        )
+
+    _write_long_doc_artifacts(tree, all_pages, doc_name, doc_id, kb_dir)
+    return CloudImportResult(
+        doc_id=doc_id, doc_name=doc_name, name=cloud_name, description=description,
+    )

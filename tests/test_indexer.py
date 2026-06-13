@@ -257,6 +257,65 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     assert "original-abc12345" in summary_text
 
 
+class TestImportCloudDocument:
+    def _fake_client(self, doc_id, sample_tree, pages):
+        col = MagicMock()
+        col.get_document.return_value = {
+            "doc_id": doc_id,
+            "doc_name": "Cloud Paper.pdf",
+            "doc_description": sample_tree["doc_description"],
+            "structure": sample_tree["structure"],
+        }
+        col.get_page_content.return_value = pages
+        client = MagicMock()
+        client.collection.return_value = col
+        return client, col
+
+    def test_writes_artifacts_and_returns_result(self, kb_dir, sample_tree, monkeypatch):
+        from openkb.indexer import CloudImportResult, import_cloud_document
+
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+        pages = [{"page": 1, "content": "Cloud page one."}]
+        client, col = self._fake_client("cloud-1", sample_tree, pages)
+
+        with patch("openkb.indexer.PageIndexClient", return_value=client):
+            result = import_cloud_document("cloud-1", kb_dir, "pageindex-cloud:cloud-1")
+
+        assert isinstance(result, CloudImportResult)
+        assert result.doc_id == "cloud-1"
+        assert result.name == "Cloud Paper.pdf"
+        assert result.doc_name == "Cloud-Paper"
+        assert (kb_dir / "wiki" / "sources" / "Cloud-Paper.json").exists()
+        assert (kb_dir / "wiki" / "summaries" / "Cloud-Paper.md").exists()
+        # col.add must never be called — the doc already exists in the cloud
+        col.add.assert_not_called()
+
+    def test_requires_api_key(self, kb_dir, monkeypatch):
+        from openkb.indexer import import_cloud_document
+
+        monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
+        try:
+            import_cloud_document("cloud-x", kb_dir, "pageindex-cloud:cloud-x")
+        except RuntimeError as exc:
+            assert "PAGEINDEX_API_KEY" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError when API key is missing")
+
+    def test_empty_pages_raise(self, kb_dir, sample_tree, monkeypatch):
+        from openkb.indexer import import_cloud_document
+
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+        client, col = self._fake_client("cloud-2", sample_tree, [])
+
+        with patch("openkb.indexer.PageIndexClient", return_value=client):
+            try:
+                import_cloud_document("cloud-2", kb_dir, "pageindex-cloud:cloud-2")
+            except RuntimeError as exc:
+                assert "No page content" in str(exc)
+            else:
+                raise AssertionError("expected RuntimeError on empty pages")
+
+
 def test_write_long_doc_artifacts_writes_json_and_summary(kb_dir, sample_tree):
     from openkb.indexer import _write_long_doc_artifacts
 
