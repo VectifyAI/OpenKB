@@ -41,8 +41,10 @@ import litellm
 litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
+from openkb.agent.compiler import compile_long_doc
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import _registry_path, convert_document
+from openkb.indexer import import_cloud_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
@@ -383,6 +385,83 @@ def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
+    return "added"
+
+
+def import_from_pageindex_cloud(
+    doc_id: str, kb_dir: Path
+) -> Literal["added", "skipped", "failed"]:
+    """Import an existing PageIndex Cloud document into the KB by ``doc_id``.
+
+    Fetches structure + page content from the cloud (no local PDF), compiles
+    concepts, and registers a raw-less ``pageindex_cloud`` entry. Idempotent:
+    re-importing the same ``doc_id`` is skipped. The user's cloud corpus is
+    never modified.
+    """
+    import hashlib
+    from openkb.state import HashRegistry
+
+    logger = logging.getLogger(__name__)
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
+    _setup_llm_key(kb_dir)
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    path_key = f"pageindex-cloud:{doc_id}"
+    synthetic_hash = hashlib.sha256(path_key.encode("utf-8")).hexdigest()
+
+    registry = HashRegistry(openkb_dir / "hashes.json")
+    if registry.is_known(synthetic_hash):
+        click.echo(f"  [SKIP] Already imported from PageIndex Cloud: {doc_id}")
+        return "skipped"
+
+    click.echo(f"Importing from PageIndex Cloud: {doc_id}")
+    try:
+        import_result = import_cloud_document(doc_id, kb_dir, path_key)
+    except Exception as exc:
+        click.echo(f"  [ERROR] Import failed: {exc}")
+        logger.debug("Cloud import traceback:", exc_info=True)
+        return "failed"
+
+    doc_name = import_result.doc_name
+    summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+    click.echo(f"  Compiling imported doc (doc_id={doc_id})...")
+    for attempt in range(2):
+        try:
+            asyncio.run(
+                compile_long_doc(
+                    doc_name, summary_path, doc_id, kb_dir, model,
+                    doc_description=import_result.description,
+                )
+            )
+            break
+        except Exception as exc:
+            if attempt == 0:
+                click.echo("  Retrying compilation in 2s...")
+                time.sleep(2)
+            else:
+                click.echo(f"  [ERROR] Compilation failed: {exc}")
+                logger.debug("Compilation traceback:", exc_info=True)
+                return "failed"
+
+    # Register the raw-less cloud entry only after successful compilation.
+    registry = HashRegistry(openkb_dir / "hashes.json")
+    meta = {
+        "name": import_result.name,
+        "doc_name": doc_name,
+        "type": "pageindex_cloud",
+        "origin": "cloud",
+        "path": path_key,
+        "source_path": _registry_path(
+            kb_dir / "wiki" / "sources" / f"{doc_name}.json", kb_dir
+        ),
+        "doc_id": doc_id,
+    }
+    registry.remove_by_doc_name(doc_name)
+    registry.add(synthetic_hash, meta)
+
+    append_log(kb_dir / "wiki", "ingest", doc_name)
+    click.echo(f"  [OK] {doc_name} imported from PageIndex Cloud.")
     return "added"
 
 
