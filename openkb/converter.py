@@ -98,7 +98,26 @@ def resolve_doc_name(src: Path, kb_dir: Path, registry: HashRegistry) -> str:
         registry.add(file_hash, meta)  # backfill + persist
         return name
 
-    candidate = _sanitize_stem(src.stem)
+    return resolve_doc_name_from_key(src.stem, path_key, registry)
+
+
+def resolve_doc_name_from_key(stem: str, path_key: str, registry: HashRegistry) -> str:
+    """Collision-resistant wiki name for a synthetic identity ``path_key``.
+
+    Same rules as :func:`resolve_doc_name` minus the legacy-by-stem
+    backfill (a filesystem-migration concern that must not fire for sources
+    with no real path, e.g. cloud imports). A source already registered
+    under ``path_key`` keeps its stored ``doc_name``; otherwise the
+    sanitized ``stem`` is used, with a deterministic
+    ``-{sha256(path_key)[:8]}`` suffix when another document owns it.
+    """
+    known = registry.get_by_path(path_key)
+    if known is not None:
+        stored = known.get("doc_name") or Path(known.get("name", "")).stem
+        if stored:
+            return stored
+
+    candidate = _sanitize_stem(stem)
     if _name_taken(candidate, registry):
         digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:_SUFFIX_LEN]
         return f"{candidate}-{digest}"
