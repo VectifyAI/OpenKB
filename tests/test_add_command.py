@@ -204,6 +204,34 @@ class TestAddCommand:
         assert len(new_entries) == 1             # …exactly one entry survives
         assert new_entries[0]["path"]            # with path identity persisted
 
+    def test_add_from_pageindex_cloud_dispatches(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        runner = CliRunner()
+        with patch("openkb.cli.import_from_pageindex_cloud", return_value="added") as mock_imp, \
+             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            runner.invoke(cli, ["add", "--from-pageindex-cloud", "doc-123"])
+            mock_imp.assert_called_once_with("doc-123", kb_dir)
+
+    def test_add_rejects_path_and_cloud_together(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        doc = tmp_path / "test.md"
+        doc.write_text("# Hi")
+        runner = CliRunner()
+        with patch("openkb.cli.import_from_pageindex_cloud") as mock_imp, \
+             patch("openkb.cli.add_single_file") as mock_add, \
+             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["add", str(doc), "--from-pageindex-cloud", "doc-1"])
+            assert "not both" in result.output
+            mock_imp.assert_not_called()
+            mock_add.assert_not_called()
+
+    def test_add_requires_path_or_cloud(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        runner = CliRunner()
+        with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["add"])
+            assert "Provide a PATH" in result.output
+
 
 class TestImportFromPageindexCloud:
     def _setup_kb(self, tmp_path):
