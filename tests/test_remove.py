@@ -1220,3 +1220,59 @@ def test_cli_remove_deletes_renamed_raw_copy(kb_dir):
 
     assert result.exit_code == 0, result.output
     assert not raw_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# Cloud-imported docs (type=pageindex_cloud, origin=cloud) own no local raw
+# file and the user's cloud corpus is their asset — remove must clean up ONLY
+# local wiki artifacts and must NEVER contact PageIndex Cloud.
+# ---------------------------------------------------------------------------
+
+
+def test_remove_cloud_doc_never_touches_pageindex(tmp_path):
+    """A pageindex_cloud doc removes only local artifacts; the cloud is
+    never contacted even when a pageindex.db happens to exist."""
+    import json
+    from unittest.mock import patch
+    from click.testing import CliRunner
+    from openkb.cli import cli
+    from openkb.state import HashRegistry
+
+    # Minimal KB
+    (tmp_path / "raw").mkdir()
+    for sub in ("sources/images", "summaries", "concepts", "entities", "reports"):
+        (tmp_path / "wiki" / sub).mkdir(parents=True)
+    openkb_dir = tmp_path / ".openkb"
+    openkb_dir.mkdir()
+    (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+    # A stray pageindex.db to prove the cloud path is gated by type, not just
+    # by the DB's absence.
+    (openkb_dir / "pageindex.db").write_bytes(b"")
+    (tmp_path / "wiki" / "index.md").write_text("# Index\n")
+
+    # Cloud artifacts + registry entry
+    (tmp_path / "wiki" / "summaries" / "cloud-doc.md").write_text("---\n---\n# s\n")
+    (tmp_path / "wiki" / "sources" / "cloud-doc.json").write_text("[]")
+    registry = HashRegistry(openkb_dir / "hashes.json")
+    registry.add("synthhash", {
+        "name": "Cloud Paper.pdf",
+        "doc_name": "cloud-doc",
+        "type": "pageindex_cloud",
+        "origin": "cloud",
+        "path": "pageindex-cloud:cloud-1",
+        "source_path": "wiki/sources/cloud-doc.json",
+        "doc_id": "cloud-1",
+    })
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("pageindex.PageIndexClient") as mock_client:
+        result = runner.invoke(cli, ["remove", "cloud-doc", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    # The cloud client must never be constructed.
+    mock_client.assert_not_called()
+    # Local artifacts are gone and the registry entry is removed.
+    assert not (tmp_path / "wiki" / "summaries" / "cloud-doc.md").exists()
+    assert not (tmp_path / "wiki" / "sources" / "cloud-doc.json").exists()
+    assert HashRegistry(openkb_dir / "hashes.json").get("synthhash") is None
