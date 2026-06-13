@@ -86,6 +86,29 @@ def _convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> li
     return convert_pdf_to_pages(pdf_path, doc_name, images_dir)
 
 
+def _write_long_doc_artifacts(
+    tree: dict, pages: list[dict[str, Any]], doc_name: str, doc_id: str, kb_dir: Path
+) -> Path:
+    """Write ``wiki/sources/<doc_name>.json`` + ``wiki/summaries/<doc_name>.md``.
+
+    Returns the summary path. Shared by :func:`index_long_document` (local)
+    and :func:`import_cloud_document` (cloud) so both produce identical
+    artifacts. Page images, when present, are written separately by the
+    caller's page extractor — this helper only persists page text + summary.
+    """
+    sources_dir = kb_dir / "wiki" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / f"{doc_name}.json").write_text(
+        json_mod.dumps(pages, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+
+    summaries_dir = kb_dir / "wiki" / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = summaries_dir / f"{doc_name}.md"
+    summary_path.write_text(render_summary_md(tree, doc_name, doc_id), encoding="utf-8")
+    return summary_path
+
+
 def index_long_document(
     pdf_path: Path, kb_dir: Path, doc_name: str | None = None
 ) -> IndexResult:
@@ -167,14 +190,5 @@ def index_long_document(
     if not all_pages:
         raise RuntimeError(f"No page content extracted for {pdf_path.name}")
 
-    (sources_dir / f"{source_name}.json").write_text(
-        json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
-
-    # Write wiki/summaries/ (no images, just summaries)
-    summaries_dir = kb_dir / "wiki" / "summaries"
-    summaries_dir.mkdir(parents=True, exist_ok=True)
-    summary_md = render_summary_md(tree, source_name, doc_id)
-    (summaries_dir / f"{source_name}.md").write_text(summary_md, encoding="utf-8")
-
+    _write_long_doc_artifacts(tree, all_pages, source_name, doc_id, kb_dir)
     return IndexResult(doc_id=doc_id, description=description, tree=tree)

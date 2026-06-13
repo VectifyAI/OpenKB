@@ -255,3 +255,17 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     # summary frontmatter points full_text at the doc_name artifact
     summary_text = (kb_dir / "wiki" / "summaries" / "original-abc12345.md").read_text(encoding="utf-8")
     assert "original-abc12345" in summary_text
+
+
+def test_write_long_doc_artifacts_writes_json_and_summary(kb_dir, sample_tree):
+    from openkb.indexer import _write_long_doc_artifacts
+
+    pages = [{"page": 1, "content": "Hello.", "images": []}]
+    summary_path = _write_long_doc_artifacts(sample_tree, pages, "my-doc", "doc-1", kb_dir)
+
+    assert summary_path == kb_dir / "wiki" / "summaries" / "my-doc.md"
+    assert summary_path.exists()
+    json_file = kb_dir / "wiki" / "sources" / "my-doc.json"
+    assert json_file.exists()
+    assert '"content": "Hello."' in json_file.read_text(encoding="utf-8")
+    assert "doc_type: pageindex" in summary_path.read_text(encoding="utf-8")
