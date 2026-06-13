@@ -2,6 +2,13 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
+# Optional: extra HTTP headers sent with every LLM request (forwarded to
+# LiteLLM's extra_headers). Some providers need these — e.g. GitHub Copilot
+# IDE-auth headers on older litellm versions:
+# extra_headers:
+#   Editor-Version: vscode/1.95.0
+#   Copilot-Integration-Id: vscode-chat
+
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).

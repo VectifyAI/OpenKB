@@ -29,7 +29,7 @@ from pathlib import Path
 import litellm
 import yaml
 
-from openkb.config import DEFAULT_ENTITY_TYPES, resolve_entity_types
+from openkb.config import DEFAULT_ENTITY_TYPES, get_extra_headers, resolve_entity_types
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import INDEX_SEED, get_agents_md
 
@@ -323,6 +323,9 @@ def _fmt_messages(messages: list[dict], max_content: int = 200) -> str:
 
 def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
     """Single LLM call with animated progress and debug logging."""
+    extra_headers = get_extra_headers()
+    if extra_headers:
+        kwargs.setdefault("extra_headers", extra_headers)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -342,6 +345,9 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
 
 async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
     """Async LLM call with timing output and debug logging."""
+    extra_headers = get_extra_headers()
+    if extra_headers:
+        kwargs.setdefault("extra_headers", extra_headers)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)

@@ -1,6 +1,7 @@
 import json
 from unittest.mock import patch
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
@@ -366,3 +367,81 @@ class TestQuerySaveGhostStrip:
         assert "rnn" in saved
         assert "[[concepts/multi-head-attention]]" not in saved
         assert "multi head attention" in saved
+
+
+class TestSetupLlmKey:
+    """_setup_llm_key: OAuth-provider warning skip + extra-headers stash."""
+
+    @staticmethod
+    def _make_kb(tmp_path, model, extra_headers=None):
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        config = {"model": model}
+        if extra_headers is not None:
+            config["extra_headers"] = extra_headers
+        (openkb_dir / "config.yaml").write_text(
+            yaml.safe_dump(config), encoding="utf-8"
+        )
+        return tmp_path
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, tmp_path, monkeypatch):
+        # Don't pick up the developer's real keys or global .env.
+        import openkb.config as config_mod
+        from openkb.cli import _KNOWN_PROVIDER_KEYS
+
+        monkeypatch.setattr(
+            config_mod, "GLOBAL_CONFIG_DIR", tmp_path / "no-global"
+        )
+        for key in (
+            "LLM_API_KEY",
+            "GITHUB_COPILOT_API_KEY",
+            "CHATGPT_API_KEY",
+            *_KNOWN_PROVIDER_KEYS,
+        ):
+            monkeypatch.delenv(key, raising=False)
+
+    @pytest.mark.parametrize("model", [
+        "github_copilot/gpt-5-mini",
+        "chatgpt/gpt-5.4",
+    ])
+    def test_no_warning_for_oauth_providers(self, tmp_path, capsys, model):
+        from openkb.cli import _setup_llm_key
+
+        kb = self._make_kb(tmp_path, model)
+        _setup_llm_key(kb)
+        assert "No LLM API key found" not in capsys.readouterr().out
+
+    def test_warning_for_api_key_provider_without_key(self, tmp_path, capsys):
+        from openkb.cli import _setup_llm_key
+
+        kb = self._make_kb(tmp_path, "gpt-5.4-mini")
+        _setup_llm_key(kb)
+        assert "No LLM API key found" in capsys.readouterr().out
+
+    def test_extra_headers_stashed_from_config(self, tmp_path):
+        from openkb.cli import _setup_llm_key
+        from openkb.config import get_extra_headers
+
+        kb = self._make_kb(
+            tmp_path,
+            "github_copilot/gpt-5-mini",
+            extra_headers={
+                "Editor-Version": "vscode/1.95.0",
+                "Copilot-Integration-Id": "vscode-chat",
+            },
+        )
+        _setup_llm_key(kb)
+        assert get_extra_headers() == {
+            "Editor-Version": "vscode/1.95.0",
+            "Copilot-Integration-Id": "vscode-chat",
+        }
+
+    def test_extra_headers_reset_when_config_has_none(self, tmp_path):
+        from openkb.cli import _setup_llm_key
+        from openkb.config import get_extra_headers, set_extra_headers
+
+        set_extra_headers({"Stale": "1"})
+        kb = self._make_kb(tmp_path, "gpt-5.4-mini")
+        _setup_llm_key(kb)
+        assert get_extra_headers() == {}

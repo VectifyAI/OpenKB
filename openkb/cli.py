@@ -41,7 +41,10 @@ import litellm
 litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
-from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
+from openkb.config import (
+    DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
+    resolve_extra_headers, set_extra_headers,
+)
 from openkb.converter import _registry_path, convert_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
@@ -59,6 +62,11 @@ _KNOWN_PROVIDER_KEYS = (
     "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "MOONSHOT_API_KEY",
     "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY",
 )
+
+# Providers that authenticate via OAuth device flow (subscription login
+# handled by LiteLLM itself) — no API key env var is needed, so the
+# missing-key warning would be a false alarm for them.
+_OAUTH_PROVIDERS = {"chatgpt", "github_copilot"}
 
 
 def _extract_provider(model: str) -> str | None:
@@ -100,23 +108,28 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     api_key = os.environ.get("LLM_API_KEY", "")
 
-    # Try to resolve the active provider from the KB config
+    # Try to resolve the active provider and extra headers from the KB config
     provider: str | None = None
+    extra_headers: dict[str, str] = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
         if config_path.exists():
             config = load_config(config_path)
             model = config.get("model", "")
             provider = _extract_provider(str(model))
+            extra_headers = resolve_extra_headers(config)
+    set_extra_headers(extra_headers)
 
     if not api_key:
-        # Check if any provider key is already set
+        # Check if any provider key is already set. OAuth-based providers
+        # (ChatGPT subscription, GitHub Copilot) don't use API keys at all,
+        # so the warning is skipped for them.
         check_keys = (
             (f"{provider.upper()}_API_KEY",) if provider
             else _KNOWN_PROVIDER_KEYS
         )
         has_key = any(os.environ.get(k) for k in check_keys)
-        if not has_key:
+        if not has_key and provider not in _OAUTH_PROVIDERS:
             click.echo(
                 "Warning: No LLM API key found. Set one of:\n"
                 f"  1. {kb_dir / '.env' if kb_dir else '<kb_dir>/.env'} — LLM_API_KEY=sk-...\n"

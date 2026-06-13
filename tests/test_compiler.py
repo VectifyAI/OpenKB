@@ -2046,3 +2046,54 @@ def test_plan_prompt_keeps_topic_itself_guard():
 
     assert "just the document topic itself" in _CONCEPTS_PLAN_USER
 
+
+
+class TestLLMCallExtraHeaders:
+    """Config-driven extra headers reach the litellm calls (issue #93)."""
+
+    def test_llm_call_injects_extra_headers(self):
+        from openkb.agent.compiler import _llm_call
+        from openkb.config import set_extra_headers
+
+        set_extra_headers({"Editor-Version": "vscode/1.95.0"})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["ok"]))
+            out = _llm_call("m", [{"role": "user", "content": "hi"}], "step")
+        assert out == "ok"
+        kwargs = mock_litellm.completion.call_args.kwargs
+        assert kwargs["extra_headers"] == {"Editor-Version": "vscode/1.95.0"}
+
+    def test_llm_call_no_extra_headers_by_default(self):
+        from openkb.agent.compiler import _llm_call
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["ok"]))
+            _llm_call("m", [{"role": "user", "content": "hi"}], "step")
+        assert "extra_headers" not in mock_litellm.completion.call_args.kwargs
+
+    def test_llm_call_explicit_kwarg_wins_over_config(self):
+        from openkb.agent.compiler import _llm_call
+        from openkb.config import set_extra_headers
+
+        set_extra_headers({"Editor-Version": "from-config"})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["ok"]))
+            _llm_call(
+                "m", [{"role": "user", "content": "hi"}], "step",
+                extra_headers={"Editor-Version": "explicit"},
+            )
+        kwargs = mock_litellm.completion.call_args.kwargs
+        assert kwargs["extra_headers"] == {"Editor-Version": "explicit"}
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_injects_extra_headers(self):
+        from openkb.agent.compiler import _llm_call_async
+        from openkb.config import set_extra_headers
+
+        set_extra_headers({"Copilot-Integration-Id": "vscode-chat"})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion(["ok"]))
+            out = await _llm_call_async("m", [{"role": "user", "content": "hi"}], "step")
+        assert out == "ok"
+        kwargs = mock_litellm.acompletion.call_args.kwargs
+        assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
