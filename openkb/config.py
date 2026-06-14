@@ -96,6 +96,66 @@ def resolve_entity_types(config: dict) -> list[str]:
     return cleaned
 
 
+def resolve_extra_headers(config: dict) -> dict[str, str]:
+    """Resolve the optional ``extra_headers:`` config key into a str→str dict.
+
+    Some LiteLLM providers need extra HTTP headers on every request (e.g.
+    GitHub Copilot's ``Editor-Version`` IDE-auth headers). Users opt in via
+    an ``extra_headers:`` mapping in config.yaml; the result is forwarded to
+    LiteLLM's ``extra_headers`` parameter on all LLM calls.
+
+    Values are stringified (YAML may parse version-like values as numbers).
+    Entries with a non-string/empty key or a non-scalar value are skipped.
+    A non-mapping ``extra_headers`` is ignored entirely. Warnings are logged
+    only when the key was present but malformed.
+    """
+    raw = config.get("extra_headers")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(
+            "config: 'extra_headers' must be a mapping of header name to "
+            "value, got %s — ignoring it.",
+            type(raw).__name__,
+        )
+        return {}
+    headers: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            logger.warning(
+                "config: skipping 'extra_headers' entry with non-string "
+                "or empty key: %r", key,
+            )
+            continue
+        if value is None or not isinstance(value, (str, int, float, bool)):
+            logger.warning(
+                "config: skipping 'extra_headers' entry %r with "
+                "non-scalar value: %r", key, value,
+            )
+            continue
+        headers[key.strip()] = str(value)
+    return headers
+
+
+# Process-wide extra headers for LLM requests, resolved from the active KB's
+# config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
+# via get_extra_headers() so the value doesn't have to be threaded through
+# every compile/agent call chain — mirroring how the API key is applied
+# globally via litellm.api_key / provider env vars.
+_runtime_extra_headers: dict[str, str] = {}
+
+
+def set_extra_headers(headers: dict[str, str]) -> None:
+    """Set the process-wide extra headers for LLM requests."""
+    global _runtime_extra_headers
+    _runtime_extra_headers = dict(headers)
+
+
+def get_extra_headers() -> dict[str, str]:
+    """Return a copy of the process-wide extra headers for LLM requests."""
+    return dict(_runtime_extra_headers)
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     """Load YAML config from config_path, merged with DEFAULT_CONFIG.
 

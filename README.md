@@ -273,6 +273,16 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
 
+`extra_headers` (optional): a YAML mapping of extra HTTP headers sent with every LLM request (forwarded to LiteLLM's `extra_headers`). Useful for providers that expect custom headers, e.g. GitHub Copilot IDE-auth headers:
+
+```yaml
+extra_headers:
+  Editor-Version: vscode/1.95.0
+  Copilot-Integration-Id: vscode-chat
+```
+
+Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key — OpenKB skips the missing-key warning for them.
+
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
 
 | Provider | Model example |

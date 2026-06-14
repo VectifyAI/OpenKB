@@ -19,6 +19,7 @@ from pathlib import Path
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from agents.model_settings import ModelSettings
 
+from openkb.config import get_extra_headers
 from openkb.skill import skill_dir
 from openkb.skill.tools import (
     get_skill_page_content as _get_page_content_impl,
@@ -150,7 +151,10 @@ def build_skill_create_agent(
         # compile. Writes serialise naturally because each
         # `write_skill_file` depends on accumulated reads; the model has
         # no reason to issue parallel writes to the same path.
-        model_settings=ModelSettings(parallel_tool_calls=True),
+        model_settings=ModelSettings(
+            parallel_tool_calls=True,
+            extra_headers=get_extra_headers() or None,
+        ),
     )
 
 
