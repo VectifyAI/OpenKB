@@ -5,6 +5,8 @@ import json
 import unicodedata
 from pathlib import Path
 
+from openkb.locks import atomic_write_json
+
 
 class HashRegistry:
     """Persistent registry mapping file SHA-256 hashes to metadata dicts."""
@@ -113,9 +115,7 @@ class HashRegistry:
     # ------------------------------------------------------------------
 
     def _persist(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as fh:
-            json.dump(self._data, fh, indent=2)
+        atomic_write_json(self._path, self._data)
 
     # ------------------------------------------------------------------
     # Static utility

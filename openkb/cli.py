@@ -13,6 +13,7 @@ import logging
 import shutil
 import sys
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Literal
 
@@ -42,6 +43,7 @@ from dotenv import load_dotenv
 
 from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
 from openkb.converter import _registry_path, convert_document
+from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
 
@@ -260,6 +262,12 @@ def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
 
 
 def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
+    """Convert, index, and compile a single document under the KB mutation lock."""
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        return _add_single_file_locked(file_path, kb_dir)
+
+
+def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -403,6 +411,23 @@ def cli(ctx, verbose, kb_dir_override):
             ctx.obj["kb_dir_override"] = Path(env_kb).resolve()
         else:
             ctx.obj["kb_dir_override"] = None
+
+
+def _with_kb_lock(*, exclusive: bool):
+    """Wrap a Click command in the appropriate KB lock when a KB exists."""
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(ctx, *args, **kwargs):
+            kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+            if kb_dir is None:
+                return fn(ctx, *args, **kwargs)
+            if exclusive:
+                with kb_ingest_lock(kb_dir / ".openkb"):
+                    return fn(ctx, *args, **kwargs)
+            with kb_read_lock(kb_dir / ".openkb"):
+                return fn(ctx, *args, **kwargs)
+        return wrapper
+    return decorator
 
 
 @cli.command()
@@ -554,9 +579,9 @@ def init(model, language):
     Path("wiki/entities").mkdir(parents=True, exist_ok=True)
 
     # Write wiki files
-    Path("wiki/AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
-    Path("wiki/index.md").write_text(INDEX_SEED, encoding="utf-8")
-    Path("wiki/log.md").write_text("# Operations Log\n\n", encoding="utf-8")
+    atomic_write_text(Path("wiki/AGENTS.md"), AGENTS_MD)
+    atomic_write_text(Path("wiki/index.md"), INDEX_SEED)
+    atomic_write_text(Path("wiki/log.md"), "# Operations Log\n\n")
 
     # Create .openkb/ state directory
     openkb_dir.mkdir()
@@ -566,7 +591,7 @@ def init(model, language):
         "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
     }
     save_config(openkb_dir / "config.yaml", config)
-    (openkb_dir / "hashes.json").write_text(json.dumps({}), encoding="utf-8")
+    atomic_write_json(openkb_dir / "hashes.json", {})
 
     # Write API key to KB-local .env (0600) if the user provided one
     if api_key:
@@ -587,6 +612,7 @@ def init(model, language):
 @cli.command()
 @click.argument("path")
 @click.pass_context
+@_with_kb_lock(exclusive=True)
 def add(ctx, path):
     """Add a document or directory of documents at PATH to the knowledge base.
 
@@ -797,6 +823,7 @@ def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]
 @click.option("--yes", "-y", is_flag=True, default=False,
               help="Skip the confirmation prompt.")
 @click.pass_context
+@_with_kb_lock(exclusive=True)
 def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     """Remove a document from the knowledge base.
 
@@ -1086,6 +1113,7 @@ def _refresh_schema(wiki_dir: Path) -> bool:
               help="Overwrite wiki/AGENTS.md with the bundled schema (backs up "
                    "the old one to AGENTS.md.bak) if it differs.")
 @click.pass_context
+@_with_kb_lock(exclusive=True)
 def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
     """Re-run the current compile pipeline on already-indexed documents.
 
@@ -1389,40 +1417,42 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
     openkb_dir = kb_dir / ".openkb"
 
-    # Skip lint entirely when the KB has no indexed documents
-    hashes_file = openkb_dir / "hashes.json"
-    if hashes_file.exists():
-        hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
-    else:
-        hashes = {}
-    if not hashes:
-        click.echo("Nothing to lint — no documents indexed yet. Run `openkb add` first.")
-        return
+    with kb_read_lock(openkb_dir):
+        # Skip lint entirely when the KB has no indexed documents
+        hashes_file = openkb_dir / "hashes.json"
+        if hashes_file.exists():
+            hashes = json.loads(hashes_file.read_text(encoding="utf-8"))
+        else:
+            hashes = {}
+        if not hashes:
+            click.echo("Nothing to lint — no documents indexed yet. Run `openkb add` first.")
+            return
 
-    config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+        config = load_config(openkb_dir / "config.yaml")
+        _setup_llm_key(kb_dir)
+        model: str = config.get("model", DEFAULT_CONFIG["model"])
 
-    click.echo("Running structural lint...")
-    structural_report = run_structural_lint(kb_dir)
-    click.echo(structural_report)
+        click.echo("Running structural lint...")
+        structural_report = run_structural_lint(kb_dir)
+        click.echo(structural_report)
 
-    click.echo("Running knowledge lint...")
-    try:
-        knowledge_report = await run_knowledge_lint(kb_dir, model)
-    except Exception as exc:
-        knowledge_report = f"Knowledge lint failed: {exc}"
-    click.echo(knowledge_report)
+        click.echo("Running knowledge lint...")
+        try:
+            knowledge_report = await run_knowledge_lint(kb_dir, model)
+        except Exception as exc:
+            knowledge_report = f"Knowledge lint failed: {exc}"
+        click.echo(knowledge_report)
 
     # Write combined report
-    reports_dir = kb_dir / "wiki" / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = reports_dir / f"lint_{timestamp}.md"
-    report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
-    report_path.write_text(report_content, encoding="utf-8")
-    append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
+    with kb_ingest_lock(openkb_dir):
+        reports_dir = kb_dir / "wiki" / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = reports_dir / f"lint_{timestamp}.md"
+        report_content = f"# Lint Report — {timestamp}\n\n## Structural\n\n{structural_report}\n\n## Semantic\n\n{knowledge_report}\n"
+        report_path.write_text(report_content, encoding="utf-8")
+        append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
     click.echo(f"\nReport written to {report_path}")
     return report_path
 
@@ -1440,7 +1470,8 @@ def lint(ctx, fix):
         return
     if fix:
         from openkb.lint import fix_broken_links
-        files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
         if files_changed:
             click.echo(
                 f"Fixed {ghosts} wikilink(s) across {files_changed} file(s)."
@@ -1515,6 +1546,7 @@ def print_list(kb_dir: Path) -> None:
 
 @cli.command(name="list")
 @click.pass_context
+@_with_kb_lock(exclusive=False)
 def list_cmd(ctx):
     """List all documents in the knowledge base."""
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
@@ -1585,6 +1617,7 @@ def print_status(kb_dir: Path) -> None:
 
 @cli.command()
 @click.pass_context
+@_with_kb_lock(exclusive=False)
 def status(ctx):
     """Show the current status of the knowledge base.
 

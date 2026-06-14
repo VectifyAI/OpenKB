@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
+
+from openkb.locks import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,32 @@ DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
+GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
+
+
+@contextlib.contextmanager
+def _with_global_config_lock() -> Iterator[None]:
+    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with GLOBAL_CONFIG_LOCK_PATH.open("a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_yaml_dump(path: Path, config: dict[str, Any]) -> None:
+    atomic_write_text(
+        path,
+        yaml.safe_dump(config, allow_unicode=True, sort_keys=True),
+    )
+
+
+def _load_global_config_unlocked() -> dict[str, Any]:
+    if GLOBAL_CONFIG_PATH.exists():
+        with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    return {}
 
 
 def resolve_entity_types(config: dict) -> list[str]:
@@ -81,33 +111,28 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
 def save_config(config_path: Path, config: dict) -> None:
     """Persist config dict to YAML, creating parent directories as needed."""
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with config_path.open("w", encoding="utf-8") as fh:
-        yaml.safe_dump(config, fh, allow_unicode=True, sort_keys=True)
+    _atomic_yaml_dump(config_path, config)
 
 
 def load_global_config() -> dict[str, Any]:
     """Load the global config from ~/.config/openkb/global.yaml."""
-    if GLOBAL_CONFIG_PATH.exists():
-        with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
-    return {}
+    return _load_global_config_unlocked()
 
 
 def save_global_config(config: dict[str, Any]) -> None:
     """Save the global config to ~/.config/openkb/global.yaml."""
-    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with GLOBAL_CONFIG_PATH.open("w", encoding="utf-8") as fh:
-        yaml.safe_dump(config, fh, allow_unicode=True, sort_keys=True)
+    with _with_global_config_lock():
+        _atomic_yaml_dump(GLOBAL_CONFIG_PATH, config)
 
 
 def register_kb(kb_path: Path) -> None:
     """Register a KB path in the global config's known_kbs list."""
-    gc = load_global_config()
-    known = gc.get("known_kbs", [])
-    resolved = str(kb_path.resolve())
-    if resolved not in known:
-        known.append(resolved)
-        gc["known_kbs"] = known
-    gc["default_kb"] = resolved
-    save_global_config(gc)
+    with _with_global_config_lock():
+        gc = _load_global_config_unlocked()
+        known = gc.get("known_kbs", [])
+        resolved = str(kb_path.resolve())
+        if resolved not in known:
+            known.append(resolved)
+            gc["known_kbs"] = known
+        gc["default_kb"] = resolved
+        _atomic_yaml_dump(GLOBAL_CONFIG_PATH, gc)

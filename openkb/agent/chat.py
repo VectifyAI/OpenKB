@@ -733,18 +733,24 @@ async def _handle_slash(
         if not session.user_turns:
             _fmt(style, ("class:error", "Nothing to save yet.\n"))
             return None
-        path = _save_transcript(kb_dir, session, arg or None)
+        from openkb.locks import kb_ingest_lock
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            path = _save_transcript(kb_dir, session, arg or None)
         _fmt(style, ("class:slash.ok", f"Saved to {path}\n"))
         return None
 
     if head == "/status":
+        from openkb.locks import kb_read_lock
         from openkb.cli import print_status
-        print_status(kb_dir)
+        with kb_read_lock(kb_dir / ".openkb"):
+            print_status(kb_dir)
         return None
 
     if head == "/list":
+        from openkb.locks import kb_read_lock
         from openkb.cli import print_list
-        print_list(kb_dir)
+        with kb_read_lock(kb_dir / ".openkb"):
+            print_list(kb_dir)
         return None
 
     if head == "/lint":
@@ -899,7 +905,9 @@ async def run_chat(
                 prompt_session = _make_prompt_session(session, style, use_color, kb_dir)
             continue
 
-        append_log(kb_dir / "wiki", "query", user_input)
+        from openkb.locks import kb_ingest_lock
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            append_log(kb_dir / "wiki", "query", user_input)
         try:
             await _run_turn(agent, session, user_input, style, use_color=use_color, raw=raw)
         except KeyboardInterrupt:
