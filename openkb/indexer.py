@@ -86,8 +86,15 @@ def _convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> li
     return convert_pdf_to_pages(pdf_path, doc_name, images_dir)
 
 
-def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
-    """Index a long PDF document using PageIndex and write wiki pages."""
+def index_long_document(
+    pdf_path: Path, kb_dir: Path, doc_name: str | None = None
+) -> IndexResult:
+    """Index a long PDF document using PageIndex and write wiki pages.
+
+    ``doc_name`` is the collision-resistant wiki name used for all written
+    artifacts; defaults to the PDF's stem for backward compatibility.
+    """
+    source_name = doc_name or pdf_path.stem
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
 
@@ -123,7 +130,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
 
     # Fetch complete document (metadata + structure + text)
     doc = col.get_document(doc_id, include_text=True)
-    doc_name: str = doc.get("doc_name", pdf_path.stem)
+    indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
     description: str = doc.get("doc_description", "")
     structure: list = doc.get("structure", [])
 
@@ -132,7 +139,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
 
     tree = {
-        "doc_name": doc_name,
+        "doc_name": indexed_doc_name,
         "doc_description": description,
         "structure": structure,
     }
@@ -140,7 +147,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     # Write wiki/sources/ — per-page content
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = sources_dir / "images" / pdf_path.stem
+    images_dir = sources_dir / "images" / source_name
 
     all_pages: list[dict[str, Any]] = []
     if pageindex_api_key:
@@ -155,19 +162,19 @@ def index_long_document(pdf_path: Path, kb_dir: Path) -> IndexResult:
     if not all_pages:
         if pageindex_api_key:
             logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
-        all_pages = _normalize_page_content(_convert_pdf_to_pages(pdf_path, pdf_path.stem, images_dir))
+        all_pages = _normalize_page_content(_convert_pdf_to_pages(pdf_path, source_name, images_dir))
 
     if not all_pages:
         raise RuntimeError(f"No page content extracted for {pdf_path.name}")
 
-    (sources_dir / f"{pdf_path.stem}.json").write_text(
+    (sources_dir / f"{source_name}.json").write_text(
         json_mod.dumps(all_pages, ensure_ascii=False, indent=2), encoding="utf-8",
     )
 
     # Write wiki/summaries/ (no images, just summaries)
     summaries_dir = kb_dir / "wiki" / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    summary_md = render_summary_md(tree, pdf_path.stem, doc_id)
-    (summaries_dir / f"{pdf_path.stem}.md").write_text(summary_md, encoding="utf-8")
+    summary_md = render_summary_md(tree, source_name, doc_id)
+    (summaries_dir / f"{source_name}.md").write_text(summary_md, encoding="utf-8")
 
     return IndexResult(doc_id=doc_id, description=description, tree=tree)

@@ -16,6 +16,7 @@ from openkb.lint import (
     run_structural_lint,
     strip_ghost_wikilinks,
 )
+from openkb.state import HashRegistry
 
 
 def _make_wiki(tmp_path: Path) -> Path:
@@ -152,6 +153,129 @@ class TestFindMissingEntries:
         result = find_missing_entries(raw, wiki)
 
         assert result == []
+
+
+class TestFindMissingEntriesRegistry:
+    """With ``kb_dir``, raw files resolve through the hash registry first.
+
+    Watch-mode/URL-ingested files keep their original filename in raw/
+    (e.g. arXiv ``2509.11420.pdf``) while artifacts are named by the
+    sanitized ``doc_name`` (``2509-11420.md``) — a pure stem comparison
+    false-positives those as missing. The registry maps one to the other.
+    """
+
+    def _add_entry(self, kb: Path, file_hash: str, metadata: dict) -> None:
+        HashRegistry(kb / ".openkb" / "hashes.json").add(file_hash, metadata)
+
+    def test_registry_doc_name_resolves_renamed_artifacts(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "2509.11420.pdf").write_bytes(b"%PDF-1.4 fake")
+        (wiki / "sources" / "2509-11420.md").write_text("x", encoding="utf-8")
+        (wiki / "summaries" / "2509-11420.md").write_text("x", encoding="utf-8")
+        self._add_entry(
+            tmp_path,
+            "h1",
+            {
+                "name": "2509.11420.pdf",
+                "doc_name": "2509-11420",
+                "type": "long_pdf",
+                "raw_path": "raw/2509.11420.pdf",
+            },
+        )
+
+        result = find_missing_entries(raw, wiki, kb_dir=tmp_path)
+
+        assert "2509.11420.pdf" not in result
+
+    def test_registry_doc_name_resolves_collision_suffix(self, tmp_path):
+        # raw/paper.pdf whose artifacts got a collision suffix
+        wiki = _make_wiki(tmp_path)
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+        (wiki / "sources" / "paper-ab12cd34.md").write_text("x", encoding="utf-8")
+        self._add_entry(
+            tmp_path,
+            "h2",
+            {
+                "name": "paper.pdf",
+                "doc_name": "paper-ab12cd34",
+                "type": "pdf",
+                "raw_path": "raw/paper.pdf",
+            },
+        )
+
+        result = find_missing_entries(raw, wiki, kb_dir=tmp_path)
+
+        assert result == []
+
+    def test_registry_doc_name_json_source_counts_as_entry(self, tmp_path):
+        # Long docs store sources/{doc_name}.json instead of .md
+        wiki = _make_wiki(tmp_path)
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "2509.11420.pdf").write_bytes(b"%PDF-1.4 fake")
+        (wiki / "sources" / "2509-11420.json").write_text("{}", encoding="utf-8")
+        self._add_entry(
+            tmp_path,
+            "h3",
+            {
+                "name": "2509.11420.pdf",
+                "doc_name": "2509-11420",
+                "type": "long_pdf",
+                "raw_path": "raw/2509.11420.pdf",
+            },
+        )
+
+        result = find_missing_entries(raw, wiki, kb_dir=tmp_path)
+
+        assert result == []
+
+    def test_unregistered_file_without_artifacts_still_missing(self, tmp_path):
+        # No registry entry, no artifacts → stays reported missing
+        wiki = _make_wiki(tmp_path)
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "unprocessed.pdf").write_bytes(b"PDF content")
+
+        result = find_missing_entries(raw, wiki, kb_dir=tmp_path)
+
+        assert "unprocessed.pdf" in result
+
+    def test_legacy_stem_match_without_registry_not_missing(self, tmp_path):
+        # No registry entry but artifacts share the raw stem → old behavior
+        wiki = _make_wiki(tmp_path)
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "legacy.pdf").write_bytes(b"PDF content")
+        (wiki / "sources" / "legacy.md").write_text("# Legacy", encoding="utf-8")
+
+        result = find_missing_entries(raw, wiki, kb_dir=tmp_path)
+
+        assert result == []
+
+    def test_registered_file_with_no_artifacts_is_missing(self, tmp_path):
+        # Registry entry exists but its doc_name artifacts were deleted
+        wiki = _make_wiki(tmp_path)
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        (raw / "2509.11420.pdf").write_bytes(b"%PDF-1.4 fake")
+        self._add_entry(
+            tmp_path,
+            "h4",
+            {
+                "name": "2509.11420.pdf",
+                "doc_name": "2509-11420",
+                "type": "long_pdf",
+                "raw_path": "raw/2509.11420.pdf",
+            },
+        )
+
+        result = find_missing_entries(raw, wiki, kb_dir=tmp_path)
+
+        assert "2509.11420.pdf" in result
 
 
 class TestCheckIndexSync:

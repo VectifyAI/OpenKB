@@ -1193,3 +1193,30 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
     # Registry now empty; wiki cleanup remains complete.
     assert json.loads((kb_dir / ".openkb" / "hashes.json").read_text()) == {}
     assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Regression: doc-name collision fix — raw copies are renamed to doc_name
+# on copy (raw/{doc_name}{suffix}), so remove must locate them via the
+# recorded `raw_path` in registry meta, not `raw_dir / name`.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_remove_deletes_renamed_raw_copy(kb_dir):
+    """Raw copies are now named by doc_name; remove must use meta raw_path."""
+    # Collided doc: original filename report.md, doc_name report-aabbccdd
+    raw_file = kb_dir / "raw" / "report-aabbccdd.md"
+    raw_file.write_text("# R", encoding="utf-8")
+    (kb_dir / "wiki" / "sources" / "report-aabbccdd.md").write_text("# R", encoding="utf-8")
+    HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
+        "h-collide",
+        {"name": "report.md", "doc_name": "report-aabbccdd", "type": "md",
+         "path": "inputs/second/report.md",
+         "raw_path": "raw/report-aabbccdd.md",
+         "source_path": "wiki/sources/report-aabbccdd.md"},
+    )
+
+    result = _invoke(kb_dir, ["remove", "report-aabbccdd", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not raw_file.exists()

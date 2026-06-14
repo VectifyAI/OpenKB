@@ -80,3 +80,82 @@ def test_load_existing_json(tmp_path):
     registry = HashRegistry(path)
     assert registry.is_known("existinghash") is True
     assert registry.get("existinghash") == {"file": "pre.pdf"}
+
+
+def test_get_by_path_matches_path_raw_path_and_source_path(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {
+        "name": "report.md",
+        "doc_name": "report",
+        "path": "inputs/report.md",
+        "raw_path": "raw/report.md",
+        "source_path": "wiki/sources/report.md",
+    })
+    assert reg.get_by_path("inputs/report.md")["doc_name"] == "report"
+    assert reg.get_by_path("raw/report.md")["doc_name"] == "report"
+    assert reg.get_by_path("wiki/sources/report.md")["doc_name"] == "report"
+
+
+def test_get_by_path_miss_returns_none(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "a.md", "doc_name": "a", "path": "a.md"})
+    assert reg.get_by_path("elsewhere/a.md") is None
+
+
+def test_get_by_path_legacy_entry_without_path_fields_is_not_matched(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "old.md", "doc_name": "old"})
+    assert reg.get_by_path("raw/old.md") is None
+
+
+def test_find_legacy_by_stem_matches_doc_name_entry_without_path(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "report.md", "doc_name": "report", "type": "md"})
+    hit = reg.find_legacy_by_stem("report")
+    assert hit is not None
+    file_hash, meta = hit
+    assert file_hash == "h1"
+    assert meta["doc_name"] == "report"
+
+
+def test_find_legacy_by_stem_matches_pre_doc_name_entry_by_filename_stem(tmp_path):
+    # Entries written before doc_name existed carry only {name, type}.
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "notes.md", "type": "md"})
+    hit = reg.find_legacy_by_stem("notes")
+    assert hit is not None
+    assert hit[0] == "h1"
+
+
+def test_find_legacy_by_stem_entry_with_path_is_not_legacy(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h1", {"name": "report.md", "doc_name": "report",
+                   "path": "inputs/report.md"})
+    assert reg.find_legacy_by_stem("report") is None
+
+
+def test_find_legacy_by_stem_miss_returns_none(tmp_path):
+    reg = HashRegistry(tmp_path / "hashes.json")
+    assert reg.find_legacy_by_stem("anything") is None
+
+
+def test_find_legacy_by_stem_first_match_wins_on_duplicates(tmp_path):
+    # Pre-fix registries can hold two same-named legacy entries (the
+    # collision bug); the resolver backfills the first in insertion order.
+    reg = HashRegistry(tmp_path / "hashes.json")
+    reg.add("h_first", {"name": "report.md", "doc_name": "report", "type": "md"})
+    reg.add("h_second", {"name": "report.md", "doc_name": "report", "type": "md"})
+    hit = reg.find_legacy_by_stem("report")
+    assert hit is not None
+    assert hit[0] == "h_first"
+
+
+def test_find_legacy_by_stem_nfkc_normalizes_both_sides(tmp_path):
+    # macOS hands back NFD filenames; registry may hold NFC. Both must match.
+    import unicodedata
+    reg = HashRegistry(tmp_path / "hashes.json")
+    nfc = unicodedata.normalize("NFC", "café")
+    nfd = unicodedata.normalize("NFD", "café")
+    reg.add("h1", {"name": f"{nfc}.md", "doc_name": nfc, "type": "md"})
+    hit = reg.find_legacy_by_stem(nfd)
+    assert hit is not None and hit[0] == "h1"

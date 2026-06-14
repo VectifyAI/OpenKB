@@ -336,15 +336,25 @@ def find_orphans(wiki: Path) -> list[str]:
     return sorted(orphans)
 
 
-def find_missing_entries(raw: Path, wiki: Path) -> list[str]:
+def find_missing_entries(
+    raw: Path, wiki: Path, *, kb_dir: Path | None = None,
+) -> list[str]:
     """Find files in raw/ that have no corresponding wiki entries.
 
-    A file is considered "present" if it has either a sources/ or summaries/
-    page with the same stem.
+    When ``kb_dir`` is provided, each raw file is first resolved through
+    the hash registry (``kb_dir/.openkb/hashes.json``): registered files
+    are checked against their ``doc_name`` artifacts, which can differ
+    from the raw stem (watch-mode/URL ingests keep the original filename
+    in raw/ — e.g. ``2509.11420.pdf`` → ``2509-11420.md`` — and collision
+    suffixes rename artifacts too). Files with no registry entry fall back
+    to the stem heuristic: "present" means a sources/ or summaries/ page
+    with the same stem.
 
     Args:
         raw: Path to the raw documents directory.
         wiki: Path to the wiki root directory.
+        kb_dir: Root of the knowledge base. When None, only the legacy
+            stem heuristic is used.
 
     Returns:
         List of filenames in raw/ with no wiki entry.
@@ -356,10 +366,39 @@ def find_missing_entries(raw: Path, wiki: Path) -> list[str]:
     summary_stems = {p.stem for p in summaries_dir.glob("*.md")} if summaries_dir.exists() else set()
     known_stems = sources_stems | summary_stems
 
+    registry = None
+    if kb_dir is not None:
+        registry_file = kb_dir / ".openkb" / "hashes.json"
+        if registry_file.exists():
+            # Deferred import: converter pulls in pymupdf/markitdown,
+            # which lint doesn't otherwise need at import time.
+            from openkb.converter import _registry_path
+            from openkb.state import HashRegistry
+
+            registry = HashRegistry(registry_file)
+
     missing: list[str] = []
     if raw.exists():
         for f in raw.iterdir():
-            if f.is_file() and f.stem not in known_stems:
+            if not f.is_file():
+                continue
+            if registry is not None:
+                meta = registry.get_by_path(_registry_path(f, kb_dir))
+                if meta is not None:
+                    # Registered file — the registry's doc_name is the
+                    # single source of truth for artifact names.
+                    doc_name = meta.get("doc_name") or Path(
+                        meta.get("name", f.name)
+                    ).stem
+                    present = (
+                        (sources_dir / f"{doc_name}.md").exists()
+                        or (sources_dir / f"{doc_name}.json").exists()
+                        or (summaries_dir / f"{doc_name}.md").exists()
+                    )
+                    if not present:
+                        missing.append(f.name)
+                    continue
+            if f.stem not in known_stems:
                 missing.append(f.name)
 
     return sorted(missing)
@@ -460,7 +499,7 @@ def run_structural_lint(kb_dir: Path) -> str:
 
     broken = find_broken_links(wiki)
     orphans = find_orphans(wiki)
-    missing = find_missing_entries(raw, wiki)
+    missing = find_missing_entries(raw, wiki, kb_dir=kb_dir)
     sync_issues = check_index_sync(wiki)
     bad_frontmatter = find_invalid_frontmatter(wiki)
 

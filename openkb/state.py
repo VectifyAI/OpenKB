@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from pathlib import Path
 
 
@@ -31,6 +32,49 @@ class HashRegistry:
     def all_entries(self) -> dict[str, dict]:
         """Return a shallow copy of all hash -> metadata entries."""
         return dict(self._data)
+
+    def get_by_path(self, path: str) -> dict | None:
+        """Return metadata whose path/raw_path/source_path equals ``path``.
+
+        ``path`` is a registry path string (posix, relative to the KB dir
+        when inside it) as produced by ``converter._registry_path``. Entries
+        written before the path index existed carry none of these fields and
+        never match.
+        """
+        for metadata in self._data.values():
+            if path in (
+                metadata.get("path"),
+                metadata.get("raw_path"),
+                metadata.get("source_path"),
+            ):
+                return metadata
+        return None
+
+    def find_legacy_by_stem(self, stem: str) -> tuple[str, dict] | None:
+        """Find a pre-path-index entry matching ``stem``.
+
+        Returns ``(file_hash, metadata)`` for an entry that has no truthy
+        ``path`` (a missing or empty ``path`` is treated as unindexed) and
+        whose ``doc_name`` — or, for even older entries lacking
+        ``doc_name``, the stem of its ``name`` — equals ``stem``. When
+        several legacy entries match (pre-fix registries can hold
+        same-named entries), the first in insertion order is returned.
+        Callers use the hash to backfill ``path`` via :meth:`add`. Returns
+        None when every matching name is already path-indexed. The
+        comparison is NFKC-normalized on both sides, so macOS NFD
+        filenames match their NFC registry entries.
+        """
+        for file_hash, metadata in self._data.items():
+            if metadata.get("path"):
+                continue
+            entry_name = metadata.get("doc_name") or Path(
+                metadata.get("name", "")
+            ).stem
+            if unicodedata.normalize("NFKC", entry_name) == unicodedata.normalize(
+                "NFKC", stem
+            ):
+                return file_hash, metadata
+        return None
 
     # ------------------------------------------------------------------
     # Mutation
