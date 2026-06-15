@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import openkb
 from openkb import locks
 
 
@@ -31,7 +30,7 @@ def _module_level_imports_fcntl(path: Path) -> bool:
 
 def test_openkb_modules_do_not_hard_import_fcntl():
     """Guards issue #93: OpenKB's own modules must import on Windows (no bare fcntl)."""
-    pkg_dir = Path(openkb.__file__).parent
+    pkg_dir = Path(locks.__file__).parent  # locks.py lives in the openkb package
     offenders = [
         str(py.relative_to(pkg_dir))
         for py in pkg_dir.rglob("*.py")
