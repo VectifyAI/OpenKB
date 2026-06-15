@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -15,31 +16,58 @@ import time
 from pathlib import Path
 from typing import IO, Iterator
 
+logger = logging.getLogger(__name__)
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows has no fcntl (simulated in tests)
     fcntl = None
+
+# Upper bound (seconds) on the Windows lock-acquire wait. fcntl.flock blocks in
+# the kernel indefinitely; the msvcrt fallback polls, so without a cap a genuine
+# error (or a never-released lock) would hang the process forever. Generous by
+# default so it never trips on a lock legitimately held through a long compile;
+# override via OPENKB_LOCK_TIMEOUT for constrained environments.
+_WINDOWS_LOCK_TIMEOUT = float(os.getenv("OPENKB_LOCK_TIMEOUT", "3600"))
 
 
 def flock(fh: IO, *, exclusive: bool) -> None:
     """Acquire an advisory lock on an open file handle (cross-platform).
 
     Uses ``fcntl.flock`` on POSIX. On Windows (no ``fcntl``) it falls back to
-    ``msvcrt.locking``, which provides only exclusive byte-range locks — shared
-    requests are taken exclusively (over-locking is safe) — and the blocking
-    behaviour of ``fcntl.flock`` is emulated by retrying the non-blocking lock.
+    ``msvcrt.locking``, which provides only **exclusive** byte-range locks: a
+    shared (``exclusive=False``) request is taken exclusively. Over-locking is
+    safe for correctness but does not allow concurrent readers on Windows — and
+    because the in-process :class:`_LocalRwLock` admits multiple readers, truly
+    concurrent in-process readers serialise (and wait) on Windows. The blocking
+    acquire of ``fcntl.flock`` is emulated by retrying the non-blocking lock
+    with backoff, bounded by ``_WINDOWS_LOCK_TIMEOUT`` so a stuck lock raises
+    instead of hanging forever.
     """
     if fcntl is not None:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
         return
     import msvcrt
     fh.seek(0)
+    start = time.monotonic()
+    delay = 0.05
+    warned = False
     while True:
         try:
             msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
             return
         except OSError:
-            time.sleep(0.1)
+            elapsed = time.monotonic() - start
+            if elapsed >= _WINDOWS_LOCK_TIMEOUT:
+                raise  # surface a stuck/never-released lock instead of hanging
+            if not warned and elapsed >= 5:
+                logger.warning(
+                    "Still waiting for file lock on %s ...",
+                    getattr(fh, "name", "<lock>"),
+                )
+                warned = True
+            time.sleep(delay)
+            delay = min(delay * 2, 1.0)
 
 
 def funlock(fh: IO) -> None:
@@ -164,8 +192,9 @@ def kb_read_lock(openkb_dir: Path):
 
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
-        # Windows cannot open a directory handle to fsync it; os.replace is
-        # already atomic on NTFS, so the parent-directory flush is a no-op.
+        # Windows cannot open a directory handle to fsync it. os.replace is
+        # atomic on NTFS (no torn/partial state), though without the dir flush
+        # the rename's durability across a crash is weaker than on POSIX.
         return
     fd = os.open(path, os.O_RDONLY)
     try:

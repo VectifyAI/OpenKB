@@ -62,6 +62,45 @@ def test_flock_uses_msvcrt_when_fcntl_absent(monkeypatch, tmp_path):
     assert fake_msvcrt.LK_UNLCK in modes  # release unlocked
 
 
+def test_flock_retries_until_lock_available(monkeypatch, tmp_path):
+    """The Windows fallback retries the non-blocking lock until it succeeds."""
+    attempts = {"n": 0}
+
+    def fake_locking(fd, mode, nbytes):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise OSError("locked")  # contention on the first two tries
+
+    fake_msvcrt = types.SimpleNamespace(
+        LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0, locking=fake_locking
+    )
+    monkeypatch.setattr(locks, "fcntl", None)
+    monkeypatch.setattr(locks, "_WINDOWS_LOCK_TIMEOUT", 5.0)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+    with (tmp_path / "test.lock").open("a+", encoding="utf-8") as fh:
+        locks.flock(fh, exclusive=True)
+
+    assert attempts["n"] == 3  # retried twice, succeeded on the third
+
+
+def test_flock_raises_after_timeout(monkeypatch, tmp_path):
+    """A never-released Windows lock surfaces an error instead of hanging forever."""
+    def always_locked(fd, mode, nbytes):
+        raise OSError("locked")
+
+    fake_msvcrt = types.SimpleNamespace(
+        LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0, locking=always_locked
+    )
+    monkeypatch.setattr(locks, "fcntl", None)
+    monkeypatch.setattr(locks, "_WINDOWS_LOCK_TIMEOUT", 0.2)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+    with (tmp_path / "test.lock").open("a+", encoding="utf-8") as fh:
+        with pytest.raises(OSError):
+            locks.flock(fh, exclusive=True)
+
+
 def test_atomic_write_bytes_without_fchmod(monkeypatch, tmp_path):
     """atomic_write_bytes must still work where os.fchmod is missing (Windows)."""
     monkeypatch.delattr(os, "fchmod", raising=False)
