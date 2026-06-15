@@ -21,11 +21,16 @@ import portalocker
 def flock(fh: IO, *, exclusive: bool) -> None:
     """Acquire an advisory lock on an open file handle (cross-platform).
 
-    Delegates to :mod:`portalocker`, which is fcntl-backed on POSIX and
-    msvcrt/Win32-backed on Windows. The call blocks until the lock is acquired,
-    matching ``fcntl.flock``. Shared (``exclusive=False``) locks are honoured
-    where the platform supports them; on Windows they may be taken exclusively
-    (portalocker handles the platform differences).
+    Delegates to :mod:`portalocker`:
+
+    - **POSIX** — ``fcntl.flock``; the call blocks indefinitely until acquired.
+    - **Windows** — shared locks use the Win32 ``LockFileEx`` API (``pywin32``,
+      which portalocker pulls in automatically on Windows), so concurrent
+      readers are honoured; exclusive locks use ``msvcrt.locking``, which
+      retries for ~10s and then raises rather than blocking indefinitely.
+
+    On failure portalocker raises :class:`portalocker.LockException` — note this
+    is *not* an ``OSError`` (e.g. on filesystems without working lock support).
     """
     portalocker.lock(fh, portalocker.LOCK_EX if exclusive else portalocker.LOCK_SH)
 

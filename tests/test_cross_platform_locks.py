@@ -3,19 +3,41 @@
 File locking is delegated to :mod:`portalocker` (fcntl on POSIX, msvcrt/Win32
 on Windows), so OpenKB no longer hard-imports the Unix-only ``fcntl``. The
 atomic-write path still special-cases the Unix-only ``os.fchmod`` and directory
-``os.fsync``. These tests pin the platform-neutral behaviour that is verifiable
-on POSIX; portalocker carries its own Windows test coverage.
+``os.fsync``. These tests pin the platform-neutral behaviour verifiable on
+POSIX; portalocker carries its own Windows test coverage.
 """
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-import portalocker
-import pytest
-
+import openkb
 from openkb import locks
+
+
+def _module_level_imports_fcntl(path: Path) -> bool:
+    """True if the module has a top-level ``import fcntl`` / ``from fcntl import``."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:  # module-level statements only (import-time crash risk)
+        if isinstance(node, ast.Import) and any(a.name == "fcntl" for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module == "fcntl":
+            return True
+    return False
+
+
+def test_openkb_modules_do_not_hard_import_fcntl():
+    """Guards issue #93: OpenKB's own modules must import on Windows (no bare fcntl)."""
+    pkg_dir = Path(openkb.__file__).parent
+    offenders = [
+        str(py.relative_to(pkg_dir))
+        for py in pkg_dir.rglob("*.py")
+        if _module_level_imports_fcntl(py)
+    ]
+    assert not offenders, f"Unix-only fcntl hard-imported at module level in: {offenders}"
 
 
 def test_flock_funlock_roundtrip(tmp_path):
@@ -28,28 +50,35 @@ def test_flock_funlock_roundtrip(tmp_path):
         locks.funlock(fh)  # must not raise
 
 
-def test_flock_exclusive_blocks_other_process(tmp_path):
-    """An exclusive flock is a real OS lock that excludes another process."""
+def test_flock_exclusive_excludes_other_process(tmp_path):
+    """An exclusive flock is a real OS lock: it excludes another process while
+    held, and the lock is acquirable again once released."""
     lock_path = tmp_path / "test.lock"
-    fh = lock_path.open("a+", encoding="utf-8")
-    locks.flock(fh, exclusive=True)
-    try:
-        probe = (
-            "import portalocker\n"
-            f"fh = open({str(lock_path)!r}, 'a+')\n"
-            "try:\n"
-            "    portalocker.lock(fh, portalocker.LOCK_EX | portalocker.LOCK_NB)\n"
-            "    print('ACQUIRED')\n"
-            "except portalocker.LockException:\n"
-            "    print('BLOCKED')\n"
-        )
+    probe = (
+        "import portalocker\n"
+        f"fh = open({str(lock_path)!r}, 'a+')\n"
+        "try:\n"
+        "    portalocker.lock(fh, portalocker.LOCK_EX | portalocker.LOCK_NB)\n"
+        "    print('ACQUIRED')\n"
+        "except portalocker.LockException:\n"
+        "    print('BLOCKED')\n"
+    )
+
+    def run_probe() -> str:
         result = subprocess.run(
             [sys.executable, "-c", probe], capture_output=True, text=True
         )
-        assert "BLOCKED" in result.stdout, result.stdout + result.stderr
+        assert result.returncode == 0, result.stderr  # probe itself ran cleanly
+        return result.stdout.strip()
+
+    fh = lock_path.open("a+", encoding="utf-8")
+    locks.flock(fh, exclusive=True)
+    try:
+        assert run_probe() == "BLOCKED"  # held → other process is excluded
     finally:
         locks.funlock(fh)
         fh.close()
+    assert run_probe() == "ACQUIRED"  # released → other process can acquire
 
 
 def test_atomic_write_bytes_without_fchmod(monkeypatch, tmp_path):
