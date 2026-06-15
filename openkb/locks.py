@@ -7,13 +7,78 @@ or synced filesystems where ``fcntl.flock`` may be unavailable or inconsistent.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
+import logging
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Iterator
+from typing import IO, Iterator
+
+logger = logging.getLogger(__name__)
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl (simulated in tests)
+    fcntl = None
+
+# Upper bound (seconds) on the Windows lock-acquire wait. fcntl.flock blocks in
+# the kernel indefinitely; the msvcrt fallback polls, so without a cap a genuine
+# error (or a never-released lock) would hang the process forever. Generous by
+# default so it never trips on a lock legitimately held through a long compile;
+# override via OPENKB_LOCK_TIMEOUT for constrained environments.
+_WINDOWS_LOCK_TIMEOUT = float(os.getenv("OPENKB_LOCK_TIMEOUT", "3600"))
+
+
+def flock(fh: IO, *, exclusive: bool) -> None:
+    """Acquire an advisory lock on an open file handle (cross-platform).
+
+    Uses ``fcntl.flock`` on POSIX. On Windows (no ``fcntl``) it falls back to
+    ``msvcrt.locking``, which provides only **exclusive** byte-range locks: a
+    shared (``exclusive=False``) request is taken exclusively. Over-locking is
+    safe for correctness but does not allow concurrent readers on Windows — and
+    because the in-process :class:`_LocalRwLock` admits multiple readers, truly
+    concurrent in-process readers serialise (and wait) on Windows. The blocking
+    acquire of ``fcntl.flock`` is emulated by retrying the non-blocking lock
+    with backoff, bounded by ``_WINDOWS_LOCK_TIMEOUT`` so a stuck lock raises
+    instead of hanging forever.
+    """
+    if fcntl is not None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        return
+    import msvcrt
+    fh.seek(0)
+    start = time.monotonic()
+    delay = 0.05
+    warned = False
+    while True:
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError:
+            elapsed = time.monotonic() - start
+            if elapsed >= _WINDOWS_LOCK_TIMEOUT:
+                raise  # surface a stuck/never-released lock instead of hanging
+            if not warned and elapsed >= 5:
+                logger.warning(
+                    "Still waiting for file lock on %s ...",
+                    getattr(fh, "name", "<lock>"),
+                )
+                warned = True
+            time.sleep(delay)
+            delay = min(delay * 2, 1.0)
+
+
+def funlock(fh: IO) -> None:
+    """Release a lock previously acquired with :func:`flock`."""
+    if fcntl is not None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        return
+    import msvcrt
+    fh.seek(0)
+    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+
 
 _LOCKS_GUARD = threading.Lock()
 _LOCAL_LOCKS: dict[Path, "_LocalRwLock"] = {}
@@ -106,14 +171,13 @@ def kb_lock(openkb_dir: Path, *, exclusive: bool) -> Iterator[None]:
     local_context = local_lock.write() if exclusive else local_lock.read()
     with local_context:
         with lock_path.open("a+", encoding="utf-8") as fh:
-            mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-            fcntl.flock(fh.fileno(), mode)
+            flock(fh, exclusive=exclusive)
             held[resolved] = (1, 0) if exclusive else (0, 1)
             try:
                 yield
             finally:
                 held.pop(resolved, None)
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                funlock(fh)
 
 
 def kb_ingest_lock(openkb_dir: Path):
@@ -127,6 +191,11 @@ def kb_read_lock(openkb_dir: Path):
 
 
 def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        # Windows cannot open a directory handle to fsync it. os.replace is
+        # atomic on NTFS (no torn/partial state), though without the dir flush
+        # the rename's durability across a crash is weaker than on POSIX.
+        return
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -154,7 +223,8 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as fh:
-            os.fchmod(fh.fileno(), _target_mode(path))
+            if hasattr(os, "fchmod"):  # not available on Windows
+                os.fchmod(fh.fileno(), _target_mode(path))
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())
