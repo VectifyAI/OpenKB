@@ -1,104 +1,83 @@
 """Cross-platform behaviour for openkb.locks / openkb.config.
 
-The locking layer (#86) originally hard-imported ``fcntl`` and called
-``os.fchmod`` / directory ``os.fsync`` unconditionally — all Unix-only — which
-crashed OpenKB at import time on Windows (``ModuleNotFoundError: No module
-named 'fcntl'``, reported in VectifyAI/OpenKB#93). These tests pin the
-platform-neutral behaviour and simulate the Windows path on this host.
+File locking is delegated to :mod:`portalocker` (fcntl on POSIX, msvcrt/Win32
+on Windows), so OpenKB no longer hard-imports the Unix-only ``fcntl``. The
+atomic-write path still special-cases the Unix-only ``os.fchmod`` and directory
+``os.fsync``. These tests pin the platform-neutral behaviour verifiable on
+POSIX; portalocker carries its own Windows test coverage.
 """
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
-import types
-
-import pytest
+from pathlib import Path
 
 from openkb import locks
 
 
-def test_config_and_locks_import_without_fcntl():
-    """openkb.config / openkb.locks must import on a host without fcntl (Windows)."""
-    code = (
-        "import sys\n"
-        "sys.modules['fcntl'] = None\n"  # make `import fcntl` raise ImportError
-        "import openkb.locks, openkb.config\n"
-        "assert openkb.locks.fcntl is None\n"
-        "print('OK')\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True
-    )
-    assert result.returncode == 0, result.stderr
-    assert "OK" in result.stdout
+def _module_level_imports_fcntl(path: Path) -> bool:
+    """True if the module has a top-level ``import fcntl`` / ``from fcntl import``."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:  # module-level statements only (import-time crash risk)
+        if isinstance(node, ast.Import) and any(a.name == "fcntl" for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module == "fcntl":
+            return True
+    return False
+
+
+def test_openkb_modules_do_not_hard_import_fcntl():
+    """Guards issue #93: OpenKB's own modules must import on Windows (no bare fcntl)."""
+    pkg_dir = Path(locks.__file__).parent  # locks.py lives in the openkb package
+    offenders = [
+        str(py.relative_to(pkg_dir))
+        for py in pkg_dir.rglob("*.py")
+        if _module_level_imports_fcntl(py)
+    ]
+    assert not offenders, f"Unix-only fcntl hard-imported at module level in: {offenders}"
 
 
 def test_flock_funlock_roundtrip(tmp_path):
-    """flock/funlock acquire and release an advisory lock on the real platform."""
-    lock_path = tmp_path / "test.lock"
-    with lock_path.open("a+", encoding="utf-8") as fh:
-        locks.flock(fh, exclusive=True)
-        locks.funlock(fh)  # must not raise
-
-
-def test_flock_uses_msvcrt_when_fcntl_absent(monkeypatch, tmp_path):
-    """When fcntl is unavailable (Windows), locking is delegated to msvcrt."""
-    calls = []
-    fake_msvcrt = types.SimpleNamespace(
-        LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0,
-        locking=lambda fd, mode, nbytes: calls.append((mode, nbytes)),
-    )
-    monkeypatch.setattr(locks, "fcntl", None)
-    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-
+    """flock/funlock acquire and release both exclusive and shared locks."""
     lock_path = tmp_path / "test.lock"
     with lock_path.open("a+", encoding="utf-8") as fh:
         locks.flock(fh, exclusive=True)
         locks.funlock(fh)
-
-    modes = [mode for mode, _ in calls]
-    assert fake_msvcrt.LK_NBLCK in modes  # acquire used the non-blocking lock
-    assert fake_msvcrt.LK_UNLCK in modes  # release unlocked
+        locks.flock(fh, exclusive=False)
+        locks.funlock(fh)  # must not raise
 
 
-def test_flock_retries_until_lock_available(monkeypatch, tmp_path):
-    """The Windows fallback retries the non-blocking lock until it succeeds."""
-    attempts = {"n": 0}
-
-    def fake_locking(fd, mode, nbytes):
-        attempts["n"] += 1
-        if attempts["n"] < 3:
-            raise OSError("locked")  # contention on the first two tries
-
-    fake_msvcrt = types.SimpleNamespace(
-        LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0, locking=fake_locking
+def test_flock_exclusive_excludes_other_process(tmp_path):
+    """An exclusive flock is a real OS lock: it excludes another process while
+    held, and the lock is acquirable again once released."""
+    lock_path = tmp_path / "test.lock"
+    probe = (
+        "import portalocker\n"
+        f"fh = open({str(lock_path)!r}, 'a+')\n"
+        "try:\n"
+        "    portalocker.lock(fh, portalocker.LOCK_EX | portalocker.LOCK_NB)\n"
+        "    print('ACQUIRED')\n"
+        "except portalocker.LockException:\n"
+        "    print('BLOCKED')\n"
     )
-    monkeypatch.setattr(locks, "fcntl", None)
-    monkeypatch.setattr(locks, "_WINDOWS_LOCK_TIMEOUT", 5.0)
-    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
 
-    with (tmp_path / "test.lock").open("a+", encoding="utf-8") as fh:
-        locks.flock(fh, exclusive=True)
+    def run_probe() -> str:
+        result = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr  # probe itself ran cleanly
+        return result.stdout.strip()
 
-    assert attempts["n"] == 3  # retried twice, succeeded on the third
-
-
-def test_flock_raises_after_timeout(monkeypatch, tmp_path):
-    """A never-released Windows lock surfaces an error instead of hanging forever."""
-    def always_locked(fd, mode, nbytes):
-        raise OSError("locked")
-
-    fake_msvcrt = types.SimpleNamespace(
-        LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0, locking=always_locked
-    )
-    monkeypatch.setattr(locks, "fcntl", None)
-    monkeypatch.setattr(locks, "_WINDOWS_LOCK_TIMEOUT", 0.2)
-    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-
-    with (tmp_path / "test.lock").open("a+", encoding="utf-8") as fh:
-        with pytest.raises(OSError):
-            locks.flock(fh, exclusive=True)
+    fh = lock_path.open("a+", encoding="utf-8")
+    locks.flock(fh, exclusive=True)
+    try:
+        assert run_probe() == "BLOCKED"  # held → other process is excluded
+    finally:
+        locks.funlock(fh)
+        fh.close()
+    assert run_probe() == "ACQUIRED"  # released → other process can acquire
 
 
 def test_atomic_write_bytes_without_fchmod(monkeypatch, tmp_path):

@@ -2,82 +2,42 @@
 
 The lock protocol is advisory and intended for local filesystem access by
 OpenKB processes. It does not guarantee cross-host coordination on networked
-or synced filesystems where ``fcntl.flock`` may be unavailable or inconsistent.
+or synced filesystems where the underlying OS lock may be unavailable or
+inconsistent.
 """
 from __future__ import annotations
 
 import contextlib
 import json
-import logging
 import os
 import tempfile
 import threading
-import time
 from pathlib import Path
 from typing import IO, Iterator
 
-logger = logging.getLogger(__name__)
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows has no fcntl (simulated in tests)
-    fcntl = None
-
-# Upper bound (seconds) on the Windows lock-acquire wait. fcntl.flock blocks in
-# the kernel indefinitely; the msvcrt fallback polls, so without a cap a genuine
-# error (or a never-released lock) would hang the process forever. Generous by
-# default so it never trips on a lock legitimately held through a long compile;
-# override via OPENKB_LOCK_TIMEOUT for constrained environments.
-_WINDOWS_LOCK_TIMEOUT = float(os.getenv("OPENKB_LOCK_TIMEOUT", "3600"))
+import portalocker
 
 
 def flock(fh: IO, *, exclusive: bool) -> None:
     """Acquire an advisory lock on an open file handle (cross-platform).
 
-    Uses ``fcntl.flock`` on POSIX. On Windows (no ``fcntl``) it falls back to
-    ``msvcrt.locking``, which provides only **exclusive** byte-range locks: a
-    shared (``exclusive=False``) request is taken exclusively. Over-locking is
-    safe for correctness but does not allow concurrent readers on Windows — and
-    because the in-process :class:`_LocalRwLock` admits multiple readers, truly
-    concurrent in-process readers serialise (and wait) on Windows. The blocking
-    acquire of ``fcntl.flock`` is emulated by retrying the non-blocking lock
-    with backoff, bounded by ``_WINDOWS_LOCK_TIMEOUT`` so a stuck lock raises
-    instead of hanging forever.
+    Delegates to :mod:`portalocker`:
+
+    - **POSIX** — ``fcntl.flock``; the call blocks indefinitely until acquired.
+    - **Windows** — shared locks use the Win32 ``LockFileEx`` API (``pywin32``,
+      which portalocker pulls in automatically on Windows), so concurrent
+      readers are honoured; exclusive locks use ``msvcrt.locking``, which
+      retries for ~10s and then raises rather than blocking indefinitely.
+
+    On failure portalocker raises :class:`portalocker.LockException` — note this
+    is *not* an ``OSError`` (e.g. on filesystems without working lock support).
     """
-    if fcntl is not None:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
-        return
-    import msvcrt
-    fh.seek(0)
-    start = time.monotonic()
-    delay = 0.05
-    warned = False
-    while True:
-        try:
-            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-            return
-        except OSError:
-            elapsed = time.monotonic() - start
-            if elapsed >= _WINDOWS_LOCK_TIMEOUT:
-                raise  # surface a stuck/never-released lock instead of hanging
-            if not warned and elapsed >= 5:
-                logger.warning(
-                    "Still waiting for file lock on %s ...",
-                    getattr(fh, "name", "<lock>"),
-                )
-                warned = True
-            time.sleep(delay)
-            delay = min(delay * 2, 1.0)
+    portalocker.lock(fh, portalocker.LOCK_EX if exclusive else portalocker.LOCK_SH)
 
 
 def funlock(fh: IO) -> None:
     """Release a lock previously acquired with :func:`flock`."""
-    if fcntl is not None:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        return
-    import msvcrt
-    fh.seek(0)
-    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    portalocker.unlock(fh)
 
 
 _LOCKS_GUARD = threading.Lock()

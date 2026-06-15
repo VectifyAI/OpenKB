@@ -44,6 +44,7 @@ dependencies = [
     "json-repair==0.59.10",
     "prompt_toolkit==3.0.52",
     "rich==15.0.0",
+    "portalocker==3.2.0",
 ]
 
 [project.urls]
