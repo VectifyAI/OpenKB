@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import logging
 import re
 from pathlib import Path
@@ -9,7 +8,7 @@ from typing import Any, Iterator
 
 import yaml
 
-from openkb.locks import atomic_write_text
+from openkb.locks import atomic_write_text, flock, funlock
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +33,11 @@ GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
 def _with_global_config_lock() -> Iterator[None]:
     GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with GLOBAL_CONFIG_LOCK_PATH.open("a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        flock(fh, exclusive=True)
         try:
             yield
         finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            funlock(fh)
 
 
 def _atomic_yaml_dump(path: Path, config: dict[str, Any]) -> None:
