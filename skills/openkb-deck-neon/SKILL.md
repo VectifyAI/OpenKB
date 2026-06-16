@@ -1,0 +1,226 @@
+---
+name: openkb-deck-neon
+description: |
+  Use when the user asks the openkb chat to make a deck / slide presentation /
+  PPT / slides / 演示稿 / 幻灯片 from their compiled KB content AND wants a
+  dark, high-tech, neon / glow / glassmorphism look (赛博 / 科技风 / 暗色 /
+  霓虹 / 炫酷). Generates a polished single-file HTML deck in the Aurora Glass
+  visual direction (near-black background, teal/sky/magenta/amber neon accents,
+  glassmorphism panels, aurora gradient atmosphere) — opened in a browser,
+  full-screened, shared. For the warm, printed, serif look use
+  openkb-deck-editorial instead. Does NOT apply to generating skills
+  (`openkb skill new`), research reports, or scrolling long-form documents.
+od:
+  mode: deck
+  output_path_template: "output/decks/{slug}/index.html"
+  deck_grammar:
+    kind_attr: data-type
+    required: [cover, closing]
+    allowed: [cover, chapter, thesis, quote, compare, data, closing]
+    min_distinct: 4
+    max_consecutive_same: 2
+---
+
+# Aurora Glass deck skill
+
+You are designing a presentation, not writing a research report. Each slide
+carries one idea. In this visual direction, **light, color and glow** organize
+the slide — dark canvas holds it, neon points the eye, glass adds depth.
+
+## How this skill is invoked
+
+The user typed something like "make a deck about X" (and asked for a dark /
+neon / 科技 look) inside `openkb chat`. You have wiki-read tools in your normal
+tool set, plus a `write_file` tool that can write under `output/**`, plus a
+tool to read this SKILL.md and files in `skills/openkb-deck-neon/` if needed.
+
+Pick a kebab-case slug (e.g. `okf-pitch`) and write the output to
+`output/decks/<slug>/index.html`.
+
+## Required output
+
+Exactly one file: `output/decks/<slug>/index.html`.
+
+It must be **self-contained**: NO external `<link rel="stylesheet">`, NO
+external `<script src>`, NO remote `<img>`, **and NO web fonts** (no Google
+Fonts link — that is an external link and breaks self-containment). All CSS in
+one inline `<style>`; the scale-to-fit script (§Frame) and keyboard-nav JS in
+one inline `<script>` at end of `<body>`. Use the local font stacks in §Type system — do not reach for Inter,
+Chakra Petch, Orbitron, or any `fonts.googleapis.com` import.
+
+The body is a sequence of `<section class="slide" data-type="...">` blocks;
+each `data-type` is one of the 7 values in §Slide grammar. Keyboard nav:
+← / → move between slides, `F` toggles fullscreen, `P` triggers print.
+
+## Design system: Aurora Glass
+
+Use this fixed design system. Do not improvise nearby colors, do not add a
+fifth accent hue, do not bring in emojis. Glow and gradient are allowed here
+(unlike the editorial skill) — but they are seasoning, not the meal.
+
+### Color palette
+
+```css
+:root {
+  --bg:      #080b11;  /* near-black blue — the canvas, never pure #000 */
+  --bg-elev: #0f141d;  /* raised surface / slide inner */
+  --ink:     #eef2f7;  /* primary text — body copy uses THIS, not muted */
+  --soft:    #aeb8c7;  /* secondary text */
+  --muted:   #69748a;  /* labels / folio / metadata */
+  --line:    rgba(255,255,255,.09);  /* hairline borders */
+  --glass:   rgba(255,255,255,.04);  /* glassmorphism fill */
+  --teal:    #2dd4bf;  /* PRIMARY accent */
+  --sky:     #38bdf8;  /* secondary accent */
+  --magenta: #e879f9;  /* tertiary accent */
+  --amber:   #f6b94b;  /* highlight / numbers-in-code only */
+}
+```
+
+These 4 neon hues + the neutrals are the **only** colors. No purple-on-white
+gradients, no rainbow, no per-slide recoloring.
+
+### Type system (local fonts only — NO web fonts)
+
+```css
+--font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+                "PingFang SC", "Microsoft YaHei", sans-serif; /* heavy weights */
+--font-mono:    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+                monospace;  /* labels, numbers, code, kickers */
+```
+
+Display titles use `--font-display` at weight 800 with `letter-spacing:-.02em`.
+The tech character here comes from **mono for every label / number / kicker /
+code**, not from a fancy downloaded display face.
+
+Type scale (size / line-height):
+* `--type-display`: 64px / 1.05  — cover/chapter big titles
+* `--type-title`:   40px / 1.12  — normal slide titles
+* `--type-body`:    19px / 1.6   — body copy (color: var(--ink))
+* `--type-quote`:   30px / 1.35  — pull quotes
+* `--type-label`:   11px / 1.0 / letter-spacing:.22em uppercase mono — tracks
+
+### Atmosphere (fixed background layers on every slide)
+
+1. **Aurora**: 3–4 blurred `radial-gradient`s in teal / sky / magenta / amber,
+   low alpha (.10–.16), `filter: blur(14px)`. Positioned off the title.
+2. **Grain**: an inline SVG `feTurbulence` noise data-URI at `opacity:.04`
+   (data-URI is inline, NOT an external image — allowed).
+3. Optional faint dot-grid via `radial-gradient` background, alpha < .06.
+
+These three layers are what stop the dark background from looking flat/cheap.
+
+### Frame (every slide)
+
+* **Fixed 16:9 stage that scales to fill the viewport.** Author every slide at
+  a fixed `1280×720` design size (so px-based type sizes stay predictable),
+  then scale the WHOLE deck to fit the window — never cap it with `max-width`:
+  ```css
+  html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)}
+  #stage{position:fixed;inset:0;display:grid;place-items:center}
+  .slide{width:1280px;height:720px;transform-origin:center;display:none}
+  .slide.active{display:flex}   /* flex/grid inside as the layout needs */
+  ```
+  ```js
+  const fit=()=>{const s=Math.min(innerWidth/1280,innerHeight/720);
+    document.querySelectorAll('.slide').forEach(el=>el.style.transform=`scale(${s})`);};
+  addEventListener('resize',fit); fit();
+  ```
+  Result: the deck letterbox-fills ANY window size and fullscreen — never a
+  small 1280px card stranded in a large viewport. One slide visible at a time;
+  ← / → swap the active slide (they do not scroll).
+* Padding: 64px top/bottom, 80px left/right.
+* **Visual signature:** a glowing 3px bar along the bottom edge, gradient
+  `teal → sky → magenta`, with `box-shadow:0 0 14px` of --teal. This is the
+  deck's signature — present on every slide.
+* Top label row (mono, --muted): left = chapter id ("CHAPTER 03"), right =
+  source mark. Cover/closing use "OPENKB" on the left instead.
+* Bottom folio row (mono): left = `N / Total`, right = source short label.
+
+### Glow & glass rules (read this — it is the #1 failure mode)
+
+* **Glow only the protagonist** of a slide: the display title, the one big
+  number, graph nodes. Body copy, labels, tables NEVER glow. A slide where
+  everything glows reads as blurry mush.
+* Glass (`--glass` fill + `backdrop-filter:blur(8px)` + 1px --line border +
+  subtle inset highlight) is for **compare columns and data cards only**.
+* Gradient text (teal→sky→magenta via `background-clip:text`) is reserved for
+  cover / chapter / closing big titles and `data` numbers — not for body.
+
+### Composition rules
+
+* Cover/chapter titles: `max-width:18ch`; never wrap an article onto its own line.
+* `data` slides center the big number (`align-items:center; text-align:center`);
+  all other types stay left-aligned.
+* Cover/closing bodies: `max-width:26em`.
+* Maintain contrast: body text is `--ink` on `--bg`. Never set body copy to
+  `--muted`/`--soft` as its main color — it disappears on dark. (Exception:
+  a `quote` slide's pull-quote is intentionally `--soft`, and `cover`/`closing`
+  subtitles may use `--soft` — these are the only body exceptions.)
+
+## Slide grammar (7 permitted `data-type` values)
+
+| `data-type` | Use | Neon signature |
+|---|---|---|
+| `cover`   | tag + huge gradient title + 1-line subtitle | strongest aurora; mono "OPENKB" top-left; gradient display title |
+| `chapter` | section divider: oversize number + name | number 120px mono, teal with glow; name 40px display |
+| `thesis`  | one claim + short explanation | title fills ~60% height; ONE keyword in teal+glow; rest --ink |
+| `quote`   | italic pull-quote + attribution | centered; left teal glowing vertical rule; quote in --soft |
+| `compare` | two-column comparison, 3–5 lines each | two glass panels; glowing teal vertical rule between them |
+| `data`    | one number + label + one-line read | number 120–160px gradient+glow; micro-copy 12px mono |
+| `closing` | mirrors cover; thanks / next step | same scale as cover; aurora dims toward calm |
+
+Cover/closing have no chapter context → top-left label is "OPENKB".
+
+## Working method
+
+1. **Survey first.** Use wiki-read tools to list `concepts/` and `summaries/`
+   and read `wiki/index.md`. Build a mental map before deciding the argument.
+2. **Choose a narrative arc.** One-line thesis, then an 8–12 step arc. Each
+   step → 1–2 slides, landing 8–15 slides total.
+3. **Read the relevant content.** For each concept the arc touches, read the
+   concept page; for cited documents read a targeted slice. **The deck is only
+   as expert as the source-reading you do here.** Generic restatements are a
+   failure mode — name a specific technique, number, or quote on each slide.
+4. **Outline slides** with concrete `data-type` assignments. Vary types — ≥4
+   distinct, no run of 3+ consecutive same type.
+5. **Write** `output/decks/<slug>/index.html` in one `write_file` call. Inline
+   all CSS, inline keyboard-nav JS, inline `<svg>` for any graphics, inline
+   noise as a data-URI. No external anything.
+6. **Revise** against §Failure modes; touch at least one slide if any match.
+7. **Self-check** the invariants below; fix anything failing.
+8. Report the deck path + a one-line summary of the arc.
+
+## Failure modes (negative checklist)
+
+1. **External fonts/assets** — any `fonts.googleapis.com`, `<script src>`,
+   `<link>`, or remote `<img>`. Breaks self-containment AND the deck validator.
+   Use the local stacks; the look does not depend on a downloaded font.
+2. **Glow soup** — more than the protagonist glowing. Body/labels/tables flat.
+3. **Low contrast** — body text in --muted/--soft on dark. Body is --ink.
+4. **Palette drift** — any hue outside teal/sky/magenta/amber + neutrals;
+   purple-gradient-on-white; emoji; per-slide recoloring.
+5. **Bullet dump** — >5 bullets. Cut to 3 or restructure into compare/data.
+6. **Wall of text** — slide body >~80 words. Cut or split.
+7. **Visual monotony** — 3+ consecutive slides of one `data-type`.
+8. **Decorative-only viz** — an SVG/graph that says nothing. If you draw a
+   graph, its nodes/edges must encode real concepts/links from the KB. In a
+   16:9 slide prefer a small, exact, hand-placed SVG over a fake "force layout".
+9. **Generic titles** — "Introduction"/"Background". Titles carry content.
+10. **Definition-grade content** — "X is Y where Y is…" with no named
+    technique, number, or source quote. Re-read sources (step 3) first.
+11. **Fixed-size card** — capping the deck with `max-width` so it sits as a
+    small 1280px card in a big window. Use the scale-to-fit stage (§Frame) so
+    it letterbox-fills any viewport and fullscreen.
+
+## Self-check (before reporting back)
+
+1. Does `output/decks/<slug>/index.html` exist with NO external
+   `<link>`/`<script src>`/web-font import/remote `<img>`?
+2. At least one `data-type="cover"` and one `data-type="closing"`?
+3. Total slide count between 8 and 15?
+4. At least 4 distinct `data-type` values, no run of 3+ same?
+5. Is body copy in `--ink` (readable on dark) — `quote` pull-quotes and
+   cover/closing subtitles in `--soft` being the only allowed exceptions — and
+   is glow limited to titles / big numbers / graph nodes only?
+
+If any answer is no, revise and re-run this self-check.
