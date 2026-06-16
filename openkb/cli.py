@@ -2261,8 +2261,10 @@ def deck():
     "--skill", "skill_name",
     metavar="SKILL_NAME",
     default=None,
+    # NOTE: 'openkb-deck-neon' below must stay in sync with
+    # DEFAULT_DECK_SKILL in openkb/deck/creator.py.
     help=(
-        "Which deck skill to use. Defaults to 'openkb-deck-editorial' "
+        "Which deck skill to use. Defaults to 'openkb-deck-neon' "
         "(the built-in). Pass e.g. 'deck-guizang-editorial' to route to "
         "a third-party skill installed under ~/.openkb/skills/."
     ),
@@ -2341,7 +2343,8 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
 
     # Run the generator.
     from openkb.skill.generator import Generator
-    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    from openkb.deck.creator import DEFAULT_DECK_SKILL
+    skill_label = skill_name if skill_name else f"{DEFAULT_DECK_SKILL} (default)"
     click.echo(f"Generating deck '{name}' via skill {skill_label}...")
     gen = Generator(
         target_type="deck",
