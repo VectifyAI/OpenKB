@@ -659,7 +659,7 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.skill.generator import Generator
-    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    skill_label = skill_name if skill_name else "openkb-deck-neon (default)"
     _fmt(
         style,
         ("class:slash.help", f"Generating deck '{name}' via skill {skill_label}...\n"),

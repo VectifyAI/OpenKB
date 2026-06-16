@@ -1,7 +1,7 @@
 """Thin CLI/Generator wrapper around any deck-producing skill.
 
 The actual deck generation lives in skill packages — by default
-``skills/openkb-deck-editorial/SKILL.md``, but the caller may pass
+``skills/openkb-deck-neon/SKILL.md``, but the caller may pass
 ``skill_name`` to route to a different one (e.g.
 ``deck-guizang-editorial`` from open-design). Skill execution runs
 through :func:`openkb.agent.skill_runner.run_skill`, which also handles
@@ -29,7 +29,7 @@ from openkb.agent.skill_runner import (
 from openkb.deck import deck_dir
 
 
-DEFAULT_DECK_SKILL = "openkb-deck-editorial"
+DEFAULT_DECK_SKILL = "openkb-deck-neon"
 """Skill name routed to when the CLI / chat doesn't pass ``--skill``."""
 
 CRITIC_SKILL = "openkb-html-critic"
@@ -52,7 +52,7 @@ async def run_deck_create(
 
     Args:
         skill_name: Which deck skill to run. Defaults to the built-in
-            ``openkb-deck-editorial``. Pass ``"deck-guizang-editorial"``
+            ``openkb-deck-neon``. Pass ``"deck-guizang-editorial"``
             etc. to route to a third-party skill installed under
             ``~/.openkb/skills/``.
 

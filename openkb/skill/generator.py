@@ -69,7 +69,7 @@ class Generator:
         """Args:
             skill_name: For ``target_type="deck"``, which deck skill to use.
                 Defaults to :data:`openkb.deck.creator.DEFAULT_DECK_SKILL`
-                (``"openkb-deck-editorial"``). Ignored for skill target.
+                (``"openkb-deck-neon"``). Ignored for skill target.
         """
         if target_type not in ("skill", "deck"):
             raise ValueError(
