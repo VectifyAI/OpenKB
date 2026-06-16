@@ -44,8 +44,8 @@ Exactly one file: `output/decks/<slug>/index.html`.
 It must be **self-contained**: NO external `<link rel="stylesheet">`, NO
 external `<script src>`, NO remote `<img>`, **and NO web fonts** (no Google
 Fonts link — that is an external link and breaks self-containment). All CSS in
-one inline `<style>`; the scale-to-fit script (§Frame) and keyboard-nav JS in
-one inline `<script>` at end of `<body>`. Use the local font stacks in §Type system — do not reach for Inter,
+one inline `<style>`; keyboard-nav JS in one inline `<script>` at end of
+`<body>` (no scaling script needed — CSS fills the viewport). Use the local font stacks in §Type system — do not reach for Inter,
 Chakra Petch, Orbitron, or any `fonts.googleapis.com` import.
 
 The body is a sequence of `<section class="slide" data-type="...">` blocks;
@@ -92,12 +92,13 @@ Display titles use `--font-display` at weight 800 with `letter-spacing:-.02em`.
 The tech character here comes from **mono for every label / number / kicker /
 code**, not from a fancy downloaded display face.
 
-Type scale (size / line-height):
-* `--type-display`: 64px / 1.05  — cover/chapter big titles
-* `--type-title`:   40px / 1.12  — normal slide titles
-* `--type-body`:    19px / 1.6   — body copy (color: var(--ink))
-* `--type-quote`:   30px / 1.35  — pull quotes
-* `--type-label`:   11px / 1.0 / letter-spacing:.22em uppercase mono — tracks
+Type scale — use `clamp()` so type scales with the viewport (fixed px look tiny
+on a 2560px screen). vw drives the middle value; the rem caps keep it sane:
+* `--type-display`: clamp(2.8rem, 5.2vw, 5.5rem) / 1.05  — cover/chapter titles
+* `--type-title`:   clamp(1.9rem, 3.2vw, 3rem)    / 1.12 — normal slide titles
+* `--type-body`:    clamp(1.05rem, 1.4vw, 1.4rem) / 1.6  — body copy (var(--ink))
+* `--type-quote`:   clamp(1.6rem, 2.6vw, 2.2rem)  / 1.35 — pull quotes
+* `--type-label`:   clamp(.66rem, .8vw, .8rem) / .22em uppercase mono — tracks
 
 ### Atmosphere (fixed background layers on every slide)
 
@@ -111,24 +112,24 @@ These three layers are what stop the dark background from looking flat/cheap.
 
 ### Frame (every slide)
 
-* **Fixed 16:9 stage that scales to fill the viewport.** Author every slide at
-  a fixed `1280×720` design size (so px-based type sizes stay predictable),
-  then scale the WHOLE deck to fit the window — never cap it with `max-width`:
+* **Every slide fills the entire viewport — edge to edge, no letterbox, no
+  fixed card.** The slide IS the window; design for a wide canvas and let
+  flexbox + `clamp()` sizing adapt to any window ratio:
   ```css
   html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)}
-  #stage{position:fixed;inset:0;display:grid;place-items:center}
-  .slide{width:1280px;height:720px;transform-origin:center;display:none}
-  .slide.active{display:flex}   /* flex/grid inside as the layout needs */
+  .slide{position:fixed;inset:0;display:none;flex-direction:column;
+    justify-content:center;
+    padding:clamp(40px,5vh,72px) clamp(56px,5vw,128px)}
+  .slide.active{display:flex}
   ```
-  ```js
-  const fit=()=>{const s=Math.min(innerWidth/1280,innerHeight/720);
-    document.querySelectorAll('.slide').forEach(el=>el.style.transform=`scale(${s})`);};
-  addEventListener('resize',fit); fit();
-  ```
-  Result: the deck letterbox-fills ANY window size and fullscreen — never a
-  small 1280px card stranded in a large viewport. One slide visible at a time;
-  ← / → swap the active slide (they do not scroll).
-* Padding: 64px top/bottom, 80px left/right.
+  No scaling/transform tricks — CSS alone fills the viewport. On an ultrawide
+  window the slide is simply wider than 16:9; content reflows and the dark
+  background + aurora bleed to all four edges — never a centered card with dark
+  side-bands. One slide visible at a time; ← / → swap the active slide, `F`
+  fullscreen, `P` print (they do not scroll).
+* The aurora, dot-grid, top label row and the bottom signature bar all span the
+  FULL viewport width (they live on `.slide`, which is the whole window). Inner
+  padding uses the `clamp()` values above so content breathes on any size.
 * **Visual signature:** a glowing 3px bar along the bottom edge, gradient
   `teal → sky → magenta`, with `box-shadow:0 0 14px` of --teal. This is the
   deck's signature — present on every slide.
@@ -148,10 +149,21 @@ These three layers are what stop the dark background from looking flat/cheap.
 
 ### Composition rules
 
-* Cover/chapter titles: `max-width:18ch`; never wrap an article onto its own line.
-* `data` slides center the big number (`align-items:center; text-align:center`);
-  all other types stay left-aligned.
-* Cover/closing bodies: `max-width:26em`.
+* **Wrap each slide's content in one `.inner` block with an EXPLICIT
+  `max-width`.** This is mandatory under fill-viewport — without it a centered
+  box sizes to `min-content` and collapses into a narrow sliver on a wide
+  screen (the #1 bug). Never let a content box use `min-content`/`fit-content`.
+  * Left-aligned types (cover/chapter/thesis/closing): `.inner{
+    max-width:min(60ch,62vw); margin-right:auto}` — hugs the left.
+  * Centered types (`data`, `quote`): `.inner{max-width:min(840px,80vw);
+    margin:0 auto; text-align:center}`.
+  * `compare`: `.inner{max-width:min(1100px,88vw); margin:0 auto;
+    display:grid; grid-template-columns:1fr 1fr; gap:clamp(24px,3vw,56px)}`
+    with the glowing teal rule between columns.
+* `data` big number: `white-space:nowrap` (so `93.1%` never wraps) at
+  `clamp(3.5rem,11vh,9rem)`; body beneath stays centered in the SAME `.inner`
+  as a readable ~3-line paragraph — never a 3-word column.
+* Cover/chapter titles never wrap an article ("the"/"an"/"to") onto its own line.
 * Maintain contrast: body text is `--ink` on `--bg`. Never set body copy to
   `--muted`/`--soft` as its main color — it disappears on dark. (Exception:
   a `quote` slide's pull-quote is intentionally `--soft`, and `cover`/`closing`
@@ -203,14 +215,22 @@ Cover/closing have no chapter context → top-left label is "OPENKB".
 6. **Wall of text** — slide body >~80 words. Cut or split.
 7. **Visual monotony** — 3+ consecutive slides of one `data-type`.
 8. **Decorative-only viz** — an SVG/graph that says nothing. If you draw a
-   graph, its nodes/edges must encode real concepts/links from the KB. In a
-   16:9 slide prefer a small, exact, hand-placed SVG over a fake "force layout".
+   graph, its nodes/edges must encode real concepts/links from the KB. On a
+   single slide prefer a small, exact, hand-placed SVG over a fake "force layout".
 9. **Generic titles** — "Introduction"/"Background". Titles carry content.
 10. **Definition-grade content** — "X is Y where Y is…" with no named
     technique, number, or source quote. Re-read sources (step 3) first.
-11. **Fixed-size card** — capping the deck with `max-width` so it sits as a
-    small 1280px card in a big window. Use the scale-to-fit stage (§Frame) so
-    it letterbox-fills any viewport and fullscreen.
+11. **Letterbox / fixed-size card** — capping the slide with `max-width` or a
+    fixed `1280×720` box, leaving dark side-bands on a wide window. Slides are
+    `position:fixed;inset:0` and fill the viewport edge-to-edge (§Frame).
+12. **Collapsed content column** — a centered / `data` box sizing to
+    `min-content` or a tiny `max-width`, squashing text into a narrow sliver on
+    a wide screen (and breaking big numbers). Wrap content in an `.inner` with
+    an explicit `max-width` (§Composition); big numbers `white-space:nowrap`.
+13. **Invalid SVG sizing** — `height="auto"` written as an SVG *attribute*
+    (invalid; fires a console error). Give inline SVG a `viewBox` and size it
+    with CSS (`width:100%;height:auto` in a `style`) or fixed `width`/`height`
+    attributes — never `height="auto"` as an attribute.
 
 ## Self-check (before reporting back)
 
@@ -222,5 +242,9 @@ Cover/closing have no chapter context → top-left label is "OPENKB".
 5. Is body copy in `--ink` (readable on dark) — `quote` pull-quotes and
    cover/closing subtitles in `--soft` being the only allowed exceptions — and
    is glow limited to titles / big numbers / graph nodes only?
+6. Do slides fill the viewport edge-to-edge (`position:fixed;inset:0`, no
+   `max-width` / fixed `1280px` box, no letterbox side-bands)?
+7. Is content wrapped in an `.inner` with an explicit `max-width` — no narrow
+   sliver / `min-content` collapse, and big numbers `white-space:nowrap`?
 
 If any answer is no, revise and re-run this self-check.
