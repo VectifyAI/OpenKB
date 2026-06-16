@@ -149,25 +149,40 @@ These three layers are what stop the dark background from looking flat/cheap.
 
 ### Composition rules
 
-* **Wrap each slide's content in one `.inner` block with an EXPLICIT
-  `max-width`.** This is mandatory under fill-viewport — without it a centered
-  box sizes to `min-content` and collapses into a narrow sliver on a wide
-  screen (the #1 bug). Never let a content box use `min-content`/`fit-content`.
-  * Left-aligned types (cover/chapter/thesis/closing): `.inner{
-    max-width:min(60ch,62vw); margin-right:auto}` — hugs the left.
-  * Centered types (`data`, `quote`): `.inner{max-width:min(840px,80vw);
-    margin:0 auto; text-align:center}`.
-  * `compare`: `.inner{max-width:min(1100px,88vw); margin:0 auto;
-    display:grid; grid-template-columns:1fr 1fr; gap:clamp(24px,3vw,56px)}`
-    with the glowing teal rule between columns.
-* `data` big number: `white-space:nowrap` (so `93.1%` never wraps) at
-  `clamp(3.5rem,11vh,9rem)`; body beneath stays centered in the SAME `.inner`
-  as a readable ~3-line paragraph — never a 3-word column.
+**Use the WHOLE canvas — never a left sliver with a big empty right half.**
+This is the #1 layout failure under fill-viewport. Every slide must span the
+width via ONE of these (vary them across the deck):
+
+* **Split** — default for `thesis` / `chapter` / `closing` (and `cover` when it
+  has a visual). A 2-column grid that fills the slide:
+  `.inner{display:grid; grid-template-columns:1.05fr .95fr;
+  gap:clamp(40px,5vw,96px); align-items:center; width:100%;
+  max-width:min(1600px,92vw); margin:0 auto}`. Text in one column; a
+  **first-class VISUAL in the other** — inline-SVG diagram, node/flow sketch,
+  big labeled stat, or schema table — sized `width:100%` to fill its column,
+  NEVER a thumbnail in a corner.
+* **Full-bleed headline** — `cover`, big `thesis`. The gradient display title
+  spans ~70vw across the upper canvas; subtitle + a thin full-width detail row
+  (kicker / stat strip / row of chips) beneath. The title fills the width, so
+  there is no right-hand void.
+* **Centered focus** — `data`, `quote`. `.inner{max-width:min(900px,72vw);
+  margin:0 auto; text-align:center}` with SYMMETRIC breathing room on both
+  sides (never one-sided dead space).
+* **`compare`** — `.inner{max-width:min(1180px,90vw); margin:0 auto;
+  display:grid; grid-template-columns:1fr 1fr; gap:clamp(24px,3vw,56px)}`, with
+  the glowing teal rule between columns.
+
+**Per-slide self-test: is there a large empty right half? Then the layout is
+wrong** — widen the headline, add the visual column, or center it. The closing
+diagram, compare columns, and any flow/graph MUST fill their region, never
+shrink to a corner. Never size a content box to `min-content`/`fit-content`
+(collapses to a sliver).
+
+* `data` big number: `white-space:nowrap` at `clamp(3.5rem,11vh,9rem)`; body
+  beneath centered in the same `.inner` as a readable ~3-line paragraph.
 * Cover/chapter titles never wrap an article ("the"/"an"/"to") onto its own line.
-* Maintain contrast: body text is `--ink` on `--bg`. Never set body copy to
-  `--muted`/`--soft` as its main color — it disappears on dark. (Exception:
-  a `quote` slide's pull-quote is intentionally `--soft`, and `cover`/`closing`
-  subtitles may use `--soft` — these are the only body exceptions.)
+* Contrast: body is `--ink` on `--bg`; never body copy in `--muted`/`--soft`
+  (exception: `quote` pull-quotes and cover/closing subtitles may be `--soft`).
 
 ## Slide grammar (7 permitted `data-type` values)
 
@@ -231,6 +246,9 @@ Cover/closing have no chapter context → top-left label is "OPENKB".
     (invalid; fires a console error). Give inline SVG a `viewBox` and size it
     with CSS (`width:100%;height:auto` in a `style`) or fixed `width`/`height`
     attributes — never `height="auto"` as an attribute.
+14. **Left sliver / right void** — content crammed into a left column with a
+    large empty right half (the worst look). Use a split / full-bleed / centered
+    layout (§Composition) so the right half is content or symmetric space.
 
 ## Self-check (before reporting back)
 
@@ -246,5 +264,7 @@ Cover/closing have no chapter context → top-left label is "OPENKB".
    `max-width` / fixed `1280px` box, no letterbox side-bands)?
 7. Is content wrapped in an `.inner` with an explicit `max-width` — no narrow
    sliver / `min-content` collapse, and big numbers `white-space:nowrap`?
+8. Does every slide use the full width (split / full-bleed / centered) with NO
+   large empty right half, and do text-heavy slides carry a visual?
 
 If any answer is no, revise and re-run this self-check.
