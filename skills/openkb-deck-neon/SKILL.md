@@ -184,8 +184,15 @@ diagram, compare columns, and any flow/graph MUST fill their region, never
 shrink to a corner. Never size a content box to `min-content`/`fit-content`
 (collapses to a sliver).
 
-* `data` big number: `white-space:nowrap` at `clamp(3.5rem,11vh,9rem)`; body
-  beneath centered in the same `.inner` as a readable ~3-line paragraph.
+* `data` big number: give it its OWN width — `display:inline-block;
+  width:max-content; max-width:92vw; white-space:nowrap; margin:0 auto` — so it
+  is NOT clipped by the `.inner` text column, and (with `background-clip:text`)
+  the gradient covers the WHOLE string instead of stopping at the column edge
+  and leaving the last char unpainted/smeared under the glow. Size a SINGLE
+  number with `clamp(3.5rem,11vh,9rem)`; a COMPARISON number (`A → B`, `A vs B`)
+  is far wider — drop it to `clamp(2.4rem,7vh,5.5rem)` and keep the whole string
+  (incl. the trailing `%`) inside 92vw, never overflowing. Body beneath stays
+  centered in the `.inner` as a readable ~3-line paragraph.
 * Cover/chapter titles never wrap an article ("the"/"an"/"to") onto its own line.
 * Contrast: body is `--ink` on `--bg`; never body copy in `--muted`/`--soft`
   (exception: `quote` pull-quotes and cover/closing subtitles may be `--soft`).
@@ -199,7 +206,7 @@ shrink to a corner. Never size a content box to `min-content`/`fit-content`
 | `thesis`  | one claim + short explanation | title fills ~60% height; ONE keyword in teal+glow; rest --ink |
 | `quote`   | italic pull-quote + attribution | centered; left teal glowing vertical rule; quote in --soft |
 | `compare` | two-column comparison, 3–5 lines each | two glass panels; glowing teal vertical rule between them |
-| `data`    | one number + label + one-line read | number `clamp(3.5rem,11vh,9rem)` gradient+glow (per §Composition); micro-copy in `--type-label` |
+| `data`    | one number + label + one-line read | single number `clamp(3.5rem,11vh,9rem)`; comparison `A → B` `clamp(2.4rem,7vh,5.5rem)`; `width:max-content;max-width:92vw` (per §Composition); micro-copy in `--type-label` |
 | `closing` | mirrors cover; thanks / next step | same scale as cover; aurora dims toward calm |
 
 Cover/closing have no chapter context → top-left label is "OPENKB".
@@ -255,6 +262,11 @@ Cover/closing have no chapter context → top-left label is "OPENKB".
 14. **Left sliver / right void** — content crammed into a left column with a
     large empty right half (the worst look). Use a split / full-bleed / centered
     layout (§Composition) so the right half is content or symmetric space.
+15. **Overflowing big number** — a `data` comparison number (`A → B`/`A vs B`)
+    at the single-number font size overruns its container; the trailing `%`
+    falls outside the `background-clip:text` gradient and smears under the glow.
+    Give the number `width:max-content; max-width:92vw` and the smaller
+    comparison font size (§Composition).
 
 ## Self-check (before reporting back)
 
