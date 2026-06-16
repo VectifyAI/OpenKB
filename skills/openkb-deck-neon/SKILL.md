@@ -98,7 +98,7 @@ on a 2560px screen). vw drives the middle value; the rem caps keep it sane:
 * `--type-title`:   clamp(1.9rem, 3.2vw, 3rem)    / 1.12 — normal slide titles
 * `--type-body`:    clamp(1.05rem, 1.4vw, 1.4rem) / 1.6  — body copy (var(--ink))
 * `--type-quote`:   clamp(1.6rem, 2.6vw, 2.2rem)  / 1.35 — pull quotes
-* `--type-label`:   clamp(.66rem, .8vw, .8rem) / .22em uppercase mono — tracks
+* `--type-label`:   size `clamp(.66rem,.8vw,.8rem)`, `letter-spacing:.22em`, uppercase, mono — label tracks
 
 ### Atmosphere (fixed background layers on every slide)
 
@@ -130,6 +130,12 @@ These three layers are what stop the dark background from looking flat/cheap.
 * The aurora, dot-grid, top label row and the bottom signature bar all span the
   FULL viewport width (they live on `.slide`, which is the whole window). Inner
   padding uses the `clamp()` values above so content breathes on any size.
+* **One screen, no scroll — content MUST fit the viewport height.** With
+  `overflow:hidden` + `justify-content:center`, a slide taller than the window
+  is clipped at BOTH top and bottom and is unreachable. Stay within the
+  bullet/word caps (§Failure modes), lean on the `vh` terms in the type scale so
+  text shrinks on short viewports, and if a slide would overflow, CUT content —
+  never let it clip.
 * **Visual signature:** a glowing 3px bar along the bottom edge, gradient
   `teal → sky → magenta`, with `box-shadow:0 0 14px` of --teal. This is the
   deck's signature — present on every slide.
@@ -189,11 +195,11 @@ shrink to a corner. Never size a content box to `min-content`/`fit-content`
 | `data-type` | Use | Neon signature |
 |---|---|---|
 | `cover`   | tag + huge gradient title + 1-line subtitle | strongest aurora; mono "OPENKB" top-left; gradient display title |
-| `chapter` | section divider: oversize number + name | number 120px mono, teal with glow; name 40px display |
+| `chapter` | section divider: oversize number + name | number `clamp(4rem,12vh,9rem)` mono, teal with glow; name in `--type-display` |
 | `thesis`  | one claim + short explanation | title fills ~60% height; ONE keyword in teal+glow; rest --ink |
 | `quote`   | italic pull-quote + attribution | centered; left teal glowing vertical rule; quote in --soft |
 | `compare` | two-column comparison, 3–5 lines each | two glass panels; glowing teal vertical rule between them |
-| `data`    | one number + label + one-line read | number 120–160px gradient+glow; micro-copy 12px mono |
+| `data`    | one number + label + one-line read | number `clamp(3.5rem,11vh,9rem)` gradient+glow (per §Composition); micro-copy in `--type-label` |
 | `closing` | mirrors cover; thanks / next step | same scale as cover; aurora dims toward calm |
 
 Cover/closing have no chapter context → top-left label is "OPENKB".
