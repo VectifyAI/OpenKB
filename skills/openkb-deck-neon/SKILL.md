@@ -164,9 +164,17 @@ width via ONE of these (vary them across the deck):
   `.inner{display:grid; grid-template-columns:1.05fr .95fr;
   gap:clamp(40px,5vw,96px); align-items:center; width:100%;
   max-width:min(1600px,92vw); margin:0 auto}`. Text in one column; a
-  **first-class VISUAL in the other** — inline-SVG diagram, node/flow sketch,
-  big labeled stat, or schema table — sized `width:100%` to fill its column,
-  NEVER a thumbnail in a corner.
+  **first-class VISUAL in the other** — a big labeled stat, a schema/spec
+  table, stacked labeled cards, or a simple diagram — sized `width:100%` to
+  fill its column, NEVER a thumbnail in a corner.
+  **Build the visual with HTML + CSS (flex/grid); put every label in its own
+  HTML box** so boxes auto-wrap and auto-space and never collide. Do NOT put
+  text in `<svg><text>` — SVG text does not wrap or reflow, so multiple labels
+  in a narrow column overlap into an unreadable smear. Use SVG ONLY for
+  lines / arrows / shapes between the HTML boxes (or skip SVG). Keep it to ≤4
+  nodes/cards with SHORT labels (node ≤2 words, caption ≤4 words); if labels run
+  long or there are many, use a VERTICAL stack of full-width rows, never a
+  cramped horizontal graph.
 * **Full-bleed headline** — `cover`, big `thesis`. The gradient display title
   spans ~70vw across the upper canvas; subtitle + a thin full-width detail row
   (kicker / stat strip / row of chips) beneath. The title fills the width, so
@@ -267,6 +275,10 @@ Cover/closing have no chapter context → top-left label is "OPENKB".
     falls outside the `background-clip:text` gradient and smears under the glow.
     Give the number `width:max-content; max-width:92vw` and the smaller
     comparison font size (§Composition).
+16. **Overlapping diagram labels** — text placed in `<svg><text>` (which never
+    wraps) so multiple labels in the narrow visual column collide into a smear.
+    Build the visual in HTML/CSS with each label in its own auto-spaced box;
+    use SVG for lines/shapes only, ≤4 nodes, short labels (§Composition).
 
 ## Self-check (before reporting back)
 
