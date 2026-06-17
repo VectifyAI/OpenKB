@@ -15,7 +15,7 @@ def _yaml_frontmatter(source_name: str, doc_id: str, description: str = "") -> s
     if description:
         lines.append(_yaml_kv_line("description", description))
     lines.append("doc_type: pageindex")
-    lines.append(f"full_text: sources/{source_name}.json")
+    lines.append(_yaml_kv_line("full_text", f"sources/{source_name}.json"))
     return "---\n" + "\n".join(lines) + "\n---\n"
 
 

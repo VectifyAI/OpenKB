@@ -511,9 +511,11 @@ def find_missing_okf_fields(wiki: Path) -> list[str]:
                         fm = None
             fm = fm if isinstance(fm, dict) else {}
             rel = path.relative_to(wiki)
-            if not str(fm.get("type") or "").strip():
+            type_val = fm.get("type")
+            if not (isinstance(type_val, str) and type_val.strip()):
                 issues.append(f"{rel}: missing non-empty 'type'")
-            if not str(fm.get("description") or "").strip():
+            desc_val = fm.get("description")
+            if not (isinstance(desc_val, str) and desc_val.strip()):
                 issues.append(f"{rel}: missing non-empty 'description'")
     return issues
 

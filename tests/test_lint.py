@@ -675,3 +675,12 @@ def test_flags_null_type_as_missing(tmp_path):
         '---\ntype: null\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
     issues = find_missing_okf_fields(wiki)
     assert any("null_type.md" in i and "type" in i for i in issues)
+
+
+def test_flags_non_string_type_as_missing(tmp_path):
+    wiki = tmp_path / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "concepts" / "bool_type.md").write_text(
+        '---\ntype: true\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+    issues = find_missing_okf_fields(wiki)
+    assert any("bool_type.md" in i and "type" in i for i in issues)

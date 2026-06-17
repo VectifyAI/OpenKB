@@ -343,3 +343,5 @@ def test_compile_long_doc_backfills_summary_frontmatter(tmp_path):
     text = summary_path.read_text(encoding="utf-8")
     assert 'type: "Summary"' in text
     assert 'description: "A long report."' in text
+    # canonical order: type before description
+    assert text.index('type:') < text.index('description:')

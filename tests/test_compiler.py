@@ -209,7 +209,7 @@ class TestWriteSummary:
         assert 'type: "Summary"' in text
         assert 'description: "A one-line summary."' in text
         assert "doc_type: short" in text
-        assert "full_text: sources/my-doc.md" in text
+        assert 'full_text: "sources/my-doc.md"' in text
         assert "# Summary" in text
 
     def test_omits_description_when_empty(self, tmp_path):
@@ -773,6 +773,12 @@ class TestWriteEntity:
         assert "Old brief." not in text
         assert 'description: "New desc."' in text
 
+    def test_entity_type_multiword_title_cased(self, tmp_path):
+        _write_entity(tmp_path, "acme", "# Acme\n\nx.", "summaries/a.md",
+                      is_update=False, brief="b", type_="real estate")
+        text = (tmp_path / "entities" / "acme.md").read_text(encoding="utf-8")
+        assert 'type: "Real Estate"' in text
+
 
 class TestBacklinkSummary:
     def test_adds_missing_concept_links(self, tmp_path):
@@ -1063,7 +1069,7 @@ class TestCompileShortDoc:
         summary_path = wiki / "summaries" / "test-doc.md"
         assert summary_path.exists()
         summary_text = summary_path.read_text()
-        assert "full_text: sources/test-doc.md" in summary_text
+        assert 'full_text: "sources/test-doc.md"' in summary_text
         assert 'type: "Summary"' in summary_text
         # Summary body comes from the rewrite step
         assert "[[concepts/transformer]]" in summary_text
@@ -1741,7 +1747,7 @@ class TestBriefIntegration:
         # Summary frontmatter has doc_type and full_text
         summary_text = (wiki / "summaries" / "test-doc.md").read_text()
         assert "doc_type: short" in summary_text
-        assert "full_text: sources/test-doc.md" in summary_text
+        assert 'full_text: "sources/test-doc.md"' in summary_text
 
         # Concept frontmatter has type and description
         concept_text = (wiki / "concepts" / "transformer.md").read_text()

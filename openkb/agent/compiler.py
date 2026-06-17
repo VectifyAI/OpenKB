@@ -783,7 +783,7 @@ def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
     if description:
         fm_lines.append(_yaml_kv_line("description", description))
     fm_lines.append(f"doc_type: {doc_type}")
-    fm_lines.append(f"full_text: sources/{doc_name}.{ext}")
+    fm_lines.append(_yaml_kv_line("full_text", f"sources/{doc_name}.{ext}"))
     frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
@@ -917,7 +917,7 @@ def _write_entity(
 
     def _build_frontmatter(sources: list[str]) -> str:
         fm_lines = [_yaml_list_line("sources", sources)]
-        fm_lines.append(_yaml_kv_line("type", (type_ or "other").capitalize()))
+        fm_lines.append(_yaml_kv_line("type", (type_ or "other").title()))
         if brief:
             fm_lines.append(_yaml_kv_line("description", brief))
         if aliases:
@@ -932,7 +932,7 @@ def _write_entity(
         if end != -1:
             fm = existing[:end + 3]
             fm = _set_fm_line(fm, "description", brief) if brief else fm
-            fm = _set_fm_line(fm, "type", type_.capitalize()) if type_ else fm
+            fm = _set_fm_line(fm, "type", type_.title()) if type_ else fm
             # Drop any legacy ``brief:`` key (migrated to ``description:``),
             # mirroring _write_concept's update path.
             fm = re.sub(r"^brief:.*\n?", "", fm, flags=re.MULTILINE)
@@ -2055,17 +2055,21 @@ async def compile_long_doc(
     schema_md = get_agents_md(wiki_dir)
     summary_content = summary_path.read_text(encoding="utf-8")
 
-    # Backfill OKF fields on the indexer-written summary (idempotent).
+    # Backfill OKF fields on the indexer-written summary. Idempotent: set
+    # description before type so that when both keys are missing the prepends
+    # leave `type` first (canonical order); only rewrite when content changed.
     if summary_content.startswith("---"):
         fm_end = summary_content.find("---", 3)
         if fm_end != -1:
             fm = summary_content[:fm_end + 3]
             body = summary_content[fm_end + 3:]
-            fm = _set_fm_line(fm, "type", "Summary")
             if doc_description:
                 fm = _set_fm_line(fm, "description", doc_description)
-            summary_content = fm + body
-            summary_path.write_text(summary_content, encoding="utf-8")
+            fm = _set_fm_line(fm, "type", "Summary")
+            updated = fm + body
+            if updated != summary_content:
+                summary_content = updated
+                summary_path.write_text(summary_content, encoding="utf-8")
 
     # Base context A. cache_control marker on the doc message creates a
     # cache breakpoint covering (system + doc) for every concept call.
