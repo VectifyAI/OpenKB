@@ -2052,6 +2052,18 @@ async def compile_long_doc(
     schema_md = get_agents_md(wiki_dir)
     summary_content = summary_path.read_text(encoding="utf-8")
 
+    # Backfill OKF fields on the indexer-written summary (idempotent).
+    if summary_content.startswith("---"):
+        fm_end = summary_content.find("---", 3)
+        if fm_end != -1:
+            fm = summary_content[:fm_end + 3]
+            body = summary_content[fm_end + 3:]
+            fm = _set_fm_line(fm, "type", "Summary")
+            if doc_description:
+                fm = _set_fm_line(fm, "description", doc_description)
+            summary_content = fm + body
+            summary_path.write_text(summary_content, encoding="utf-8")
+
     # Base context A. cache_control marker on the doc message creates a
     # cache breakpoint covering (system + doc) for every concept call.
     system_msg = {"role": "system", "content": _SYSTEM_TEMPLATE.format(
