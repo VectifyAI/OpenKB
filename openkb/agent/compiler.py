@@ -180,7 +180,7 @@ Write the entity page for: {title} (type: {type})
 This entity relates to the document "{doc_name}" summarized above.
 
 Return a JSON object with three keys:
-- "brief": A single sentence (under 100 chars) identifying this entity
+- "description": A single sentence (under 100 chars) identifying this entity
 - "type": one of __ENTITY_TYPES__
 - "content": The full entity page in Markdown — what this entity is, the key
   facts about it from this document, and [[wikilinks]] to related concepts,
@@ -202,7 +202,7 @@ existing structure and intent. Follow the whitelist rules from the message
 above for all [[wikilinks]].
 
 Return a JSON object with three keys:
-- "brief": A single sentence (under 100 chars) identifying this entity
+- "description": A single sentence (under 100 chars) identifying this entity
 - "type": one of __ENTITY_TYPES__
 - "content": The rewritten full entity page in Markdown
 
@@ -597,10 +597,13 @@ def _read_entity_briefs(wiki_dir: Path) -> str:
                 except yaml.YAMLError:
                     fm = None
                 if isinstance(fm, dict):
-                    if isinstance(fm.get("brief"), str):
-                        brief = fm["brief"].strip()
+                    desc = fm.get("description")
+                    if not isinstance(desc, str):
+                        desc = fm.get("brief")  # legacy, pre-migration pages
+                    if isinstance(desc, str):
+                        brief = desc.strip()
                     if isinstance(fm.get("type"), str):
-                        etype = fm["type"].strip() or "other"
+                        etype = fm["type"].strip().lower() or "other"
                     if isinstance(fm.get("sources"), list):
                         n_sources = len(fm["sources"])
         if not brief:
@@ -885,8 +888,8 @@ def _write_entity(
     """Write or update an entity page in entities/, managing frontmatter.
 
     Frontmatter fields: ``sources`` (list), ``type`` (one of the entity
-    enum), ``brief`` (one-liner), and optional ``aliases`` (list, omitted
-    when empty). On update the new source is prepended and the body replaced
+    enum, capitalized on write), ``description`` (one-liner), and optional
+    ``aliases`` (list, omitted when empty). On update the new source is prepended and the body replaced
     with the LLM rewrite; ``type`` is preserved from the new write.
     """
     entities_dir = wiki_dir / "entities"
@@ -906,9 +909,9 @@ def _write_entity(
 
     def _build_frontmatter(sources: list[str]) -> str:
         fm_lines = [_yaml_list_line("sources", sources)]
-        fm_lines.append(_yaml_kv_line("type", type_ or "other"))
+        fm_lines.append(_yaml_kv_line("type", (type_ or "other").capitalize()))
         if brief:
-            fm_lines.append(_yaml_kv_line("brief", brief))
+            fm_lines.append(_yaml_kv_line("description", brief))
         if aliases:
             fm_lines.append(_yaml_list_line("aliases", aliases))
         return "---\n" + "\n".join(fm_lines) + "\n---\n\n"
@@ -920,8 +923,8 @@ def _write_entity(
         end = existing.find("---", 3) if existing.startswith("---") else -1
         if end != -1:
             fm = existing[:end + 3]
-            fm = _set_fm_line(fm, "brief", brief) if brief else fm
-            fm = _set_fm_line(fm, "type", type_) if type_ else fm
+            fm = _set_fm_line(fm, "description", brief) if brief else fm
+            fm = _set_fm_line(fm, "type", type_.capitalize()) if type_ else fm
             existing = fm + "\n\n" + clean
         else:
             # Malformed/absent frontmatter (opening ``---`` with no closing
@@ -1690,7 +1693,7 @@ async def _compile_concepts(
             ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
-            brief = parsed.get("brief", "")
+            brief = parsed.get("description", "")
             etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             content = parsed.get("content") or ""
@@ -1727,7 +1730,7 @@ async def _compile_concepts(
             ], f"entity-update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
-            brief = parsed.get("brief", "")
+            brief = parsed.get("description", "")
             etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             content = parsed.get("content") or ""

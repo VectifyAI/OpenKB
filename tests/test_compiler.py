@@ -607,6 +607,31 @@ class TestReadEntityBriefs:
         assert lines[0].startswith("- alpha ")
         assert lines[1].startswith("- zeta ")
 
+    def test_reads_description_and_lowercases_type(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "anthropic.md").write_text(
+            "---\n"
+            'sources: ["summaries/a.md", "summaries/b.md"]\n'
+            'type: "Organization"\n'
+            'description: "AI lab behind Claude."\n'
+            "---\n\n# Anthropic\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        assert out == "- anthropic (organization, 2 sources) — AI lab behind Claude."
+
+    def test_reads_legacy_brief_when_no_description(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "openai.md").write_text(
+            "---\ntype: organization\nsources: [summaries/a.md]\n"
+            "brief: Legacy one-liner.\n---\n\n# OpenAI\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        assert "— Legacy one-liner." in out
+
 
 class TestWriteEntity:
     def test_new_entity_frontmatter(self, tmp_path):
@@ -617,8 +642,8 @@ class TestWriteEntity:
             aliases=["Anthropic PBC"],
         )
         text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
-        assert "type:" in text and "organization" in text
-        assert "brief:" in text and "AI lab behind Claude." in text
+        assert 'type: "Organization"' in text
+        assert 'description: "AI lab behind Claude."' in text
         assert "sources:" in text and "summaries/a.md" in text
         assert "Anthropic PBC" in text
         assert text.count("---") == 2  # exactly one frontmatter block
@@ -638,10 +663,10 @@ class TestWriteEntity:
         assert "summaries/b.md" in text and "summaries/a.md" in text
         # _yaml_list_line uses json.dumps: b prepended before a, double-quoted
         assert '"summaries/b.md", "summaries/a.md"' in text
-        assert "type:" in text and "organization" in text
+        assert 'type: "Organization"' in text
         assert "v2 richer." in text
         assert "v1." not in text
-        assert "brief:" in text and "b2" in text
+        assert 'description: "b2"' in text
 
     def test_update_rebuilds_frontmatter_when_no_closing_delim(self, tmp_path):
         """#11: malformed existing file (opening --- but no closing ---) must
@@ -666,9 +691,30 @@ class TestWriteEntity:
         assert "sources:" in text and "summaries/b.md" in text
         # The PRE-EXISTING source must be preserved, not dropped when rebuilding.
         assert "summaries/a.md" in text
-        assert "type:" in text and "organization" in text
-        assert "brief:" in text and "AI lab." in text
+        assert 'type: "Organization"' in text
+        assert 'description: "AI lab."' in text
         assert "v2 rewritten." in text
+
+    def test_new_entity_type_capitalized_and_description(self, tmp_path):
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nAI lab.",
+            "summaries/a.md", is_update=False,
+            brief="AI lab behind Claude.", type_="organization",
+        )
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert 'type: "Organization"' in text          # capitalized
+        assert 'description: "AI lab behind Claude."' in text
+        assert "brief:" not in text                      # renamed, not duplicated
+
+    def test_update_entity_capitalizes_type_and_writes_description(self, tmp_path):
+        _write_entity(tmp_path, "anthropic", "# A\n\nv1.", "summaries/a.md",
+                      is_update=False, brief="b1", type_="organization")
+        _write_entity(tmp_path, "anthropic", "# A\n\nv2.", "summaries/b.md",
+                      is_update=True, brief="b2", type_="organization")
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert 'type: "Organization"' in text
+        assert 'description: "b2"' in text
+        assert "brief:" not in text
 
 
 class TestBacklinkSummary:
@@ -1759,7 +1805,7 @@ class TestCompileEntitiesEndToEnd:
                                              "type": "organization"}],
                                  "update": [], "related": []},
                 })
-            return json.dumps({"brief": "b", "type": "organization", "content": "# Page\n"})
+            return json.dumps({"description": "b", "type": "organization", "content": "# Page\n"})
 
         async def fake_llm_async(model, messages, label, **kw):
             return fake_llm(model, messages, label, **kw)
@@ -1777,9 +1823,7 @@ class TestCompileEntitiesEndToEnd:
         assert (wiki / "concepts" / "ai-demand.md").exists()
         assert (wiki / "entities" / "nvidia.md").exists()
         ent = (wiki / "entities" / "nvidia.md").read_text(encoding="utf-8")
-        # Frontmatter values are JSON-quoted by _yaml_kv_line (see _write_entity,
-        # Task 2), matching the tolerant assertion style in TestWriteEntity.
-        assert "type:" in ent and "organization" in ent
+        assert 'type: "Organization"' in ent
         index = (wiki / "index.md").read_text(encoding="utf-8")
         assert "[[entities/nvidia]]" in index
         summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
@@ -1900,7 +1944,7 @@ class TestCompileEntitiesEndToEnd:
                                              "type": "dataset"}],
                                  "update": [], "related": []},
                 })
-            return json.dumps({"brief": "b", "type": "dataset", "content": "# Page\n"})
+            return json.dumps({"description": "b", "type": "dataset", "content": "# Page\n"})
 
         async def fake_llm_async(model, messages, label, **kw):
             seen_messages.append((label, messages))
@@ -1920,7 +1964,7 @@ class TestCompileEntitiesEndToEnd:
         )
 
         ent = (wiki / "entities" / "imagenet.md").read_text(encoding="utf-8")
-        assert "type:" in ent and "dataset" in ent
+        assert 'type: "Dataset"' in ent
         # The custom type must reach the plan prompt the mock saw.
         plan_msgs = [m for (label, m) in seen_messages if label == "concepts-plan"]
         assert plan_msgs, "plan call was not made"
