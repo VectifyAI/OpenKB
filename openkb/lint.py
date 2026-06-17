@@ -450,35 +450,66 @@ def check_index_sync(wiki: Path) -> list[str]:
     return sorted(issues)
 
 
-def find_invalid_frontmatter(wiki: Path) -> list[str]:
+def _load_wiki_pages(wiki: Path) -> dict[Path, str]:
+    """Read all wiki .md files once and return a ``{path: text}`` mapping.
+
+    Applies the same scope as :func:`find_invalid_frontmatter`: walks the
+    whole wiki, skips names in :data:`_EXCLUDED_FILES`, and skips any path
+    whose first relative-to-wiki directory part is ``"reports"`` or
+    ``"sources"``.  The result is the superset that both frontmatter checks
+    iterate; :func:`find_missing_okf_fields` additionally filters down to
+    :data:`PAGE_CONTENT_DIRS <openkb.schema.PAGE_CONTENT_DIRS>` paths.
+    """
+    pages: dict[Path, str] = {}
+    for path in wiki.rglob("*.md"):
+        if path.name in _EXCLUDED_FILES:
+            continue
+        rel_parts = path.relative_to(wiki).parts
+        if rel_parts and rel_parts[0] in ("reports", "sources"):
+            continue
+        pages[path] = _read_md(path)
+    return pages
+
+
+def find_invalid_frontmatter(
+    wiki: Path,
+    pages: dict[Path, str] | None = None,
+) -> list[str]:
     """Return wiki pages whose YAML frontmatter fails ``yaml.safe_load``.
 
     Catches the silent-write class of bug where an LLM-authored field
     (e.g. ``brief:``) ships unquoted and turns a colon-bearing value
     into invalid YAML that OpenKB itself reads with string slicing but
     external YAML-aware tools (VS Code, Obsidian, doc generators) reject.
+
+    Args:
+        wiki: Path to the wiki root directory.
+        pages: Optional pre-loaded ``{path: text}`` mapping from
+            :func:`_load_wiki_pages`.  When ``None`` (the default), the
+            mapping is built internally so existing callers that pass only
+            ``wiki`` keep working unchanged.
     """
     issues: list[str] = []
     if not wiki.exists():
         return issues
-    for path in sorted(wiki.rglob("*.md")):
-        if path.name in _EXCLUDED_FILES:
+    if pages is None:
+        pages = _load_wiki_pages(wiki)
+    for path, text in sorted(pages.items()):
+        parts = frontmatter.split(text)
+        if parts is None:
             continue
-        # Skip reports/ and sources/ — auto-generated / user-uploaded
-        # content, not wiki pages we manage. Matches the convention in
-        # find_broken_links / find_orphans.
-        rel_parts = path.relative_to(wiki).parts
-        if rel_parts and rel_parts[0] in ("reports", "sources"):
-            continue
-        text = _read_md(path)
-        if not text.startswith("---"):
-            continue
-        end = text.find("\n---", 3)
-        if end == -1:
-            continue
-        fm = text[3:end].strip("\n")
+        fm_block = parts[0]
+        # Extract the raw YAML between the two ``---`` delimiters so that
+        # yaml.safe_load can surface the exact error message.  The closing
+        # delimiter is line-anchored (frontmatter.split guarantees this),
+        # so we strip the opening ``---\n`` and everything from the final
+        # ``\n---`` onward.
+        inner = fm_block[4:]          # drop "---\n"
+        close = inner.rfind("\n---")
+        if close != -1:
+            inner = inner[:close]
         try:
-            yaml.safe_load(fm)
+            yaml.safe_load(inner)
         except yaml.YAMLError as exc:
             rel = path.relative_to(wiki)
             msg = str(exc).splitlines()[0]
@@ -486,29 +517,41 @@ def find_invalid_frontmatter(wiki: Path) -> list[str]:
     return issues
 
 
-def find_missing_okf_fields(wiki: Path) -> list[str]:
+def find_missing_okf_fields(
+    wiki: Path,
+    pages: dict[Path, str] | None = None,
+) -> list[str]:
     """Return knowledge pages missing a non-empty ``type`` or ``description``.
 
     OKF v0.1 requires every non-reserved knowledge page to carry a non-empty
     ``type``; ``description`` is OpenKB's required one-liner. Only summaries/,
     concepts/, entities/ are checked — index.md, log.md and sources/ are exempt.
+
+    Args:
+        wiki: Path to the wiki root directory.
+        pages: Optional pre-loaded ``{path: text}`` mapping from
+            :func:`_load_wiki_pages`.  When ``None`` (the default), the
+            mapping is built internally so existing callers that pass only
+            ``wiki`` keep working unchanged.
     """
     issues: list[str] = []
     if not wiki.exists():
         return issues
-    for subdir in PAGE_CONTENT_DIRS:
-        subdir_path = wiki / subdir
-        if not subdir_path.exists():
+    if pages is None:
+        pages = _load_wiki_pages(wiki)
+    for path, text in sorted(pages.items()):
+        # find_missing_okf_fields covers only PAGE_CONTENT_DIRS subsets.
+        rel_parts = path.relative_to(wiki).parts
+        if not rel_parts or rel_parts[0] not in PAGE_CONTENT_DIRS:
             continue
-        for path in sorted(subdir_path.glob("*.md")):
-            fm = frontmatter.parse(_read_md(path))
-            rel = path.relative_to(wiki)
-            type_val = fm.get("type")
-            if not (isinstance(type_val, str) and type_val.strip()):
-                issues.append(f"{rel}: missing non-empty 'type'")
-            desc_val = fm.get("description")
-            if not (isinstance(desc_val, str) and desc_val.strip()):
-                issues.append(f"{rel}: missing non-empty 'description'")
+        fm = frontmatter.parse(text)
+        rel = path.relative_to(wiki)
+        type_val = fm.get("type")
+        if not (isinstance(type_val, str) and type_val.strip()):
+            issues.append(f"{rel}: missing non-empty 'type'")
+        desc_val = fm.get("description")
+        if not (isinstance(desc_val, str) and desc_val.strip()):
+            issues.append(f"{rel}: missing non-empty 'description'")
     return issues
 
 
@@ -524,12 +567,16 @@ def run_structural_lint(kb_dir: Path) -> str:
     wiki = kb_dir / "wiki"
     raw = kb_dir / "raw"
 
+    # Load all wiki pages once and share across both frontmatter checks
+    # (avoids 2N disk reads when the wiki is large).
+    wiki_pages = _load_wiki_pages(wiki) if wiki.exists() else {}
+
     broken = find_broken_links(wiki)
     orphans = find_orphans(wiki)
     missing = find_missing_entries(raw, wiki, kb_dir=kb_dir)
     sync_issues = check_index_sync(wiki)
-    bad_frontmatter = find_invalid_frontmatter(wiki)
-    missing_okf = find_missing_okf_fields(wiki)
+    bad_frontmatter = find_invalid_frontmatter(wiki, pages=wiki_pages)
+    missing_okf = find_missing_okf_fields(wiki, pages=wiki_pages)
 
     lines = ["## Structural Lint Report\n"]
 
