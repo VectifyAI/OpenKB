@@ -61,7 +61,7 @@ Full text:
 Write a summary page for this document in Markdown.
 
 Return a JSON object with two keys:
-- "brief": A single sentence (under 100 chars) describing the document's main contribution
+- "description": A single sentence (under 100 chars) describing the document's main contribution
 - "content": The full summary in Markdown. Include key concepts, findings, ideas, \
 and [[wikilinks]] to concepts that could become cross-document concept pages
 
@@ -770,7 +770,7 @@ def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
 
 
 def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
-                    doc_type: str = "short") -> None:
+                    doc_type: str = "short", description: str = "") -> None:
     """Write summary page with frontmatter."""
     if summary.startswith("---"):
         end = summary.find("---", 3)
@@ -779,10 +779,11 @@ def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     ext = "md" if doc_type == "short" else "json"
-    fm_lines = [
-        f"doc_type: {doc_type}",
-        f"full_text: sources/{doc_name}.{ext}",
-    ]
+    fm_lines = [_yaml_kv_line("type", "Summary")]
+    if description:
+        fm_lines.append(_yaml_kv_line("description", description))
+    fm_lines.append(f"doc_type: {doc_type}")
+    fm_lines.append(f"full_text: sources/{doc_name}.{ext}")
     frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
@@ -1466,7 +1467,7 @@ async def _compile_concepts(
                 "stripped %d ghost wikilink(s) from fallback v1 summary %s: %s",
                 len(ghosts), doc_name, ghosts[:5],
             )
-        _write_summary(wiki_dir, doc_name, cleaned)
+        _write_summary(wiki_dir, doc_name, cleaned, description=doc_brief)
 
     try:
         parsed = _parse_json(plan_raw)
@@ -1925,7 +1926,7 @@ async def _compile_concepts(
                     "stripped %d ghost wikilink(s) from v1 fallback summary %s: %s",
                     len(fallback_ghosts), doc_name, fallback_ghosts[:5],
                 )
-        _write_summary(wiki_dir, doc_name, final_summary)
+        _write_summary(wiki_dir, doc_name, final_summary, description=doc_brief)
 
     # --- Write concept pages to disk ---
     for name, page_content, is_update, brief in pending_writes:
@@ -2007,7 +2008,7 @@ async def compile_short_doc(
                              response_format=_JSON_RESPONSE_FORMAT)
     try:
         summary_parsed = _parse_json(summary_raw)
-        doc_brief = summary_parsed.get("brief", "")
+        doc_brief = summary_parsed.get("description", "")
         summary = summary_parsed.get("content", summary_raw)
     except (json.JSONDecodeError, ValueError):
         doc_brief = ""

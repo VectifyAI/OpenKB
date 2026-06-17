@@ -200,25 +200,25 @@ class TestSanitizeConceptName:
 
 
 class TestWriteSummary:
-    def test_writes_with_frontmatter(self, tmp_path):
+    def test_writes_type_and_description(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
-        path = wiki / "summaries" / "my-doc.md"
-        assert path.exists()
-        text = path.read_text()
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent.",
+                       description="A one-line summary.")
+        text = (wiki / "summaries" / "my-doc.md").read_text()
+        assert 'type: "Summary"' in text
+        assert 'description: "A one-line summary."' in text
         assert "doc_type: short" in text
         assert "full_text: sources/my-doc.md" in text
         assert "# Summary" in text
 
-    def test_writes_without_brief(self, tmp_path):
+    def test_omits_description_when_empty(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
-        path = wiki / "summaries" / "my-doc.md"
-        text = path.read_text()
-        assert "doc_type: short" in text
-        assert "full_text: sources/my-doc.md" in text
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent.")
+        text = (wiki / "summaries" / "my-doc.md").read_text()
+        assert 'type: "Summary"' in text
+        assert "description:" not in text
 
 
 class TestWriteConcept:
@@ -1014,7 +1014,7 @@ class TestCompileShortDoc:
         (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
         summary_response = json.dumps({
-            "brief": "Discusses transformers",
+            "description": "Discusses transformers",
             "content": "# Summary\n\nThis document discusses transformers.",
         })
         concepts_list_response = json.dumps({
@@ -1049,6 +1049,7 @@ class TestCompileShortDoc:
         assert summary_path.exists()
         summary_text = summary_path.read_text()
         assert "full_text: sources/test-doc.md" in summary_text
+        assert 'type: "Summary"' in summary_text
         # Summary body comes from the rewrite step
         assert "[[concepts/transformer]]" in summary_text
 
@@ -1700,7 +1701,7 @@ class TestBriefIntegration:
         (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
         summary_resp = json.dumps({
-            "brief": "A paper about transformers",
+            "description": "A paper about transformers",
             "content": "# Summary\n\nThis paper discusses transformers.",
         })
         plan_resp = json.dumps({
