@@ -38,3 +38,13 @@ class TestRenderSummaryMd:
         assert "Summary: Historical context." in output
         # Raw text should NOT appear in summary view
         assert "This document introduces the core concepts of the system." not in output
+
+
+def test_summary_md_has_type_and_description():
+    tree = {"structure": [{"title": "Intro", "start_index": 1,
+                           "end_index": 2, "summary": "x", "nodes": []}]}
+    md = render_summary_md(tree, "my-doc", "doc-123", description="Quarterly report.")
+    assert 'type: "Summary"' in md
+    assert 'description: "Quarterly report."' in md
+    assert "doc_type: pageindex" in md
+    assert "full_text: sources/my-doc.json" in md

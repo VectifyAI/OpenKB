@@ -174,7 +174,7 @@ def index_long_document(
     # Write wiki/summaries/ (no images, just summaries)
     summaries_dir = kb_dir / "wiki" / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    summary_md = render_summary_md(tree, source_name, doc_id)
+    summary_md = render_summary_md(tree, source_name, doc_id, description=description)
     (summaries_dir / f"{source_name}.md").write_text(summary_md, encoding="utf-8")
 
     return IndexResult(doc_id=doc_id, description=description, tree=tree)
