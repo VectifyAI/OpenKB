@@ -485,6 +485,39 @@ def find_invalid_frontmatter(wiki: Path) -> list[str]:
     return issues
 
 
+def find_missing_okf_fields(wiki: Path) -> list[str]:
+    """Return knowledge pages missing a non-empty ``type`` or ``description``.
+
+    OKF v0.1 requires every non-reserved knowledge page to carry a non-empty
+    ``type``; ``description`` is OpenKB's required one-liner. Only summaries/,
+    concepts/, entities/ are checked — index.md, log.md and sources/ are exempt.
+    """
+    issues: list[str] = []
+    if not wiki.exists():
+        return issues
+    for subdir in PAGE_CONTENT_DIRS:
+        subdir_path = wiki / subdir
+        if not subdir_path.exists():
+            continue
+        for path in sorted(subdir_path.glob("*.md")):
+            text = _read_md(path)
+            fm = None
+            if text.startswith("---"):
+                end = text.find("\n---", 3)
+                if end != -1:
+                    try:
+                        fm = yaml.safe_load(text[3:end].strip("\n"))
+                    except yaml.YAMLError:
+                        fm = None
+            fm = fm if isinstance(fm, dict) else {}
+            rel = path.relative_to(wiki)
+            if not str(fm.get("type") or "").strip():
+                issues.append(f"{rel}: missing non-empty 'type'")
+            if not str(fm.get("description") or "").strip():
+                issues.append(f"{rel}: missing non-empty 'description'")
+    return issues
+
+
 def run_structural_lint(kb_dir: Path) -> str:
     """Run all structural lint checks and return a formatted Markdown report.
 
@@ -502,6 +535,7 @@ def run_structural_lint(kb_dir: Path) -> str:
     missing = find_missing_entries(raw, wiki, kb_dir=kb_dir)
     sync_issues = check_index_sync(wiki)
     bad_frontmatter = find_invalid_frontmatter(wiki)
+    missing_okf = find_missing_okf_fields(wiki)
 
     lines = ["## Structural Lint Report\n"]
 
@@ -548,5 +582,14 @@ def run_structural_lint(kb_dir: Path) -> str:
             lines.append(f"- {issue}")
     else:
         lines.append("All frontmatter parses as valid YAML.")
+    lines.append("")
+
+    # OKF conformance
+    lines.append(f"### OKF Conformance ({len(missing_okf)})")
+    if missing_okf:
+        for issue in missing_okf:
+            lines.append(f"- {issue}")
+    else:
+        lines.append("All knowledge pages carry required OKF fields.")
 
     return "\n".join(lines)

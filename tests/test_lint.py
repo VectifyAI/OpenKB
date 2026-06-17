@@ -10,6 +10,7 @@ from openkb.lint import (
     check_index_sync,
     find_broken_links,
     find_missing_entries,
+    find_missing_okf_fields,
     find_orphans,
     fix_broken_links,
     list_existing_wiki_targets,
@@ -649,3 +650,28 @@ def test_whitelist_includes_entities(tmp_path):
     (tmp_path / "entities" / "anthropic.md").write_text("# A", encoding="utf-8")
     targets = list_existing_wiki_targets(tmp_path)
     assert "entities/anthropic" in targets
+
+
+def test_flags_missing_type_and_description(tmp_path):
+    wiki = tmp_path / "wiki"
+    for sub in ("summaries", "concepts", "entities"):
+        (wiki / sub).mkdir(parents=True)
+    (wiki / "concepts" / "good.md").write_text(
+        '---\ntype: "Concept"\ndescription: "ok"\n---\n\n# Good\n', encoding="utf-8")
+    (wiki / "concepts" / "no_type.md").write_text(
+        '---\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+    (wiki / "summaries" / "no_desc.md").write_text(
+        '---\ntype: "Summary"\n---\n\n# Bad\n', encoding="utf-8")
+    issues = find_missing_okf_fields(wiki)
+    assert any("no_type.md" in i and "type" in i for i in issues)
+    assert any("no_desc.md" in i and "description" in i for i in issues)
+    assert not any("good.md" in i for i in issues)
+
+
+def test_flags_null_type_as_missing(tmp_path):
+    wiki = tmp_path / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "concepts" / "null_type.md").write_text(
+        '---\ntype: null\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+    issues = find_missing_okf_fields(wiki)
+    assert any("null_type.md" in i and "type" in i for i in issues)
