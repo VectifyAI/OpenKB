@@ -1,21 +1,16 @@
 """Markdown renderers for PageIndex tree structures."""
 from __future__ import annotations
 
-import json
-
-
-def _yaml_kv_line(key: str, value: str) -> str:
-    """Return a single YAML key-value line with the value JSON-quoted."""
-    return f"{key}: {json.dumps(value, ensure_ascii=False)}"
+from openkb import frontmatter
 
 
 def _yaml_frontmatter(source_name: str, doc_id: str, description: str = "") -> str:
     """Return a YAML frontmatter block for a PageIndex wiki page."""
-    lines = [_yaml_kv_line("type", "Summary")]
+    lines = [frontmatter.kv_line("type", "Summary")]
     if description:
-        lines.append(_yaml_kv_line("description", description))
+        lines.append(frontmatter.kv_line("description", description))
     lines.append("doc_type: pageindex")
-    lines.append(_yaml_kv_line("full_text", f"sources/{source_name}.json"))
+    lines.append(frontmatter.kv_line("full_text", f"sources/{source_name}.json"))
     return "---\n" + "\n".join(lines) + "\n---\n"
 
 

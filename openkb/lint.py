@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from openkb import frontmatter
 from openkb.schema import PAGE_CONTENT_DIRS
 
 # Matches [[wikilink]] or [[subdir/link]]
@@ -500,16 +501,7 @@ def find_missing_okf_fields(wiki: Path) -> list[str]:
         if not subdir_path.exists():
             continue
         for path in sorted(subdir_path.glob("*.md")):
-            text = _read_md(path)
-            fm = None
-            if text.startswith("---"):
-                end = text.find("\n---", 3)
-                if end != -1:
-                    try:
-                        fm = yaml.safe_load(text[3:end].strip("\n"))
-                    except yaml.YAMLError:
-                        fm = None
-            fm = fm if isinstance(fm, dict) else {}
+            fm = frontmatter.parse(_read_md(path))
             rel = path.relative_to(wiki)
             type_val = fm.get("type")
             if not (isinstance(type_val, str) and type_val.strip()):
