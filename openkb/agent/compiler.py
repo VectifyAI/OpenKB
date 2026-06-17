@@ -933,6 +933,9 @@ def _write_entity(
             fm = existing[:end + 3]
             fm = _set_fm_line(fm, "description", brief) if brief else fm
             fm = _set_fm_line(fm, "type", type_.capitalize()) if type_ else fm
+            # Drop any legacy ``brief:`` key (migrated to ``description:``),
+            # mirroring _write_concept's update path.
+            fm = re.sub(r"^brief:.*\n?", "", fm, flags=re.MULTILINE)
             existing = fm + "\n\n" + clean
         else:
             # Malformed/absent frontmatter (opening ``---`` with no closing

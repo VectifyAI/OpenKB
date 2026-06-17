@@ -758,6 +758,21 @@ class TestWriteEntity:
         assert 'description: "b2"' in text
         assert "brief:" not in text
 
+    def test_update_entity_strips_legacy_brief(self, tmp_path):
+        entities = tmp_path / "entities"
+        entities.mkdir(parents=True)
+        (entities / "anthropic.md").write_text(
+            '---\nsources: ["summaries/a.md"]\ntype: organization\n'
+            'brief: Old brief.\n---\n\n# Anthropic\n\nOld.',
+            encoding="utf-8",
+        )
+        _write_entity(tmp_path, "anthropic", "# Anthropic\n\nv2.", "summaries/b.md",
+                      is_update=True, brief="New desc.", type_="organization")
+        text = (entities / "anthropic.md").read_text(encoding="utf-8")
+        assert "brief:" not in text
+        assert "Old brief." not in text
+        assert 'description: "New desc."' in text
+
 
 class TestBacklinkSummary:
     def test_adds_missing_concept_links(self, tmp_path):
