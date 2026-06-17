@@ -780,6 +780,26 @@ class TestWriteEntity:
         assert 'type: "Real Estate"' in text
 
 
+def test_update_keeps_single_blank_line_after_frontmatter(tmp_path):
+    """Regression: the update path must not accumulate a 3rd newline after ---."""
+    wiki = tmp_path / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "concepts" / "x.md").write_text(
+        '---\ntype: "Concept"\nsources: ["a"]\ndescription: "old"\n---\n\n# X\n',
+        encoding="utf-8")
+    _write_concept(wiki, "x", "# X\n\nNew.", "summaries/b.md", True, brief="new")
+    ctext = (wiki / "concepts" / "x.md").read_text(encoding="utf-8")
+    assert "---\n\n\n" not in ctext and "---\n\n" in ctext
+
+    (wiki / "entities").mkdir(parents=True)
+    (wiki / "entities" / "e.md").write_text(
+        '---\nsources: ["a"]\ntype: "Person"\ndescription: "old"\n---\n\n# E\n',
+        encoding="utf-8")
+    _write_entity(wiki, "e", "# E\n\nNew.", "summaries/b.md", True, brief="new", type_="person")
+    etext = (wiki / "entities" / "e.md").read_text(encoding="utf-8")
+    assert "---\n\n\n" not in etext and "---\n\n" in etext
+
+
 class TestBacklinkSummary:
     def test_adds_missing_concept_links(self, tmp_path):
         wiki = tmp_path / "wiki"
@@ -2205,3 +2225,50 @@ class TestLLMCallExtraHeaders:
         assert out == "ok"
         kwargs = mock_litellm.acompletion.call_args.kwargs
         assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
+
+
+class TestFrontmatterDashBoundary:
+    """Regression: description containing '---' must not truncate frontmatter."""
+
+    def test_concept_round_trip_with_dashes_in_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Write concept with a brief containing '---'.
+        brief = "--- note ---"
+        _write_concept(wiki, "tricky", "# Body\n\nContent.", "summaries/doc.md",
+                       is_update=False, brief=brief)
+        # Round-trip: _read_concept_briefs must return the brief intact.
+        result = _read_concept_briefs(wiki)
+        assert "--- note ---" in result
+        # The body must not be corrupted.
+        text = (wiki / "concepts" / "tricky.md").read_text(encoding="utf-8")
+        assert "# Body" in text
+        assert "Content." in text
+
+    def test_entity_round_trip_with_dashes_in_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        brief = "--- note ---"
+        _write_entity(wiki, "tricky-org", "# Body\n\nContent.", "summaries/doc.md",
+                      is_update=False, brief=brief, type_="organization")
+        result = _read_entity_briefs(wiki)
+        assert "--- note ---" in result
+        text = (wiki / "entities" / "tricky-org.md").read_text(encoding="utf-8")
+        assert "# Body" in text
+        assert "Content." in text
+
+    def test_concept_update_malformed_frontmatter_rebuilds(self, tmp_path):
+        """_write_concept(is_update=True) on a file with malformed frontmatter
+        must rebuild valid frontmatter, not write a bare body."""
+        concepts = tmp_path / "concepts"
+        concepts.mkdir(parents=True)
+        # Opening '---' with no closing delimiter.
+        malformed = "---\nsources: [x]\nno close\n\nbody"
+        (concepts / "tricky.md").write_text(malformed, encoding="utf-8")
+        _write_concept(tmp_path, "tricky", "# New\n\nNew body.", "summaries/doc.md",
+                       is_update=True, brief="brief text")
+        text = (concepts / "tricky.md").read_text(encoding="utf-8")
+        assert text.startswith("---\n")
+        assert 'type: "Concept"' in text
+        # Must have a properly closed frontmatter block (two '---' occurrences).
+        assert text.count("---") >= 2

@@ -27,8 +27,8 @@ import unicodedata
 from pathlib import Path
 
 import litellm
-import yaml
 
+from openkb import frontmatter
 from openkb.config import DEFAULT_ENTITY_TYPES, get_extra_headers, resolve_entity_types
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import INDEX_SEED, get_agents_md
@@ -524,6 +524,19 @@ def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
     return index_content, existing
 
 
+def _resolve_description(fm: dict) -> str:
+    """Return a non-empty description string from a frontmatter dict.
+
+    Checks ``description`` first, then the legacy ``brief`` key. Returns
+    an empty string when neither key holds a non-blank string value.
+    """
+    for key in ("description", "brief"):
+        v = fm.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
 def _read_concept_briefs(wiki_dir: Path) -> str:
     """Read existing concept pages and return compact one-line summaries.
 
@@ -545,24 +558,11 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     lines: list[str] = []
     for path in md_files:
         text = path.read_text(encoding="utf-8")
-        brief = ""
-        body = text
-        if text.startswith("---"):
-            end = text.find("---", 3)
-            if end != -1:
-                fm_text = text[3:end].strip("\n")
-                body = text[end + 3:]
-                try:
-                    fm = yaml.safe_load(fm_text)
-                except yaml.YAMLError:
-                    fm = None
-                if isinstance(fm, dict):
-                    desc = fm.get("description")
-                    if not isinstance(desc, str):
-                        desc = fm.get("brief")  # legacy pages
-                    if isinstance(desc, str):
-                        brief = desc.strip()
+        fm_dict = frontmatter.parse(text)
+        brief = _resolve_description(fm_dict)
         if not brief:
+            parts = frontmatter.split(text)
+            body = parts[1] if parts is not None else text
             brief = body.strip().replace("\n", " ")[:150]
         if brief:
             lines.append(f"- {path.stem}: {brief}")
@@ -588,30 +588,13 @@ def _read_entity_briefs(wiki_dir: Path) -> str:
     lines: list[str] = []
     for path in md_files:
         text = path.read_text(encoding="utf-8")
-        brief = ""
-        etype = "other"
-        n_sources = 0
-        body = text
-        if text.startswith("---"):
-            end = text.find("---", 3)
-            if end != -1:
-                fm_text = text[3:end].strip("\n")
-                body = text[end + 3:]
-                try:
-                    fm = yaml.safe_load(fm_text)
-                except yaml.YAMLError:
-                    fm = None
-                if isinstance(fm, dict):
-                    desc = fm.get("description")
-                    if not isinstance(desc, str):
-                        desc = fm.get("brief")  # legacy, pre-migration pages
-                    if isinstance(desc, str):
-                        brief = desc.strip()
-                    if isinstance(fm.get("type"), str):
-                        etype = fm["type"].strip().lower() or "other"
-                    if isinstance(fm.get("sources"), list):
-                        n_sources = len(fm["sources"])
+        fm_dict = frontmatter.parse(text)
+        brief = _resolve_description(fm_dict)
+        etype = str(fm_dict.get("type") or "").strip().lower() or "other"
+        n_sources = len(fm_dict["sources"]) if isinstance(fm_dict.get("sources"), list) else 0
         if not brief:
+            parts = frontmatter.split(text)
+            body = parts[1] if parts is not None else text
             brief = body.strip().replace("\n", " ")[:150]
         suffix = f" — {brief}" if brief else ""
         lines.append(f"- {path.stem} ({etype}, {n_sources} sources){suffix}")
@@ -772,10 +755,10 @@ def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
 def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
                     doc_type: str = "short", description: str = "") -> None:
     """Write summary page with frontmatter."""
-    if summary.startswith("---"):
-        end = summary.find("---", 3)
-        if end != -1:
-            summary = summary[end + 3:].lstrip("\n")
+    parts = frontmatter.split(summary)
+    if parts is not None:
+        _, summary = parts
+        summary = summary.lstrip("\n")
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     ext = "md" if doc_type == "short" else "json"
@@ -784,8 +767,8 @@ def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
         fm_lines.append(_yaml_kv_line("description", description))
     fm_lines.append(f"doc_type: {doc_type}")
     fm_lines.append(_yaml_kv_line("full_text", f"sources/{doc_name}.{ext}"))
-    frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
-    (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
+    fm_block = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
+    (summaries_dir / f"{doc_name}.md").write_text(fm_block + summary, encoding="utf-8")
 
 
 _SAFE_NAME_RE = re.compile(r'[^\w\-]')
@@ -798,37 +781,9 @@ def _sanitize_concept_name(name: str) -> str:
     return sanitized or "unnamed-concept"
 
 
-def _yaml_kv_line(key: str, value: str) -> str:
-    """Render a single ``key: value`` line that round-trips through any YAML loader.
-
-    Uses ``json.dumps`` for the value — JSON strings are a strict subset of
-    YAML, always single-line, always correctly escaped (newlines, quotes,
-    control chars), and never auto-promoted to multi-line block scalars.
-    """
-    return f"{key}: {json.dumps(value, ensure_ascii=False)}"
-
-
-def _yaml_list_line(key: str, items: list[str]) -> str:
-    """Render ``key: [a, b, c]`` as JSON-style YAML (always single-line, always valid)."""
-    return f"{key}: {json.dumps(list(items), ensure_ascii=False)}"
-
-
-def _parse_yaml_list_value(line: str) -> list[str] | None:
-    """Parse the right-hand side of ``key: [...]`` into a list of strings.
-
-    Returns ``None`` when the value cannot be interpreted as a list — callers
-    treat that as "leave the frontmatter alone".
-    """
-    colon = line.find(":")
-    if colon == -1:
-        return None
-    try:
-        parsed = yaml.safe_load(line[colon + 1:])
-    except yaml.YAMLError:
-        return None
-    if not isinstance(parsed, list):
-        return None
-    return [str(x) for x in parsed]
+_yaml_kv_line = frontmatter.kv_line
+_yaml_list_line = frontmatter.list_line
+_parse_yaml_list_value = frontmatter.parse_list_value
 
 
 def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
@@ -846,46 +801,58 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
         if source_file not in existing:
             existing = _prepend_source_to_frontmatter(existing, source_file)
         # Strip frontmatter from LLM content to avoid duplicate blocks
-        clean = content
-        if clean.startswith("---"):
-            end = clean.find("---", 3)
-            if end != -1:
-                clean = clean[end + 3:].lstrip("\n")
+        clean_parts = frontmatter.split(content)
+        clean = clean_parts[1].lstrip("\n") if clean_parts is not None else content
         # Replace body with LLM rewrite (prompt asks for full rewrite, not delta)
-        if existing.startswith("---"):
-            end = existing.find("---", 3)
-            if end != -1:
-                existing = existing[:end + 3] + "\n\n" + clean
-            else:
-                existing = clean
+        ex_parts = frontmatter.split(existing)
+        if ex_parts is not None:
+            fm_block, _ = ex_parts
+            existing = fm_block + "\n" + clean
         else:
-            existing = clean
+            # Malformed/absent frontmatter (opening ``---`` with no closing
+            # delimiter, or no frontmatter at all): rebuild valid frontmatter
+            # rather than writing a bare body. Recover any sources already
+            # listed in the broken block first.
+            recovered: list[str] = []
+            for ln in existing.split("\n"):
+                if ln.lstrip().startswith("sources:"):
+                    parsed = _parse_yaml_list_value(ln)
+                    if parsed:
+                        recovered = parsed
+                    break
+            merged = [source_file] + [s for s in recovered if s != source_file]
+            fm_lines = [
+                _yaml_kv_line("type", "Concept"),
+                _yaml_list_line("sources", merged),
+            ]
+            if brief:
+                fm_lines.append(_yaml_kv_line("description", brief))
+            existing = frontmatter.block(fm_lines) + clean
+            path.write_text(existing, encoding="utf-8")
+            return
         # Guarantee type + refresh description on update; remove legacy brief:.
-        if existing.startswith("---"):
-            end = existing.find("---", 3)
-            if end != -1:
-                fm = existing[:end + 3]
-                body = existing[end + 3:]
-                fm = _set_fm_line(fm, "type", "Concept")
-                if brief:
-                    fm = _set_fm_line(fm, "description", brief)
-                # Drop legacy brief: lines (migrated to description:).
-                fm = re.sub(r"^brief:.*\n?", "", fm, flags=re.MULTILINE)
-                existing = fm + body
+        ex_parts2 = frontmatter.split(existing)
+        if ex_parts2 is not None:
+            fm_block, body = ex_parts2
+            fm_block = _set_fm_line(fm_block, "type", "Concept")
+            if brief:
+                fm_block = _set_fm_line(fm_block, "description", brief)
+            # Drop legacy brief: lines (migrated to description:).
+            fm_block = frontmatter.drop_line(fm_block, "brief")
+            existing = fm_block + body
         path.write_text(existing, encoding="utf-8")
     else:
-        if content.startswith("---"):
-            end = content.find("---", 3)
-            if end != -1:
-                content = content[end + 3:].lstrip("\n")
+        clean_parts = frontmatter.split(content)
+        if clean_parts is not None:
+            content = clean_parts[1].lstrip("\n")
         fm_lines = [
             _yaml_kv_line("type", "Concept"),
             _yaml_list_line("sources", [source_file]),
         ]
         if brief:
             fm_lines.append(_yaml_kv_line("description", brief))
-        frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
-        path.write_text(frontmatter + content, encoding="utf-8")
+        fm_block = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
+        path.write_text(fm_block + content, encoding="utf-8")
 
 
 def _write_entity(
@@ -909,13 +876,10 @@ def _write_entity(
         return
 
     # Strip any frontmatter the LLM body may carry.
-    clean = content
-    if clean.startswith("---"):
-        end = clean.find("---", 3)
-        if end != -1:
-            clean = clean[end + 3:].lstrip("\n")
+    clean_parts = frontmatter.split(content)
+    clean = clean_parts[1].lstrip("\n") if clean_parts is not None else content
 
-    def _build_frontmatter(sources: list[str]) -> str:
+    def _build_entity_frontmatter(sources: list[str]) -> str:
         fm_lines = [_yaml_list_line("sources", sources)]
         fm_lines.append(_yaml_kv_line("type", (type_ or "other").title()))
         if brief:
@@ -928,15 +892,15 @@ def _write_entity(
         existing = path.read_text(encoding="utf-8")
         if source_file not in existing:
             existing = _prepend_source_to_frontmatter(existing, source_file)
-        end = existing.find("---", 3) if existing.startswith("---") else -1
-        if end != -1:
-            fm = existing[:end + 3]
-            fm = _set_fm_line(fm, "description", brief) if brief else fm
-            fm = _set_fm_line(fm, "type", type_.title()) if type_ else fm
+        ex_parts = frontmatter.split(existing)
+        if ex_parts is not None:
+            fm_block, _ = ex_parts
+            fm_block = _set_fm_line(fm_block, "description", brief) if brief else fm_block
+            fm_block = _set_fm_line(fm_block, "type", type_.title()) if type_ else fm_block
             # Drop any legacy ``brief:`` key (migrated to ``description:``),
             # mirroring _write_concept's update path.
-            fm = re.sub(r"^brief:.*\n?", "", fm, flags=re.MULTILINE)
-            existing = fm + "\n\n" + clean
+            fm_block = frontmatter.drop_line(fm_block, "brief")
+            existing = fm_block + "\n" + clean
         else:
             # Malformed/absent frontmatter (opening ``---`` with no closing
             # delimiter, or no frontmatter at all): rebuild valid frontmatter
@@ -951,23 +915,14 @@ def _write_entity(
                         recovered = parsed
                     break
             merged = [source_file] + [s for s in recovered if s != source_file]
-            existing = _build_frontmatter(merged) + clean
+            existing = _build_entity_frontmatter(merged) + clean
         path.write_text(existing, encoding="utf-8")
         return
 
-    path.write_text(_build_frontmatter([source_file]) + clean, encoding="utf-8")
+    path.write_text(_build_entity_frontmatter([source_file]) + clean, encoding="utf-8")
 
 
-def _set_fm_line(fm: str, key: str, value: str) -> str:
-    """Set or replace a single scalar ``key:`` line inside a frontmatter block.
-
-    ``fm`` includes the opening and closing ``---`` markers. Uses a lambda
-    replacement so values containing regex backrefs are inserted literally.
-    """
-    line = _yaml_kv_line(key, value)
-    if re.search(rf"^{re.escape(key)}:", fm, flags=re.MULTILINE):
-        return re.sub(rf"^{re.escape(key)}:.*", lambda _m: line, fm, count=1, flags=re.MULTILINE)
-    return fm.replace("---\n", f"---\n{line}\n", 1)
+_set_fm_line = frontmatter.set_line
 
 
 def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
@@ -980,13 +935,17 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
     if not text.startswith("---"):
         return f"---\n{_yaml_list_line('sources', [source_file])}\n---\n\n" + text
 
-    fm_end = text.find("---", 3)
-    if fm_end == -1:
+    parts = frontmatter.split(text)
+    if parts is None:
         return text
 
-    fm_block = text[:fm_end]
-    body = text[fm_end:]
-    fm_lines = fm_block.split("\n")
+    fm_block, body = parts
+    # Split the fm_block into lines for per-line manipulation. fm_block ends
+    # with "\n---\n"; strip the trailing closing delimiter + newline to get
+    # the prefix lines (opening "---" + content lines), then re-append after.
+    fm_prefix, _, _ = fm_block.rpartition("\n---\n")
+    fm_lines = fm_prefix.split("\n")
+    closing = "\n---\n"
 
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
@@ -998,10 +957,10 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
             return text
         items.insert(0, source_file)
         fm_lines[i] = _yaml_list_line("sources", items)
-        return "\n".join(fm_lines) + body
+        return "\n".join(fm_lines) + closing + body
 
     fm_lines.insert(1, _yaml_list_line("sources", [source_file]))
-    return "\n".join(fm_lines) + body
+    return "\n".join(fm_lines) + closing + body
 
 
 def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, bool]:
@@ -1017,13 +976,14 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
     if not text.startswith("---"):
         return text, False
 
-    fm_end = text.find("---", 3)
-    if fm_end == -1:
+    parts = frontmatter.split(text)
+    if parts is None:
         return text, False
 
-    fm_block = text[:fm_end]
-    body = text[fm_end:]
-    fm_lines = fm_block.split("\n")
+    fm_block, body = parts
+    fm_prefix, _, _ = fm_block.rpartition("\n---\n")
+    fm_lines = fm_prefix.split("\n")
+    closing = "\n---\n"
 
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
@@ -1035,7 +995,7 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
             return text, False
         items.remove(source_file)
         fm_lines[i] = _yaml_list_line("sources", items)
-        return "\n".join(fm_lines) + body, len(items) == 0
+        return "\n".join(fm_lines) + closing + body, len(items) == 0
 
     return text, False
 
@@ -1239,17 +1199,15 @@ def scan_affected_pages(pages_dir: Path, source_file_marker: str) -> list[tuple[
         return affected
     for path in sorted(pages_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8")
-        if not text.startswith("---"):
+        fm_dict = frontmatter.parse(text)
+        if not fm_dict:
             continue
-        fm_end = text.find("---", 3)
-        if fm_end == -1:
+        sources = fm_dict.get("sources")
+        if not isinstance(sources, list):
             continue
-        for line in text[:fm_end].split("\n"):
-            if line.lstrip().startswith("sources:"):
-                items = _parse_yaml_list_value(line)
-                if items is not None and source_file_marker in items:
-                    affected.append((path.stem, max(len(items) - 1, 0)))
-                break
+        items = [str(x) for x in sources]
+        if source_file_marker in items:
+            affected.append((path.stem, max(len(items) - 1, 0)))
     return affected
 
 
@@ -1659,11 +1617,8 @@ async def _compile_concepts(
         concept_path = wiki_dir / "concepts" / f"{_sanitize_concept_name(name)}.md"
         if concept_path.exists():
             raw_text = concept_path.read_text(encoding="utf-8")
-            if raw_text.startswith("---"):
-                parts = raw_text.split("---", 2)
-                existing_content = parts[2].strip() if len(parts) >= 3 else raw_text
-            else:
-                existing_content = raw_text
+            ex_parts = frontmatter.split(raw_text)
+            existing_content = ex_parts[1].strip() if ex_parts is not None else raw_text
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
@@ -1721,11 +1676,8 @@ async def _compile_concepts(
         epath = wiki_dir / "entities" / f"{_sanitize_concept_name(name)}.md"
         if epath.exists():
             raw_text = epath.read_text(encoding="utf-8")
-            if raw_text.startswith("---"):
-                parts = raw_text.split("---", 2)
-                existing_content = parts[2].strip() if len(parts) >= 3 else raw_text
-            else:
-                existing_content = raw_text
+            ex_parts = frontmatter.split(raw_text)
+            existing_content = ex_parts[1].strip() if ex_parts is not None else raw_text
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
@@ -1889,10 +1841,9 @@ async def _compile_concepts(
             ], "summary-rewrite")
             candidate = rewrite_raw.strip()
             # Strip frontmatter if the model added one anyway.
-            if candidate.startswith("---"):
-                end = candidate.find("---", 3)
-                if end != -1:
-                    candidate = candidate[end + 3:].lstrip("\n")
+            cand_parts = frontmatter.split(candidate)
+            if cand_parts is not None:
+                candidate = cand_parts[1].lstrip("\n")
             # Safety net: strip any wikilink the rewrite emitted that is
             # not in the whitelist.
             candidate, summary_ghosts = strip_ghost_wikilinks(
@@ -2058,18 +2009,16 @@ async def compile_long_doc(
     # Backfill OKF fields on the indexer-written summary. Idempotent: set
     # description before type so that when both keys are missing the prepends
     # leave `type` first (canonical order); only rewrite when content changed.
-    if summary_content.startswith("---"):
-        fm_end = summary_content.find("---", 3)
-        if fm_end != -1:
-            fm = summary_content[:fm_end + 3]
-            body = summary_content[fm_end + 3:]
-            if doc_description:
-                fm = _set_fm_line(fm, "description", doc_description)
-            fm = _set_fm_line(fm, "type", "Summary")
-            updated = fm + body
-            if updated != summary_content:
-                summary_content = updated
-                summary_path.write_text(summary_content, encoding="utf-8")
+    fm_parts = frontmatter.split(summary_content)
+    if fm_parts is not None:
+        fm_block, body = fm_parts
+        if doc_description:
+            fm_block = _set_fm_line(fm_block, "description", doc_description)
+        fm_block = _set_fm_line(fm_block, "type", "Summary")
+        updated = fm_block + body
+        if updated != summary_content:
+            summary_content = updated
+            summary_path.write_text(summary_content, encoding="utf-8")
 
     # Base context A. cache_control marker on the doc message creates a
     # cache breakpoint covering (system + doc) for every concept call.
