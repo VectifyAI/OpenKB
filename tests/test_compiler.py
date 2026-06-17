@@ -230,7 +230,7 @@ class TestWriteConcept:
         assert path.exists()
         text = path.read_text()
         assert 'sources: ["paper.pdf"]' in text
-        assert 'brief: "Mechanism for selective focus"' in text
+        assert 'description: "Mechanism for selective focus"' in text
         assert "# Attention" in text
 
     def test_new_concept_without_brief(self, tmp_path):
@@ -255,7 +255,7 @@ class TestWriteConcept:
         text = (concepts / "attention.md").read_text()
         assert "paper2.pdf" in text
         assert "paper1.pdf" in text
-        assert 'brief: "Updated brief"' in text
+        assert 'description: "Updated brief"' in text
         assert "Old brief" not in text
 
     def test_update_concept_appends_source(self, tmp_path):
@@ -287,6 +287,38 @@ class TestWriteConcept:
         assert "paper1.pdf" in text
         assert "paper2.pdf" in text
         assert "New info from paper2." in text
+
+    def test_new_concept_has_type_and_description(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "summaries/p.md",
+                       False, brief="Mechanism for selective focus")
+        text = (wiki / "concepts" / "attention.md").read_text()
+        assert 'type: "Concept"' in text
+        assert 'description: "Mechanism for selective focus"' in text
+        assert "brief:" not in text
+
+    def test_new_concept_without_description_still_has_type(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "summaries/p.md", False)
+        text = (wiki / "concepts" / "attention.md").read_text()
+        assert 'type: "Concept"' in text
+        assert "description:" not in text
+
+    def test_update_concept_sets_type_and_description(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            '---\nsources: ["p1.pdf"]\ndescription: "Old"\n---\n\n# Attention\n\nOld.',
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New.", "summaries/p2.md", True, brief="New one")
+        text = (concepts / "attention.md").read_text()
+        assert 'type: "Concept"' in text
+        assert 'description: "New one"' in text
+        assert "Old" not in text
 
 
 class TestUpdateIndex:
@@ -548,6 +580,16 @@ class TestReadConceptBriefs:
         )
         result = _read_concept_briefs(wiki)
         assert "- old: Old concept without brief field." in result
+
+    def test_reads_description_field(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            '---\nsources: ["p.pdf"]\ndescription: "Selective focus"\n---\n\n# A\n',
+            encoding="utf-8",
+        )
+        assert "- attention: Selective focus" in _read_concept_briefs(wiki)
 
 
 class TestReadEntityBriefs:
@@ -1667,7 +1709,7 @@ class TestBriefIntegration:
             "related": [],
         })
         concept_resp = json.dumps({
-            "brief": "NN architecture using self-attention",
+            "description": "NN architecture using self-attention",
             "content": "# Transformer\n\nA neural network architecture.",
         })
 
@@ -1685,9 +1727,9 @@ class TestBriefIntegration:
         assert "doc_type: short" in summary_text
         assert "full_text: sources/test-doc.md" in summary_text
 
-        # Concept frontmatter has brief
+        # Concept frontmatter has type and description
         concept_text = (wiki / "concepts" / "transformer.md").read_text()
-        assert 'brief: "NN architecture using self-attention"' in concept_text
+        assert 'description: "NN architecture using self-attention"' in concept_text
 
         # Index has briefs
         index_text = (wiki / "index.md").read_text()

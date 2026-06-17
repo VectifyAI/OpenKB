@@ -142,7 +142,7 @@ This concept relates to the document "{doc_name}" summarized above.
 {update_instruction}
 
 Return a JSON object with two keys:
-- "brief": A single sentence (under 100 chars) defining this concept
+- "description": A single sentence (under 100 chars) defining this concept
 - "content": The full concept page in Markdown. Include clear explanation, \
 key details from the source document, and [[wikilinks]] to related concepts \
 and [[summaries/{doc_name}]] — subject to the wikilink rules from the \
@@ -168,7 +168,7 @@ existing links whose target is NOT in the whitelist to plain text, and do \
 not invent new wikilink targets.
 
 Return a JSON object with two keys:
-- "brief": A single sentence (under 100 chars) defining this concept (may differ from before)
+- "description": A single sentence (under 100 chars) defining this concept (may differ from before)
 - "content": The rewritten full concept page in Markdown
 
 Return ONLY valid JSON, no fences.
@@ -527,9 +527,10 @@ def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
 def _read_concept_briefs(wiki_dir: Path) -> str:
     """Read existing concept pages and return compact one-line summaries.
 
-    For each concept, reads the ``brief:`` field from YAML frontmatter if
-    present; otherwise falls back to truncating the first 150 chars of the body
-    (newlines collapsed to spaces).  Formats each as ``- {slug}: {brief}``.
+    For each concept, reads the ``description:`` field (falling back to legacy
+    ``brief:``) from YAML frontmatter if present; otherwise falls back to
+    truncating the first 150 chars of the body (newlines collapsed to spaces).
+    Formats each as ``- {slug}: {description}``.
 
     Returns "(none yet)" if the concepts directory is missing or empty.
     """
@@ -555,8 +556,12 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
                     fm = yaml.safe_load(fm_text)
                 except yaml.YAMLError:
                     fm = None
-                if isinstance(fm, dict) and isinstance(fm.get("brief"), str):
-                    brief = fm["brief"].strip()
+                if isinstance(fm, dict):
+                    desc = fm.get("description")
+                    if not isinstance(desc, str):
+                        desc = fm.get("brief")  # legacy pages
+                    if isinstance(desc, str):
+                        brief = desc.strip()
         if not brief:
             brief = body.strip().replace("\n", " ")[:150]
         if brief:
@@ -854,18 +859,17 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
                 existing = clean
         else:
             existing = clean
-        if brief and existing.startswith("---"):
+        # Guarantee type + refresh description on update; remove legacy brief:.
+        if existing.startswith("---"):
             end = existing.find("---", 3)
             if end != -1:
                 fm = existing[:end + 3]
                 body = existing[end + 3:]
-                brief_line = _yaml_kv_line("brief", brief)
-                if "brief:" in fm:
-                    # Lambda to bypass re.sub backref interpretation in the
-                    # replacement string (brief may contain \1, \g<…>, etc.).
-                    fm = re.sub(r"brief:.*", lambda _m: brief_line, fm)
-                else:
-                    fm = fm.replace("---\n", f"---\n{brief_line}\n", 1)
+                fm = _set_fm_line(fm, "type", "Concept")
+                if brief:
+                    fm = _set_fm_line(fm, "description", brief)
+                # Drop legacy brief: lines (migrated to description:).
+                fm = re.sub(r"^brief:.*\n?", "", fm, flags=re.MULTILINE)
                 existing = fm + body
         path.write_text(existing, encoding="utf-8")
     else:
@@ -873,9 +877,12 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
             end = content.find("---", 3)
             if end != -1:
                 content = content[end + 3:].lstrip("\n")
-        fm_lines = [_yaml_list_line("sources", [source_file])]
+        fm_lines = [
+            _yaml_kv_line("type", "Concept"),
+            _yaml_list_line("sources", [source_file]),
+        ]
         if brief:
-            fm_lines.append(_yaml_kv_line("brief", brief))
+            fm_lines.append(_yaml_kv_line("description", brief))
         frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
         path.write_text(frontmatter + content, encoding="utf-8")
 
@@ -1630,7 +1637,7 @@ async def _compile_concepts(
             ], f"concept: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
-            brief = parsed.get("brief", "")
+            brief = parsed.get("description", "")
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             # An empty/None ``content`` field yields "" so
             # ``_require_nonempty_content`` raises and the page is skipped,
@@ -1668,7 +1675,7 @@ async def _compile_concepts(
             ], f"update: {name}", response_format=_JSON_RESPONSE_FORMAT)
         try:
             parsed = _parse_json(raw)
-            brief = parsed.get("brief", "")
+            brief = parsed.get("description", "")
             # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
             content = parsed.get("content") or ""
         except (json.JSONDecodeError, ValueError):
