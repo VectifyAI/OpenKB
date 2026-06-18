@@ -13,11 +13,28 @@ class HashRegistry:
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._persist_enabled = True
         if path.exists():
             with path.open("r", encoding="utf-8") as fh:
                 self._data: dict[str, dict] = json.load(fh)
         else:
             self._data = {}
+
+    @classmethod
+    def memory(cls, entries: dict[str, dict]) -> "HashRegistry":
+        """An in-memory view over ``entries`` that never writes back to disk.
+
+        Shares the on-disk registry's read/resolve contract (``get_by_path``,
+        ``find_legacy_by_stem``, ``all_entries``, ``add``) so callers that only
+        need to stage mutations in memory — batch doc_name reservation —
+        reuse the same code path instead of a parallel reimplementation.
+        ``add`` updates the in-memory dict but skips persistence.
+        """
+        reg = cls.__new__(cls)
+        reg._path = None
+        reg._persist_enabled = False
+        reg._data = {key: dict(value) for key, value in entries.items()}
+        return reg
 
     # ------------------------------------------------------------------
     # Query helpers
@@ -115,6 +132,8 @@ class HashRegistry:
     # ------------------------------------------------------------------
 
     def _persist(self) -> None:
+        if not self._persist_enabled:
+            return
         atomic_write_json(self._path, self._data)
 
     # ------------------------------------------------------------------

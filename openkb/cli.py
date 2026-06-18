@@ -8,11 +8,16 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import logging
 import shutil
 import sys
 import time
+import unicodedata
+import uuid
 from functools import wraps
 from pathlib import Path
 from typing import Literal
@@ -45,9 +50,10 @@ from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
     resolve_extra_headers, set_extra_headers,
 )
-from openkb.converter import _registry_path, convert_document
+from openkb.converter import _registry_path, _sanitize_stem, convert_document, resolve_doc_name
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
+from openkb.mutation import MutationSnapshot, publish_staged_tree, recover_pending_journals, snapshot_paths
 from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
@@ -67,6 +73,7 @@ _KNOWN_PROVIDER_KEYS = (
 # handled by LiteLLM itself) — no API key env var is needed, so the
 # missing-key warning would be a false alarm for them.
 _OAUTH_PROVIDERS = {"chatgpt", "github_copilot"}
+_AddOutcome = Literal["added", "skipped", "failed"]
 
 
 def _extract_provider(model: str) -> str | None:
@@ -274,13 +281,379 @@ def _clear_existing_skill_dir(kb_dir: Path, name: str) -> None:
         shutil.rmtree(target)
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
-    """Convert, index, and compile a single document under the KB mutation lock."""
+@dataclass
+class _PreparedAdd:
+    file_path: Path
+    result: object | None = None
+    staging_dir: Path | None = None
+    outcome: _AddOutcome | None = None
+    error_stage: str = ""
+    error: Exception | None = None
+
+
+def _positive_int(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)
+
+
+def _reserve_batch_doc_names(files: list[Path], kb_dir: Path) -> dict[Path, str]:
+    """Reserve doc_names in scan order so parallel prepare matches serial add."""
+    from openkb.state import HashRegistry
+
+    # In-memory registry view: same resolve contract as the on-disk registry
+    # but add() never persists. persist_legacy=True below therefore only
+    # *consumes* a matched legacy entry in memory (backfilling its path) so a
+    # later same-stem file in this batch no longer re-matches it via
+    # find_legacy_by_stem — the idempotency fix. With a persisting registry
+    # that same call would write disk on every reservation.
+    batch_registry = HashRegistry.memory(
+        HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries()
+    )
+    reserved: dict[Path, str] = {}
+    for file_path in files:
+        doc_name = resolve_doc_name(
+            file_path,
+            kb_dir,
+            batch_registry,
+            persist_legacy=True,
+        )
+        reserved[file_path] = doc_name
+        # Future files in the same batch must see this name as already taken;
+        # otherwise same-stem files prepared in parallel could all claim it.
+        batch_registry.add(
+            f"batch:{len(reserved)}:{_registry_path(file_path, kb_dir)}",
+            {
+                "name": file_path.name,
+                "doc_name": doc_name,
+                "path": _registry_path(file_path, kb_dir),
+            },
+        )
+    return reserved
+
+
+def _staging_dir_for(kb_dir: Path, file_path: Path) -> Path:
+    safe = _sanitize_stem(file_path.stem)
+    # uuid (not time.time_ns()) for uniqueness: two same-stem files sanitize to
+    # the same `safe`, so the timestamp was the only differentiator and a
+    # repeated wall-clock ns would make mkdir(exist_ok=False) crash the batch.
+    path = kb_dir / ".openkb" / "staging" / f"add-{safe}-{uuid.uuid4().hex[:8]}"
+    path.mkdir(parents=True, exist_ok=False)
+    return path
+
+
+def _cleanup_staging(path: Path | None) -> None:
+    if path is not None:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _prepare_add_file(
+    file_path: Path,
+    kb_dir: Path,
+    staging_dir: Path | None,
+    doc_name: str | None = None,
+) -> _PreparedAdd:
+    """Run file-local conversion into an optional staging directory."""
+    logger = logging.getLogger(__name__)
+    try:
+        result = convert_document(
+            file_path,
+            kb_dir,
+            assume_locked=True,
+            staging_dir=staging_dir,
+            doc_name_override=doc_name,
+        )
+    except Exception as exc:
+        logger.debug("Conversion traceback:", exc_info=True)
+        return _PreparedAdd(
+            file_path=file_path,
+            staging_dir=staging_dir,
+            outcome="failed",
+            error_stage="Conversion",
+            error=exc,
+        )
+    if result.skipped:
+        return _PreparedAdd(
+            file_path=file_path,
+            result=result,
+            staging_dir=staging_dir,
+            outcome="skipped",
+        )
+    return _PreparedAdd(file_path=file_path, result=result, staging_dir=staging_dir)
+
+
+def _final_artifact_paths(result, kb_dir: Path) -> tuple[Path | None, Path | None]:
+    final_raw = None
+    final_source = None
+    if result.raw_path is not None:
+        final_raw = kb_dir / "raw" / result.raw_path.name
+    if result.source_path is not None:
+        final_source = kb_dir / "wiki" / "sources" / result.source_path.name
+    return final_raw, final_source
+
+
+def _snapshot_add_paths(kb_dir: Path, doc_name: str, final_raw: Path | None, final_source: Path | None) -> list[Path]:
+    paths = [
+        kb_dir / ".openkb" / "hashes.json",
+        kb_dir / ".openkb" / "pageindex.db",
+        # SQLite may keep recently-written PageIndex state in sidecar files.
+        # Snapshot missing paths too, so rollback removes sidecars created
+        # during a failed long-document ingest.
+        kb_dir / ".openkb" / "pageindex.db-wal",
+        kb_dir / ".openkb" / "pageindex.db-shm",
+        kb_dir / ".openkb" / "pageindex.db-journal",
+        kb_dir / ".openkb" / "files",
+        kb_dir / "wiki" / "summaries" / f"{doc_name}.md",
+        kb_dir / "wiki" / "sources" / f"{doc_name}.json",
+        kb_dir / "wiki" / "sources" / "images" / doc_name,
+        kb_dir / "wiki" / "concepts",
+        kb_dir / "wiki" / "entities",
+        kb_dir / "wiki" / "index.md",
+        kb_dir / "wiki" / "log.md",
+    ]
+    if final_raw is not None:
+        paths.append(final_raw)
+    if final_source is not None:
+        paths.append(final_source)
+    return paths
+
+
+def _run_compile_with_retry(coro_factory, label: str) -> None:
+    """Run an async compile coroutine once, retrying once after 2s on failure.
+
+    ``coro_factory`` builds a fresh coroutine each call (an ``asyncio.run``-consumed
+    coroutine can't be awaited twice). Raises on the second failure so the caller's
+    snapshot-rollback path runs.
+    """
+    logger = logging.getLogger(__name__)
+    click.echo(f"  {label}...")
+    for attempt in range(2):
+        try:
+            asyncio.run(coro_factory())
+            return
+        except Exception as exc:
+            if attempt == 0:
+                click.echo("  Retrying compilation in 2s...")
+                time.sleep(2)
+            else:
+                click.echo(f"  [ERROR] Compilation failed: {exc}")
+                logger.debug("Compilation traceback:", exc_info=True)
+                raise
+
+
+def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _AddOutcome:
+    """Commit a prepared add while the caller holds the KB mutation lock."""
+    from openkb.agent.compiler import compile_long_doc, compile_short_doc
+    from openkb.state import HashRegistry
+
+    logger = logging.getLogger(__name__)
+    file_path = prepared.file_path
+
+    if prepared.outcome == "failed":
+        click.echo(f"  [ERROR] {prepared.error_stage} failed: {prepared.error}")
+        _cleanup_staging(prepared.staging_dir)
+        return "failed"
+    if prepared.outcome == "skipped":
+        click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
+        _cleanup_staging(prepared.staging_dir)
+        return "skipped"
+    if prepared.result is None:
+        click.echo(f"  [ERROR] Conversion failed: no result for {file_path.name}")
+        _cleanup_staging(prepared.staging_dir)
+        return "failed"
+
+    result = prepared.result
+    registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+    if result.file_hash and registry.is_known(result.file_hash):
+        click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
+        _cleanup_staging(prepared.staging_dir)
+        return "skipped"
+
+    doc_name = result.doc_name or file_path.stem
+    norm_doc_name = unicodedata.normalize("NFKC", doc_name)
+    norm_file_name = unicodedata.normalize("NFKC", file_path.name)
+    path_key = _registry_path(file_path, kb_dir)
+    for existing_hash, meta in registry.all_entries().items():
+        existing_name = meta.get("doc_name") or Path(meta.get("name", "")).stem
+        if (
+            existing_hash != result.file_hash
+            and unicodedata.normalize("NFKC", existing_name) == norm_doc_name
+        ):
+            existing_path = meta.get("path")
+            # Same document iff it shares our path, OR it is a legacy
+            # (pre-path-index) entry with no path whose filename matches — the
+            # pre-collision form of this same document being re-ingested. A
+            # path-indexed entry must NOT be matched by filename alone: two
+            # different files can share a name, and a concurrent add could
+            # claim this doc_name in the window between reservation and commit.
+            # NFKC-normalize names: macOS reports filenames in NFD, so a raw
+            # `==` would mis-classify a same-document re-add as a conflict.
+            if existing_path == path_key or (
+                not existing_path
+                and unicodedata.normalize("NFKC", meta.get("name") or "") == norm_file_name
+            ):
+                continue
+            click.echo(
+                "  [ERROR] Document name conflict after parallel preparation: "
+                f"'{doc_name}' is already used by {meta.get('name', 'another document')}. "
+                "Re-run this file after the current batch."
+            )
+            _cleanup_staging(prepared.staging_dir)
+            return "failed"
+
+    final_raw, final_source = _final_artifact_paths(result, kb_dir)
+    snapshot: MutationSnapshot | None = None
+    index_result = None
+
+    try:
+        # Take the snapshot inside the try: a failure here (disk-full copytree
+        # of concepts/entities, permission, relative_to ValueError) used to
+        # propagate uncaught — aborting the whole remaining batch and leaking
+        # an unjournaled backup dir. snapshot_paths now self-cleans its backup
+        # dir on partial failure, so when snapshot stays None there is nothing
+        # to roll back and the except branch handles that case.
+        snapshot = snapshot_paths(
+            kb_dir,
+            _snapshot_add_paths(kb_dir, doc_name, final_raw, final_source),
+            operation="add",
+            details={"file_hash": result.file_hash, "name": file_path.name, "doc_name": doc_name},
+        )
+        publish_staged_tree(prepared.staging_dir, kb_dir)
+        if final_raw is not None:
+            result.raw_path = final_raw
+        if final_source is not None:
+            result.source_path = final_source
+
+        if result.is_long_doc:
+            click.echo("  Long document detected — indexing with PageIndex...")
+            try:
+                from openkb.indexer import index_long_document
+
+                index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
+            except Exception as exc:
+                click.echo(f"  [ERROR] Indexing failed: {exc}")
+                logger.debug("Indexing traceback:", exc_info=True)
+                raise
+
+            summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+            _run_compile_with_retry(
+                lambda: compile_long_doc(
+                    doc_name,
+                    summary_path,
+                    index_result.doc_id,
+                    kb_dir,
+                    model,
+                    doc_description=index_result.description,
+                ),
+                label=f"Compiling long doc (doc_id={index_result.doc_id})",
+            )
+        else:
+            _run_compile_with_retry(
+                lambda: compile_short_doc(doc_name, result.source_path, kb_dir, model),
+                label="Compiling short doc",
+            )
+
+        if result.file_hash:
+            # Reuse the conflict-scan registry (line above): still valid under
+            # the same lock — nothing mutated it between scan and write.
+            doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
+            meta = {
+                "name": file_path.name,
+                "doc_name": doc_name,
+                "type": doc_type,
+                "path": _registry_path(file_path, kb_dir),
+            }
+            if result.raw_path is not None:
+                meta["raw_path"] = _registry_path(result.raw_path, kb_dir)
+            if result.source_path is not None:
+                meta["source_path"] = _registry_path(result.source_path, kb_dir)
+            if index_result is not None:
+                meta["doc_id"] = index_result.doc_id
+            registry.remove_by_doc_name(doc_name)
+            for existing_hash, existing_meta in list(registry.all_entries().items()):
+                if (
+                    existing_hash != result.file_hash
+                    and not existing_meta.get("doc_name")
+                    and existing_meta.get("name") == file_path.name
+                ):
+                    registry.remove_by_hash(existing_hash)
+            registry.add(result.file_hash, meta)
+
+        # Commit point: the registry write is durable. Mark the journal
+        # committed so that any failure in the post-commit cleanup below
+        # (log append, backup removal) cannot trigger a recovery rollback
+        # that discards this completed ingest. mark_committed is the last
+        # step inside the try — together with registry.add it forms the
+        # atomic commit group, so a failure here correctly rolls back.
+        snapshot.mark_committed()
+    except Exception:
+        if snapshot is None:
+            # snapshot_paths failed before any mutation ran; it already removed
+            # its own backup dir, so there is nothing to roll back.
+            click.echo(f"  [ERROR] Failed to prepare mutation snapshot for {file_path.name}.")
+            return "failed"
+        rollback_error = snapshot.rollback_best_effort()
+        if rollback_error is None:
+            snapshot.discard_best_effort()
+        else:
+            click.echo(
+                "  [ERROR] Rollback failed; mutation journal retained for recovery: "
+                f"{snapshot.journal_path}"
+            )
+        return "failed"
+    finally:
+        _cleanup_staging(prepared.staging_dir)
+
+    # Post-commit side effects. These run only after the mutation is
+    # committed and the journal marked committed, so a failure here must NOT
+    # roll back — best-effort only. A stale "committed" journal left behind
+    # is harmless: the next recover_pending_journals sees status "committed"
+    # and discards it.
+    try:
+        append_log(kb_dir / "wiki", "ingest", file_path.name)
+    except Exception as exc:
+        logger.warning("Failed to append ingest log for %s: %s", file_path.name, exc)
+    cleanup_error = snapshot.discard_best_effort()
+    if cleanup_error is not None:
+        click.echo(
+            f"  [WARN] {file_path.name} added, but mutation journal cleanup failed: {cleanup_error}"
+        )
+    click.echo(f"  [OK] {file_path.name} added to knowledge base.")
+    return "added"
+
+
+@contextmanager
+def _kb_mutation_lock(kb_dir: Path):
+    """Acquire the ingest lock and drain pending mutation journals first.
+
+    Draining recovery is part of taking the mutation lock: a process that
+    acquires it must restore the KB to a known state before mutating, so any
+    journal left by a prior interrupted run is rolled back (and a terminal
+    one discarded) before the caller runs. Recovery messages indicate a prior
+    interrupted run, so they surface at WARNING.
+    """
     with kb_ingest_lock(kb_dir / ".openkb"):
-        return _add_single_file_locked(file_path, kb_dir)
+        for message in recover_pending_journals(kb_dir):
+            logging.getLogger(__name__).warning(message)
+        yield
 
 
-def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
+def add_single_file(file_path: Path, kb_dir: Path, *, stage: bool = True) -> _AddOutcome:
+    """Convert, index, and compile a single document under the KB mutation lock.
+
+    ``stage=True`` converts into an isolated staging dir before the commit
+    snapshot, so a crash between convert and commit can't orphan raw/source
+    files in the live KB. Callers whose file already lives in ``raw/`` (watch
+    mode, URL fetch) pass ``stage=False`` to keep convert's in-place
+    optimization.
+    """
+    with _kb_mutation_lock(kb_dir):
+        return _add_single_file_locked(file_path, kb_dir, stage=stage)
+
+
+def _add_single_file_locked(file_path: Path, kb_dir: Path, *, stage: bool = True) -> _AddOutcome:
     """Convert, index, and compile a single document into the knowledge base.
 
     Steps:
@@ -297,106 +670,19 @@ def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "
         be an orphan) while preserving it on failure so the user can
         retry without re-downloading.
     """
-    from openkb.agent.compiler import compile_long_doc, compile_short_doc
-    from openkb.state import HashRegistry
-
-    logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
-    # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
-    try:
-        result = convert_document(file_path, kb_dir)
-    except Exception as exc:
-        click.echo(f"  [ERROR] Conversion failed: {exc}")
-        logger.debug("Conversion traceback:", exc_info=True)
-        return "failed"
-
-    if result.skipped:
-        click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
-        return "skipped"
-
-    doc_name = result.doc_name or file_path.stem
-    index_result = None  # populated only on the long-doc branch
-
-    # 3/4. Index and compile
-    if result.is_long_doc:
-        click.echo(f"  Long document detected — indexing with PageIndex...")
-        try:
-            from openkb.indexer import index_long_document
-            index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
-        except Exception as exc:
-            click.echo(f"  [ERROR] Indexing failed: {exc}")
-            logger.debug("Indexing traceback:", exc_info=True)
-            return "failed"
-
-        summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
-        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
-        for attempt in range(2):
-            try:
-                asyncio.run(
-                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
-                                     doc_description=index_result.description)
-                )
-                break
-            except Exception as exc:
-                if attempt == 0:
-                    click.echo(f"  Retrying compilation in 2s...")
-                    time.sleep(2)
-                else:
-                    click.echo(f"  [ERROR] Compilation failed: {exc}")
-                    logger.debug("Compilation traceback:", exc_info=True)
-                    return "failed"
-    else:
-        click.echo(f"  Compiling short doc...")
-        for attempt in range(2):
-            try:
-                asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
-                break
-            except Exception as exc:
-                if attempt == 0:
-                    click.echo(f"  Retrying compilation in 2s...")
-                    time.sleep(2)
-                else:
-                    click.echo(f"  [ERROR] Compilation failed: {exc}")
-                    logger.debug("Compilation traceback:", exc_info=True)
-                    return "failed"
-
-    # Register hash only after successful compilation
-    if result.file_hash:
-        # Construct the registry NOW, not earlier: convert_document may have
-        # backfilled a legacy entry (doc_name/path) on disk via its own
-        # instance, and an earlier snapshot would clobber that backfill on
-        # the full rewrite in add().
-        registry = HashRegistry(openkb_dir / "hashes.json")
-        doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
-        meta = {
-            "name": file_path.name,
-            "doc_name": doc_name,
-            "type": doc_type,
-            "path": _registry_path(file_path, kb_dir),
-        }
-        if result.raw_path is not None:
-            meta["raw_path"] = _registry_path(result.raw_path, kb_dir)
-        if result.source_path is not None:
-            meta["source_path"] = _registry_path(result.source_path, kb_dir)
-        # For long PDFs we also persist the PageIndex doc_id so `openkb
-        # remove` can later call ``Collection.delete_document(doc_id)``
-        # to free the managed PDF copy + SQLite row.
-        if index_result is not None:
-            meta["doc_id"] = index_result.doc_id
-        # An edited document arrives with a new content hash; drop the
-        # stale entry for the same doc_name so the registry keeps exactly
-        # one entry per document.
-        registry.remove_by_doc_name(doc_name)
-        registry.add(result.file_hash, meta)
-
-    append_log(kb_dir / "wiki", "ingest", file_path.name)
-    click.echo(f"  [OK] {file_path.name} added to knowledge base.")
-    return "added"
+    # Stage unless the file already lives in raw/ (watch/URL), where convert's
+    # in-place optimization applies. Staging keeps convert's writes out of the
+    # live KB so a crash between convert and the commit snapshot can't orphan
+    # raw/source files with no journal to recover them.
+    staging_dir = _staging_dir_for(kb_dir, file_path) if stage else None
+    prepared = _prepare_add_file(file_path, kb_dir, staging_dir=staging_dir)
+    return _commit_prepared_add(prepared, kb_dir, model)
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +888,7 @@ def init(model, language):
         "model": model,
         "language": language,
         "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
+        "file_processing_jobs": DEFAULT_CONFIG["file_processing_jobs"],
     }
     save_config(openkb_dir / "config.yaml", config)
     atomic_write_json(openkb_dir / "hashes.json", {})
@@ -625,7 +912,6 @@ def init(model, language):
 @cli.command()
 @click.argument("path")
 @click.pass_context
-@_with_kb_lock(exclusive=True)
 def add(ctx, path):
     """Add a document or directory of documents at PATH to the knowledge base.
 
@@ -647,10 +933,11 @@ def add(ctx, path):
     # that the registry can't reach via openkb remove.
     from openkb.url_ingest import looks_like_url, fetch_url_to_raw
     if looks_like_url(path):
-        fetched = fetch_url_to_raw(path, kb_dir)
-        if fetched is None:
-            return
-        outcome = add_single_file(fetched, kb_dir)
+        with _kb_mutation_lock(kb_dir):
+            fetched = fetch_url_to_raw(path, kb_dir)
+            if fetched is None:
+                return
+            outcome = _add_single_file_locked(fetched, kb_dir, stage=False)
         # Only clean up on dedup-skip. On "failed" we keep the file so
         # the user can retry (e.g. transient LLM error during compile)
         # without re-downloading — and so they don't lose data when
@@ -674,9 +961,45 @@ def add(ctx, path):
             return
         total = len(files)
         click.echo(f"Found {total} supported file(s) in {path}.")
-        for i, f in enumerate(files, 1):
-            click.echo(f"\n[{i}/{total}] ", nl=False)
-            add_single_file(f, kb_dir)
+        config = load_config(kb_dir / ".openkb" / "config.yaml")
+        jobs = min(total, _positive_int(config.get("file_processing_jobs"), DEFAULT_CONFIG["file_processing_jobs"]))
+        _setup_llm_key(kb_dir)
+        model = config.get("model", DEFAULT_CONFIG["model"])
+        with _kb_mutation_lock(kb_dir):
+            reserved_doc_names = _reserve_batch_doc_names(files, kb_dir)
+        if jobs == 1:
+            for i, f in enumerate(files, 1):
+                click.echo(f"\n[{i}/{total}] ", nl=False)
+                # Stage exactly like the multi-worker path: prepare must never
+                # write the live KB unlocked. staging_dir=None would make
+                # convert_document write raw/ and wiki/sources/ straight into
+                # kb_dir with no lock and no mutation journal (orphan on crash).
+                prepared = _prepare_add_file(
+                    f, kb_dir, staging_dir=_staging_dir_for(kb_dir, f), doc_name=reserved_doc_names[f]
+                )
+                with _kb_mutation_lock(kb_dir):
+                    _commit_prepared_add(prepared, kb_dir, model)
+            return
+
+        click.echo(f"Preparing files with {jobs} worker(s).")
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = {
+                f: executor.submit(
+                    _prepare_add_file,
+                    f,
+                    kb_dir,
+                    _staging_dir_for(kb_dir, f),
+                    reserved_doc_names[f],
+                )
+                for f in files
+            }
+            # Commit in scan order even though prepare finishes out of order.
+            # That keeps log.md and CLI progress stable for human audit.
+            for i, f in enumerate(files, 1):
+                prepared = futures[f].result()
+                click.echo(f"\n[{i}/{total}] Adding: {prepared.file_path.name}")
+                with _kb_mutation_lock(kb_dir):
+                    _commit_prepared_add(prepared, kb_dir, model)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(
@@ -1412,7 +1735,7 @@ def watch(ctx):
                     f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
                 )
                 continue
-            add_single_file(fp, kb_dir)
+            add_single_file(fp, kb_dir, stage=False)
 
     click.echo(f"Watching {raw_dir} for new documents. Press Ctrl+C to stop.")
     watch_directory(raw_dir, on_new_files)

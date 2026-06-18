@@ -14,6 +14,7 @@ from markitdown import MarkItDown
 
 from openkb.config import load_config
 from openkb.images import copy_relative_images, extract_base64_images, convert_pdf_with_images
+from openkb.locks import atomic_write_text, kb_ingest_lock
 from openkb.state import HashRegistry
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class ConvertResult:
     skipped: bool = False
     file_hash: str | None = None  # For deferred hash registration
     doc_name: str | None = None  # Stable wiki name (collision-resistant)
+    staging_dir: Path | None = None
 
 
 def _registry_path(path: Path, kb_dir: Path) -> str:
@@ -70,7 +72,13 @@ def _name_taken(candidate: str, registry: HashRegistry) -> bool:
     return False
 
 
-def resolve_doc_name(src: Path, kb_dir: Path, registry: HashRegistry) -> str:
+def resolve_doc_name(
+    src: Path,
+    kb_dir: Path,
+    registry: HashRegistry,
+    *,
+    persist_legacy: bool = True,
+) -> str:
     """Resolve the stable wiki name for ``src`` (Scheme A).
 
     Identity is keyed by path: a source we've seen before (same path, even
@@ -93,9 +101,10 @@ def resolve_doc_name(src: Path, kb_dir: Path, registry: HashRegistry) -> str:
         file_hash, meta = legacy
         meta = dict(meta)
         name = meta.get("doc_name") or Path(meta.get("name", "")).stem
-        meta["doc_name"] = name
-        meta["path"] = path_key
-        registry.add(file_hash, meta)  # backfill + persist
+        if persist_legacy:
+            meta["doc_name"] = name
+            meta["path"] = path_key
+            registry.add(file_hash, meta)  # backfill + persist
         return name
 
     candidate = _sanitize_stem(src.stem)
@@ -111,7 +120,14 @@ def get_pdf_page_count(path: Path) -> int:
         return doc.page_count
 
 
-def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
+def convert_document(
+    src: Path,
+    kb_dir: Path,
+    *,
+    assume_locked: bool = False,
+    staging_dir: Path | None = None,
+    doc_name_override: str | None = None,
+) -> ConvertResult:
     """Convert a document and integrate it into the knowledge base.
 
     Steps:
@@ -122,12 +138,23 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
     5. Otherwise — run MarkItDown, extract base64 images, save to ``wiki/sources/``.
     6. Register hash in the registry.
     """
+    if not assume_locked:
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            return convert_document(
+                src,
+                kb_dir,
+                assume_locked=True,
+                staging_dir=staging_dir,
+                doc_name_override=doc_name_override,
+            )
+
     # ------------------------------------------------------------------
     # Load config & state
     # ------------------------------------------------------------------
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     threshold: int = config.get("pageindex_threshold", 20)
+    artifact_root = staging_dir if staging_dir is not None else kb_dir
     registry = HashRegistry(openkb_dir / "hashes.json")
 
     # ------------------------------------------------------------------
@@ -141,15 +168,23 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
             skipped=True,
             file_hash=file_hash,
             doc_name=stored.get("doc_name") or Path(stored.get("name", src.name)).stem,
+            staging_dir=staging_dir,
         )
-    doc_name = resolve_doc_name(src, kb_dir, registry)
+    # Batch ingest reserves doc_names before parallel conversion so same-stem
+    # files behave like serial adds while still writing to isolated staging dirs.
+    doc_name = doc_name_override or resolve_doc_name(
+        src,
+        kb_dir,
+        registry,
+        persist_legacy=staging_dir is None,
+    )
 
     # ------------------------------------------------------------------
     # 2. Copy to raw/
     # ------------------------------------------------------------------
-    raw_dir = kb_dir / "raw"
+    raw_dir = artifact_root / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    if src.resolve().is_relative_to(raw_dir.resolve()):
+    if staging_dir is None and src.resolve().is_relative_to(raw_dir.resolve()):
         # Watch mode: the file already lives in raw/ — don't copy/rename.
         raw_dest = src
     else:
@@ -173,14 +208,15 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
                 is_long_doc=True,
                 file_hash=file_hash,
                 doc_name=doc_name,
+                staging_dir=staging_dir,
             )
 
     # ------------------------------------------------------------------
     # 4/5. Convert to Markdown
     # ------------------------------------------------------------------
-    sources_dir = kb_dir / "wiki" / "sources"
+    sources_dir = artifact_root / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = kb_dir / "wiki" / "sources" / "images" / doc_name
+    images_dir = artifact_root / "wiki" / "sources" / "images" / doc_name
     images_dir.mkdir(parents=True, exist_ok=True)
 
     if src.suffix.lower() == ".md":
@@ -197,11 +233,12 @@ def convert_document(src: Path, kb_dir: Path) -> ConvertResult:
         markdown = extract_base64_images(markdown, doc_name, images_dir)
 
     dest_md = sources_dir / f"{doc_name}.md"
-    dest_md.write_text(markdown, encoding="utf-8")
+    atomic_write_text(dest_md, markdown)
 
     return ConvertResult(
         raw_path=raw_dest,
         source_path=dest_md,
         file_hash=file_hash,
         doc_name=doc_name,
+        staging_dir=staging_dir,
     )

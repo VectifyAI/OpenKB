@@ -16,6 +16,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "language": "en",
     "pageindex_threshold": 20,
+    "file_processing_jobs": 2,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional
