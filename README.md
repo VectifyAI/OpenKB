@@ -24,6 +24,16 @@ Traditional RAG rediscovers knowledge from scratch on every query. Nothing accum
 
 OpenKB has two layers: a **wiki foundation** that compiles and maintains your knowledge, and **generators** (query / chat / Skill Factory) that turn it into useful output. See [Usage](#️-usage) for the full command list.
 
+### Features
+
+- **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, URLs, and more
+- **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless context-aware retrieval
+- **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
+- **Compiled Wiki** — LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync
+- **Query & Chat** — One-off questions or multi-turn conversations over your wiki, with persisted sessions you can resume
+- **Skill Factory** — Distill redistributable agent skills from your wiki
+- **Obsidian compatible** — Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
+
 # 🚀 Getting Started
 
 ### Install
@@ -71,8 +81,8 @@ openkb query "What are the main findings?"
 # 5. Or chat interactively
 openkb chat
 
-# 6. Or distill your wiki into a redistributable skill
-openkb skill new my-expert "Reason like an expert on <topic-from-your-docs>"
+# (Optional) Distill a redistributable agent skill from your wiki
+openkb skill new my-expert "Reason like an expert on <your-topic>"
 ```
 
 ### Set up your LLM
@@ -108,7 +118,7 @@ wiki/                                  │            ← the foundation
  ├── AGENTS.md           Wiki schema (LLM instructions)
  ├── sources/            Full-text conversions
  ├── summaries/          Per-document summaries
- ├── concepts/           Cross-document synthesis ← the good stuff
+ ├── concepts/           Cross-document synthesis
  ├── entities/           Specific named things (people, orgs, places, products)
  ├── explorations/       Saved query results
  └── reports/            Lint reports
@@ -116,9 +126,8 @@ wiki/                                  │            ← the foundation
                 ┌──────────────────────┼──────────────────────┐
                 ▼                      ▼                      ▼
             query / chat         Skill Factory          (future)
-          (LLM answers from     openkb skill new       ppt / podcast /
-            the wiki)           → output/skills/        report / …
-                                + marketplace.json
+          (LLM answers from    (redistributable       ppt / podcast /
+            the wiki)           agent skills)           report / …
 ```
 
 ### Short vs. Long Document Handling
@@ -155,7 +164,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | `openkb init` | Initialize a new knowledge base (interactive) |
 | <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add documents and compile to wiki. URL ingest auto-detects PDF (saved as `.pdf` → PageIndex / markitdown) vs HTML (trafilatura main-content extract → `.md`) |
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (use `--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts) |
-| <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the current compile pipeline on already-indexed docs (e.g. to backfill the `entities/` layer) without re-indexing. Regenerates summaries and rewrites concept pages — manual edits are overwritten. Use `--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md` |
+| <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the current compile pipeline on already-indexed docs (e.g. to backfill the `entities/` layer) without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten. Use `--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md` |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
@@ -174,8 +183,8 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | `openkb chat` | Interactive multi-turn session over the wiki (use `--resume`, `--list`, `--delete` to manage sessions) |
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | A redistributable Anthropic Skill at `<kb>/output/skills/<name>/` + auto-updated `marketplace.json` |
 | <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Structural lint of compiled skills (frontmatter, file sizes, wikilinks, scripts/ stdlib check with `--strict`). Auto-runs at end of `skill new` |
-| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Trigger-accuracy evaluation — does the `description:` field actually fire? LLM generates eval prompts; grader LLM scores activation. `--save` persists the eval set |
-| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Iteration workspace — every overwrite saves the previous version to `output/skills/<name>-workspace/iteration-N/` with a structural diff. Rollback restores any iteration |
+| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Trigger-accuracy evaluation: does the `description:` field actually fire? LLM generates eval prompts; grader LLM scores activation. `--save` persists the eval set |
+| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Iteration workspace: every overwrite saves the previous version to `output/skills/<name>-workspace/iteration-N/` with a structural diff. Rollback restores any iteration |
 
 ### Query & Chat — ask the wiki
 
@@ -205,7 +214,7 @@ Inside a chat, type `/` to access slash commands (Tab to complete):
 
 ### 🛠 Skill Factory — *Drop in a book. Out comes a digital expert.*
 
-The newest generator. `openkb skill new` distills any subset of your wiki into an [Anthropic Skill](https://docs.claude.com/en/docs/build-with-claude/skills) — a portable folder that **Claude Code, Codex CLI, Gemini CLI, and Cursor** all install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
+The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
 
 ```bash
 openkb skill new karpathy-thinking \
@@ -281,7 +290,7 @@ extra_headers:
   Copilot-Integration-Id: vscode-chat
 ```
 
-Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key — OpenKB skips the missing-key warning for them.
+Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
 
@@ -294,7 +303,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 ### PageIndex Integration
 
 Long documents are challenging for LLMs due to context limits, context rot, and summarization loss.
-[PageIndex](https://github.com/VectifyAI/PageIndex) solves this with vectorless, reasoning-based retrieval — building a hierarchical tree index that lets LLMs reason over the index for context-aware retrieval.
+[PageIndex](https://github.com/VectifyAI/PageIndex) solves this with vectorless, reasoning-based retrieval, building a hierarchical tree index that lets LLMs reason over the index for context-aware retrieval.
 
 PageIndex runs locally by default using the [open-source version](https://github.com/VectifyAI/PageIndex), with no external dependencies required.
 
@@ -329,7 +338,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 
 ### Using with Claude Code / Codex / Gemini CLI
 
-OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki — no extra runtime, no MCP setup, just install the skill once.
+OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki. No extra runtime, no MCP setup, just install the skill once.
 
 **Claude Code**:
 
@@ -344,7 +353,7 @@ OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki — no ex
 gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/openkb --consent
 ```
 
-**OpenAI Codex CLI** (no marketplace command yet — manual symlink):
+**OpenAI Codex CLI** (no marketplace command yet; manual symlink):
 
 ```bash
 git clone https://github.com/VectifyAI/OpenKB.git ~/openkb-src
@@ -352,7 +361,7 @@ mkdir -p ~/.agents/skills
 ln -s ~/openkb-src/skills/openkb ~/.agents/skills/openkb
 ```
 
-The skill is read-only — it won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
+The skill is read-only; it won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
 
 # 🧭 Learn More
 
@@ -362,9 +371,11 @@ The skill is read-only — it won't run `openkb add`, `remove`, or `lint --fix` 
 |---|---|---|
 | Short documents | LLM reads directly | markitdown → LLM reads |
 | Long documents | Context limits, context rot | PageIndex tree index |
-| Supported formats | Web clipper → .md | PDF, Word, PPT, Excel, HTML, text, CSV, .md |
+| Input sources | Web clipper → .md | PDF, Word, PPT, Excel, HTML, text, CSV, .md, URLs |
 | Wiki compilation | LLM agent | LLM agent (same) |
+| Entity extraction | Manual | Automatic (people, orgs, places, products) |
 | Q&A | Query over wiki | Wiki + PageIndex retrieval |
+| Output | Wiki only | Wiki + Skill Factory + agent CLI integration |
 
 ### The Stack
 
@@ -391,9 +402,18 @@ Contributions are welcome! Please submit a pull request, or open an [issue](http
 
 Apache 2.0. See [LICENSE](LICENSE).
 
+### 🌐 Open-Source Ecosystem
+
+Other [open-source projects](https://docs.pageindex.ai/open-source) from the PageIndex ecosystem:
+
+- [PageIndex](https://github.com/VectifyAI/PageIndex) — Vectorless, reasoning-based RAG framework for long documents
+- [ChatIndex](https://github.com/VectifyAI/ChatIndex) — Tree indexing and retrieval for long conversational histories and memory
+- [ConDB](https://github.com/VectifyAI/ConDB) — A KV-cache native context database for tree-based retrieval at scale
+- [PageIndex MCP](https://github.com/VectifyAI/pageindex-mcp) — The MCP server for PageIndex
+
 ### Support Us
 
-If you find OpenKB useful, please give us a star 🌟 — and check out [PageIndex](https://github.com/VectifyAI/PageIndex) too!  
+If you find OpenKB useful, please give us a star 🌟 and check out [PageIndex](https://github.com/VectifyAI/PageIndex) too!  
 
 <div>
 
