@@ -26,13 +26,13 @@ OpenKB has two layers: a **wiki foundation** that compiles and maintains your kn
 
 ### Features
 
-- **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, URLs, and more
-- **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless context-aware retrieval
-- **Native multi-modality** — Retrieves and understands figures, tables, and images, not just text
-- **Compiled Wiki** — LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync
-- **Query & Chat** — One-off questions or multi-turn conversations over your wiki, with persisted sessions you can resume
-- **Skill Factory** — Distill redistributable agent skills from your wiki
-- **Obsidian compatible** — Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
+- **Broad format support:** PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, URLs, and more
+- **Scale to long documents:** Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless context-aware retrieval
+- **Native multi-modality:** Retrieves and understands figures, tables, and images, not just text
+- **Compiled Wiki:** LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync
+- **Query & Chat:** One-off questions or multi-turn conversations over your wiki, with persisted sessions you can resume
+- **Skill Factory:** Distill redistributable agent skills from your wiki
+- **Obsidian compatible:** Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
 
 # 🚀 Getting Started
 
@@ -43,7 +43,7 @@ pip install openkb
 ```
 
 <details>
-<summary><i>Other install options:</i></summary>
+<summary><b><i>Other install options:</i></b></summary>
 
 - **Latest from GitHub:**
 
@@ -170,6 +170,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 
 <details>
 <summary><b><i>More wiki commands:</i></b></summary>
+<br>
 
 | Command | Description |
 |---|---|
@@ -190,10 +191,11 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (use `--save` to persist to `wiki/explorations/`) |
 | <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (use `--resume`, `--list`, `--delete` to manage sessions) |
 | | |
-| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | A redistributable agent skill — see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki — see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below |
 
 <details>
 <summary><b><i>More skill commands:</i></b></summary>
+<br>
 
 | Command | Output |
 |---|---|
@@ -221,18 +223,21 @@ Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <details>
 <summary><i>Slash commands:</i></summary>
+<br>
 
 - `/help` — list available commands
 - `/status` — show knowledge base status
 - `/list` — list all documents
 - `/add <path>` — add a document or directory without leaving the chat
-- `/skill new <name> "<intent>"` — compile a skill from this chat (see below)
+- `/skill new <skill-name> "<intent>"` — compile a skill from this chat (see below)
 - `/save [name]` — export the transcript to `wiki/explorations/`
 - `/clear` — start a fresh session (the current one stays on disk)
 - `/lint` — run knowledge base lint
 - `/exit` — exit (Ctrl-D also works)
 
 </details>
+
+<a id="skill-factory"></a>
 
 ### 🛠 Skill Factory — *Drop in a book; out comes a digital expert.*
 
@@ -245,6 +250,7 @@ openkb skill new karpathy-thinking \
 
 <details>
 <summary><i>Output:</i></summary>
+<br>
 
 ```
 <kb>/output/skills/karpathy-thinking/
@@ -261,6 +267,7 @@ openkb skill new karpathy-thinking \
 
 <details>
 <summary><i>Install locally:</i></summary>
+<br>
 
 ```bash
 cp -r output/skills/karpathy-thinking ~/.claude/skills/
@@ -270,6 +277,7 @@ cp -r output/skills/karpathy-thinking ~/.claude/skills/
 
 <details>
 <summary><i>Share with others:</i></summary>
+<br>
 
 Push your KB to GitHub, then anyone runs:
 
@@ -281,6 +289,7 @@ npx skills@latest add <your-org>/<your-repo>
 
 <details>
 <summary><i>Iterate from chat:</i></summary>
+<br>
 
 Compilation is one-shot, but follow-up edits aren't. Inside `openkb chat`, you can refine without re-running the whole pipeline:
 
@@ -295,6 +304,7 @@ Compilation is one-shot, but follow-up edits aren't. Inside `openkb chat`, you c
 
 <details>
 <summary><i>Quality gates:</i></summary>
+<br>
 
 Structural validation, trigger-accuracy + body-coverage evaluation, and full history/rollback:
 
@@ -335,6 +345,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 
 <details>
 <summary><i>Advanced options:</i></summary>
+<br>
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
 
@@ -393,6 +404,7 @@ OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki. No extra
 
 <details>
 <summary><i>Claude Code:</i></summary>
+<br>
 
 ```
 /plugin marketplace add VectifyAI/OpenKB
@@ -403,6 +415,7 @@ OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki. No extra
 
 <details>
 <summary><i>OpenAI Codex CLI:</i></summary>
+<br>
 
 *(no marketplace command yet; manual symlink)*
 
@@ -416,6 +429,7 @@ ln -s ~/openkb-src/skills/openkb ~/.agents/skills/openkb
 
 <details>
 <summary><i>Gemini CLI:</i></summary>
+<br>
 
 ```bash
 gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/openkb --consent
@@ -468,10 +482,10 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 Other [open-source projects](https://docs.pageindex.ai/open-source) from the PageIndex ecosystem:
 
-- [PageIndex](https://github.com/VectifyAI/PageIndex) — Vectorless, reasoning-based RAG framework for long documents
-- [ChatIndex](https://github.com/VectifyAI/ChatIndex) — Tree indexing and retrieval for long conversational histories and memory
-- [ConDB](https://github.com/VectifyAI/ConDB) — A KV-cache native context database for tree-based retrieval at scale
-- [PageIndex MCP](https://github.com/VectifyAI/pageindex-mcp) — The MCP server for PageIndex
+- [PageIndex](https://github.com/VectifyAI/PageIndex): Vectorless, reasoning-based RAG framework for long documents
+- [ChatIndex](https://github.com/VectifyAI/ChatIndex): Tree indexing and retrieval for long conversational histories and memory
+- [ConDB](https://github.com/VectifyAI/ConDB): A KV-cache native context database for tree-based retrieval at scale
+- [PageIndex MCP](https://github.com/VectifyAI/pageindex-mcp): The MCP server for PageIndex
 
 ### Support Us
 
