@@ -26,13 +26,13 @@ OpenKB has two layers: a **wiki foundation** that compiles and maintains your kn
 
 ### Features
 
-- **Broad format support:** PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, URLs, and more
-- **Scale to long documents:** Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless context-aware retrieval
-- **Native multi-modality:** Retrieves and understands figures, tables, and images, not just text
-- **Compiled Wiki:** LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync
-- **Query & Chat:** One-off questions or multi-turn conversations over your wiki, with persisted sessions you can resume
-- **Skill Factory:** Distill redistributable agent skills from your wiki
-- **Obsidian compatible:** Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
+- **Broad format support:** PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, URLs, and more.
+- **Scale to long documents:** Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless context-aware retrieval.
+- **Native multi-modality:** Retrieves and understands figures, tables, and images, not just text.
+- **Compiled Wiki:** The LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync.
+- **Query & Chat:** One-off questions or multi-turn conversations over your wiki, with persisted sessions you can resume.
+- **Skill Factory:** Distills redistributable agent skills from your wiki.
+- **Obsidian compatible:** Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing.
 
 # 🚀 Getting Started
 
@@ -162,7 +162,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | Command | Description |
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
-| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add files, directories, or URLs and compile to wiki. URL content type (PDF or HTML) is auto-detected |
+| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add files, directories, or URLs and compile to wiki. The URL content type (PDF or HTML) is auto-detected. |
 | `openkb list` | List indexed documents and concepts |
 | `openkb status` | Show knowledge base stats |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
@@ -241,7 +241,7 @@ Inside a chat, type `/` to access slash commands (Tab to complete).
 
 ### 🛠 Skill Factory — *Drop in a book; out comes a digital expert.*
 
-The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
+The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) can install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
 
 ```bash
 openkb skill new karpathy-thinking \
@@ -327,7 +327,7 @@ openkb skill rollback karpathy-thinking --to 2
 
 ### Settings
 
-OpenKB settings are initialized by `openkb init` and are stored in `.openkb/config.yaml`:
+OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.yaml`:
 
 ```yaml
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
@@ -400,7 +400,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 
 ### Using with Claude Code / Codex / Gemini CLI
 
-OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki. No extra runtime, no MCP setup, just install the skill once.
+OpenKB ships a `SKILL.md` so any agent can read your compiled wiki. No extra runtime, no MCP setup, just install the skill once.
 
 <details>
 <summary><i>Claude Code:</i></summary>
