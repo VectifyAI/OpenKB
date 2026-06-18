@@ -18,12 +18,14 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
 
+from openkb.agent import compiler
 from openkb.cli import cli
 from openkb.schema import AGENTS_MD
 
@@ -312,3 +314,34 @@ def test_recompile_refresh_schema_noop_when_agents_missing(kb_dir):
     assert result.exit_code == 0, result.output
     assert not agents.exists()  # not materialized
     assert not (kb_dir / "wiki" / "AGENTS.md.bak").exists()
+
+
+# ---------------------------------------------------------------------------
+# compile_long_doc backfills type + description on recompile
+# ---------------------------------------------------------------------------
+
+
+def test_compile_long_doc_backfills_summary_frontmatter(tmp_path):
+    wiki = tmp_path / "wiki"
+    (wiki / "summaries").mkdir(parents=True)
+    (wiki / "concepts").mkdir(parents=True)
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text(
+        "model: gpt-4o-mini\nlanguage: en\n", encoding="utf-8")
+    summary_path = wiki / "summaries" / "long.md"
+    summary_path.write_text(
+        "---\ndoc_type: pageindex\nfull_text: sources/long.json\n---\n\n# Long\n",
+        encoding="utf-8",
+    )
+    with patch.object(compiler, "_llm_call", return_value="overview"), \
+         patch.object(compiler, "_compile_concepts", new=AsyncMock()), \
+         patch.object(compiler, "_close_async_llm_clients", new=AsyncMock()):
+        asyncio.run(compiler.compile_long_doc(
+            "long", summary_path, "doc-1", tmp_path, "gpt-4o-mini",
+            doc_description="A long report.",
+        ))
+    text = summary_path.read_text(encoding="utf-8")
+    assert 'type: "Summary"' in text
+    assert 'description: "A long report."' in text
+    # canonical order: type before description
+    assert text.index('type:') < text.index('description:')

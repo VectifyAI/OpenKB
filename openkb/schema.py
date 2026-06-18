@@ -48,7 +48,13 @@ Operations: ingest, query, lint
 - Use [[wikilink]] to link other wiki pages (e.g., [[concepts/attention]])
 - Standard Markdown heading hierarchy
 - Keep each page focused on a single topic
-- Do not include YAML frontmatter (---) in generated content; it is managed by code
+
+## Frontmatter (managed by code — do NOT emit it in generated content)
+- Every summary/concept/entity page carries a non-empty `type:` — `Summary`,
+  `Concept`, or a capitalized entity subtype (e.g. `Organization`). This is the
+  one field OKF requires; consumers use it for routing/filtering/presentation.
+- `description:` — a single-sentence one-liner (the field formerly named `brief`).
+- Do not include YAML frontmatter (---) in generated content; it is managed by code.
 """
 
 # Backward compat alias

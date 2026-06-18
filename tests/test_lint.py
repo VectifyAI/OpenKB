@@ -5,11 +5,15 @@ from pathlib import Path
 
 
 from openkb.lint import (
+    _EXCLUDED_FILES,
+    _load_wiki_pages,
     _normalize_target,
     build_norm_index,
     check_index_sync,
     find_broken_links,
+    find_invalid_frontmatter,
     find_missing_entries,
+    find_missing_okf_fields,
     find_orphans,
     fix_broken_links,
     list_existing_wiki_targets,
@@ -649,3 +653,117 @@ def test_whitelist_includes_entities(tmp_path):
     (tmp_path / "entities" / "anthropic.md").write_text("# A", encoding="utf-8")
     targets = list_existing_wiki_targets(tmp_path)
     assert "entities/anthropic" in targets
+
+
+def test_flags_missing_type_and_description(tmp_path):
+    wiki = tmp_path / "wiki"
+    for sub in ("summaries", "concepts", "entities"):
+        (wiki / sub).mkdir(parents=True)
+    (wiki / "concepts" / "good.md").write_text(
+        '---\ntype: "Concept"\ndescription: "ok"\n---\n\n# Good\n', encoding="utf-8")
+    (wiki / "concepts" / "no_type.md").write_text(
+        '---\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+    (wiki / "summaries" / "no_desc.md").write_text(
+        '---\ntype: "Summary"\n---\n\n# Bad\n', encoding="utf-8")
+    issues = find_missing_okf_fields(wiki)
+    assert any("no_type.md" in i and "type" in i for i in issues)
+    assert any("no_desc.md" in i and "description" in i for i in issues)
+    assert not any("good.md" in i for i in issues)
+
+
+def test_flags_null_type_as_missing(tmp_path):
+    wiki = tmp_path / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "concepts" / "null_type.md").write_text(
+        '---\ntype: null\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+    issues = find_missing_okf_fields(wiki)
+    assert any("null_type.md" in i and "type" in i for i in issues)
+
+
+def test_flags_non_string_type_as_missing(tmp_path):
+    wiki = tmp_path / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "concepts" / "bool_type.md").write_text(
+        '---\ntype: true\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+    issues = find_missing_okf_fields(wiki)
+    assert any("bool_type.md" in i and "type" in i for i in issues)
+
+
+class TestLoadWikiPages:
+    """Tests for :func:`_load_wiki_pages` scope and exclusion rules."""
+
+    def test_excludes_reports_directory(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "reports" / "run.md").write_text("# Report", encoding="utf-8")
+
+        pages = _load_wiki_pages(wiki)
+
+        assert not any(p.parts[-2] == "reports" for p in pages)
+
+    def test_excludes_sources_directory(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "sources" / "doc.md").write_text("# Source", encoding="utf-8")
+
+        pages = _load_wiki_pages(wiki)
+
+        assert not any(p.parts[-2] == "sources" for p in pages)
+
+    def test_excludes_excluded_files(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        for name in _EXCLUDED_FILES:
+            (wiki / name).write_text("# excluded", encoding="utf-8")
+
+        pages = _load_wiki_pages(wiki)
+
+        assert not any(p.name in _EXCLUDED_FILES for p in pages)
+
+    def test_includes_summaries_concepts_entities(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "entities").mkdir(parents=True, exist_ok=True)
+        (wiki / "summaries" / "paper.md").write_text("x", encoding="utf-8")
+        (wiki / "concepts" / "idea.md").write_text("x", encoding="utf-8")
+        (wiki / "entities" / "person.md").write_text("x", encoding="utf-8")
+
+        pages = _load_wiki_pages(wiki)
+
+        paths = {p.name for p in pages}
+        assert "paper.md" in paths
+        assert "idea.md" in paths
+        assert "person.md" in paths
+
+    def test_shared_pages_yields_identical_results_find_invalid_frontmatter(
+        self, tmp_path
+    ):
+        """Calling ``find_invalid_frontmatter`` with a pre-loaded ``pages``
+        dict must produce the same issues as calling it without one."""
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "bad.md").write_text(
+            "---\nkey: value: broken\n---\n\n# Bad\n", encoding="utf-8"
+        )
+        (wiki / "concepts" / "good.md").write_text(
+            '---\ntype: "Concept"\n---\n\n# Good\n', encoding="utf-8"
+        )
+
+        standalone = find_invalid_frontmatter(wiki)
+        shared = find_invalid_frontmatter(wiki, pages=_load_wiki_pages(wiki))
+
+        assert standalone == shared
+
+    def test_shared_pages_yields_identical_results_find_missing_okf_fields(
+        self, tmp_path
+    ):
+        """Calling ``find_missing_okf_fields`` with a pre-loaded ``pages``
+        dict must produce the same issues as calling it without one."""
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "missing_type.md").write_text(
+            '---\ndescription: "ok"\n---\n\n# Bad\n', encoding="utf-8"
+        )
+        (wiki / "summaries" / "complete.md").write_text(
+            '---\ntype: "Summary"\ndescription: "fine"\n---\n\n# Good\n',
+            encoding="utf-8",
+        )
+
+        standalone = find_missing_okf_fields(wiki)
+        shared = find_missing_okf_fields(wiki, pages=_load_wiki_pages(wiki))
+
+        assert standalone == shared
