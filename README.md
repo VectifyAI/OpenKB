@@ -207,7 +207,7 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 ### 💬 Query & Chat — *Ask the wiki*
 
-`openkb query "..."` answers a single question. `openkb chat` is interactive; each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and retrieval primitives.
+`openkb query "..."` answers a single question. `openkb chat` is interactive — each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and retrieval primitives.
 
 ```bash
 openkb query "What does the literature say about attention scaling?"
@@ -344,7 +344,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | Gemini | `gemini/gemini-3.1-pro-preview` |
 
 <details>
-<summary><i>Advanced options:</i></summary>
+<summary><i>Advanced options (entity_types, extra_headers, OAuth):</i></summary>
 <br>
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
@@ -437,7 +437,7 @@ gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/open
 
 </details>
 
-The skill is read-only; it won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
+The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
 
 # 🧭 Learn More
 
