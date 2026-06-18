@@ -43,7 +43,7 @@ pip install openkb
 ```
 
 <details>
-<summary><i>Other install options</i></summary>
+<summary><i>Other install options:</i></summary>
 
 - **Latest from GitHub:**
 
@@ -89,7 +89,7 @@ openkb skill new my-expert "Reason like an expert on <your-topic>"
 
 OpenKB comes with [multi-LLM support](https://docs.litellm.ai/docs/providers) (e.g., OpenAI, Claude, Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
-Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using `provider/model` LiteLLM format (like `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (like `gpt-5.4`).
+Set your model during `openkb init`, or in [`.openkb/config.yaml`](#configuration), using the `provider/model` LiteLLM format (like `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (like `gpt-5.4`).
 
 Create a `.env` file with your LLM API key:
 
@@ -162,14 +162,14 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | Command | Description |
 |---|---|
 | `openkb init` | Initialize a new knowledge base (interactive) |
-| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add files, directories, or URLs and compile to wiki. URLs auto-detect content type (PDF or HTML) |
+| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add files, directories, or URLs and compile to wiki. URL content type (PDF or HTML) is auto-detected |
 | `openkb list` | List indexed documents and concepts |
 | `openkb status` | Show knowledge base stats |
 | `openkb watch` | Watch `raw/` and auto-compile new files |
 | `openkb lint` | Run structural + knowledge health checks |
 
 <details>
-<summary><i>More wiki commands:</i></summary>
+<summary><b><i>More wiki commands:</i></b></summary>
 
 | Command | Description |
 |---|---|
@@ -193,7 +193,7 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | A redistributable agent skill — see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below |
 
 <details>
-<summary><i>More skill commands:</i></summary>
+<summary><b><i>More skill commands:</i></b></summary>
 
 | Command | Output |
 |---|---|
@@ -203,9 +203,9 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 </details>
 
-### Query & Chat — ask the wiki
+### 💬 Query & Chat — *Ask the wiki*
 
-`openkb query "..."` answers a single question. `openkb chat` is interactive; each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and the same retrieval primitives (PageIndex for long docs, direct concept reads for short).
+`openkb query "..."` answers a single question. `openkb chat` is interactive; each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and retrieval primitives.
 
 ```bash
 openkb query "What does the literature say about attention scaling?"
@@ -217,10 +217,10 @@ openkb chat --list                # list all sessions
 openkb chat --delete <id>         # delete a session
 ```
 
-Inside a chat, type `/` to access slash commands (Tab to complete):
+Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <details>
-<summary><i>Slash commands</i></summary>
+<summary><i>Slash commands:</i></summary>
 
 - `/help` — list available commands
 - `/status` — show knowledge base status
@@ -234,7 +234,7 @@ Inside a chat, type `/` to access slash commands (Tab to complete):
 
 </details>
 
-### 🛠 Skill Factory — *Drop in a book. Out comes a digital expert.*
+### 🛠 Skill Factory — *Drop in a book; out comes a digital expert.*
 
 The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
 
@@ -244,7 +244,7 @@ openkb skill new karpathy-thinking \
 ```
 
 <details>
-<summary><i>Output</i></summary>
+<summary><i>Output:</i></summary>
 
 ```
 <kb>/output/skills/karpathy-thinking/
@@ -260,7 +260,7 @@ openkb skill new karpathy-thinking \
 </details>
 
 <details>
-<summary><i>Install locally</i></summary>
+<summary><i>Install locally:</i></summary>
 
 ```bash
 cp -r output/skills/karpathy-thinking ~/.claude/skills/
@@ -269,7 +269,7 @@ cp -r output/skills/karpathy-thinking ~/.claude/skills/
 </details>
 
 <details>
-<summary><i>Share with others</i></summary>
+<summary><i>Share with others:</i></summary>
 
 Push your KB to GitHub, then anyone runs:
 
@@ -280,7 +280,7 @@ npx skills@latest add <your-org>/<your-repo>
 </details>
 
 <details>
-<summary><i>Iterate from chat</i></summary>
+<summary><i>Iterate from chat:</i></summary>
 
 Compilation is one-shot, but follow-up edits aren't. Inside `openkb chat`, you can refine without re-running the whole pipeline:
 
@@ -294,7 +294,7 @@ Compilation is one-shot, but follow-up edits aren't. Inside `openkb chat`, you c
 </details>
 
 <details>
-<summary><i>Quality gates</i></summary>
+<summary><i>Quality gates:</i></summary>
 
 Structural validation, trigger-accuracy + body-coverage evaluation, and full history/rollback:
 
@@ -317,7 +317,7 @@ openkb skill rollback karpathy-thinking --to 2
 
 ### Settings
 
-Settings are initialized by `openkb init`, and stored in `.openkb/config.yaml`:
+OpenKB settings are initialized by `openkb init` and are stored in `.openkb/config.yaml`:
 
 ```yaml
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
@@ -334,7 +334,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | Gemini | `gemini/gemini-3.1-pro-preview` |
 
 <details>
-<summary><i>Advanced options</i></summary>
+<summary><i>Advanced options:</i></summary>
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
 
@@ -350,13 +350,13 @@ Subscription-based providers that authenticate via OAuth device flow (e.g. `chat
 
 </details>
 
-### PageIndex
+### PageIndex Setup
 
-Long-document retrieval is a [known challenge](https://x.com/karpathy/status/2039823314982744522) for LLMs. [PageIndex](https://github.com/VectifyAI/PageIndex) solves this with vectorless, reasoning-based retrieval, building a hierarchical tree index that lets LLMs reason over the index for context-aware retrieval.
+Long-document retrieval is a [known challenge](https://x.com/karpathy/status/2039823314982744522) for LLMs. [PageIndex](https://github.com/VectifyAI/PageIndex) solves this with vectorless, reasoning-based retrieval, by building a hierarchical tree index that lets LLMs reason over the index for context-aware retrieval.
 
 PageIndex runs locally by default using the [open-source version](https://github.com/VectifyAI/PageIndex), with no external dependencies required.
 
-#### Cloud Support (Optional)
+***Cloud Support*** *(Optional)*:
 
 For large or complex PDFs, [PageIndex Cloud](https://docs.pageindex.ai/) can be used to access additional capabilities, including:
 
@@ -392,7 +392,7 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki. No extra runtime, no MCP setup, just install the skill once.
 
 <details>
-<summary><b>Claude Code</b></summary>
+<summary><i>Claude Code:</i></summary>
 
 ```
 /plugin marketplace add VectifyAI/OpenKB
@@ -402,7 +402,9 @@ OpenKB ships a `SKILL.md` so any agent CLI can read your compiled wiki. No extra
 </details>
 
 <details>
-<summary><b>OpenAI Codex CLI</b> <i>(no marketplace command yet; manual symlink)</i></summary>
+<summary><i>OpenAI Codex CLI:</i></summary>
+
+*(no marketplace command yet; manual symlink)*
 
 ```bash
 git clone https://github.com/VectifyAI/OpenKB.git ~/openkb-src
@@ -413,7 +415,7 @@ ln -s ~/openkb-src/skills/openkb ~/.agents/skills/openkb
 </details>
 
 <details>
-<summary><b>Gemini CLI</b></summary>
+<summary><i>Gemini CLI:</i></summary>
 
 ```bash
 gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/openkb --consent
@@ -473,7 +475,7 @@ Other [open-source projects](https://docs.pageindex.ai/open-source) from the Pag
 
 ### Support Us
 
-If you find OpenKB useful, please give us a star 🌟 and check out [PageIndex](https://github.com/VectifyAI/PageIndex) too!  
+If you find OpenKB useful, please give us a star 🌟 — and check out [**PageIndex**](https://github.com/VectifyAI/PageIndex) too!  
 
 <div>
 
