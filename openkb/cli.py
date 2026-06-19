@@ -53,7 +53,7 @@ from openkb.config import (
 from openkb.converter import _registry_path, _sanitize_stem, convert_document, resolve_doc_name
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
-from openkb.mutation import MutationSnapshot, publish_staged_tree, recover_pending_journals, snapshot_paths
+from openkb.mutation import MutationSnapshot, publish_staged_tree, snapshot_paths
 from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
@@ -714,19 +714,18 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
 
 @contextmanager
 def _kb_mutation_lock(kb_dir: Path):
-    """Acquire the ingest lock and drain pending mutation journals first.
+    """Acquire the ingest lock for an add-path mutation.
 
-    Draining recovery is part of taking the mutation lock: a process that
-    acquires it must restore the KB to a known state before mutating, so any
-    journal left by a prior interrupted run is rolled back (and a terminal
-    one discarded) before the caller runs. Recovery messages indicate a prior
-    interrupted run, so they surface at WARNING.
+    Journal draining lives in :func:`openkb.locks.kb_lock` now, so every
+    exclusive-lock holder — ``add``, ``remove``, ``recompile``, ``lint``,
+    ``chat`` — drains pending journals on first acquisition, not just the add
+    path. This wrapper remains the add pipeline's entry point (prepare/commit
+    run inside the lock); it no longer drains separately, since doing so would
+    double-scan and double-log on every per-file commit in a directory batch.
     """
     started = time.perf_counter()
     with kb_ingest_lock(kb_dir / ".openkb"):
         _log_add_timing("lock_wait", None, started)
-        for message in recover_pending_journals(kb_dir):
-            logging.getLogger(__name__).warning(message)
         yield
 
 
