@@ -98,6 +98,49 @@ class TestAddCommand:
             assert "b.txt" in called_names
             assert "ignore.xyz" not in called_names
 
+    def test_add_directory_prefilters_known_hashes_before_prepare(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / ".openkb" / "config.yaml").write_text(
+            "model: gpt-4o-mini\nfile_processing_jobs: 2\n",
+            encoding="utf-8",
+        )
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        known = docs_dir / "known.md"
+        unknown = docs_dir / "unknown.md"
+        known.write_text("# Known", encoding="utf-8")
+        unknown.write_text("# Unknown", encoding="utf-8")
+
+        from openkb.cli import _PreparedAdd
+        from openkb.state import HashRegistry
+
+        HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
+            HashRegistry.hash_file(known),
+            {
+                "name": "known.md",
+                "doc_name": "known",
+                "type": "md",
+                "path": "docs/known.md",
+            },
+        )
+
+        def fake_prepare(file_path, kb_dir_arg, staging_dir, doc_name=None):
+            return _PreparedAdd(file_path=file_path, staging_dir=staging_dir)
+
+        runner = CliRunner()
+        with patch("openkb.cli._prepare_add_file", side_effect=fake_prepare) as mock_prepare, \
+             patch("openkb.cli._commit_prepared_add", return_value="added") as mock_commit, \
+             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+
+        assert result.exception is None
+        assert [call.args[0].name for call in mock_prepare.call_args_list] == ["unknown.md"]
+        assert [call.args[0].file_path.name for call in mock_commit.call_args_list] == [
+            "known.md",
+            "unknown.md",
+        ]
+        assert mock_commit.call_args_list[0].args[0].outcome == "skipped"
+
     def test_add_unsupported_extension(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         doc = tmp_path / "file.xyz"

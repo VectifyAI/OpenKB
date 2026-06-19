@@ -314,6 +314,64 @@ def _log_add_timing(
     logger.debug("add %s for %s took %.3fs%s", stage, subject, elapsed, suffix)
 
 
+def _prefilter_known_files(
+    files: list[Path],
+    kb_dir: Path,
+    jobs: int,
+) -> tuple[list[Path], dict[Path, _PreparedAdd]]:
+    """Hash directory inputs before conversion and skip hashes already known."""
+    from openkb.state import HashRegistry
+
+    started = time.perf_counter()
+    with _kb_mutation_lock(kb_dir):
+        registry = HashRegistry.memory(
+            HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries()
+        )
+
+    def hash_one(file_path: Path) -> tuple[Path, str | None, Exception | None]:
+        try:
+            return file_path, HashRegistry.hash_file(file_path), None
+        except Exception as exc:
+            return file_path, None, exc
+
+    if jobs == 1:
+        hashed = [hash_one(file_path) for file_path in files]
+    else:
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = [executor.submit(hash_one, file_path) for file_path in files]
+            hashed = [future.result() for future in futures]
+
+    remaining: list[Path] = []
+    prepared: dict[Path, _PreparedAdd] = {}
+    for file_path, file_hash, error in hashed:
+        if error is not None:
+            prepared[file_path] = _PreparedAdd(
+                file_path=file_path,
+                outcome="failed",
+                error_stage="Hash",
+                error=error,
+            )
+            continue
+        if file_hash is not None and registry.is_known(file_hash):
+            prepared[file_path] = _PreparedAdd(
+                file_path=file_path,
+                outcome="skipped",
+            )
+            continue
+        remaining.append(file_path)
+
+    _log_add_timing(
+        "prefilter",
+        None,
+        started,
+        total=len(files),
+        remaining=len(remaining),
+        skipped=len(prepared),
+        jobs=jobs,
+    )
+    return remaining, prepared
+
+
 def _reserve_batch_doc_names(files: list[Path], kb_dir: Path) -> dict[Path, str]:
     """Reserve doc_names in scan order so parallel prepare matches serial add."""
     from openkb.state import HashRegistry
@@ -994,21 +1052,35 @@ def add(ctx, path):
         total = len(files)
         click.echo(f"Found {total} supported file(s) in {path}.")
         config = load_config(kb_dir / ".openkb" / "config.yaml")
-        jobs = min(total, _positive_int(config.get("file_processing_jobs"), DEFAULT_CONFIG["file_processing_jobs"]))
+        jobs = min(
+            total,
+            _positive_int(
+                config.get("file_processing_jobs"),
+                DEFAULT_CONFIG["file_processing_jobs"],
+            ),
+        )
         _setup_llm_key(kb_dir)
         model = config.get("model", DEFAULT_CONFIG["model"])
+        files_to_prepare, prepared_outcomes = _prefilter_known_files(files, kb_dir, jobs)
         with _kb_mutation_lock(kb_dir):
-            reserved_doc_names = _reserve_batch_doc_names(files, kb_dir)
+            reserved_doc_names = _reserve_batch_doc_names(files_to_prepare, kb_dir)
         if jobs == 1:
             for i, f in enumerate(files, 1):
-                click.echo(f"\n[{i}/{total}] ", nl=False)
-                # Stage exactly like the multi-worker path: prepare must never
-                # write the live KB unlocked. staging_dir=None would make
-                # convert_document write raw/ and wiki/sources/ straight into
-                # kb_dir with no lock and no mutation journal (orphan on crash).
-                prepared = _prepare_add_file(
-                    f, kb_dir, staging_dir=_staging_dir_for(kb_dir, f), doc_name=reserved_doc_names[f]
-                )
+                if f in prepared_outcomes:
+                    prepared = prepared_outcomes[f]
+                    click.echo(f"\n[{i}/{total}] Adding: {prepared.file_path.name}")
+                else:
+                    click.echo(f"\n[{i}/{total}] ", nl=False)
+                    # Stage exactly like the multi-worker path: prepare must never
+                    # write the live KB unlocked. staging_dir=None would make
+                    # convert_document write raw/ and wiki/sources/ straight into
+                    # kb_dir with no lock and no mutation journal (orphan on crash).
+                    prepared = _prepare_add_file(
+                        f,
+                        kb_dir,
+                        staging_dir=_staging_dir_for(kb_dir, f),
+                        doc_name=reserved_doc_names[f],
+                    )
                 with _kb_mutation_lock(kb_dir):
                     _commit_prepared_add(prepared, kb_dir, model)
             return
@@ -1023,12 +1095,14 @@ def add(ctx, path):
                     _staging_dir_for(kb_dir, f),
                     reserved_doc_names[f],
                 )
-                for f in files
+                for f in files_to_prepare
             }
             # Commit in scan order even though prepare finishes out of order.
             # That keeps log.md and CLI progress stable for human audit.
             for i, f in enumerate(files, 1):
-                prepared = futures[f].result()
+                prepared = prepared_outcomes.get(f)
+                if prepared is None:
+                    prepared = futures[f].result()
                 click.echo(f"\n[{i}/{total}] Adding: {prepared.file_path.name}")
                 with _kb_mutation_lock(kb_dir):
                     _commit_prepared_add(prepared, kb_dir, model)
