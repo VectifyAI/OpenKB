@@ -2,6 +2,9 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 file_processing_jobs: 2          # Number of files to prepare concurrently during `openkb add <dir>`
+# Note: this parallelizes hashing/conversion/staging only. Live KB publish,
+# PageIndex indexing, LLM compilation, registry updates, and log writes remain
+# serialized under the KB mutation lock.
 
 # Optional: extra HTTP headers sent with every LLM request (forwarded to
 # LiteLLM's extra_headers). Some providers need these — e.g. GitHub Copilot

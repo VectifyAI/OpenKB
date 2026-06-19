@@ -348,6 +348,8 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 <summary><i>Advanced options (entity_types, extra_headers, OAuth):</i></summary>
 <br>
 
+`file_processing_jobs` (default `2`): number of files prepared concurrently during `openkb add <dir>`. Only the preparation stage is parallelized (hashing, duplicate prefiltering, raw/source staging, conversion); live-KB mutation stays serialized under the mutation lock, so raising it helps mainly when conversion is the bottleneck.
+
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
 
 `extra_headers` (optional): a YAML mapping of extra HTTP headers sent with every LLM request (forwarded to LiteLLM's `extra_headers`). Useful for providers that expect custom headers, e.g. GitHub Copilot IDE-auth headers:
