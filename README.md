@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/vectifyai-openkb-badge.png)](https://mseep.ai/app/vectifyai-openkb)
+
 <div align="center">
 
 <a href="https://openkb.ai">
