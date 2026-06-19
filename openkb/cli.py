@@ -299,6 +299,21 @@ def _positive_int(value: object, default: int) -> int:
     return max(1, parsed)
 
 
+def _log_add_timing(
+    stage: str,
+    file_path: Path | None,
+    started_at: float,
+    **fields: object,
+) -> None:
+    logger = logging.getLogger(__name__)
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    elapsed = time.perf_counter() - started_at
+    subject = file_path.name if file_path is not None else "<batch>"
+    suffix = "".join(f" {key}={value}" for key, value in fields.items())
+    logger.debug("add %s for %s took %.3fs%s", stage, subject, elapsed, suffix)
+
+
 def _reserve_batch_doc_names(files: list[Path], kb_dir: Path) -> dict[Path, str]:
     """Reserve doc_names in scan order so parallel prepare matches serial add."""
     from openkb.state import HashRegistry
@@ -357,6 +372,7 @@ def _prepare_add_file(
 ) -> _PreparedAdd:
     """Run file-local conversion into an optional staging directory."""
     logger = logging.getLogger(__name__)
+    started = time.perf_counter()
     try:
         result = convert_document(
             file_path,
@@ -367,6 +383,7 @@ def _prepare_add_file(
         )
     except Exception as exc:
         logger.debug("Conversion traceback:", exc_info=True)
+        _log_add_timing("prepare", file_path, started, outcome="failed")
         return _PreparedAdd(
             file_path=file_path,
             staging_dir=staging_dir,
@@ -375,13 +392,17 @@ def _prepare_add_file(
             error=exc,
         )
     if result.skipped:
-        return _PreparedAdd(
+        prepared = _PreparedAdd(
             file_path=file_path,
             result=result,
             staging_dir=staging_dir,
             outcome="skipped",
         )
-    return _PreparedAdd(file_path=file_path, result=result, staging_dir=staging_dir)
+        _log_add_timing("prepare", file_path, started, outcome="skipped")
+        return prepared
+    prepared = _PreparedAdd(file_path=file_path, result=result, staging_dir=staging_dir)
+    _log_add_timing("prepare", file_path, started, outcome="prepared")
+    return prepared
 
 
 def _final_artifact_paths(result, kb_dir: Path) -> tuple[Path | None, Path | None]:
@@ -429,9 +450,11 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
     """
     logger = logging.getLogger(__name__)
     click.echo(f"  {label}...")
+    started = time.perf_counter()
     for attempt in range(2):
         try:
             asyncio.run(coro_factory())
+            _log_add_timing("compile", None, started, label=label)
             return
         except Exception as exc:
             if attempt == 0:
@@ -450,26 +473,31 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
 
     logger = logging.getLogger(__name__)
     file_path = prepared.file_path
+    started = time.perf_counter()
+
+    def finish(outcome: _AddOutcome) -> _AddOutcome:
+        _log_add_timing("commit", file_path, started, outcome=outcome)
+        return outcome
 
     if prepared.outcome == "failed":
         click.echo(f"  [ERROR] {prepared.error_stage} failed: {prepared.error}")
         _cleanup_staging(prepared.staging_dir)
-        return "failed"
+        return finish("failed")
     if prepared.outcome == "skipped":
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
         _cleanup_staging(prepared.staging_dir)
-        return "skipped"
+        return finish("skipped")
     if prepared.result is None:
         click.echo(f"  [ERROR] Conversion failed: no result for {file_path.name}")
         _cleanup_staging(prepared.staging_dir)
-        return "failed"
+        return finish("failed")
 
     result = prepared.result
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
     if result.file_hash and registry.is_known(result.file_hash):
         click.echo(f"  [SKIP] Already in knowledge base: {file_path.name}")
         _cleanup_staging(prepared.staging_dir)
-        return "skipped"
+        return finish("skipped")
 
     doc_name = result.doc_name or file_path.stem
     norm_doc_name = unicodedata.normalize("NFKC", doc_name)
@@ -501,7 +529,7 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
                 "Re-run this file after the current batch."
             )
             _cleanup_staging(prepared.staging_dir)
-            return "failed"
+            return finish("failed")
 
     final_raw, final_source = _final_artifact_paths(result, kb_dir)
     snapshot: MutationSnapshot | None = None
@@ -528,10 +556,12 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
 
         if result.is_long_doc:
             click.echo("  Long document detected — indexing with PageIndex...")
+            index_started = time.perf_counter()
             try:
                 from openkb.indexer import index_long_document
 
                 index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
+                _log_add_timing("index", file_path, index_started, doc_name=doc_name)
             except Exception as exc:
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
@@ -593,7 +623,7 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
             # snapshot_paths failed before any mutation ran; it already removed
             # its own backup dir, so there is nothing to roll back.
             click.echo(f"  [ERROR] Failed to prepare mutation snapshot for {file_path.name}.")
-            return "failed"
+            return finish("failed")
         rollback_error = snapshot.rollback_best_effort()
         if rollback_error is None:
             snapshot.discard_best_effort()
@@ -602,7 +632,7 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
                 "  [ERROR] Rollback failed; mutation journal retained for recovery: "
                 f"{snapshot.journal_path}"
             )
-        return "failed"
+        return finish("failed")
     finally:
         _cleanup_staging(prepared.staging_dir)
 
@@ -621,7 +651,7 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
             f"  [WARN] {file_path.name} added, but mutation journal cleanup failed: {cleanup_error}"
         )
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
-    return "added"
+    return finish("added")
 
 
 @contextmanager
@@ -634,7 +664,9 @@ def _kb_mutation_lock(kb_dir: Path):
     one discarded) before the caller runs. Recovery messages indicate a prior
     interrupted run, so they surface at WARNING.
     """
+    started = time.perf_counter()
     with kb_ingest_lock(kb_dir / ".openkb"):
+        _log_add_timing("lock_wait", None, started)
         for message in recover_pending_journals(kb_dir):
             logging.getLogger(__name__).warning(message)
         yield
