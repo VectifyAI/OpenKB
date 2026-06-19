@@ -164,7 +164,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 
 OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output).
 
-## 🧱 Wiki Foundation — compile and maintain
+## 🧱 Layer 1: Wiki Foundation — compile and maintain
 
 | Command | Description |
 |---|---|
@@ -189,7 +189,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 
 </details>
 
-## ✨ Generators — turn the wiki into output
+## 💡 Layer 2: Generators — turn the wiki into output
 
 A "generator" reads from the compiled wiki and produces something usable: an answer, a conversation, a skill folder. The wiki is the substrate; generators are the surfaces.
 
@@ -351,7 +351,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | Gemini | `gemini/gemini-3.1-pro-preview` |
 
 <details>
-<summary><i>Advanced options (entity_types, extra_headers, OAuth):</i></summary>
+<summary><i>Advanced options (<code>entity_types</code>, <code>extra_headers</code>, OAuth):</i></summary>
 <br>
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
