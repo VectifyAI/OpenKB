@@ -164,7 +164,7 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 
 OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output).
 
-## 🧱 Layer 1: Wiki Foundation — compile and maintain
+## Layer 1: 🧱 Wiki Foundation — compile and maintain
 
 | Command | Description |
 |---|---|
@@ -176,7 +176,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | `openkb lint` | Run structural + knowledge health checks |
 
 <details>
-<summary><b><i>More wiki commands:</i></b></summary>
+<summary><i>More wiki commands:</i></summary>
 <br>
 
 | Command | Description |
@@ -189,7 +189,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 
 </details>
 
-## 💡 Layer 2: Generators — turn the wiki into output
+## Layer 2: 💡 Generators — turn the wiki into output
 
 A "generator" reads from the compiled wiki and produces something usable: an answer, a conversation, a skill folder. The wiki is the substrate; generators are the surfaces.
 
@@ -201,7 +201,7 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki — see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below |
 
 <details>
-<summary><b><i>More skill commands:</i></b></summary>
+<summary><i>More skill commands:</i></summary>
 <br>
 
 | Command | Output |
@@ -212,7 +212,7 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 </details>
 
-### 💬 Query & Chat — *Ask the wiki*
+### (i) 💬 Query & Chat — *ask the wiki*
 
 `openkb query "..."` answers a single question. `openkb chat` is interactive — each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and retrieval primitives.
 
@@ -229,7 +229,7 @@ openkb chat --delete <id>         # delete a session
 Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <details>
-<summary><i>Slash commands:</i></summary>
+<summary><i>More slash commands:</i></summary>
 <br>
 
 - `/help` — list available commands
@@ -246,7 +246,7 @@ Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <a id="skill-factory"></a>
 
-### 🛠 Skill Factory — *Drop in a book; out comes a digital expert.*
+### (ii) 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
 
 The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) can install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
 
