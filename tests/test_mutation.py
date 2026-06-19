@@ -76,3 +76,36 @@ def test_snapshot_paths_cleans_backup_dir_on_failure(tmp_path):
     staging = kb_dir / ".openkb" / "staging"
     if staging.exists():
         assert not any(staging.iterdir())  # no orphan rollback-<uuid> dir
+
+
+def test_exclusive_lock_drains_active_journal_before_yielding(tmp_path):
+    """Recovery runs on every exclusive-lock acquisition, not just the add path.
+
+    ``recover_pending_journals`` is wired into ``kb_lock``'s first exclusive
+    acquisition, so any mutation command — ``remove``/``recompile``/``lint``/
+    ``chat``, all of which take ``kb_ingest_lock`` directly — drains a crashed
+    predecessor's active journal before it mutates. This is the regression
+    guard for the bug where an ``add`` crash left an active journal that an
+    intervening ``remove`` ignored and a later ``add`` then rolled back over
+    the remove's edits.
+    """
+    from openkb.locks import kb_ingest_lock
+
+    kb_dir = tmp_path
+    openkb_dir = kb_dir / ".openkb"
+    openkb_dir.mkdir()
+    target = kb_dir / "wiki" / "summaries" / "doc.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("before", encoding="utf-8")
+
+    # Simulate a crashed add: snapshot taken, file mutated, but mark_committed
+    # never ran — an ACTIVE journal is left on disk.
+    snapshot_paths(kb_dir, [target], operation="add", details={"doc_name": "doc"})
+    target.write_text("after", encoding="utf-8")
+
+    # Any exclusive-lock holder drains before its body runs.
+    with kb_ingest_lock(openkb_dir):
+        assert target.read_text(encoding="utf-8") == "before"
+
+    assert target.read_text(encoding="utf-8") == "before"
+    assert not any((openkb_dir / "journal").glob("*.json"))

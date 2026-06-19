@@ -657,3 +657,42 @@ class TestAddCommand:
 
         # NFC-vs-NFD is the same document, not a conflict → ingest proceeds.
         assert outcome == "added"
+
+    def test_add_directory_jobs_gt1_runs_real_pipeline(self, tmp_path):
+        """jobs>1 ThreadPoolExecutor 路径的端到端测试。
+
+        其余 jobs>1 测试都 mock 了 _prepare_add_file 和 _commit_prepared_add，
+        所以真正的并发分支——futures 按扫描顺序提交、_staging_dir_for 分配、
+        prepared_outcomes.get(f) or futures[f].result() 回退、publish_staged_tree
+        发布、registry 写入、staging 清理——从不被执行。这里用真实 prepare + 真实
+        commit，只 mock LLM compile，让最复杂的新路径真正跑一遍。
+        """
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / ".openkb" / "config.yaml").write_text(
+            "model: gpt-4o-mini\nfile_processing_jobs: 3\n",
+            encoding="utf-8",
+        )
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        for letter in ("a", "b", "c"):
+            (docs_dir / f"{letter}.md").write_text(f"# {letter}", encoding="utf-8")
+
+        runner = CliRunner()
+        with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
+             patch("openkb.cli.asyncio.run"):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+
+        assert result.exception is None, result.output
+        assert result.output.count("[OK]") == 3
+        hashes = json.loads(
+            (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8")
+        )
+        assert len(hashes) == 3
+        assert {meta["doc_name"] for meta in hashes.values()} == {"a", "b", "c"}
+        # Staging dirs cleaned up after each commit.
+        staging = kb_dir / ".openkb" / "staging"
+        if staging.exists():
+            assert not any(p.name.startswith("add-") for p in staging.iterdir())
+        # Source artifacts published from staging into the live KB.
+        for letter in ("a", "b", "c"):
+            assert (kb_dir / "wiki" / "sources" / f"{letter}.md").exists()
