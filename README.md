@@ -42,12 +42,12 @@ OpenKB has two layers: a **wiki foundation** that compiles and maintains your kn
 ### Features
 
 - **Broad format support:** PDF, Word, Markdown, PowerPoint, HTML, Excel, CSV, text, URLs, and more.
-- **Scale to long documents:** Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless context-aware retrieval.
+- **Scales to long documents:** Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless, context-aware retrieval.
 - **Native multi-modality:** Retrieves and understands figures, tables, and images, not just text.
 - **Compiled Wiki:** The LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync.
-- **Query & Chat:** One-off questions or multi-turn conversations over your wiki, with persisted sessions you can resume.
+- **Query & Chat:** One-off questions or multi-turn conversations over your wiki, with persisted sessions to resume.
 - **Skill Factory:** Distills redistributable agent skills from your wiki.
-- **Google OKF ready:** Wiki frontmatter follows the [Google Open Knowledge Format (OKF)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) schema for knowledge sharing.
+- **OKF ready:** Wiki frontmatter follows Google's [Open Knowledge Format (OKF)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) schema for knowledge sharing.
 - **Obsidian compatible:** Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing.
 
 # 🚀 Getting Started
