@@ -50,7 +50,7 @@ from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
     resolve_extra_headers, set_extra_headers,
 )
-from openkb.converter import _registry_path, _sanitize_stem, convert_document, resolve_doc_name
+from openkb.converter import _convert_document_locked, _registry_path, _sanitize_stem, resolve_doc_name
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
 from openkb.mutation import MutationSnapshot, publish_staged_tree, snapshot_paths
@@ -61,6 +61,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 load_dotenv()  # load from cwd (covers running inside the KB dir)
+
+logger = logging.getLogger(__name__)
 
 
 _KNOWN_PROVIDER_KEYS = (
@@ -305,7 +307,6 @@ def _log_add_timing(
     started_at: float,
     **fields: object,
 ) -> None:
-    logger = logging.getLogger(__name__)
     if not logger.isEnabledFor(logging.DEBUG):
         return
     elapsed = time.perf_counter() - started_at
@@ -429,13 +430,11 @@ def _prepare_add_file(
     doc_name: str | None = None,
 ) -> _PreparedAdd:
     """Run file-local conversion into an optional staging directory."""
-    logger = logging.getLogger(__name__)
     started = time.perf_counter()
     try:
-        result = convert_document(
+        result = _convert_document_locked(
             file_path,
             kb_dir,
-            assume_locked=True,
             staging_dir=staging_dir,
             doc_name_override=doc_name,
         )
@@ -485,6 +484,9 @@ def _snapshot_add_paths(kb_dir: Path, doc_name: str, final_raw: Path | None, fin
         kb_dir / ".openkb" / "pageindex.db-journal",
         kb_dir / ".openkb" / "files",
         kb_dir / "wiki" / "summaries" / f"{doc_name}.md",
+        # Long-doc only: per-page sources JSON + extracted images. Listed
+        # unconditionally because snapshot_paths no-ops on missing targets,
+        # so the same helper covers short and long docs without branching.
         kb_dir / "wiki" / "sources" / f"{doc_name}.json",
         kb_dir / "wiki" / "sources" / "images" / doc_name,
         kb_dir / "wiki" / "concepts",
@@ -506,7 +508,6 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
     coroutine can't be awaited twice). Raises on the second failure so the caller's
     snapshot-rollback path runs.
     """
-    logger = logging.getLogger(__name__)
     click.echo(f"  {label}...")
     started = time.perf_counter()
     for attempt in range(2):
@@ -529,7 +530,6 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
 
-    logger = logging.getLogger(__name__)
     file_path = prepared.file_path
     started = time.perf_counter()
 
@@ -1063,27 +1063,6 @@ def add(ctx, path):
         files_to_prepare, prepared_outcomes = _prefilter_known_files(files, kb_dir, jobs)
         with _kb_mutation_lock(kb_dir):
             reserved_doc_names = _reserve_batch_doc_names(files_to_prepare, kb_dir)
-        if jobs == 1:
-            for i, f in enumerate(files, 1):
-                if f in prepared_outcomes:
-                    prepared = prepared_outcomes[f]
-                    click.echo(f"\n[{i}/{total}] Adding: {prepared.file_path.name}")
-                else:
-                    click.echo(f"\n[{i}/{total}] ", nl=False)
-                    # Stage exactly like the multi-worker path: prepare must never
-                    # write the live KB unlocked. staging_dir=None would make
-                    # convert_document write raw/ and wiki/sources/ straight into
-                    # kb_dir with no lock and no mutation journal (orphan on crash).
-                    prepared = _prepare_add_file(
-                        f,
-                        kb_dir,
-                        staging_dir=_staging_dir_for(kb_dir, f),
-                        doc_name=reserved_doc_names[f],
-                    )
-                with _kb_mutation_lock(kb_dir):
-                    _commit_prepared_add(prepared, kb_dir, model)
-            return
-
         click.echo(f"Preparing files with {jobs} worker(s).")
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             futures = {

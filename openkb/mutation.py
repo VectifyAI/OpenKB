@@ -3,19 +3,38 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openkb.locks import atomic_write_bytes, atomic_write_json
+from openkb.locks import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
 
 def _copy_file_atomic(src: Path, dest: Path) -> None:
+    """Stream ``src`` to ``dest`` through a temp file, then atomically replace.
+
+    Streams (never buffers the whole file) so publishing a large raw PDF
+    does not spike peak memory. The temp-file + ``os.replace`` means a torn
+    intermediate state can never be observed at ``dest``. Used by both
+    publish and rollback, so every file copy in this module shares one
+    atomic, streaming semantic.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes(dest, src.read_bytes())
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as out, src.open("rb") as inp:
+            shutil.copyfileobj(inp, out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp_path, dest)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @dataclass
@@ -145,7 +164,7 @@ def snapshot_paths(
             if target.is_dir():
                 shutil.copytree(target, backup)
             else:
-                shutil.copy2(target, backup)
+                _copy_file_atomic(target, backup)
             snapshot.entries[target] = backup
         # The active journal is the recovery signal: once this exists, a future
         # process can restore every recorded target even if the current one exits.

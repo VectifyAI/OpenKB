@@ -169,7 +169,7 @@ class TestAddCommand:
 
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.convert_document", return_value=mock_result), \
+             patch("openkb.cli._convert_document_locked", return_value=mock_result), \
              patch("openkb.cli.asyncio.run") as mock_arun:
             result = runner.invoke(cli, ["add", str(doc)])
             assert "SKIP" in result.output
@@ -201,7 +201,7 @@ class TestAddCommand:
 
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.convert_document", return_value=mock_result), \
+             patch("openkb.cli._convert_document_locked", return_value=mock_result), \
              patch("openkb.cli.asyncio.run") as mock_arun:
             result = runner.invoke(cli, ["add", str(doc)])
             mock_arun.assert_called_once()

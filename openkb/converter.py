@@ -30,7 +30,6 @@ class ConvertResult:
     skipped: bool = False
     file_hash: str | None = None  # For deferred hash registration
     doc_name: str | None = None  # Stable wiki name (collision-resistant)
-    staging_dir: Path | None = None
 
 
 def _registry_path(path: Path, kb_dir: Path) -> str:
@@ -124,11 +123,15 @@ def convert_document(
     src: Path,
     kb_dir: Path,
     *,
-    assume_locked: bool = False,
     staging_dir: Path | None = None,
     doc_name_override: str | None = None,
 ) -> ConvertResult:
     """Convert a document and integrate it into the knowledge base.
+
+    Acquires the KB ingest lock, then delegates to
+    :func:`_convert_document_locked`. Callers that already hold the lock
+    (the parallel add pipeline prepares files outside the lock) should call
+    ``_convert_document_locked`` directly to avoid re-entering it.
 
     Steps:
     1. Hash-check — skip if already known.
@@ -138,16 +141,29 @@ def convert_document(
     5. Otherwise — run MarkItDown, extract base64 images, save to ``wiki/sources/``.
     6. Register hash in the registry.
     """
-    if not assume_locked:
-        with kb_ingest_lock(kb_dir / ".openkb"):
-            return convert_document(
-                src,
-                kb_dir,
-                assume_locked=True,
-                staging_dir=staging_dir,
-                doc_name_override=doc_name_override,
-            )
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        return _convert_document_locked(
+            src,
+            kb_dir,
+            staging_dir=staging_dir,
+            doc_name_override=doc_name_override,
+        )
 
+
+def _convert_document_locked(
+    src: Path,
+    kb_dir: Path,
+    *,
+    staging_dir: Path | None = None,
+    doc_name_override: str | None = None,
+) -> ConvertResult:
+    """Lock-held body of :func:`convert_document`.
+
+    The caller must already hold the KB ingest lock. Writes go to
+    ``staging_dir`` when set (isolated, published at commit) and to
+    ``kb_dir`` otherwise (in-place, e.g. watch mode where the file is
+    already in ``raw/``).
+    """
     # ------------------------------------------------------------------
     # Load config & state
     # ------------------------------------------------------------------
@@ -168,7 +184,6 @@ def convert_document(
             skipped=True,
             file_hash=file_hash,
             doc_name=stored.get("doc_name") or Path(stored.get("name", src.name)).stem,
-            staging_dir=staging_dir,
         )
     # Batch ingest reserves doc_names before parallel conversion so same-stem
     # files behave like serial adds while still writing to isolated staging dirs.
@@ -208,7 +223,6 @@ def convert_document(
                 is_long_doc=True,
                 file_hash=file_hash,
                 doc_name=doc_name,
-                staging_dir=staging_dir,
             )
 
     # ------------------------------------------------------------------
@@ -240,5 +254,4 @@ def convert_document(
         source_path=dest_md,
         file_hash=file_hash,
         doc_name=doc_name,
-        staging_dir=staging_dir,
     )
