@@ -35,7 +35,7 @@ from openkb.config import resolve_entity_types
 
 
 class TestFrontmatterSourceMutation:
-    """``_prepend``/``_remove_source_from_frontmatter`` must preserve existing
+    """``_prepend_source_to_frontmatter``/``_remove_source_from_frontmatter`` must preserve existing
     frontmatter even when the page ends at the closing ``---`` with no trailing
     newline — ``frontmatter.split`` then returns a block ending in a bare
     ``\\n---`` rather than ``\\n---\\n``.
