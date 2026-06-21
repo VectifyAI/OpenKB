@@ -272,6 +272,19 @@ def test_wikilink_dotted_stem_without_md_suffix_resolves(tmp_path):
     assert result.passed, result.errors
 
 
+def test_wikilink_escaping_references_dir_is_rejected(tmp_path):
+    # A link that resolves outside references/ (e.g. "../SKILL") must error —
+    # not be accepted just because the resolved target (here SKILL.md) exists.
+    sd = _write_skill(
+        tmp_path, "ref-escape",
+        body="See [[references/../SKILL]] for details.\n",
+        refs={"topic.md": "# topic\n"},
+    )
+    result = validate_skill(sd)
+    assert not result.passed
+    assert any("outside the references/" in e for e in result.errors)
+
+
 # ---------------------------------------------------------------------------
 # scripts/ imports — strict mode only
 # ---------------------------------------------------------------------------
