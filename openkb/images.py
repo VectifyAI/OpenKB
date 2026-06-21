@@ -229,7 +229,12 @@ def copy_relative_images(
     # ``b/logo.png``) don't overwrite each other and collapse both links onto a
     # single image.
     assigned: dict[Path, str] = {}
-    taken: set[str] = set()
+    # Seed taken names from any files already in images_dir so a re-convert into
+    # an existing per-doc directory disambiguates against them instead of
+    # overwriting a previously-copied image with a same-basename source.
+    taken: set[str] = (
+        {p.name for p in images_dir.iterdir()} if images_dir.is_dir() else set()
+    )
 
     for match in _RELATIVE_RE.finditer(markdown):
         alt, rel_path = match.group(1), match.group(2)

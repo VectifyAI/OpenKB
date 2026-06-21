@@ -201,3 +201,23 @@ class TestCopyRelativeImages:
 
         assert [p.name for p in images_dir.iterdir()] == ["logo.png"]
         assert result.count("sources/images/doc/logo.png") == 2
+
+    def test_does_not_overwrite_preexisting_file_in_images_dir(self, tmp_path):
+        # A file already in images_dir (e.g. from a prior conversion) with a
+        # colliding basename must not be silently overwritten.
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "logo.png").write_bytes(FAKE_JPG)  # new image
+        images_dir = tmp_path / "images" / "doc"
+        images_dir.mkdir(parents=True)
+        (images_dir / "logo.png").write_bytes(FAKE_PNG)  # pre-existing image
+
+        result = copy_relative_images("![a](logo.png)", source_dir, "doc", images_dir)
+
+        # Pre-existing file kept intact; the new image lands under a fresh name.
+        assert (images_dir / "logo.png").read_bytes() == FAKE_PNG
+        names = sorted(p.name for p in images_dir.iterdir())
+        assert len(names) == 2
+        new_name = next(n for n in names if n != "logo.png")
+        assert (images_dir / new_name).read_bytes() == FAKE_JPG
+        assert f"sources/images/doc/{new_name}" in result
