@@ -103,7 +103,7 @@ openkb skill new my-expert "Reason like an expert on <your-topic>"
 
 ### Set up your LLM
 
-OpenKB supports [multiple LLM providers](https://docs.litellm.ai/docs/providers) (OpenAI, Claude, Gemini, and more) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
+OpenKB supports [multiple LLM providers](https://docs.litellm.ai/docs/providers) (OpenAI, Claude, Gemini, etc.) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
 Set your model during `openkb init` or in [`.openkb/config.yaml`](#configuration) using the `provider/model` LiteLLM format (e.g. `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (e.g. `gpt-5.4`).
 
@@ -155,7 +155,7 @@ wiki/                                  │            ← the foundation
 | **LLM reads** | Full text | Document trees |
 | **Result** | summary + concepts | summary + concepts |
 
-Short documents are read in full by the LLM. Long PDFs are indexed by PageIndex into a hierarchical tree representation. The LLM reads the tree instead of the full text, enabling accurate and scalable retrieval from long documents.
+Short documents are read in full by the LLM. Long PDFs are processed by [PageIndex](https://github.com/VectifyAI/PageIndex) into a hierarchical tree index. The LLM reads the tree instead of the full text, enabling accurate and scalable retrieval for long documents.
 
 ### Knowledge Compilation
 
