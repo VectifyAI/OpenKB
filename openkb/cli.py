@@ -1494,6 +1494,36 @@ def lint(ctx, fix):
     asyncio.run(run_lint(kb_dir))
 
 
+@cli.command()
+@click.option("--open/--no-open", "open_browser", default=True,
+              help="Open the graph in your browser after generating (default: on; --no-open for headless).")
+@click.pass_context
+@_with_kb_lock(exclusive=False)
+def visualize(ctx, open_browser):
+    """Render the wiki's [[wikilink]] graph as a self-contained interactive HTML page."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb import visualize as viz
+    graph = viz.build_graph(kb_dir / "wiki")
+    if not graph["nodes"]:
+        click.echo("No wiki pages to visualize yet. Run `openkb add` first.")
+        return
+    out = kb_dir / "output" / "visualize" / "graph.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(viz.render_html(graph), encoding="utf-8")
+    click.echo(f"Graph written to {out}  ({len(graph['nodes'])} nodes, {len(graph['edges'])} edges)")
+    if open_browser:
+        import webbrowser
+        try:
+            opened = webbrowser.open(out.resolve().as_uri())   # resolve() so a relative --kb-dir still yields a valid file URI
+        except Exception:
+            opened = False
+        if not opened:
+            click.echo("(couldn't launch a browser — open the file above manually, or use --no-open)")
+
+
 def print_list(kb_dir: Path) -> None:
     """Print all documents in the knowledge base. Usable from CLI and chat REPL."""
     openkb_dir = kb_dir / ".openkb"
