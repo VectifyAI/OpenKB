@@ -206,6 +206,7 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 |---|---|
 | <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (`--save` to persist to `wiki/explorations/`) |
 | <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) |
+| <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views |
 | | |
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below) |
 
@@ -338,6 +339,14 @@ openkb skill rollback karpathy-thinking --to 2
 ```
 
 </details>
+
+### (iii) 🗺 Visualize — *see the shape of your knowledge*
+
+`openkb visualize` renders the wiki as a single self-contained, offline HTML page with three views of the same knowledge base — a **3D** force graph, an OpenKB-rooted **mind-map**, and a **radial** tree — coloured by type and linked by `[[wikilinks]]`.
+
+```bash
+openkb visualize            # build + open output/visualize/graph.html
+```
 
 # 🔧 Configuration
 

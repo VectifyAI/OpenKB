@@ -85,7 +85,7 @@ async def test_generator_deck_dispatches_to_deck_creator(tmp_path):
     # validation up to self.validation.
     from openkb.agent.skill_runner import SkillRunResult
     fake_run_result = SkillRunResult(
-        skill_name="openkb-deck-editorial",
+        skill_name="openkb-deck-neon",
         output_path=gen.output_dir / "index.html",
         validation=DeckValidationResult(),
         metadata={"mode": "deck"},
@@ -102,7 +102,7 @@ async def test_generator_deck_dispatches_to_deck_creator(tmp_path):
         intent="…",
         model="openai/gpt-4o",
         critique=False,
-        skill_name="openkb-deck-editorial",
+        skill_name="openkb-deck-neon",
     )
     regen.assert_not_called()  # marketplace is skill-only
     assert result == gen.output_dir
