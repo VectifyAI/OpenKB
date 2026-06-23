@@ -17,3 +17,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 #   - organization
 #   - dataset
 #   - model
+
+# Optional: per-request LLM timeout in seconds, forwarded to LiteLLM.
+# Defaults to LiteLLM's 600s; raise it for slow local backends (e.g. Ollama).
+# timeout: 1200
