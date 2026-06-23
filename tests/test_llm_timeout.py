@@ -57,3 +57,24 @@ def test_llm_call_async_forwards_configured_timeout():
             _llm_call_async("gpt-4o", [{"role": "user", "content": "hi"}], "step")
         )
     assert acompletion.call_args.kwargs["timeout"] == 900.0
+
+
+def test_llm_call_async_omits_timeout_when_unset():
+    set_timeout(None)
+    with patch("openkb.agent.compiler.litellm.acompletion",
+               new_callable=AsyncMock, return_value=_fake_response()) as acompletion:
+        asyncio.run(
+            _llm_call_async("gpt-4o", [{"role": "user", "content": "hi"}], "step")
+        )
+    assert "timeout" not in acompletion.call_args.kwargs
+
+
+def test_llm_call_async_does_not_override_explicit_timeout():
+    set_timeout(900.0)
+    with patch("openkb.agent.compiler.litellm.acompletion",
+               new_callable=AsyncMock, return_value=_fake_response()) as acompletion:
+        asyncio.run(
+            _llm_call_async("gpt-4o", [{"role": "user", "content": "hi"}], "step",
+                            timeout=30)
+        )
+    assert acompletion.call_args.kwargs["timeout"] == 30

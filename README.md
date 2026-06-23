@@ -382,7 +382,7 @@ extra_headers:
   Copilot-Integration-Id: vscode-chat
 ```
 
-`timeout` (optional): the per-request LLM timeout in seconds, forwarded to LiteLLM. Defaults to LiteLLM's own 600s; raise it for slow local backends (e.g. Ollama on large inputs) that would otherwise hit `litellm.Timeout`:
+`timeout` (optional): the per-request LLM timeout in seconds, forwarded to LiteLLM on all of OpenKB's own calls (compile, query, chat, lint, skill). Defaults to LiteLLM's own 600s; raise it for slow local backends (e.g. Ollama on large inputs) that would otherwise hit `litellm.Timeout`. (PageIndex long-document indexing manages its own timeout and is not affected.)
 
 ```yaml
 timeout: 1200

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Iterator
@@ -147,7 +148,8 @@ def resolve_timeout(config: dict) -> float | None:
     Accepts an int or float number of seconds (a numeric string is coerced).
     Returns ``None`` — meaning "use LiteLLM's default" — when the key is
     absent, and logs a warning and returns ``None`` when it is present but not
-    a positive number. Booleans are rejected (``True``/``False`` aren't durations).
+    a finite positive number. Booleans are rejected (``True``/``False`` aren't
+    durations), as are ``nan``/``inf`` (which YAML's ``.nan``/``.inf`` produce).
     """
     raw = config.get("timeout")
     if raw is None:
@@ -168,10 +170,10 @@ def resolve_timeout(config: dict) -> float | None:
             raw,
         )
         return None
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         logger.warning(
-            "config: 'timeout' must be a positive number of seconds, got %s — "
-            "ignoring it.",
+            "config: 'timeout' must be a finite positive number of seconds, got "
+            "%s — ignoring it.",
             value,
         )
         return None
@@ -214,6 +216,19 @@ def set_timeout(timeout: float | None) -> None:
 def get_timeout() -> float | None:
     """Return the process-wide LLM request timeout in seconds, or ``None``."""
     return _runtime_timeout
+
+
+def get_timeout_extra_args() -> dict[str, float] | None:
+    """Return ``{"timeout": <seconds>}`` for the Agents SDK, or ``None``.
+
+    The openai-agents ``ModelSettings`` has no ``timeout`` field, so the
+    configured timeout reaches the agent paths (query/chat/lint/skill) via
+    ``ModelSettings(extra_args=...)``, which the LiteLLM provider forwards to
+    the underlying completion call — keeping those calls consistent with the
+    compiler's direct ``litellm`` calls. ``None`` when no timeout is configured.
+    """
+    timeout = _runtime_timeout
+    return {"timeout": timeout} if timeout is not None else None
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

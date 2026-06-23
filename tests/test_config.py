@@ -137,6 +137,14 @@ def test_resolve_timeout_rejects_non_numeric():
     assert resolve_timeout({"timeout": [1200]}) is None
 
 
+def test_resolve_timeout_rejects_nan_and_inf():
+    # nan/inf pass a naive `<= 0` check; YAML's .nan/.inf yield real floats.
+    assert resolve_timeout({"timeout": float("inf")}) is None
+    assert resolve_timeout({"timeout": float("nan")}) is None
+    assert resolve_timeout({"timeout": "inf"}) is None
+    assert resolve_timeout({"timeout": "nan"}) is None
+
+
 def test_timeout_stash_roundtrip_and_reset():
     set_timeout(1200.0)
     assert get_timeout() == 1200.0

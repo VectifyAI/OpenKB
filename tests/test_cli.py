@@ -373,12 +373,14 @@ class TestSetupLlmKey:
     """_setup_llm_key: OAuth-provider warning skip + extra-headers stash."""
 
     @staticmethod
-    def _make_kb(tmp_path, model, extra_headers=None):
+    def _make_kb(tmp_path, model, extra_headers=None, timeout=None):
         openkb_dir = tmp_path / ".openkb"
         openkb_dir.mkdir()
         config = {"model": model}
         if extra_headers is not None:
             config["extra_headers"] = extra_headers
+        if timeout is not None:
+            config["timeout"] = timeout
         (openkb_dir / "config.yaml").write_text(
             yaml.safe_dump(config), encoding="utf-8"
         )
@@ -445,3 +447,20 @@ class TestSetupLlmKey:
         kb = self._make_kb(tmp_path, "gpt-5.4-mini")
         _setup_llm_key(kb)
         assert get_extra_headers() == {}
+
+    def test_timeout_stashed_from_config(self, tmp_path):
+        from openkb.cli import _setup_llm_key
+        from openkb.config import get_timeout
+
+        kb = self._make_kb(tmp_path, "gpt-5.4-mini", timeout=1200)
+        _setup_llm_key(kb)
+        assert get_timeout() == 1200.0
+
+    def test_timeout_reset_when_config_has_none(self, tmp_path):
+        from openkb.cli import _setup_llm_key
+        from openkb.config import get_timeout, set_timeout
+
+        set_timeout(999.0)
+        kb = self._make_kb(tmp_path, "gpt-5.4-mini")
+        _setup_llm_key(kb)
+        assert get_timeout() is None

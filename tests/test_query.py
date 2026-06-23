@@ -163,3 +163,22 @@ class TestQueryAgentExtraHeaders:
     def test_no_extra_headers_by_default(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.extra_headers is None
+
+
+class TestQueryAgentTimeout:
+    """Config-driven timeout reaches the agents-SDK model settings via extra_args.
+
+    ModelSettings has no ``timeout`` field, so it is forwarded through
+    ``extra_args`` (which the LiteLLM provider passes on to the completion call).
+    """
+
+    def test_timeout_applied_from_stash(self, tmp_path):
+        from openkb.config import set_timeout
+
+        set_timeout(1200.0)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.extra_args == {"timeout": 1200.0}
+
+    def test_no_timeout_by_default(self, tmp_path):
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.extra_args is None
