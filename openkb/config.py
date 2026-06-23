@@ -138,18 +138,10 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
 
 
 def resolve_timeout(config: dict) -> float | None:
-    """Resolve the optional ``timeout:`` config key into a positive float of seconds.
+    """Resolve the optional ``timeout:`` key to a finite positive number of seconds.
 
-    LiteLLM applies a 600-second per-request timeout by default, which can be
-    too short for slow local backends (e.g. Ollama on large inputs). Users
-    raise it via a ``timeout:`` value in config.yaml; the result is forwarded
-    to LiteLLM's ``timeout`` parameter on OpenKB's own LLM calls.
-
-    Accepts an int or float number of seconds (a numeric string is coerced).
-    Returns ``None`` — meaning "use LiteLLM's default" — when the key is
-    absent, and logs a warning and returns ``None`` when it is present but not
-    a finite positive number. Booleans are rejected (``True``/``False`` aren't
-    durations), as are ``nan``/``inf`` (which YAML's ``.nan``/``.inf`` produce).
+    Returns ``None`` (use LiteLLM's default) when absent or invalid; rejects
+    bools and ``nan``/``inf``, warning when present but unusable.
     """
     raw = config.get("timeout")
     if raw is None:
@@ -199,11 +191,8 @@ def get_extra_headers() -> dict[str, str]:
     return dict(_runtime_extra_headers)
 
 
-# Process-wide LLM request timeout in seconds, resolved from the active KB's
-# config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
-# via get_timeout() so the value doesn't have to be threaded through every
-# compile/agent call chain — mirroring extra headers above. ``None`` means
-# "use LiteLLM's built-in default".
+# Process-wide LLM request timeout (seconds), set from config by the CLI and
+# read at the call sites via get_timeout(). None = use LiteLLM's default.
 _runtime_timeout: float | None = None
 
 
@@ -219,16 +208,10 @@ def get_timeout() -> float | None:
 
 
 def get_timeout_extra_args() -> dict[str, float] | None:
-    """Return ``{"timeout": <seconds>}`` for the Agents SDK, or ``None``.
-
-    The openai-agents ``ModelSettings`` has no ``timeout`` field, so the
-    configured timeout reaches the agent paths (query/chat/lint/skill) via
-    ``ModelSettings(extra_args=...)``, which the LiteLLM provider forwards to
-    the underlying completion call — keeping those calls consistent with the
-    compiler's direct ``litellm`` calls. ``None`` when no timeout is configured.
+    """Timeout as Agents-SDK ``ModelSettings.extra_args`` (it has no ``timeout``
+    field), or ``None``. The LiteLLM provider forwards it to the completion call.
     """
-    timeout = _runtime_timeout
-    return {"timeout": timeout} if timeout is not None else None
+    return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

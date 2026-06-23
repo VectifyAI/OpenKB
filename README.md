@@ -358,6 +358,7 @@ OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.y
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+timeout: 1200                    # (optional) per-request LLM timeout in seconds; defaults to LiteLLM's 600s
 ```
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
@@ -369,7 +370,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | Gemini | `gemini/gemini-3.1-pro-preview` |
 
 <details>
-<summary><i>Advanced options (<code>entity_types</code>, <code>extra_headers</code>, <code>timeout</code>, OAuth):</i></summary>
+<summary><i>Advanced options (<code>entity_types</code>, <code>extra_headers</code>, OAuth):</i></summary>
 <br>
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
@@ -380,12 +381,6 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 extra_headers:
   Editor-Version: vscode/1.95.0
   Copilot-Integration-Id: vscode-chat
-```
-
-`timeout` (optional): the per-request LLM timeout in seconds, forwarded to LiteLLM on all of OpenKB's own calls (compile, query, chat, lint, skill). Defaults to LiteLLM's own 600s; raise it for slow local backends (e.g. Ollama on large inputs) that would otherwise hit `litellm.Timeout`. (PageIndex long-document indexing manages its own timeout and is not affected.)
-
-```yaml
-timeout: 1200
 ```
 
 Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
