@@ -136,6 +136,48 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
     return headers
 
 
+def resolve_timeout(config: dict) -> float | None:
+    """Resolve the optional ``timeout:`` config key into a positive float of seconds.
+
+    LiteLLM applies a 600-second per-request timeout by default, which can be
+    too short for slow local backends (e.g. Ollama on large inputs). Users
+    raise it via a ``timeout:`` value in config.yaml; the result is forwarded
+    to LiteLLM's ``timeout`` parameter on OpenKB's own LLM calls.
+
+    Accepts an int or float number of seconds (a numeric string is coerced).
+    Returns ``None`` — meaning "use LiteLLM's default" — when the key is
+    absent, and logs a warning and returns ``None`` when it is present but not
+    a positive number. Booleans are rejected (``True``/``False`` aren't durations).
+    """
+    raw = config.get("timeout")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %s — "
+            "ignoring it.",
+            type(raw).__name__,
+        )
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %r — "
+            "ignoring it.",
+            raw,
+        )
+        return None
+    if value <= 0:
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %s — "
+            "ignoring it.",
+            value,
+        )
+        return None
+    return value
+
+
 # Process-wide extra headers for LLM requests, resolved from the active KB's
 # config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
 # via get_extra_headers() so the value doesn't have to be threaded through
@@ -153,6 +195,25 @@ def set_extra_headers(headers: dict[str, str]) -> None:
 def get_extra_headers() -> dict[str, str]:
     """Return a copy of the process-wide extra headers for LLM requests."""
     return dict(_runtime_extra_headers)
+
+
+# Process-wide LLM request timeout in seconds, resolved from the active KB's
+# config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
+# via get_timeout() so the value doesn't have to be threaded through every
+# compile/agent call chain — mirroring extra headers above. ``None`` means
+# "use LiteLLM's built-in default".
+_runtime_timeout: float | None = None
+
+
+def set_timeout(timeout: float | None) -> None:
+    """Set the process-wide LLM request timeout in seconds; ``None`` clears it."""
+    global _runtime_timeout
+    _runtime_timeout = timeout
+
+
+def get_timeout() -> float | None:
+    """Return the process-wide LLM request timeout in seconds, or ``None``."""
+    return _runtime_timeout
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

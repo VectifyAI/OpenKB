@@ -369,7 +369,7 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | Gemini | `gemini/gemini-3.1-pro-preview` |
 
 <details>
-<summary><i>Advanced options (<code>entity_types</code>, <code>extra_headers</code>, OAuth):</i></summary>
+<summary><i>Advanced options (<code>entity_types</code>, <code>extra_headers</code>, <code>timeout</code>, OAuth):</i></summary>
 <br>
 
 `entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
@@ -380,6 +380,12 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 extra_headers:
   Editor-Version: vscode/1.95.0
   Copilot-Integration-Id: vscode-chat
+```
+
+`timeout` (optional): the per-request LLM timeout in seconds, forwarded to LiteLLM. Defaults to LiteLLM's own 600s; raise it for slow local backends (e.g. Ollama on large inputs) that would otherwise hit `litellm.Timeout`:
+
+```yaml
+timeout: 1200
 ```
 
 Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.

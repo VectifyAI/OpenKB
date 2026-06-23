@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 
 from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
-    resolve_extra_headers, set_extra_headers,
+    resolve_extra_headers, set_extra_headers, resolve_timeout, set_timeout,
 )
 from openkb.converter import _registry_path, convert_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
@@ -108,9 +108,11 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     api_key = os.environ.get("LLM_API_KEY", "")
 
-    # Try to resolve the active provider and extra headers from the KB config
+    # Try to resolve the active provider, extra headers, and request timeout
+    # from the KB config
     provider: str | None = None
     extra_headers: dict[str, str] = {}
+    timeout: float | None = None
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
         if config_path.exists():
@@ -118,7 +120,9 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             model = config.get("model", "")
             provider = _extract_provider(str(model))
             extra_headers = resolve_extra_headers(config)
+            timeout = resolve_timeout(config)
     set_extra_headers(extra_headers)
+    set_timeout(timeout)
 
     if not api_key:
         # Check if any provider key is already set. OAuth-based providers

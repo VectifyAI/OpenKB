@@ -29,7 +29,12 @@ from pathlib import Path
 import litellm
 
 from openkb import frontmatter
-from openkb.config import DEFAULT_ENTITY_TYPES, get_extra_headers, resolve_entity_types
+from openkb.config import (
+    DEFAULT_ENTITY_TYPES,
+    get_extra_headers,
+    get_timeout,
+    resolve_entity_types,
+)
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.schema import INDEX_SEED, get_agents_md
 
@@ -326,6 +331,9 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
     extra_headers = get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
+    timeout = get_timeout()
+    if timeout is not None:
+        kwargs.setdefault("timeout", timeout)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -348,6 +356,9 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
     extra_headers = get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
+    timeout = get_timeout()
+    if timeout is not None:
+        kwargs.setdefault("timeout", timeout)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
