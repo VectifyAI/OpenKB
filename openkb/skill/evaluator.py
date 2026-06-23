@@ -46,7 +46,7 @@ from agents import Agent, Runner
 from agents.exceptions import MaxTurnsExceeded
 from agents.model_settings import ModelSettings
 
-from openkb.config import get_extra_headers
+from openkb.config import get_extra_headers, get_timeout_extra_args
 from openkb.skill import extract_body, extract_frontmatter
 
 
@@ -243,7 +243,10 @@ async def generate_eval_set(
         name="eval-set-generator",
         instructions=instructions,
         model=f"litellm/{model}",
-        model_settings=ModelSettings(extra_headers=get_extra_headers() or None),
+        model_settings=ModelSettings(
+            extra_headers=get_extra_headers() or None,
+            extra_args=get_timeout_extra_args(),
+        ),
     )
     try:
         result = await Runner.run(agent, "Generate the eval set now.", max_turns=3)
@@ -302,7 +305,10 @@ async def grade_one(
         name="trigger-grader",
         instructions=instructions,
         model=f"litellm/{model}",
-        model_settings=ModelSettings(extra_headers=get_extra_headers() or None),
+        model_settings=ModelSettings(
+            extra_headers=get_extra_headers() or None,
+            extra_args=get_timeout_extra_args(),
+        ),
     )
     try:
         result = await Runner.run(agent, f"Question: {question}", max_turns=2)
@@ -351,7 +357,10 @@ async def grade_coverage(
         name="coverage-grader",
         instructions=instructions,
         model=f"litellm/{model}",
-        model_settings=ModelSettings(extra_headers=get_extra_headers() or None),
+        model_settings=ModelSettings(
+            extra_headers=get_extra_headers() or None,
+            extra_args=get_timeout_extra_args(),
+        ),
     )
     try:
         result = await Runner.run(agent, f"Question: {question}", max_turns=2)

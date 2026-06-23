@@ -1,10 +1,13 @@
 from openkb.config import (
     DEFAULT_CONFIG,
     get_extra_headers,
+    get_timeout,
     load_config,
     resolve_extra_headers,
+    resolve_timeout,
     save_config,
     set_extra_headers,
+    set_timeout,
 )
 
 
@@ -102,3 +105,48 @@ def test_extra_headers_stash_roundtrip_and_isolation():
     assert get_extra_headers() == {"A": "1"}
     set_extra_headers({})
     assert get_extra_headers() == {}
+
+
+# --- timeout -----------------------------------------------------------------
+
+def test_resolve_timeout_absent_returns_none():
+    assert resolve_timeout({}) is None
+
+
+def test_resolve_timeout_int_and_float():
+    assert resolve_timeout({"timeout": 1200}) == 1200.0
+    assert resolve_timeout({"timeout": 0.5}) == 0.5
+
+
+def test_resolve_timeout_numeric_string_coerced():
+    assert resolve_timeout({"timeout": "1200"}) == 1200.0
+
+
+def test_resolve_timeout_rejects_non_positive():
+    assert resolve_timeout({"timeout": 0}) is None
+    assert resolve_timeout({"timeout": -10}) is None
+
+
+def test_resolve_timeout_rejects_bool():
+    # bool is a subclass of int; True/False are not durations.
+    assert resolve_timeout({"timeout": True}) is None
+
+
+def test_resolve_timeout_rejects_non_numeric():
+    assert resolve_timeout({"timeout": "soon"}) is None
+    assert resolve_timeout({"timeout": [1200]}) is None
+
+
+def test_resolve_timeout_rejects_nan_and_inf():
+    # nan/inf pass a naive `<= 0` check; YAML's .nan/.inf yield real floats.
+    assert resolve_timeout({"timeout": float("inf")}) is None
+    assert resolve_timeout({"timeout": float("nan")}) is None
+    assert resolve_timeout({"timeout": "inf"}) is None
+    assert resolve_timeout({"timeout": "nan"}) is None
+
+
+def test_timeout_stash_roundtrip_and_reset():
+    set_timeout(1200.0)
+    assert get_timeout() == 1200.0
+    set_timeout(None)
+    assert get_timeout() is None

@@ -6,7 +6,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 
 from agents import ToolOutputImage, ToolOutputText
-from openkb.config import get_extra_headers
+from openkb.config import get_extra_headers, get_timeout_extra_args
 from openkb.agent.tools import (
     get_wiki_page_content,
     read_wiki_file,
@@ -98,6 +98,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         model_settings=ModelSettings(
             parallel_tool_calls=False,
             extra_headers=get_extra_headers() or None,
+            extra_args=get_timeout_extra_args(),
         ),
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Iterator
@@ -136,6 +137,41 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
     return headers
 
 
+def resolve_timeout(config: dict) -> float | None:
+    """Resolve the optional ``timeout:`` key to a finite positive number of seconds.
+
+    Returns ``None`` (use LiteLLM's default) when absent or invalid; rejects
+    bools and ``nan``/``inf``, warning when present but unusable.
+    """
+    raw = config.get("timeout")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %s — "
+            "ignoring it.",
+            type(raw).__name__,
+        )
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %r — "
+            "ignoring it.",
+            raw,
+        )
+        return None
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "config: 'timeout' must be a finite positive number of seconds, got "
+            "%s — ignoring it.",
+            value,
+        )
+        return None
+    return value
+
+
 # Process-wide extra headers for LLM requests, resolved from the active KB's
 # config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
 # via get_extra_headers() so the value doesn't have to be threaded through
@@ -153,6 +189,29 @@ def set_extra_headers(headers: dict[str, str]) -> None:
 def get_extra_headers() -> dict[str, str]:
     """Return a copy of the process-wide extra headers for LLM requests."""
     return dict(_runtime_extra_headers)
+
+
+# Process-wide LLM request timeout (seconds), set from config by the CLI and
+# read at the call sites via get_timeout(). None = use LiteLLM's default.
+_runtime_timeout: float | None = None
+
+
+def set_timeout(timeout: float | None) -> None:
+    """Set the process-wide LLM request timeout in seconds; ``None`` clears it."""
+    global _runtime_timeout
+    _runtime_timeout = timeout
+
+
+def get_timeout() -> float | None:
+    """Return the process-wide LLM request timeout in seconds, or ``None``."""
+    return _runtime_timeout
+
+
+def get_timeout_extra_args() -> dict[str, float] | None:
+    """Timeout as Agents-SDK ``ModelSettings.extra_args`` (it has no ``timeout``
+    field), or ``None``. The LiteLLM provider forwards it to the completion call.
+    """
+    return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
