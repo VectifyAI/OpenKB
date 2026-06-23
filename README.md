@@ -358,7 +358,6 @@ OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.y
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
-timeout: 1200                    # (optional) per-request LLM timeout in seconds; defaults to LiteLLM's 600s
 ```
 
 Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
