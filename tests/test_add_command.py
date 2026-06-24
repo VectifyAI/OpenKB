@@ -109,7 +109,7 @@ class TestAddCommand:
             result = runner.invoke(cli, ["add", str(tmp_path / "nonexistent.pdf")])
             assert "does not exist" in result.output
 
-    def test_add_skipped_file(self, tmp_path):
+    def test_add_skipped_file(self, tmp_path, close_coroutine_run):
         kb_dir = self._setup_kb(tmp_path)
         doc = tmp_path / "test.md"
         doc.write_text("# Hello")
@@ -120,12 +120,12 @@ class TestAddCommand:
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
              patch("openkb.cli.convert_document", return_value=mock_result), \
-             patch("openkb.cli.asyncio.run") as mock_arun:
+             patch("openkb.cli.asyncio.run", side_effect=close_coroutine_run) as mock_arun:
             result = runner.invoke(cli, ["add", str(doc)])
             assert "SKIP" in result.output
             mock_arun.assert_not_called()
 
-    def test_add_short_doc_runs_compiler(self, tmp_path):
+    def test_add_short_doc_runs_compiler(self, tmp_path, close_coroutine_run):
         kb_dir = self._setup_kb(tmp_path)
         doc = tmp_path / "test.md"
         doc.write_text("# Hello")
@@ -152,7 +152,7 @@ class TestAddCommand:
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
              patch("openkb.cli.convert_document", return_value=mock_result), \
-             patch("openkb.cli.asyncio.run") as mock_arun:
+             patch("openkb.cli.asyncio.run", side_effect=close_coroutine_run) as mock_arun:
             result = runner.invoke(cli, ["add", str(doc)])
             mock_arun.assert_called_once()
             assert "OK" in result.output
@@ -168,7 +168,7 @@ class TestAddCommand:
         assert "path" in meta
         assert "stale-old-hash" not in hashes
 
-    def test_add_oldest_legacy_entry_converges_to_single_entry(self, tmp_path):
+    def test_add_oldest_legacy_entry_converges_to_single_entry(self, tmp_path, close_coroutine_run):
         """Editing a pre-doc_name-era document must not fork the registry.
 
         convert_document backfills doc_name/path onto the legacy entry on
@@ -192,7 +192,7 @@ class TestAddCommand:
         # the legacy backfill actually happens on disk mid-pipeline.
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.asyncio.run"):
+             patch("openkb.cli.asyncio.run", side_effect=close_coroutine_run):
             result = runner.invoke(cli, ["add", str(doc)])
             assert "OK" in result.output
 

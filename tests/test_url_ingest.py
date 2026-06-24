@@ -461,7 +461,7 @@ def test_fetch_pdf_uses_post_redirect_url_for_filename(tmp_path):
     assert result.name == "great-paper.pdf"
 
 
-def test_add_single_file_returns_added_on_success(tmp_path):
+def test_add_single_file_returns_added_on_success(tmp_path, close_coroutine_run):
     """Tri-state return contract: ``"added"`` when the file was newly
     indexed. URL-ingest uses this to decide whether to keep / unlink
     the just-downloaded file."""
@@ -489,7 +489,7 @@ def test_add_single_file_returns_added_on_success(tmp_path):
     )
 
     with patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run"):
+         patch("openkb.cli.asyncio.run", side_effect=close_coroutine_run):
         outcome = add_single_file(doc, tmp_path)
 
     assert outcome == "added"
@@ -513,7 +513,7 @@ def test_add_single_file_returns_skipped_on_dedup(tmp_path):
     assert outcome == "skipped"
 
 
-def test_add_single_file_returns_failed_on_pipeline_error(tmp_path):
+def test_add_single_file_returns_failed_on_pipeline_error(tmp_path, raise_after_closing_coroutine):
     """A pipeline failure (e.g. transient LLM error during compilation)
     must be distinguishable from dedup-skip, so URL-ingest can preserve
     the raw file for retry instead of deleting it."""
@@ -540,7 +540,10 @@ def test_add_single_file_returns_failed_on_pipeline_error(tmp_path):
 
     # Make both compile attempts raise to drive the failure path.
     with patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run", side_effect=RuntimeError("LLM 503")), \
+         patch(
+             "openkb.cli.asyncio.run",
+             side_effect=raise_after_closing_coroutine(RuntimeError("LLM 503")),
+         ), \
          patch("openkb.cli.time.sleep"):
         outcome = add_single_file(doc, tmp_path)
 
@@ -580,7 +583,7 @@ def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
     assert not fetched_path.exists()
 
 
-def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
+def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path, raise_after_closing_coroutine):
     """The point of the tri-state return: a pipeline failure (e.g. LLM
     timeout during compilation) must NOT delete the downloaded file —
     the user can retry without re-downloading, and we don't lose data
@@ -611,7 +614,10 @@ def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
     with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
          patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
          patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run", side_effect=RuntimeError("LLM 503")), \
+         patch(
+             "openkb.cli.asyncio.run",
+             side_effect=raise_after_closing_coroutine(RuntimeError("LLM 503")),
+         ), \
          patch("openkb.cli.time.sleep"):
         result = runner.invoke(cli, ["add", "https://example.com/paper.pdf"])
 

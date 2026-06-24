@@ -1,3 +1,4 @@
+import inspect
 import json
 import pytest
 
@@ -9,6 +10,28 @@ def _reset_extra_headers():
     yield
     set_extra_headers({})
     set_timeout(None)
+
+
+@pytest.fixture
+def close_coroutine_run():
+    """Test double for asyncio.run that closes unawaited coroutines."""
+    def _run(awaitable):
+        if inspect.iscoroutine(awaitable):
+            awaitable.close()
+
+    return _run
+
+
+@pytest.fixture
+def raise_after_closing_coroutine(close_coroutine_run):
+    def _factory(exc):
+        def _run(awaitable):
+            close_coroutine_run(awaitable)
+            raise exc
+
+        return _run
+
+    return _factory
 
 
 @pytest.fixture

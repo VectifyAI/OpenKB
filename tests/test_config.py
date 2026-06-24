@@ -15,12 +15,14 @@ def test_default_config_keys():
     assert "model" in DEFAULT_CONFIG
     assert "language" in DEFAULT_CONFIG
     assert "pageindex_threshold" in DEFAULT_CONFIG
+    assert "pdf_parser" in DEFAULT_CONFIG
 
 
 def test_default_config_values():
     assert DEFAULT_CONFIG["model"] == "gpt-5.4-mini"
     assert DEFAULT_CONFIG["language"] == "en"
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
+    assert DEFAULT_CONFIG["pdf_parser"] == "local"
 
 
 def test_load_missing_file_returns_defaults(tmp_path):

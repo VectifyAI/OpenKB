@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 
 from openkb.indexer import IndexResult, _normalize_page_content, index_long_document
+from openkb.pdf_extractor import PageContent
 
 
 class TestNormalizePageContent:
@@ -57,8 +58,8 @@ class TestIndexLongDocument:
 
     def _fake_pages(self):
         return [
-            {"page": 1, "content": "Page one text.", "images": []},
-            {"page": 2, "content": "Page two text.", "images": []},
+            PageContent(page=1, content="Page one text.", images=[]),
+            PageContent(page=2, content="Page two text.", images=[]),
         ]
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):
@@ -71,8 +72,11 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = self._fake_pages()
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             result = index_long_document(pdf_path, kb_dir)
 
         assert isinstance(result, IndexResult)
@@ -88,17 +92,14 @@ class TestIndexLongDocument:
 
         fake_client = MagicMock()
         fake_client.collection.return_value = fake_col
-        # Mock get_page_content to return page data
-        fake_col.get_page_content.return_value = [
-            {"page": 1, "content": "Page one text."},
-            {"page": 2, "content": "Page two text."},
-        ]
-
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = self._fake_pages()
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             index_long_document(pdf_path, kb_dir)
 
         json_file = kb_dir / "wiki" / "sources" / "sample.json"
@@ -119,8 +120,11 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = self._fake_pages()
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             index_long_document(pdf_path, kb_dir)
 
         summary_file = kb_dir / "wiki" / "summaries" / "sample.md"
@@ -140,8 +144,11 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "report.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = self._fake_pages()
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls, \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             index_long_document(pdf_path, kb_dir)
 
         # Verify PageIndexClient was instantiated with correct IndexConfig
@@ -153,7 +160,7 @@ class TestIndexLongDocument:
         assert ic.if_add_node_summary is True
         assert ic.if_add_doc_description is True
 
-    def test_cloud_page_content_is_normalized(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+    def test_cloud_page_content_is_normalized_before_shared_extractor_fallback(self, kb_dir, sample_tree, tmp_path, monkeypatch):
         doc_id = "cloud-123"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
         fake_col.get_page_content.return_value = [
@@ -168,17 +175,21 @@ class TestIndexLongDocument:
         pdf_path.write_bytes(b"%PDF-1.4 fake")
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = self._fake_pages()
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
              patch("openkb.indexer._get_pdf_page_count", return_value=2), \
-             patch("openkb.indexer._convert_pdf_to_pages") as local_pages:
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             index_long_document(pdf_path, kb_dir)
 
-        local_pages.assert_not_called()
+        fake_col.get_page_content.assert_called_once_with(doc_id, "1-2")
+        extractor.parse_pages.assert_not_called()
         json_file = kb_dir / "wiki" / "sources" / "sample.json"
         assert '"content": "Cloud page one."' in json_file.read_text(encoding="utf-8")
         assert '"content": "Cloud page two."' in json_file.read_text(encoding="utf-8")
 
-    def test_invalid_cloud_page_content_falls_back_to_local(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+    def test_invalid_cloud_page_content_falls_back_to_shared_extractor(self, kb_dir, sample_tree, tmp_path, monkeypatch):
         doc_id = "cloud-456"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
         fake_col.get_page_content.return_value = {"bad": "shape"}
@@ -190,16 +201,20 @@ class TestIndexLongDocument:
         pdf_path.write_bytes(b"%PDF-1.4 fake")
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = self._fake_pages()
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
              patch("openkb.indexer._get_pdf_page_count", return_value=2), \
-             patch("openkb.indexer._convert_pdf_to_pages", return_value=self._fake_pages()) as local_pages:
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             index_long_document(pdf_path, kb_dir)
 
-        local_pages.assert_called_once()
+        fake_col.get_page_content.assert_called_once_with(doc_id, "1-2")
+        extractor.parse_pages.assert_called_once()
         json_file = kb_dir / "wiki" / "sources" / "sample.json"
         assert "Page one text." in json_file.read_text(encoding="utf-8")
 
-    def test_empty_cloud_and_local_pages_fail(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+    def test_empty_shared_extractor_pages_fail(self, kb_dir, sample_tree, tmp_path, monkeypatch):
         doc_id = "empty-123"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
 
@@ -210,9 +225,12 @@ class TestIndexLongDocument:
         pdf_path.write_bytes(b"%PDF-1.4 fake")
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = []
+
         with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
              patch("openkb.indexer._get_pdf_page_count", return_value=2), \
-             patch("openkb.indexer._convert_pdf_to_pages", return_value=[]):
+             patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
             try:
                 index_long_document(pdf_path, kb_dir)
             except RuntimeError as exc:
@@ -237,10 +255,11 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     pdf = kb_dir / "raw" / "original.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
 
+    extractor = MagicMock()
+    extractor.parse_pages.return_value = [PageContent(page=1, content="p1", images=[])]
+
     with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-         patch("openkb.indexer._get_pdf_page_count", return_value=30), \
-         patch("openkb.indexer._convert_pdf_to_pages",
-               return_value=[{"page": 1, "text": "p1"}]) as mock_convert:
+         patch("openkb.indexer.resolve_pdf_extractor", return_value=extractor):
         result = index_long_document(pdf, kb_dir, doc_name="original-abc12345")
 
     assert result.doc_id == "doc-123"
@@ -251,7 +270,7 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     assert not (kb_dir / "wiki" / "summaries" / "original.md").exists()
     # the page extractor receives the explicit doc_name and its images dir
     expected_images = kb_dir / "wiki" / "sources" / "images" / "original-abc12345"
-    mock_convert.assert_called_once_with(pdf, "original-abc12345", expected_images)
+    extractor.parse_pages.assert_called_once_with(pdf, "original-abc12345", expected_images)
     # summary frontmatter points full_text at the doc_name artifact
     summary_text = (kb_dir / "wiki" / "summaries" / "original-abc12345.md").read_text(encoding="utf-8")
     assert "original-abc12345" in summary_text

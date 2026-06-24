@@ -696,7 +696,7 @@ def test_cli_remove_preserves_ghosts_in_unrelated_pages(kb_dir):
 # ---------------------------------------------------------------------------
 
 
-def test_add_persists_doc_name_for_later_remove(tmp_path):
+def test_add_persists_doc_name_for_later_remove(tmp_path, close_coroutine_run):
     """End-to-end: `openkb add` writes a registry entry with `doc_name`,
     and a subsequent `openkb remove` actually prunes that entry.
     """
@@ -743,7 +743,7 @@ def test_add_persists_doc_name_for_later_remove(tmp_path):
     # Mock convert_document + asyncio.run to skip the LLM-driven compile.
     with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
          patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run"):
+         patch("openkb.cli.asyncio.run", side_effect=close_coroutine_run):
         add_res = runner.invoke(cli, ["add", str(doc)])
     assert add_res.exit_code == 0, add_res.output
 
@@ -944,7 +944,7 @@ def test_cli_remove_dry_run_does_not_touch_images(kb_dir):
 # ---------------------------------------------------------------------------
 
 
-def test_add_long_pdf_persists_doc_id_to_registry(tmp_path):
+def test_add_long_pdf_persists_doc_id_to_registry(tmp_path, close_coroutine_run):
     """Long-doc ingest must record `doc_id` in the registry. Without it,
     the remove path has no handle to feed `Collection.delete_document`.
     """
@@ -987,7 +987,7 @@ def test_add_long_pdf_persists_doc_id_to_registry(tmp_path):
     with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
          patch("openkb.cli.convert_document", return_value=convert_mock), \
          patch("openkb.indexer.index_long_document", return_value=index_mock), \
-         patch("openkb.cli.asyncio.run"):
+         patch("openkb.cli.asyncio.run", side_effect=close_coroutine_run):
         result = runner.invoke(cli, ["add", str(pdf)])
 
     assert result.exit_code == 0, result.output

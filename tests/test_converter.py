@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 
 from openkb.converter import convert_document, get_pdf_page_count
+from openkb.pdf_extractor import PageContent
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +79,23 @@ class TestConvertDocumentMarkdown:
 
 
 class TestConvertDocumentPdfShort:
-    def test_short_pdf_converted_via_pymupdf(self, kb_dir, tmp_path):
-        """PDF under threshold is converted with pymupdf (convert_pdf_with_images)."""
+    def test_short_pdf_converted_via_shared_extractor(self, kb_dir, tmp_path):
+        """PDF under threshold is converted through the configured extractor."""
         src = tmp_path / "short.pdf"
         src.write_bytes(b"%PDF-1.4 fake content")
 
+        extractor = MagicMock()
+        extractor.parse_pages.return_value = [
+            PageContent(
+                page=1,
+                content="# Short PDF\n\n![image](sources/images/short/p1_img1.png)",
+                images=[{"path": "sources/images/short/p1_img1.png"}],
+            )
+        ]
+
         with (
             patch("openkb.converter.pymupdf.open") as mock_mu,
-            patch("openkb.converter.convert_pdf_with_images", return_value="# Short PDF\n\nConverted.") as mock_cpwi,
+            patch("openkb.converter.resolve_pdf_extractor", return_value=extractor) as resolve,
         ):
             fake_doc = MagicMock()
             fake_doc.page_count = 5  # below default threshold of 20
@@ -95,11 +105,19 @@ class TestConvertDocumentPdfShort:
 
             result = convert_document(src, kb_dir)
 
-        mock_cpwi.assert_called_once()
+        resolve.assert_called_once()
+        extractor.parse_pages.assert_called_once_with(
+            src,
+            "short",
+            kb_dir / "wiki" / "sources" / "images" / "short",
+        )
         assert result.skipped is False
         assert result.is_long_doc is False
         assert result.source_path is not None
         assert result.source_path.exists()
+        assert result.source_path.read_text(encoding="utf-8") == (
+            "# Short PDF\n\n![image](sources/images/short/p1_img1.png)"
+        )
 
 
 # ---------------------------------------------------------------------------
