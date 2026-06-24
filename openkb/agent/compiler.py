@@ -951,12 +951,15 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
         return text
 
     fm_block, body = parts
-    # Split the fm_block into lines for per-line manipulation. fm_block ends
-    # with "\n---\n"; strip the trailing closing delimiter + newline to get
-    # the prefix lines (opening "---" + content lines), then re-append after.
-    fm_prefix, _, _ = fm_block.rpartition("\n---\n")
+    # Strip the trailing closing delimiter to get the prefix lines (opening
+    # "---" + content lines), then re-append it. `frontmatter.split` leaves the
+    # closing at the end of fm_block as either "\n---\n" or a bare "\n---" (when
+    # the page ends at the delimiter with no trailing newline). Assuming only
+    # "\n---\n" would, for the bare form, make the strip below collapse the
+    # whole block and drop every existing frontmatter key.
+    closing = "\n---\n" if fm_block.endswith("\n---\n") else "\n---"
+    fm_prefix = fm_block[: -len(closing)]
     fm_lines = fm_prefix.split("\n")
-    closing = "\n---\n"
 
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
@@ -992,9 +995,12 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
         return text, False
 
     fm_block, body = parts
-    fm_prefix, _, _ = fm_block.rpartition("\n---\n")
+    # See _prepend_source_to_frontmatter: the closing delimiter may be "\n---\n"
+    # or a bare "\n---" (no trailing newline); strip whichever is present so the
+    # existing frontmatter lines (and the sources: line we need) are preserved.
+    closing = "\n---\n" if fm_block.endswith("\n---\n") else "\n---"
+    fm_prefix = fm_block[: -len(closing)]
     fm_lines = fm_prefix.split("\n")
-    closing = "\n---\n"
 
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):

@@ -27,9 +27,42 @@ from openkb.agent.compiler import (
     _parse_entities_plan,
     _filter_entity_items,
     _ENTITY_TYPE_LIST,
+    _prepend_source_to_frontmatter,
+    _remove_source_from_frontmatter,
     remove_doc_from_entity_pages,
 )
 from openkb.config import resolve_entity_types
+
+
+class TestFrontmatterSourceMutation:
+    """``_prepend_source_to_frontmatter``/``_remove_source_from_frontmatter`` must preserve existing
+    frontmatter even when the page ends at the closing ``---`` with no trailing
+    newline — ``frontmatter.split`` then returns a block ending in a bare
+    ``\\n---`` rather than ``\\n---\\n``.
+    """
+
+    def test_prepend_preserves_keys_without_trailing_newline(self):
+        text = '---\nsources: ["summaries/p1.md"]\ntype: "Concept"\ndescription: "Focus"\n---'
+        out = _prepend_source_to_frontmatter(text, "summaries/p2.md")
+        assert out.startswith("---\n")            # opening delimiter kept
+        assert 'type: "Concept"' in out           # other keys kept
+        assert 'description: "Focus"' in out
+        assert "summaries/p1.md" in out           # existing source kept
+        assert "summaries/p2.md" in out           # new source prepended
+
+    def test_remove_preserves_keys_without_trailing_newline(self):
+        text = '---\ntype: "Organization"\nsources: ["summaries/doc.md"]\n---'
+        out, now_empty = _remove_source_from_frontmatter(text, "summaries/doc.md")
+        assert now_empty is True                  # it was the only source
+        assert 'type: "Organization"' in out      # other key preserved
+        assert "summaries/doc.md" not in out      # source removed
+
+    def test_prepend_with_body_is_unchanged(self):
+        text = '---\nsources: ["a.md"]\ntype: "Concept"\n---\n\nBody.\n'
+        out = _prepend_source_to_frontmatter(text, "b.md")
+        assert out.startswith("---\n")
+        assert "b.md" in out and "a.md" in out
+        assert out.endswith("\n\nBody.\n")         # body + closing untouched
 
 
 class TestParseJson:
