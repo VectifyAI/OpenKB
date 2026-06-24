@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import errno
+import os
+
 import pytest
 
-from openkb.mutation import recover_pending_journals, snapshot_paths
+from openkb.mutation import publish_staged_tree, recover_pending_journals, snapshot_paths
 
 
 def test_recover_pending_add_journal_rolls_back_files(tmp_path):
@@ -109,3 +112,230 @@ def test_exclusive_lock_drains_active_journal_before_yielding(tmp_path):
 
     assert target.read_text(encoding="utf-8") == "before"
     assert not any((openkb_dir / "journal").glob("*.json"))
+
+
+# --- publish_staged_tree: O(1) rename + durability (review #2) -------------
+
+def _staged_raw(staging: Path, name: str, payload: bytes) -> Path:
+    src = staging / "raw" / name
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(payload)
+    return src
+
+
+def test_publish_moves_staged_files_on_same_filesystem(tmp_path):
+    """Publish must rename staged files into place (O(1)) when staging and
+    the live KB share a filesystem, not stream-copy them. The surest
+    observable signal: after publish the staged source is GONE (moved),
+    whereas a copy leaves it behind.
+    """
+    kb_dir = tmp_path / "kb"
+    staging = kb_dir / ".openkb" / "staging" / "add-x"
+    src = _staged_raw(staging, "doc.pdf", b"%PDF-1.4 payload")
+
+    publish_staged_tree(staging, kb_dir)
+
+    published = kb_dir / "raw" / "doc.pdf"
+    assert published.read_bytes() == b"%PDF-1.4 payload"
+    assert not src.exists()  # moved, not copied
+
+
+def test_published_files_keep_umask_mode_not_0600(tmp_path):
+    """Published artifacts must be created at the process umask mode, not
+    inherit tempfile.mkstemp's 0600. 0600 would make the KB's published
+    files owner-only and inconsistent with atomic_write_bytes.
+    """
+    prev_umask = os.umask(0o022)
+    try:
+        kb_dir = tmp_path / "kb"
+        staging = kb_dir / ".openkb" / "staging" / "add-y"
+        _staged_raw(staging, "doc.pdf", b"data")
+
+        publish_staged_tree(staging, kb_dir)
+
+        from openkb.locks import _default_file_mode
+
+        published = kb_dir / "raw" / "doc.pdf"
+        assert (published.stat().st_mode & 0o777) == _default_file_mode()
+    finally:
+        os.umask(prev_umask)
+
+
+def test_publish_falls_back_to_copy_on_cross_filesystem(tmp_path, monkeypatch):
+    """When staging and the live KB are on different filesystems, the publish
+    rename raises EXDEV; publish must fall back to a durable copy and still
+    land the file with correct content at the destination.
+
+    Only the cross-device publish rename raises EXDEV — the fallback copy's
+    own temp-file rename is on the destination's filesystem and must succeed,
+    so the fake raises exactly once then delegates to the real ``os.replace``.
+    """
+    import openkb.mutation as mut
+
+    kb_dir = tmp_path / "kb"
+    staging = kb_dir / ".openkb" / "staging" / "add-z"
+    _staged_raw(staging, "doc.pdf", b"cross-fs payload")
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def fake_replace(src, dst, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(mut.os, "replace", fake_replace)
+
+    publish_staged_tree(staging, kb_dir)
+
+    assert calls["n"] >= 2  # publish rename failed, fallback copy renamed
+    assert (kb_dir / "raw" / "doc.pdf").read_bytes() == b"cross-fs payload"
+
+
+# --- snapshot_paths: hardlinked dir backups (review #1) --------------------
+
+def test_snapshot_hardlinks_marked_directory_trees(tmp_path):
+    """Directory snapshots the caller marks hardlink-safe must hardlink the
+    live files into the backup (shared inode) — O(1), no per-file byte copy —
+    instead of streaming a fresh copy. This is what makes per-file concept /
+    entity / PageIndex-blob snapshots cheap on a large KB.
+    """
+    kb_dir = tmp_path
+    concepts = kb_dir / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    existing = concepts / "old.md"
+    existing.write_text("old", encoding="utf-8")
+    live_inode = existing.stat().st_ino
+
+    snapshot = snapshot_paths(
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
+    )
+    try:
+        backup_file = snapshot.backup_dir / "wiki" / "concepts" / "old.md"
+        assert backup_file.exists()
+        assert backup_file.stat().st_ino == live_inode  # hardlink, not copy
+    finally:
+        snapshot.discard_best_effort()
+
+
+def test_hardlinked_dir_rollback_correct_after_atomic_writes(tmp_path):
+    """With a hardlinked dir backup, an atomic (temp+replace) rewrite of an
+    existing page and creation of a new page must still roll back correctly:
+    existing page restored to its pre-snapshot content, new page removed.
+
+    This is the correctness invariant hardlinking relies on — the wiki
+    writers must go through atomic temp+replace so the hardlink backup keeps
+    pointing at the old inode while the live file moves to a new one.
+    """
+    from openkb.locks import atomic_write_text
+
+    kb_dir = tmp_path
+    concepts = kb_dir / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    existing = concepts / "old.md"
+    existing.write_text("old-content", encoding="utf-8")
+
+    snapshot = snapshot_paths(
+        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+    )
+    # Mirror the (now atomic) compiler writers: rewrite the existing page via
+    # atomic temp+replace, and add a brand-new page the doc creates.
+    atomic_write_text(existing, "rewritten-content")
+    (concepts / "new.md").write_text("new", encoding="utf-8")
+
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    assert existing.read_text(encoding="utf-8") == "old-content"
+    assert not (concepts / "new.md").exists()
+
+
+def test_openkb_files_tree_is_hardlinked(tmp_path):
+    """The PageIndex blob store (.openkb/files) is append-only across docs —
+    each add creates new {doc_id} blobs and never modifies existing ones — so
+    it is hardlink-safe and must be snapshotted via hardlinks, not copied.
+    """
+    kb_dir = tmp_path
+    blobs = kb_dir / ".openkb" / "files" / "col"
+    blobs.mkdir(parents=True)
+    existing = blobs / "an-existing-doc.pdf"
+    existing.write_bytes(b"existing-blob")
+    live_inode = existing.stat().st_ino
+
+    snapshot = snapshot_paths(
+        kb_dir, [kb_dir / ".openkb" / "files"], operation="add",
+        details={}, hardlink_dirs={kb_dir / ".openkb" / "files"},
+    )
+    try:
+        backup = (
+            snapshot.backup_dir / ".openkb" / "files" / "col" / "an-existing-doc.pdf"
+        )
+        assert backup.stat().st_ino == live_inode
+    finally:
+        snapshot.discard_best_effort()
+
+
+def test_concept_writer_is_atomic_so_hardlink_rollback_restores(tmp_path):
+    """Regression guard for the hardlink invariant: the wiki page writers must
+    go through atomic temp+replace (new inode). If any regresses to in-place
+    ``write_text`` (same inode), the hardlinked snapshot backup aliases that
+    inode and rollback restores the MUTATED content instead of the original.
+
+    Exercises _write_concept's update path — the canonical in-place modify —
+    through a real hardlinked snapshot + rollback.
+    """
+    from openkb.agent.compiler import _write_concept
+
+    kb_dir = tmp_path
+    concepts = kb_dir / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    existing = concepts / "topic.md"
+    existing.write_text("---\nsources: []\n---\n\noriginal body", encoding="utf-8")
+
+    snapshot = snapshot_paths(
+        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+    )
+    # The compiler rewrites the concept page as part of the doc ingest. If this
+    # write is in-place, the hardlink backup is corrupted and rollback fails.
+    _write_concept(kb_dir / "wiki", "topic", "rewritten body", "summaries/doc.md", is_update=True)
+
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    restored = existing.read_text(encoding="utf-8")
+    assert "original body" in restored
+    assert "rewritten body" not in restored
+
+
+def test_hardlink_falls_back_to_copy_on_eacces(tmp_path, monkeypatch):
+    """A hardlink blocked by a Windows ACL / OneDrive sync folder surfaces as
+    EACCES, not EXDEV/EPERM. _hardlink_or_copy must fall back to a real copy so
+    the snapshot still succeeds — otherwise the POSIX-oriented errno set aborts
+    the whole add on Windows where a plain copy would have worked.
+    """
+    import openkb.mutation as mut
+
+    kb_dir = tmp_path
+    concepts = kb_dir / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    (concepts / "page.md").write_text("content", encoding="utf-8")
+
+    def link_eacces(src, dst, *args, **kwargs):
+        raise OSError(errno.EACCES, "simulated Windows ACL hardlink block")
+    monkeypatch.setattr(mut.os, "link", link_eacces)
+
+    snapshot = snapshot_paths(
+        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+    )
+    try:
+        backup = snapshot.backup_dir / "wiki" / "concepts" / "page.md"
+        assert backup.read_text(encoding="utf-8") == "content"  # copy fallback landed
+        # It is a real copy, not a hardlink (distinct inode).
+        assert backup.stat().st_ino != (concepts / "page.md").stat().st_ino
+    finally:
+        snapshot.discard_best_effort()

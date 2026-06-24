@@ -594,17 +594,28 @@ def _commit_prepared_add(prepared: _PreparedAdd, kb_dir: Path, model: str) -> _A
     index_result = None
 
     try:
-        # Take the snapshot inside the try: a failure here (disk-full copytree
-        # of concepts/entities, permission, relative_to ValueError) used to
-        # propagate uncaught — aborting the whole remaining batch and leaking
-        # an unjournaled backup dir. snapshot_paths now self-cleans its backup
-        # dir on partial failure, so when snapshot stays None there is nothing
-        # to roll back and the except branch handles that case.
+        # Take the snapshot inside the try: a failure here (permission,
+        # relative_to ValueError) used to propagate uncaught — aborting the
+        # whole remaining batch and leaking an unjournaled backup dir.
+        # snapshot_paths now self-cleans its backup dir on partial failure, so
+        # when snapshot stays None there is nothing to roll back and the
+        # except branch handles that case.
+        #
+        # concepts/entities/files are snapshotted via hardlinks, not copies:
+        # the wiki writers are atomic (temp+replace) and PageIndex only appends
+        # new {doc_id} blobs, so a hardlink backup stays valid while the live
+        # tree is mutated. This is what keeps a per-file snapshot O(1) instead
+        # of O(corpus) — the cost that bit large-KB batch adds.
         snapshot = snapshot_paths(
             kb_dir,
             _snapshot_add_paths(kb_dir, doc_name, final_raw, final_source),
             operation="add",
             details={"file_hash": result.file_hash, "name": file_path.name, "doc_name": doc_name},
+            hardlink_dirs={
+                kb_dir / "wiki" / "concepts",
+                kb_dir / "wiki" / "entities",
+                kb_dir / ".openkb" / "files",
+            },
         )
         publish_staged_tree(prepared.staging_dir, kb_dir)
         if final_raw is not None:
@@ -1064,26 +1075,41 @@ def add(ctx, path):
         with _kb_mutation_lock(kb_dir):
             reserved_doc_names = _reserve_batch_doc_names(files_to_prepare, kb_dir)
         click.echo(f"Preparing files with {jobs} worker(s).")
-        with ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = {
-                f: executor.submit(
-                    _prepare_add_file,
-                    f,
-                    kb_dir,
-                    _staging_dir_for(kb_dir, f),
-                    reserved_doc_names[f],
-                )
-                for f in files_to_prepare
-            }
-            # Commit in scan order even though prepare finishes out of order.
-            # That keeps log.md and CLI progress stable for human audit.
-            for i, f in enumerate(files, 1):
-                prepared = prepared_outcomes.get(f)
-                if prepared is None:
-                    prepared = futures[f].result()
-                click.echo(f"\n[{i}/{total}] Adding: {prepared.file_path.name}")
-                with _kb_mutation_lock(kb_dir):
-                    _commit_prepared_add(prepared, kb_dir, model)
+        # Track every staging dir this batch creates so a Ctrl+C, a failed
+        # file, or an mkdir error can't orphan the ones whose file never
+        # reaches _commit_prepared_add's per-call cleanup. Recovery only scans
+        # journal/, and the mutation lock is released between per-file commits
+        # (so another process can acquire it mid-batch), so the batch itself —
+        # not a recovery sweep — must reap its own staging set.
+        batch_staging_dirs: list[Path] = []
+        try:
+            with ThreadPoolExecutor(max_workers=jobs) as executor:
+                futures = {}
+                for f in files_to_prepare:
+                    staging_dir = _staging_dir_for(kb_dir, f)
+                    batch_staging_dirs.append(staging_dir)
+                    futures[f] = executor.submit(
+                        _prepare_add_file,
+                        f,
+                        kb_dir,
+                        staging_dir,
+                        reserved_doc_names[f],
+                    )
+                # Commit in scan order even though prepare finishes out of
+                # order. That keeps log.md and CLI progress stable for audit.
+                for i, f in enumerate(files, 1):
+                    prepared = prepared_outcomes.get(f)
+                    if prepared is None:
+                        prepared = futures[f].result()
+                    click.echo(f"\n[{i}/{total}] Adding: {prepared.file_path.name}")
+                    with _kb_mutation_lock(kb_dir):
+                        _commit_prepared_add(prepared, kb_dir, model)
+        finally:
+            # Idempotent: dirs already removed by each commit's
+            # _cleanup_staging are a no-op here; this reaps the rest on any
+            # exit path (clean finish, raised exception, or Ctrl+C).
+            for staging_dir in batch_staging_dirs:
+                _cleanup_staging(staging_dir)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(

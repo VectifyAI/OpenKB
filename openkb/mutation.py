@@ -1,6 +1,7 @@
 """Transactional helpers for KB mutation paths."""
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -10,21 +11,69 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openkb.locks import atomic_write_json
+from openkb.locks import _fsync_directory, _target_mode, atomic_write_json
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_mode(path: Path, mode: int) -> None:
+    """Set ``path``'s permission bits (no-op where ``os.chmod`` is absent)."""
+    if hasattr(os, "chmod"):
+        os.chmod(path, mode)
+
+
+def _fsync_file(path: Path) -> None:
+    """Best-effort fsync of a file's data, for durability after a rename.
+
+    Opens read+write so ``FlushFileBuffers`` works on Windows (a read-only
+    handle can be denied). Best-effort: a failure here only weakens durability
+    of already-written bytes (the OS write-back still flushes them); it must
+    not fail the publish.
+    """
+    try:
+        with open(path, "r+b") as fh:
+            os.fsync(fh.fileno())
+    except OSError:
+        pass
+
+
+def _hardlink_or_copy(src: Path, dst: Path) -> None:
+    """``copytree`` copy_function that hardlinks (O(1), shares the inode).
+
+    Used for directory backups the caller has marked hardlink-safe — trees
+    whose writers all go through atomic temp+replace (so the live file moves
+    to a new inode) or that are append-only across documents. The hardlink
+    backup then keeps pointing at the old inode while the live tree is
+    mutated, so rollback restores the pre-mutation bytes without copying them
+    up front. Falls back to a real copy on EXDEV/EPERM/EACCES — cross-device,
+    a filesystem that forbids hardlinks, or (Windows) an ACL / cloud-sync
+    folder (OneDrive/Dropbox) that blocks CREATE_HARD_LINK. If the copy also
+    fails it surfaces the real error.
+    """
+    try:
+        os.link(src, dst)
+    except OSError as exc:
+        if exc.errno not in (errno.EXDEV, errno.EPERM, errno.EACCES):
+            raise
+        shutil.copy2(src, dst)
 
 
 def _copy_file_atomic(src: Path, dest: Path) -> None:
     """Stream ``src`` to ``dest`` through a temp file, then atomically replace.
 
-    Streams (never buffers the whole file) so publishing a large raw PDF
-    does not spike peak memory. The temp-file + ``os.replace`` means a torn
-    intermediate state can never be observed at ``dest``. Used by both
-    publish and rollback, so every file copy in this module shares one
-    atomic, streaming semantic.
+    Streams (never buffers the whole file) so copying a large raw PDF does
+    not spike peak memory. The temp-file + ``os.replace`` means a torn
+    intermediate state can never be observed at ``dest``. Used by snapshot
+    backup creation, rollback restore, and the cross-filesystem fallback of
+    :func:`_publish_staged_file` — so every byte copy in this module shares
+    one atomic, streaming, durable semantic: the parent directory is fsynced
+    and the result carries the umask mode (not ``mkstemp``'s 0600).
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # Capture the destination mode before the temp file shadows it: a brand-
+    # new file gets the process umask mode (0o666 & ~umask), an existing file
+    # keeps its current mode — the same rule ``atomic_write_bytes`` applies.
+    mode = _target_mode(dest)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent)
     tmp_path = Path(tmp_name)
     try:
@@ -33,8 +82,38 @@ def _copy_file_atomic(src: Path, dest: Path) -> None:
             out.flush()
             os.fsync(out.fileno())
         os.replace(tmp_path, dest)
+        _apply_mode(dest, mode)
+        _fsync_directory(dest.parent)
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+def _publish_staged_file(src: Path, dest: Path) -> None:
+    """Publish one staged file into its live-KB location.
+
+    Staging sits on the same filesystem as ``raw/`` and ``wiki/sources/``, so
+    an O(1) atomic ``os.replace`` (rename) is used instead of streaming the
+    bytes — a full copy + fsync per published file was the old per-file cost.
+    Only on ``EXDEV`` (staging and the live KB genuinely on different devices)
+    does it fall back to :func:`_copy_file_atomic`. Both branches leave the
+    result durable (file data + parent dir fsynced) and at the umask mode.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    mode = _target_mode(dest)
+    try:
+        os.replace(src, dest)
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+        _copy_file_atomic(src, dest)  # already fsyncs data + dir + sets mode
+        return
+    _apply_mode(dest, mode)
+    # Parity with _copy_file_atomic: the renamed inode's data may still be in
+    # the page cache. Without this, a crash right after publish can leave a
+    # 0-byte / stale raw or source file that committed metadata points at,
+    # even though the directory entry (fsynced below) survived.
+    _fsync_file(dest)
+    _fsync_directory(dest.parent)
 
 
 @dataclass
@@ -137,9 +216,19 @@ def snapshot_paths(
     *,
     operation: str,
     details: dict | None = None,
+    hardlink_dirs: set[Path] | None = None,
 ) -> MutationSnapshot:
-    """Snapshot final KB paths before a mutation starts."""
+    """Snapshot final KB paths before a mutation starts.
+
+    ``hardlink_dirs`` marks directories whose backup may be hardlinks instead
+    of copies (O(1), no per-file byte copy). A directory is only safe to list
+    here if every writer into it either goes through atomic temp+replace (new
+    inode, so the hardlink backup keeps the old bytes) or only ever appends
+    new files. The caller is asserting that invariant; an in-place writer
+    into a hardlinked tree would silently corrupt the backup.
+    """
     kb_dir = kb_dir.resolve()
+    hardlink_resolved = {p.resolve() for p in (hardlink_dirs or ())}
     journal_id = uuid.uuid4().hex
     backup_dir = kb_dir / ".openkb" / "staging" / f"rollback-{journal_id}"
     backup_dir.mkdir(parents=True, exist_ok=False)
@@ -162,7 +251,8 @@ def snapshot_paths(
             backup = backup_dir / rel
             backup.parent.mkdir(parents=True, exist_ok=True)
             if target.is_dir():
-                shutil.copytree(target, backup)
+                copy_function = _hardlink_or_copy if target in hardlink_resolved else shutil.copy2
+                shutil.copytree(target, backup, copy_function=copy_function)
             else:
                 _copy_file_atomic(target, backup)
             snapshot.entries[target] = backup
@@ -222,7 +312,7 @@ def recover_pending_journals(kb_dir: Path) -> list[str]:
 
 
 def publish_staged_tree(staging_dir: Path | None, kb_dir: Path) -> None:
-    """Copy staged raw/source artifacts into their final KB locations."""
+    """Move staged raw/source artifacts into their final KB locations."""
     if staging_dir is None or not staging_dir.exists():
         return
     for rel in ("raw", "wiki/sources"):
@@ -232,4 +322,4 @@ def publish_staged_tree(staging_dir: Path | None, kb_dir: Path) -> None:
         for src in src_root.rglob("*"):
             if not src.is_file():
                 continue
-            _copy_file_atomic(src, kb_dir / rel / src.relative_to(src_root))
+            _publish_staged_file(src, kb_dir / rel / src.relative_to(src_root))

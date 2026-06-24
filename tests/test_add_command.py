@@ -696,3 +696,102 @@ class TestAddCommand:
         # Source artifacts published from staging into the live KB.
         for letter in ("a", "b", "c"):
             assert (kb_dir / "wiki" / "sources" / f"{letter}.md").exists()
+
+    def test_add_directory_interrupted_batch_does_not_leak_staging(self, tmp_path):
+        """A failure aborting the batch mid-loop must not leak the staging dirs
+        already created for files that never reach commit. Per-commit cleanup
+        only runs inside _commit_prepared_add, and recovery only scans
+        journal/ — so the batch itself must reap its own staging set.
+
+        The fake commit mimics the real one's per-call staging cleanup (try/
+        finally), so the only dir that should leak without a batch-level guard
+        is the never-committed third file's.
+        """
+        kb_dir = self._setup_kb(tmp_path)
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        for name in ("a.md", "b.md", "c.md"):
+            (docs_dir / name).write_text(f"# {name}", encoding="utf-8")
+
+        from openkb.cli import _PreparedAdd, _cleanup_staging
+
+        def fake_prepare(file_path, kb_dir_arg, staging_dir, doc_name=None):
+            return _PreparedAdd(file_path=file_path, staging_dir=staging_dir)
+
+        commit_calls = {"n": 0}
+
+        def failing_commit(prepared, kb_dir_arg, model):
+            commit_calls["n"] += 1
+            try:
+                if commit_calls["n"] == 2:
+                    raise RuntimeError("mid-batch failure aborts the loop")
+                return "added"
+            finally:
+                # mimic real _commit_prepared_add's per-call staging cleanup
+                _cleanup_staging(prepared.staging_dir)
+
+        runner = CliRunner()
+        with patch("openkb.cli._prepare_add_file", side_effect=fake_prepare), \
+             patch("openkb.cli._commit_prepared_add", side_effect=failing_commit), \
+             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+
+        assert isinstance(result.exception, RuntimeError)
+        staging_root = kb_dir / ".openkb" / "staging"
+        leaked = [p for p in staging_root.glob("add-*")] if staging_root.exists() else []
+        assert leaked == [], f"interrupted batch leaked staging dirs: {leaked}"
+
+    def test_commit_path_hardlinks_concepts_backup(self, tmp_path):
+        """The real add-commit path must snapshot wiki/concepts (and peers)
+        via hardlinks, not copies. Spy on snapshot_paths during a real
+        _commit_prepared_add and assert the concepts backup shares the live
+        file's inode — the O(1) snapshot that keeps per-file batch cost from
+        scaling with the corpus.
+        """
+        import openkb.mutation as mut
+        from openkb.cli import _PreparedAdd, _commit_prepared_add
+        from openkb.converter import ConvertResult
+
+        kb_dir = self._setup_kb(tmp_path)
+        concepts_file = kb_dir / "wiki" / "concepts" / "keep.md"
+        concepts_file.write_text("keep", encoding="utf-8")
+        live_inode = concepts_file.stat().st_ino
+
+        captured = {}
+        real_snapshot = mut.snapshot_paths
+
+        def spy(kb_dir_arg, paths, *, operation, details=None, hardlink_dirs=None):
+            snap = real_snapshot(
+                kb_dir_arg, paths,
+                operation=operation, details=details, hardlink_dirs=hardlink_dirs,
+            )
+            backup_concepts = snap.backup_dir / "wiki" / "concepts" / "keep.md"
+            captured["hardlinked"] = (
+                backup_concepts.exists() and backup_concepts.stat().st_ino == live_inode
+            )
+            return snap
+
+        staging = tmp_path / "staging"
+        (staging / "raw").mkdir(parents=True)
+        (staging / "wiki" / "sources").mkdir(parents=True)
+        (staging / "raw" / "doc.md").write_text("# raw", encoding="utf-8")
+        source_md = staging / "wiki" / "sources" / "doc.md"
+        source_md.write_text("# converted", encoding="utf-8")
+        prepared = _PreparedAdd(
+            file_path=tmp_path / "doc.md",
+            result=ConvertResult(
+                raw_path=staging / "raw" / "doc.md",
+                source_path=source_md,
+                file_hash="d" + "0" * 63,
+                doc_name="doc",
+            ),
+            staging_dir=staging,
+        )
+
+        with patch("openkb.cli.asyncio.run"), \
+             patch("openkb.cli.snapshot_paths", side_effect=spy):
+            _commit_prepared_add(prepared, kb_dir, "gpt-4o-mini")
+
+        assert captured.get("hardlinked") is True, (
+            "real add-commit path did not hardlink the concepts backup"
+        )
