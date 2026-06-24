@@ -15,6 +15,12 @@ from openkb.locks import _fsync_directory, _target_mode, atomic_write_json
 
 logger = logging.getLogger(__name__)
 
+# Cap how many times recover_pending_journals retries an active journal whose
+# rollback keeps failing. Without a cap, a deterministically-failing rollback
+# (e.g. persistent ENOSPC) is retried on every lock acquisition forever,
+# re-doing the failed work and never releasing the backup dir + journal.
+MAX_ROLLBACK_ATTEMPTS = 5
+
 
 def _apply_mode(path: Path, mode: int) -> None:
     """Set ``path``'s permission bits (no-op where ``os.chmod`` is absent)."""
@@ -126,6 +132,11 @@ class MutationSnapshot:
     operation: str
     details: dict = field(default_factory=dict)
     entries: dict[Path, Path | None] = field(default_factory=dict)
+    attempts: int = 0
+    # Dirs whose backup was hardlinked (in-process only; not persisted, so a
+    # crash-rebuilt snapshot leaves this empty and rollback falls back to the
+    # safe full-copy path). Drives O(touched) rollback via inode-diff restore.
+    hardlinked_dirs: set[Path] = field(default_factory=set)
 
     def _journal_data(self, status: str) -> dict:
         return {
@@ -135,6 +146,7 @@ class MutationSnapshot:
             "kb_dir": str(self.kb_dir),
             "backup_dir": str(self.backup_dir),
             "details": self.details,
+            "attempts": self.attempts,
             "entries": [
                 {
                     "target": str(target),
@@ -169,8 +181,16 @@ class MutationSnapshot:
             key=lambda item: len(item[0].parts),
             reverse=True,
         ):
-            # Removal is unconditional; the backup (if any) is then restored
-            # in its place.
+            # A hardlinked dir backup supports an O(touched) inode-diff restore
+            # (leave untouched shared-inode files, only touch changed ones) —
+            # do NOT rmtree it first, which would discard those shared inodes.
+            if target.is_dir() and target in self.hardlinked_dirs:
+                if backup is not None and backup.is_dir():
+                    _restore_hardlinked_dir(backup, target)
+                else:
+                    shutil.rmtree(target, ignore_errors=True)  # new dir, no backup
+                continue
+            # Non-hardlinked (file, or copied dir): unconditional remove + restore.
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)
             else:
@@ -208,6 +228,52 @@ class MutationSnapshot:
             logger.warning("Mutation journal cleanup failed: %s", exc)
             return exc
         return None
+
+
+def _restore_hardlinked_dir(backup: Path, target: Path) -> None:
+    """O(touched) restore for a hardlinked directory backup.
+
+    The backup was built with ``os.link``, so live files the mutation never
+    touched still share the backup's inode — leave them. Only files the
+    mutation changed need work: new files (no backup counterpart) are removed,
+    modified files (atomic temp+replace → new inode) and deleted files are
+    restored from the backup's pre-mutation bytes. This avoids recopying the
+    whole tree on rollback — the cost that bit ``.openkb/files`` (the blob
+    store) and large concept/entity trees on every failed add.
+
+    Degrades gracefully to a full copy if the backup isn't actually hardlinked
+    (e.g. the EXDEV/EACCES fallback fired at snapshot time): every file then has
+    a different inode, so every file is treated as modified and recopied.
+    """
+    def _file_key(path: Path) -> tuple[int, int]:
+        st = path.stat()  # follows symlinks; these trees hold regular files only
+        return (st.st_dev, st.st_ino)
+
+    backup_files = {p.relative_to(backup): p for p in backup.rglob("*") if p.is_file()}
+
+    # Pass 1: remove new + modified live regular files; leave untouched ones
+    # (they share the backup inode) in place.
+    if target.exists():
+        for live in list(target.rglob("*")):
+            if not live.is_file():
+                continue
+            counterpart = backup_files.get(live.relative_to(target))
+            if counterpart is None or _file_key(live) != _file_key(counterpart):
+                live.unlink()
+
+    # Pass 2: restore modified + deleted files from backup.
+    for rel, src in backup_files.items():
+        dest = target / rel
+        if not dest.exists() or _file_key(dest) != _file_key(src):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+
+    # Pass 3: prune directories the mutation created that are now empty.
+    if target.exists():
+        for d in sorted((p for p in target.rglob("*") if p.is_dir()),
+                        key=lambda p: len(p.parts), reverse=True):
+            if not (backup / d.relative_to(target)).exists() and not any(d.iterdir()):
+                d.rmdir()
 
 
 def snapshot_paths(
@@ -251,8 +317,11 @@ def snapshot_paths(
             backup = backup_dir / rel
             backup.parent.mkdir(parents=True, exist_ok=True)
             if target.is_dir():
-                copy_function = _hardlink_or_copy if target in hardlink_resolved else shutil.copy2
-                shutil.copytree(target, backup, copy_function=copy_function)
+                if target in hardlink_resolved:
+                    shutil.copytree(target, backup, copy_function=_hardlink_or_copy)
+                    snapshot.hardlinked_dirs.add(target)
+                else:
+                    shutil.copytree(target, backup)
             else:
                 _copy_file_atomic(target, backup)
             snapshot.entries[target] = backup
@@ -281,6 +350,7 @@ def _snapshot_from_journal(path: Path, data: dict) -> MutationSnapshot:
         Path(item["target"]): Path(item["backup"]) if item.get("backup") else None
         for item in data.get("entries", [])
     }
+    snapshot.attempts = int(data.get("attempts", 0) or 0)
     return snapshot
 
 
@@ -305,9 +375,25 @@ def recover_pending_journals(kb_dir: Path) -> list[str]:
                 f"Rolled back interrupted {snapshot.operation} journal {journal_path.name}."
             )
         except Exception as exc:
-            messages.append(
-                f"Could not recover journal {journal_path.name}: {type(exc).__name__}: {exc}"
-            )
+            # Rollback failed. Retry a bounded number of times across recovery
+            # runs (a later attempt may succeed once the cause clears, e.g. disk
+            # space freed), then give up: discard the journal + backup and log
+            # loudly so it can't leak forever re-doing the same failing rollback.
+            snapshot.attempts += 1
+            if snapshot.attempts >= MAX_ROLLBACK_ATTEMPTS:
+                snapshot.discard()
+                messages.append(
+                    f"GAVE UP on {snapshot.operation} journal {journal_path.name} after "
+                    f"{snapshot.attempts} failed rollback(s): {type(exc).__name__}: {exc}. "
+                    f"The KB may be in a partially-rolled-back state — manual review needed."
+                )
+            else:
+                snapshot.write_journal("active")  # persist incremented attempts
+                messages.append(
+                    f"Rollback of {snapshot.operation} journal {journal_path.name} failed "
+                    f"(attempt {snapshot.attempts}/{MAX_ROLLBACK_ATTEMPTS}): "
+                    f"{type(exc).__name__}: {exc}; retained for retry."
+                )
     return messages
 
 

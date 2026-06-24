@@ -339,3 +339,116 @@ def test_hardlink_falls_back_to_copy_on_eacces(tmp_path, monkeypatch):
         assert backup.stat().st_ino != (concepts / "page.md").stat().st_ino
     finally:
         snapshot.discard_best_effort()
+
+
+# --- recover_pending_journals: bounded retry (pre-existing issue) ----------
+
+def test_recovery_gives_up_on_persistently_failing_journal(tmp_path, monkeypatch):
+    """A journal whose rollback keeps failing (e.g. persistent ENOSPC) must
+    not be retried forever — otherwise the backup dir + journal leak and every
+    future lock acquisition re-attempts the same failing rollback. After
+    MAX_ROLLBACK_ATTEMPTS failed attempts recovery discards it with a loud
+    message so a human can intervene, bounding the on-disk retention.
+    """
+    import openkb.mutation as mut
+
+    kb_dir = tmp_path
+    (kb_dir / ".openkb").mkdir()
+    target = kb_dir / "wiki" / "summaries" / "doc.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("before", encoding="utf-8")
+    # Leave an ACTIVE journal (simulating a crashed add).
+    snapshot_paths(kb_dir, [target], operation="add", details={})
+    target.write_text("after", encoding="utf-8")
+
+    # Make rollback deterministically fail.
+    def boom(self):
+        raise OSError("persistent rollback failure")
+    monkeypatch.setattr(mut.MutationSnapshot, "rollback", boom)
+
+    for _ in range(mut.MAX_ROLLBACK_ATTEMPTS + 1):
+        recover_pending_journals(kb_dir)
+
+    # Given up + discarded, not retained forever.
+    journal_dir = kb_dir / ".openkb" / "journal"
+    assert not any(journal_dir.glob("*.json"))
+
+
+# --- O(touched) rollback for hardlinked dirs (pre-existing issue) ----------
+
+def test_hardlinked_dir_rollback_leaves_untouched_files_in_place(tmp_path):
+    """O(touched) rollback: an untouched file in a hardlinked dir shares the
+    backup's inode, so rollback must leave it in place (same inode) instead
+    of delete + recopy. A full-copy rollback would give it a new inode — this
+    is the regression driver for the inode-aware restore.
+    """
+    kb_dir = tmp_path
+    concepts = kb_dir / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    keep = concepts / "keep.md"
+    keep.write_text("keep", encoding="utf-8")
+    keep_inode = keep.stat().st_ino
+
+    snapshot = snapshot_paths(
+        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+    )
+    # keep.md is not mutated — it stays shared-inode with the backup.
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    assert keep.exists()
+    assert keep.read_text(encoding="utf-8") == "keep"
+    assert keep.stat().st_ino == keep_inode  # NOT recopied
+
+
+def test_hardlinked_dir_rollback_removes_new_and_restores_modified(tmp_path):
+    from openkb.locks import atomic_write_text
+
+    kb_dir = tmp_path
+    concepts = kb_dir / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    (concepts / "old.md").write_text("old", encoding="utf-8")
+    page = concepts / "page.md"
+    page.write_text("original", encoding="utf-8")
+
+    snapshot = snapshot_paths(
+        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+    )
+    # Commit created a new page and atomically rewrote an existing one.
+    (concepts / "new.md").write_text("new", encoding="utf-8")
+    atomic_write_text(page, "rewritten")
+
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    assert (concepts / "old.md").read_text(encoding="utf-8") == "old"
+    assert page.read_text(encoding="utf-8") == "original"
+    assert not (concepts / "new.md").exists()
+
+
+def test_hardlinked_dir_rollback_prunes_new_nested_blob_dirs(tmp_path):
+    """PageIndex blob-store scenario: an existing blob is untouched (shared
+    inode, left in place), while a new doc's blob + its nested images subdir
+    are removed on rollback — including the now-empty newdoc/ directory.
+    """
+    kb_dir = tmp_path
+    files = kb_dir / ".openkb" / "files"
+    (files / "col").mkdir(parents=True)
+    existing = files / "col" / "existing.pdf"
+    existing.write_bytes(b"existing")
+    existing_inode = existing.stat().st_ino
+
+    snapshot = snapshot_paths(
+        kb_dir, [files], operation="add", details={}, hardlink_dirs={files},
+    )
+    (files / "col" / "newdoc.pdf").write_bytes(b"new")
+    (files / "col" / "newdoc" / "images").mkdir(parents=True)
+    (files / "col" / "newdoc" / "images" / "p1.png").write_bytes(b"png")
+
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    assert existing.read_bytes() == b"existing"
+    assert existing.stat().st_ino == existing_inode  # untouched, not recopied
+    assert not (files / "col" / "newdoc.pdf").exists()
+    assert not (files / "col" / "newdoc").exists()  # empty new dir pruned
