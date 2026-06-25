@@ -213,55 +213,35 @@ def index_long_document(
 # this many pages (``parse_pages`` raises "Page range too large (max 1000)"),
 # so cloud page fetches are windowed in chunks of this size.
 _CLOUD_PAGE_WINDOW = 1000
+# Safety bound on the windowed fetch (in pages) in case a backend never returns
+# a short window — caps the loop at _CLOUD_PAGE_MAX / _CLOUD_PAGE_WINDOW calls.
+_CLOUD_PAGE_MAX = 1_000_000
 
 
-def _max_page_index(structure: list, default: int = 0) -> int:
-    """Largest start/end page index across the (possibly nested) tree.
-
-    Cloud tree nodes carry ``start_index``/``end_index`` page numbers; this
-    bounds the windowed cloud page fetch. Returns ``default`` (``0`` = unknown)
-    when no integer indices are present, leaving the fetch to stop on the first
-    empty window.
-    """
-    best = 0
-
-    def _walk(nodes: list) -> None:
-        nonlocal best
-        for node in nodes or []:
-            if not isinstance(node, dict):
-                continue
-            for key in ("end_index", "start_index"):
-                val = node.get(key)
-                if isinstance(val, int):
-                    best = max(best, val)
-            _walk(node.get("nodes"))
-
-    _walk(structure)
-    return best or default
-
-
-def _fetch_cloud_pages(col, doc_id: str, max_page: int) -> list[dict[str, Any]]:
+def _fetch_cloud_pages(col, doc_id: str) -> list[dict[str, Any]]:
     """Fetch all OCR pages of a cloud doc, windowing around the 1000-page cap.
 
     ``get_page_content`` returns the whole document and uses its ``pages`` arg
     only as a client-side filter that ``parse_pages`` caps at 1000 pages — so a
-    single ``"1-<N>"`` request fails for any doc over 1000 pages or whose tree
-    exposes no integer indices. Request fixed ``1000``-page windows instead and
-    concatenate; each window over-covers its range, so an off-by-one or 0-based
-    ``max_page`` never truncates the last page. ``max_page`` (0 = unknown) bounds
-    the loop; otherwise it stops at the first empty window. A wide safety bound
-    prevents an unbounded loop if the backend never returns an empty window.
+    single ``"1-<N>"`` request fails for any doc over 1000 pages. Request fixed
+    ``1000``-page windows and stop as soon as a window comes back SHORT (fewer
+    than a full window): PageIndex page numbers are sequential, so a short window
+    means we've passed the last page. This is what makes the common (≤1000-page)
+    doc a single request, while still fetching every page of a larger one — and,
+    unlike bounding the loop by the tree's max page index, it never truncates a
+    doc whose tree under-reports its page count (a real case: a paper whose tree
+    stops a couple pages short of the references). A wide safety bound guards
+    against a backend that never narrows the window.
     """
     pages: list[dict[str, Any]] = []
-    upper = max_page if max_page and max_page > 0 else 1_000_000
     start = 1
-    while start <= upper:
+    while start <= _CLOUD_PAGE_MAX:
         window = _normalize_page_content(
             col.get_page_content(doc_id, f"{start}-{start + _CLOUD_PAGE_WINDOW - 1}")
         )
-        if not window:
-            break
         pages.extend(window)
+        if len(window) < _CLOUD_PAGE_WINDOW:
+            break
         start += _CLOUD_PAGE_WINDOW
     return pages
 
@@ -303,7 +283,7 @@ def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpo
         "structure": structure,
     }
 
-    all_pages = _fetch_cloud_pages(col, doc_id, _max_page_index(structure))
+    all_pages = _fetch_cloud_pages(col, doc_id)
     if not all_pages:
         raise RuntimeError(
             f"No page content returned from PageIndex Cloud for doc_id={doc_id}"

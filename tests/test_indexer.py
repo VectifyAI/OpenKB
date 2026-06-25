@@ -357,15 +357,38 @@ def test_fetch_cloud_pages_windows_over_1000_cap():
     col = MagicMock()
     col.get_page_content.side_effect = fake_get
 
-    pages = _fetch_cloud_pages(col, "doc", 0)  # 0 = unknown bound → loop until empty
+    pages = _fetch_cloud_pages(col, "doc")
     assert len(pages) == 1500
     assert pages[0]["page"] == 1 and pages[-1]["page"] == 1500
     ranges = [c.args[1] for c in col.get_page_content.call_args_list]
-    assert ranges == ["1-1000", "1001-2000", "2001-3000"]
+    # Full first window → fetch the next; the short 2nd window (500<1000) stops it.
+    assert ranges == ["1-1000", "1001-2000"]
     # Every requested window spans exactly 1000 pages → parse_pages never raises.
     for r in ranges:
         a, b = (int(x) for x in r.split("-"))
         assert b - a + 1 == 1000
+
+
+def test_fetch_cloud_pages_full_window_triggers_next_fetch():
+    """A doc whose pages exactly fill the first window must still fetch the next
+    one. Regression: bounding the loop by the tree's max page index dropped the
+    straggler page(s) of a doc whose tree under-reported its page count.
+    """
+    from openkb.indexer import _fetch_cloud_pages
+
+    def fake_get(doc_id, rng):
+        start = int(rng.split("-")[0])
+        if start == 1:
+            return [{"page": p, "content": "x"} for p in range(1, 1001)]  # full window
+        if start == 1001:
+            return [{"page": 1001, "content": "x"}]  # one straggler past the window
+        return []
+
+    col = MagicMock()
+    col.get_page_content.side_effect = fake_get
+
+    pages = _fetch_cloud_pages(col, "doc")
+    assert [p["page"] for p in pages] == list(range(1, 1002))  # page 1001 NOT dropped
 
 
 def test_import_cloud_document_no_indices_avoids_oversized_range(kb_dir, monkeypatch):
