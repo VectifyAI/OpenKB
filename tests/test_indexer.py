@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from openkb.indexer import IndexResult, _normalize_page_content, index_long_document
 
@@ -37,6 +38,14 @@ class TestNormalizePageContent:
 
 
 class TestIndexLongDocument:
+    @pytest.fixture(autouse=True)
+    def _local_path_by_default(self, monkeypatch):
+        # These tests exercise the LOCAL indexing path; unset PAGEINDEX_API_KEY
+        # so they are deterministic regardless of a developer's configured key
+        # (otherwise the cloud branch reads the page count from the fake PDF and
+        # raises). Cloud-path tests in this class re-enable it via setenv.
+        monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
+
     def _make_fake_collection(self, doc_id: str, sample_tree: dict):
         """Build a mock Collection that returns the sample_tree fixture data."""
         col = MagicMock()
