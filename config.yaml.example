@@ -2,13 +2,6 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
-# Optional: extra HTTP headers sent with every LLM request (forwarded to
-# LiteLLM's extra_headers). Some providers need these — e.g. GitHub Copilot
-# IDE-auth headers on older litellm versions:
-# extra_headers:
-#   Editor-Version: vscode/1.95.0
-#   Copilot-Integration-Id: vscode-chat
-
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).
@@ -18,6 +11,12 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 #   - dataset
 #   - model
 
-# Optional: per-request LLM timeout in seconds, forwarded to LiteLLM.
-# Defaults to LiteLLM's 600s; raise it for slow local backends (e.g. Ollama).
-# timeout: 1200
+# Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout` and
+# `extra_headers` apply per request, the rest are set as litellm.<key>.
+# litellm:
+#   timeout: 1200          # per-request timeout (s); raise for slow local backends (Ollama)
+#   drop_params: true      # let LiteLLM drop params a provider rejects (e.g. Ollama)
+#   num_retries: 3
+#   extra_headers:         # extra HTTP headers some providers need (e.g. GitHub Copilot)
+#     Editor-Version: vscode/1.95.0
+#     Copilot-Integration-Id: vscode-chat

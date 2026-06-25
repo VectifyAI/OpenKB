@@ -1,9 +1,12 @@
+import logging
+
 from openkb.config import (
     DEFAULT_CONFIG,
     get_extra_headers,
     get_timeout,
     load_config,
     resolve_extra_headers,
+    resolve_litellm_settings,
     resolve_timeout,
     save_config,
     set_extra_headers,
@@ -150,3 +153,41 @@ def test_timeout_stash_roundtrip_and_reset():
     assert get_timeout() == 1200.0
     set_timeout(None)
     assert get_timeout() is None
+
+
+def test_resolve_litellm_settings_absent_returns_empty():
+    assert resolve_litellm_settings({}) == {}
+
+
+def test_resolve_litellm_settings_passes_mapping_through_verbatim():
+    # Values are forwarded as-is — no validation or coercion.
+    config = {"litellm": {"drop_params": True, "num_retries": 3, "ssl_verify": False}}
+    assert resolve_litellm_settings(config) == {
+        "drop_params": True,
+        "num_retries": 3,
+        "ssl_verify": False,
+    }
+
+
+def test_resolve_litellm_settings_non_mapping_ignored():
+    assert resolve_litellm_settings({"litellm": ["drop_params"]}) == {}
+    assert resolve_litellm_settings({"litellm": "drop_params=true"}) == {}
+    assert resolve_litellm_settings({"litellm": True}) == {}
+
+
+def test_resolve_litellm_settings_drops_non_string_keys():
+    assert resolve_litellm_settings({"litellm": {5: "x", "drop_params": True}}) == {
+        "drop_params": True
+    }
+
+
+def test_resolve_litellm_settings_warns_on_non_mapping(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_litellm_settings({"litellm": ["drop_params"]}) == {}
+    assert "must be a mapping" in caplog.text
+
+
+def test_resolve_litellm_settings_warns_on_non_string_key(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        resolve_litellm_settings({"litellm": {5: "x", "drop_params": True}})
+    assert "non-string key" in caplog.text

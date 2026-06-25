@@ -44,6 +44,7 @@ from dotenv import load_dotenv
 from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
     resolve_extra_headers, set_extra_headers, resolve_timeout, set_timeout,
+    resolve_litellm_settings,
 )
 from openkb.converter import _registry_path, convert_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
@@ -55,6 +56,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 load_dotenv()  # load from cwd (covers running inside the KB dir)
+
+logger = logging.getLogger(__name__)
 
 
 _KNOWN_PROVIDER_KEYS = (
@@ -81,6 +84,31 @@ def _extract_provider(model: str) -> str | None:
     if "/" in model:
         return model.split("/")[0].lower()
     return "openai"
+
+
+def _apply_litellm_settings(settings: dict) -> None:
+    """Set each ``litellm:`` key verbatim onto the litellm module (process-wide
+    globals, so they reach every LiteLLM call). Skips with a warning a key the
+    installed litellm doesn't define, or one that is a litellm function (e.g.
+    ``completion``) since overwriting it would break later calls. Applied, never
+    reset — the values persist for the life of the process.
+    """
+    for key, value in settings.items():
+        if not hasattr(litellm, key):
+            logger.warning(
+                "config: LiteLLM has no setting %r — ignoring it "
+                "(check the spelling or your installed litellm version).",
+                key,
+            )
+            continue
+        if callable(getattr(litellm, key)):
+            logger.warning(
+                "config: 'litellm.%s' is a LiteLLM function, not a setting — "
+                "refusing to overwrite it from the litellm: config block.",
+                key,
+            )
+            continue
+        setattr(litellm, key, value)
 
 
 def _setup_llm_key(kb_dir: Path | None = None) -> None:
@@ -113,6 +141,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     provider: str | None = None
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
+    litellm_settings: dict = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
         if config_path.exists():
@@ -121,8 +150,20 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             provider = _extract_provider(str(model))
             extra_headers = resolve_extra_headers(config)
             timeout = resolve_timeout(config)
+            litellm_settings = resolve_litellm_settings(config)
+            # `timeout` / `extra_headers` in the block route to the per-call
+            # stashes (replacing the legacy top-level keys); the rest are globals.
+            if "extra_headers" in litellm_settings:
+                extra_headers = resolve_extra_headers(
+                    {"extra_headers": litellm_settings.pop("extra_headers")}
+                )
+            if "timeout" in litellm_settings:
+                timeout = resolve_timeout(
+                    {"timeout": litellm_settings.pop("timeout")}
+                )
     set_extra_headers(extra_headers)
     set_timeout(timeout)
+    _apply_litellm_settings(litellm_settings)
 
     if not api_key:
         # Check if any provider key is already set. OAuth-based providers
@@ -304,7 +345,6 @@ def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
 
-    logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
