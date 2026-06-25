@@ -288,10 +288,11 @@ def snapshot_paths(
 
     ``hardlink_dirs`` marks directories whose backup may be hardlinks instead
     of copies (O(1), no per-file byte copy). A directory is only safe to list
-    here if every writer into it either goes through atomic temp+replace (new
-    inode, so the hardlink backup keeps the old bytes) or only ever appends
-    new files. The caller is asserting that invariant; an in-place writer
-    into a hardlinked tree would silently corrupt the backup.
+    here if every writer into it is either atomic temp+replace (new inode, so
+    the hardlink backup keeps the old bytes) or append-only. This is the
+    required caller contract for hardlinked dirs; any in-place writer into one
+    of those trees would silently corrupt the backup and make rollback a no-op
+    for that file.
     """
     kb_dir = kb_dir.resolve()
     hardlink_resolved = {p.resolve() for p in (hardlink_dirs or ())}

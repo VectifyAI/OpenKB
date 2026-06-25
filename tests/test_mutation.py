@@ -312,6 +312,35 @@ def test_concept_writer_is_atomic_so_hardlink_rollback_restores(tmp_path):
     assert "rewritten body" not in restored
 
 
+def test_fix_broken_links_is_atomic_so_hardlink_rollback_restores(tmp_path):
+    """Regression guard for lint --fix/remove cleanup writers.
+
+    ``fix_broken_links`` rewrites concept/entity pages outside the add path. If
+    it writes in place, a hardlinked snapshot aliases the live inode and rollback
+    restores the cleaned content instead of the original page.
+    """
+    from openkb.lint import fix_broken_links
+
+    kb_dir = tmp_path
+    wiki = kb_dir / "wiki"
+    concepts = wiki / "concepts"
+    concepts.mkdir(parents=True)
+    page = concepts / "topic.md"
+    page.write_text("# Topic\n\nGhost [[concepts/missing]] link.\n", encoding="utf-8")
+
+    snapshot = snapshot_paths(
+        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+    )
+    fix_broken_links(wiki, restrict_to=[page])
+
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    restored = page.read_text(encoding="utf-8")
+    assert "[[concepts/missing]]" in restored
+    assert "Ghost  link" not in restored
+
+
 def test_hardlink_falls_back_to_copy_on_eacces(tmp_path, monkeypatch):
     """A hardlink blocked by a Windows ACL / OneDrive sync folder surfaces as
     EACCES, not EXDEV/EPERM. _hardlink_or_copy must fall back to a real copy so
