@@ -456,6 +456,36 @@ def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "
     return "added"
 
 
+def _cleanup_failed_cloud_import(kb_dir: Path, doc_name: str) -> None:
+    """Best-effort wiki cleanup after a cloud import whose compilation failed.
+
+    import_cloud_document writes the summary + per-page JSON source before
+    compile, and compile_long_doc writes concept/entity pages incrementally — so
+    a compile failure (which happens before the registry entry is added) would
+    otherwise strand wiki artifacts that ``openkb remove`` cannot reach. Mirror
+    remove's wiki cleanup (by doc_name, idempotent) but touch neither the
+    registry (no entry was added) nor PageIndex (the cloud doc is the user's).
+    """
+    from openkb.agent.compiler import (
+        remove_doc_from_concept_pages,
+        remove_doc_from_entity_pages,
+        remove_doc_from_index,
+    )
+
+    wiki_dir = kb_dir / "wiki"
+    (wiki_dir / "summaries" / f"{doc_name}.md").unlink(missing_ok=True)
+    (wiki_dir / "sources" / f"{doc_name}.json").unlink(missing_ok=True)
+    images_dir = wiki_dir / "sources" / "images" / doc_name
+    if images_dir.is_dir():
+        shutil.rmtree(images_dir, ignore_errors=True)
+    concept_result = remove_doc_from_concept_pages(wiki_dir, doc_name, keep_empty=False)
+    entity_result = remove_doc_from_entity_pages(wiki_dir, doc_name, keep_empty=False)
+    remove_doc_from_index(
+        wiki_dir, doc_name, concept_result["deleted"],
+        entity_slugs_deleted=entity_result["deleted"],
+    )
+
+
 def import_from_pageindex_cloud(
     doc_id: str, kb_dir: Path
 ) -> Literal["added", "skipped", "failed"]:
@@ -494,6 +524,7 @@ def import_from_pageindex_cloud(
     doc_name = import_result.doc_name
     summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
     click.echo(f"  Compiling imported doc (doc_id={doc_id})...")
+    compiled = False
     for attempt in range(2):
         try:
             asyncio.run(
@@ -502,6 +533,7 @@ def import_from_pageindex_cloud(
                     doc_description=import_result.description,
                 )
             )
+            compiled = True
             break
         except Exception as exc:
             if attempt == 0:
@@ -510,7 +542,15 @@ def import_from_pageindex_cloud(
             else:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logger.debug("Compilation traceback:", exc_info=True)
-                return "failed"
+    if not compiled:
+        # No registry entry exists yet, so `openkb remove` can't reach the
+        # summary/source/concept/entity artifacts already written; clean them
+        # best-effort so a failed import leaves no orphans and a retry is clean.
+        try:
+            _cleanup_failed_cloud_import(kb_dir, doc_name)
+        except Exception:
+            logger.debug("Cleanup after failed cloud import errored:", exc_info=True)
+        return "failed"
 
     # Register the raw-less cloud entry only after successful compilation.
     registry = HashRegistry(openkb_dir / "hashes.json")
@@ -788,7 +828,9 @@ def add(ctx, path, from_pageindex_cloud):
         if path is not None:
             click.echo("Provide either PATH or --from-pageindex-cloud, not both.")
             return
-        import_from_pageindex_cloud(from_pageindex_cloud, kb_dir)
+        outcome = import_from_pageindex_cloud(from_pageindex_cloud, kb_dir)
+        if outcome == "failed":
+            ctx.exit(1)
         return
 
     if path is None:

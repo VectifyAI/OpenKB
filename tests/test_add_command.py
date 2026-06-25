@@ -209,8 +209,17 @@ class TestAddCommand:
         runner = CliRunner()
         with patch("openkb.cli.import_from_pageindex_cloud", return_value="added") as mock_imp, \
              patch("openkb.cli._find_kb_dir", return_value=kb_dir):
-            runner.invoke(cli, ["add", "--from-pageindex-cloud", "doc-123"])
+            result = runner.invoke(cli, ["add", "--from-pageindex-cloud", "doc-123"])
             mock_imp.assert_called_once_with("doc-123", kb_dir)
+            assert result.exit_code == 0  # success → exit 0
+
+    def test_add_cloud_failure_exits_nonzero(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        runner = CliRunner()
+        with patch("openkb.cli.import_from_pageindex_cloud", return_value="failed"), \
+             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = runner.invoke(cli, ["add", "--from-pageindex-cloud", "doc-x"])
+            assert result.exit_code == 1  # failed import must not exit 0
 
     def test_add_rejects_path_and_cloud_together(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
@@ -306,3 +315,36 @@ class TestImportFromPageindexCloud:
         assert outcome == "failed"
         registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
         assert registry.all_entries() == {}
+
+    def test_compile_failure_cleans_up_orphan_artifacts(self, tmp_path):
+        """If import succeeds (artifacts written) but compile fails twice, the
+        summary/source artifacts are cleaned up — no registry entry exists, so
+        `openkb remove` couldn't reach them otherwise — and nothing is registered
+        (so a retry isn't skipped)."""
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.indexer import CloudImportResult
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
+        (kb_dir / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
+        doc_name = "Cloud-Paper"
+        # Simulate the artifacts import_cloud_document writes before compile.
+        (kb_dir / "wiki" / "summaries" / f"{doc_name}.md").write_text("---\n---\n# s\n")
+        (kb_dir / "wiki" / "sources" / f"{doc_name}.json").write_text("[]")
+        result = CloudImportResult(
+            doc_id="cloud-1", doc_name=doc_name, name="Cloud Paper.pdf", description="d",
+        )
+
+        with patch("openkb.cli.import_cloud_document", return_value=result), \
+             patch("openkb.cli.compile_long_doc", side_effect=RuntimeError("boom")), \
+             patch("openkb.cli.time.sleep"), \
+             patch("openkb.cli._setup_llm_key"):
+            outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert outcome == "failed"
+        # Orphan artifacts cleaned up (would be unreachable by `remove` otherwise).
+        assert not (kb_dir / "wiki" / "summaries" / f"{doc_name}.md").exists()
+        assert not (kb_dir / "wiki" / "sources" / f"{doc_name}.json").exists()
+        # Nothing registered → a retry is not skipped.
+        assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
