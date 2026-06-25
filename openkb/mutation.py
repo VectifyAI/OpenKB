@@ -361,6 +361,7 @@ def recover_pending_journals(kb_dir: Path) -> list[str]:
         return []
     messages: list[str] = []
     for journal_path in sorted(journal_dir.glob("*.json")):
+        snapshot: MutationSnapshot | None = None
         try:
             data = json.loads(journal_path.read_text(encoding="utf-8"))
             snapshot = _snapshot_from_journal(journal_path, data)
@@ -375,6 +376,22 @@ def recover_pending_journals(kb_dir: Path) -> list[str]:
                 f"Rolled back interrupted {snapshot.operation} journal {journal_path.name}."
             )
         except Exception as exc:
+            if snapshot is None:
+                # The journal couldn't be read or reconstructed (corrupt/empty/
+                # stray .json, or missing the kb_dir/backup_dir keys recovery
+                # needs). There is nothing to roll back or retry — and leaving
+                # it in place would re-trigger this failure on every future lock
+                # acquisition (draining runs on first exclusive acquisition),
+                # bricking add/remove/recompile/chat for the whole KB. Best-effort
+                # remove the unrecoverable journal and log loudly; any backup_dir
+                # it referenced is unreachable now and may leak.
+                journal_path.unlink(missing_ok=True)
+                messages.append(
+                    f"Unrecoverable mutation journal {journal_path.name} "
+                    f"({type(exc).__name__}: {exc}); removed so it can't block "
+                    f"recovery. The KB may need manual review."
+                )
+                continue
             # Rollback failed. Retry a bounded number of times across recovery
             # runs (a later attempt may succeed once the cause clears, e.g. disk
             # space freed), then give up: discard the journal + backup and log

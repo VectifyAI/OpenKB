@@ -374,6 +374,42 @@ def test_recovery_gives_up_on_persistently_failing_journal(tmp_path, monkeypatch
     assert not any(journal_dir.glob("*.json"))
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",                         # empty file -> JSONDecodeError
+        "{not json",                # truncated/invalid -> JSONDecodeError
+        '{"status": "active"}',     # valid JSON missing kb_dir/backup_dir -> KeyError
+        '{"not": "a journal"}',     # valid JSON, wrong shape -> KeyError
+    ],
+)
+def test_recover_skips_malformed_journal_without_bricking_lock(tmp_path, payload):
+    """A corrupt/empty/stray .json in journal/ must not crash recovery.
+
+    ``snapshot`` is assigned inside the try (after json.loads /
+    _snapshot_from_journal), but the except block referenced it unconditionally
+    — so a single malformed journal raised NameError out of recovery, and thus
+    out of every exclusive kb_lock acquisition (draining runs on first
+    acquisition), bricking add/remove/recompile/chat for the whole KB. Recovery
+    must instead drop the unrecoverable journal, log loudly, and keep going so
+    the lock still acquires.
+    """
+    from openkb.locks import kb_ingest_lock
+
+    kb_dir = tmp_path
+    journal_dir = kb_dir / ".openkb" / "journal"
+    journal_dir.mkdir(parents=True)
+    (journal_dir / "deadbeef.json").write_text(payload, encoding="utf-8")
+
+    messages = recover_pending_journals(kb_dir)  # must not raise NameError
+    assert any("Unrecoverable mutation journal" in m for m in messages)
+    assert not any(journal_dir.glob("*.json"))  # bad journal removed, not retained
+
+    # The whole point: the KB's mutation lock still acquires afterwards.
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        pass
+
+
 # --- O(touched) rollback for hardlinked dirs (pre-existing issue) ----------
 
 def test_hardlinked_dir_rollback_leaves_untouched_files_in_place(tmp_path):
