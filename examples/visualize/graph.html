@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>openkb · knowledge graph</title>
+<style>
+:root{
+  --bg:#080b11;--ink:#eef2f7;--soft:#aeb8c7;--mut:#6f7c8f;
+  --line:rgba(255,255,255,.09);--glass:rgba(255,255,255,.04);
+  --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+  overflow:hidden;
+}
+/* ---- aurora atmosphere ---- */
+.aurora{
+  position:fixed;inset:-10%;z-index:0;pointer-events:none;filter:blur(14px);
+  background:
+    radial-gradient(52vw 52vw at 15% 10%,rgba(56,189,248,.07),transparent 62%),
+    radial-gradient(46vw 46vw at 85% 24%,rgba(129,140,248,.06),transparent 62%),
+    radial-gradient(48vw 48vw at 72% 90%,rgba(45,212,191,.05),transparent 64%),
+    radial-gradient(44vw 44vw at 24% 82%,rgba(118,138,200,.045),transparent 62%);
+  animation:drift 26s ease-in-out infinite alternate;
+}
+@keyframes drift{
+  0%{transform:translate3d(0,0,0) scale(1)}
+  50%{transform:translate3d(2%,-1.5%,0) scale(1.05)}
+  100%{transform:translate3d(-1.5%,2%,0) scale(1.02)}
+}
+.grain{
+  position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.045;
+  background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%27160%27%20height%3D%27160%27%3E%3Cfilter%20id%3D%27n%27%3E%3CfeTurbulence%20type%3D%27fractalNoise%27%20baseFrequency%3D%27.85%27%20numOctaves%3D%272%27%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D%27100%25%27%20height%3D%27100%25%27%20filter%3D%27url%28%23n%29%27%2F%3E%3C%2Fsvg%3E");
+}
+.vignette{
+  position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(120vw 120vh at 50% 50%,transparent 55%,rgba(0,0,0,.55) 100%);
+}
+#c{position:fixed;inset:0;width:100%;height:100%;z-index:2;display:block;cursor:grab}
+#c:active{cursor:grabbing}
+
+/* ---- masthead ---- */
+.brand{
+  position:fixed;left:16px;top:14px;z-index:4;pointer-events:none;
+  font:700 .92rem/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink);text-shadow:0 0 18px rgba(56,189,248,.35);
+}
+.brand small{display:block;margin-top:5px;font:500 .62rem/1 var(--mono);letter-spacing:.18em;color:var(--mut)}
+
+/* ---- legend ---- */
+.legend{
+  position:fixed;left:16px;bottom:16px;z-index:4;
+  background:rgba(8,11,17,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:12px;padding:11px 13px;
+  font:.72rem var(--mono);max-width:230px;
+  box-shadow:0 12px 40px rgba(0,0,0,.4);
+}
+.legend .lh{font:600 .6rem/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--mut);margin-bottom:8px}
+.legend .li{
+  display:flex;align-items:center;gap:9px;padding:4px 6px;margin:0 -6px;border-radius:7px;
+  cursor:pointer;user-select:none;transition:opacity .2s ease,background .15s ease;
+}
+.legend .li:hover{background:var(--glass)}
+.legend .li.off{opacity:.32}
+.legend .li.off .d{box-shadow:none}
+.legend .d{width:11px;height:11px;border-radius:50%;flex:none;transition:box-shadow .2s ease}
+.legend .ct{margin-left:auto;color:var(--mut);font-size:.66rem}
+
+/* ---- HUD (counts + search) ---- */
+.hud{position:fixed;right:16px;top:14px;z-index:4;text-align:right;font:.72rem var(--mono);color:var(--soft)}
+.hud .stat{display:inline-flex;gap:6px;align-items:baseline}
+.hud .stat b{color:var(--ink);font-weight:700;font-size:.92rem}
+.hud .stat .lab{color:var(--mut);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase}
+.hud .sep{color:var(--line);margin:0 8px}
+.hud .search-wrap{position:relative;margin-top:10px;display:inline-block}
+.hud input{
+  background:var(--glass);border:1px solid var(--line);color:var(--ink);
+  border-radius:9px;padding:7px 11px 7px 30px;width:200px;
+  font:.72rem var(--mono);outline:none;transition:border-color .2s ease,box-shadow .2s ease;
+}
+.hud input::placeholder{color:var(--mut)}
+.hud input:focus{border-color:rgba(56,189,248,.5);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+.hud .si{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--mut);font-size:.8rem;pointer-events:none}
+
+/* ---- hint ---- */
+.hint{
+  position:fixed;right:16px;bottom:16px;z-index:4;
+  font:.64rem/1.6 var(--mono);color:var(--mut);text-align:right;pointer-events:none;
+}
+.hint kbd{
+  display:inline-block;background:var(--glass);border:1px solid var(--line);border-radius:5px;
+  padding:1px 6px;color:var(--soft);font-size:.6rem;
+}
+
+/* ---- controls (spacing + reset) ---- */
+.controls{
+  position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:4;
+  display:flex;align-items:center;gap:14px;
+  background:rgba(8,11,17,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:12px;padding:8px 14px;
+  box-shadow:0 12px 40px rgba(0,0,0,.4);
+}
+.controls label{display:flex;align-items:center;gap:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);font:600 .58rem var(--mono)}
+.controls input[type=range]{
+  -webkit-appearance:none;appearance:none;width:128px;height:3px;border-radius:3px;
+  background:rgba(255,255,255,.14);outline:none;cursor:ew-resize;
+}
+.controls input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:13px;height:13px;border-radius:50%;
+  background:#38bdf8;cursor:ew-resize;box-shadow:0 0 8px rgba(56,189,248,.7);
+}
+.controls input[type=range]::-moz-range-thumb{
+  width:13px;height:13px;border:none;border-radius:50%;background:#38bdf8;cursor:ew-resize;box-shadow:0 0 8px rgba(56,189,248,.7);
+}
+.controls .rst{
+  background:var(--glass);border:1px solid var(--line);color:var(--soft);
+  border-radius:8px;padding:5px 12px;font:600 .58rem var(--mono);letter-spacing:.12em;
+  text-transform:uppercase;cursor:pointer;transition:background .15s ease,color .15s ease;
+}
+.controls .rst:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+.controls .sepc{width:1px;height:18px;background:var(--line)}
+.controls .tabs{display:flex;gap:2px;background:rgba(255,255,255,.05);border-radius:9px;padding:2px}
+.controls .tabs button{
+  border:none;background:none;color:var(--soft);cursor:pointer;
+  border-radius:7px;padding:5px 11px;font:600 .58rem var(--mono);letter-spacing:.08em;text-transform:uppercase;
+  transition:background .15s ease,color .15s ease;
+}
+.controls .tabs button:hover{color:var(--ink)}
+.controls .tabs button.on{background:rgba(56,189,248,.22);color:#bfe6ff}
+
+/* ---- mind-map (horizontal tree) ---- */
+.mindmap{position:fixed;left:0;top:58px;right:0;bottom:66px;z-index:3;overflow:auto}
+.mindmap .mm-canvas{position:relative}
+.mindmap .mm-links{position:absolute;left:0;top:0;pointer-events:none}
+.mindmap .mm-node{
+  position:absolute;width:184px;height:22px;display:flex;align-items:center;gap:7px;
+  padding:0 10px;border:1px solid var(--line);border-radius:13px;background:var(--glass);
+  font:.72rem var(--mono);color:var(--ink);cursor:pointer;box-sizing:border-box;
+  box-shadow:0 1px 6px rgba(0,0,0,.3);transition:filter .12s ease,transform .12s ease;
+}
+.mindmap .mm-node:hover{filter:brightness(1.4);transform:scale(1.04)}
+.mindmap .mm-root{
+  width:104px;height:30px;justify-content:center;font-weight:700;font-size:.8rem;letter-spacing:.04em;
+  color:#08111c;background:linear-gradient(180deg,#eaf4ff,#bfe2ff);border:none;border-radius:16px;
+  box-shadow:0 0 26px rgba(120,200,255,.75);animation:rootpulse 3.2s ease-in-out infinite;
+}
+@keyframes rootpulse{0%,100%{box-shadow:0 0 22px rgba(120,200,255,.6)}50%{box-shadow:0 0 34px rgba(120,200,255,.95)}}
+.mindmap .mm-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.mindmap .mm-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mindmap .mm-caret{
+  flex:none;min-width:15px;text-align:center;color:var(--soft);font-size:.64rem;
+  background:rgba(255,255,255,.09);border-radius:7px;padding:0 4px;
+}
+.mindmap .mm-caret:hover{background:rgba(255,255,255,.2);color:var(--ink)}
+.mindmap::-webkit-scrollbar{width:9px;height:9px}
+.mindmap::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
+
+/* ---- glass inspector panel ---- */
+.panel{
+  position:fixed;top:0;right:0;z-index:6;width:360px;max-width:88vw;height:100%;
+  transform:translateX(102%);transition:transform .28s cubic-bezier(.2,.7,.2,1);
+  background:rgba(8,11,17,.86);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-left:1px solid var(--line);box-shadow:-30px 0 80px rgba(0,0,0,.55);
+  padding:24px 24px 40px;overflow:auto;
+}
+.panel.open{transform:none}
+.panel .x{
+  position:absolute;right:18px;top:18px;width:30px;height:30px;border-radius:8px;
+  border:1px solid var(--line);background:var(--glass);color:var(--soft);
+  cursor:pointer;font:1rem/1 var(--mono);display:flex;align-items:center;justify-content:center;
+  transition:background .15s ease,color .15s ease;
+}
+.panel .x:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+.panel .chip{
+  display:inline-block;font:700 .66rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+  padding:5px 11px;border-radius:20px;margin-bottom:14px;
+}
+.panel h2{margin:0 0 6px;font-size:1.32rem;font-weight:700;line-height:1.2;word-break:break-word}
+.panel .id{font:.66rem var(--mono);color:var(--mut);margin-bottom:18px;word-break:break-all}
+.panel .desc{color:var(--soft);font-size:.86rem;line-height:1.62;margin-bottom:6px}
+.panel h4{
+  margin:22px 0 9px;font:600 .62rem/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  color:var(--mut);display:flex;align-items:center;gap:8px;
+}
+.panel h4 .n{
+  margin-left:auto;background:var(--glass);border:1px solid var(--line);border-radius:20px;
+  padding:1px 8px;color:var(--soft);letter-spacing:.04em;
+}
+.panel .lk{
+  display:block;padding:7px 10px;margin:3px 0;border-radius:8px;
+  font:.74rem var(--mono);color:var(--ink);text-decoration:none;
+  background:var(--glass);border:1px solid var(--line);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transition:background .15s ease,border-color .15s ease,transform .12s ease;cursor:pointer;
+}
+.panel .lk:hover{background:rgba(255,255,255,.08);transform:translateX(2px)}
+.panel .src{display:block;padding:5px 0;font:.74rem var(--mono);color:var(--soft);word-break:break-all}
+.panel .empty{color:var(--mut);font:.74rem var(--mono);padding:4px 0}
+.panel::-webkit-scrollbar{width:8px}
+.panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
+</style>
+</head>
+<body>
+<div class="aurora"></div>
+<div class="grain"></div>
+<div class="vignette"></div>
+<canvas id="c"></canvas>
+<div class="mindmap" id="mindmap"></div>
+
+<div class="brand">openkb<small>knowledge graph</small></div>
+
+<div class="hud">
+  <span class="stat"><b id="ncount">0</b><span class="lab">nodes</span></span>
+  <span class="sep">·</span>
+  <span class="stat"><b id="ecount">0</b><span class="lab">edges</span></span>
+  <div class="search-wrap"><span class="si">⌕</span><input id="search" placeholder="search a node…" autocomplete="off" spellcheck="false"></div>
+</div>
+
+<div class="legend" id="legend"></div>
+
+<div class="hint" id="hint"></div>
+
+<div class="controls">
+  <div class="tabs" id="modeTabs">
+    <button data-m="mindmap">mind-map</button><button data-m="radial">radial</button><button data-m="graph">3D</button>
+  </div>
+  <span class="sepc"></span>
+  <label id="spacingCtl">spacing <input id="spread" type="range" min="0.5" max="3.5" step="0.1" value="1.7"></label>
+  <button class="rst" id="reset" title="reset view, spacing &amp; focus">reset</button>
+</div>
+
+<div class="panel" id="panel"></div>
+
+<script>
+/* ===================== data hook ===================== */
+const GRAPH = {"nodes": [{"id": "summaries/attention-is-all-you-need", "label": "attention-is-all-you-need", "type": "Summary", "description": "Introduces the Transformer, a fully attention-based sequence model for translation.", "sources": ["sources/attention-is-all-you-need.md"], "out": 12, "in": 12}, {"id": "concepts/attention-mechanisms", "label": "attention-mechanisms", "type": "Concept", "description": "Methods that weight sequence elements to focus computation on relevant inputs.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 3, "in": 11}, {"id": "concepts/positional-encoding", "label": "positional-encoding", "type": "Concept", "description": "Position information added to attention-only models so they can use order.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 3, "in": 6}, {"id": "concepts/transformer-models", "label": "transformer-models", "type": "Concept", "description": "Attention-only sequence models built around stacked self-attention.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 5, "in": 12}, {"id": "entities/google-brain", "label": "google-brain", "type": "Organization", "description": "Google Brain is a Google research team involved in the Transformer paper.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 5, "in": 8}, {"id": "entities/google-research", "label": "google-research", "type": "Organization", "description": "Google Research is the research division of Google involved in the Transformer paper.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 10, "in": 8}, {"id": "entities/google", "label": "google", "type": "Organization", "description": "Google is the company behind the Transformer paper's research team.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 9, "in": 6}, {"id": "entities/nips-2017", "label": "nips-2017", "type": "Event", "description": "The 31st Conference on Neural Information Processing Systems in 2017.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 10, "in": 5}, {"id": "entities/tensor2tensor", "label": "tensor2tensor", "type": "Product", "description": "Open-source TensorFlow toolkit used to implement and evaluate the Transformer", "sources": ["summaries/attention-is-all-you-need.md"], "out": 9, "in": 8}, {"id": "entities/university-of-toronto", "label": "university-of-toronto", "type": "Organization", "description": "Canadian university affiliation of a Transformer paper author", "sources": ["summaries/attention-is-all-you-need.md"], "out": 7, "in": 1}, {"id": "entities/wmt-2014-english-french", "label": "wmt-2014-english-french", "type": "Event", "description": "The WMT 2014 English-French machine translation benchmark.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 8, "in": 7}, {"id": "entities/wmt-2014-english-german", "label": "wmt-2014-english-german", "type": "Event", "description": "The WMT 2014 English-German machine translation benchmark.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 5, "in": 7}, {"id": "entities/wmt-2014", "label": "wmt-2014", "type": "Event", "description": "2014 machine translation benchmark and data release.", "sources": ["summaries/attention-is-all-you-need.md"], "out": 10, "in": 5}], "edges": [{"source": "summaries/attention-is-all-you-need", "target": "concepts/transformer-models"}, {"source": "summaries/attention-is-all-you-need", "target": "concepts/attention-mechanisms"}, {"source": "summaries/attention-is-all-you-need", "target": "concepts/positional-encoding"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/wmt-2014"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/wmt-2014-english-german"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/wmt-2014-english-french"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/google"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/google-brain"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/google-research"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/university-of-toronto"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/nips-2017"}, {"source": "summaries/attention-is-all-you-need", "target": "entities/tensor2tensor"}, {"source": "concepts/attention-mechanisms", "target": "summaries/attention-is-all-you-need"}, {"source": "concepts/attention-mechanisms", "target": "concepts/transformer-models"}, {"source": "concepts/attention-mechanisms", "target": "concepts/positional-encoding"}, {"source": "concepts/positional-encoding", "target": "summaries/attention-is-all-you-need"}, {"source": "concepts/positional-encoding", "target": "concepts/attention-mechanisms"}, {"source": "concepts/positional-encoding", "target": "concepts/transformer-models"}, {"source": "concepts/transformer-models", "target": "summaries/attention-is-all-you-need"}, {"source": "concepts/transformer-models", "target": "concepts/attention-mechanisms"}, {"source": "concepts/transformer-models", "target": "concepts/positional-encoding"}, {"source": "concepts/transformer-models", "target": "entities/wmt-2014-english-german"}, {"source": "concepts/transformer-models", "target": "entities/wmt-2014-english-french"}, {"source": "entities/google-brain", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/google-brain", "target": "concepts/transformer-models"}, {"source": "entities/google-brain", "target": "entities/google-research"}, {"source": "entities/google-brain", "target": "concepts/attention-mechanisms"}, {"source": "entities/google-brain", "target": "concepts/positional-encoding"}, {"source": "entities/google-research", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/google-research", "target": "concepts/transformer-models"}, {"source": "entities/google-research", "target": "concepts/attention-mechanisms"}, {"source": "entities/google-research", "target": "entities/wmt-2014"}, {"source": "entities/google-research", "target": "entities/wmt-2014-english-german"}, {"source": "entities/google-research", "target": "entities/wmt-2014-english-french"}, {"source": "entities/google-research", "target": "entities/nips-2017"}, {"source": "entities/google-research", "target": "entities/tensor2tensor"}, {"source": "entities/google-research", "target": "entities/google"}, {"source": "entities/google-research", "target": "entities/google-brain"}, {"source": "entities/google", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/google", "target": "entities/google-brain"}, {"source": "entities/google", "target": "entities/google-research"}, {"source": "entities/google", "target": "entities/nips-2017"}, {"source": "entities/google", "target": "concepts/transformer-models"}, {"source": "entities/google", "target": "entities/wmt-2014-english-german"}, {"source": "entities/google", "target": "entities/wmt-2014-english-french"}, {"source": "entities/google", "target": "entities/tensor2tensor"}, {"source": "entities/google", "target": "concepts/positional-encoding"}, {"source": "entities/nips-2017", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/nips-2017", "target": "concepts/transformer-models"}, {"source": "entities/nips-2017", "target": "concepts/attention-mechanisms"}, {"source": "entities/nips-2017", "target": "entities/google"}, {"source": "entities/nips-2017", "target": "entities/google-brain"}, {"source": "entities/nips-2017", "target": "entities/google-research"}, {"source": "entities/nips-2017", "target": "entities/tensor2tensor"}, {"source": "entities/nips-2017", "target": "entities/wmt-2014"}, {"source": "entities/nips-2017", "target": "entities/wmt-2014-english-german"}, {"source": "entities/nips-2017", "target": "entities/wmt-2014-english-french"}, {"source": "entities/tensor2tensor", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/tensor2tensor", "target": "concepts/transformer-models"}, {"source": "entities/tensor2tensor", "target": "concepts/attention-mechanisms"}, {"source": "entities/tensor2tensor", "target": "concepts/positional-encoding"}, {"source": "entities/tensor2tensor", "target": "entities/google"}, {"source": "entities/tensor2tensor", "target": "entities/google-brain"}, {"source": "entities/tensor2tensor", "target": "entities/google-research"}, {"source": "entities/tensor2tensor", "target": "entities/wmt-2014-english-german"}, {"source": "entities/tensor2tensor", "target": "entities/wmt-2014-english-french"}, {"source": "entities/university-of-toronto", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/university-of-toronto", "target": "entities/nips-2017"}, {"source": "entities/university-of-toronto", "target": "concepts/transformer-models"}, {"source": "entities/university-of-toronto", "target": "concepts/attention-mechanisms"}, {"source": "entities/university-of-toronto", "target": "entities/google-brain"}, {"source": "entities/university-of-toronto", "target": "entities/google-research"}, {"source": "entities/university-of-toronto", "target": "entities/tensor2tensor"}, {"source": "entities/wmt-2014-english-french", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/wmt-2014-english-french", "target": "concepts/transformer-models"}, {"source": "entities/wmt-2014-english-french", "target": "concepts/attention-mechanisms"}, {"source": "entities/wmt-2014-english-french", "target": "entities/wmt-2014"}, {"source": "entities/wmt-2014-english-french", "target": "entities/google"}, {"source": "entities/wmt-2014-english-french", "target": "entities/google-brain"}, {"source": "entities/wmt-2014-english-french", "target": "entities/google-research"}, {"source": "entities/wmt-2014-english-french", "target": "entities/tensor2tensor"}, {"source": "entities/wmt-2014-english-german", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/wmt-2014-english-german", "target": "concepts/transformer-models"}, {"source": "entities/wmt-2014-english-german", "target": "concepts/attention-mechanisms"}, {"source": "entities/wmt-2014-english-german", "target": "entities/wmt-2014"}, {"source": "entities/wmt-2014-english-german", "target": "entities/tensor2tensor"}, {"source": "entities/wmt-2014", "target": "summaries/attention-is-all-you-need"}, {"source": "entities/wmt-2014", "target": "entities/wmt-2014-english-german"}, {"source": "entities/wmt-2014", "target": "entities/wmt-2014-english-french"}, {"source": "entities/wmt-2014", "target": "concepts/transformer-models"}, {"source": "entities/wmt-2014", "target": "concepts/attention-mechanisms"}, {"source": "entities/wmt-2014", "target": "entities/tensor2tensor"}, {"source": "entities/wmt-2014", "target": "entities/google"}, {"source": "entities/wmt-2014", "target": "entities/google-brain"}, {"source": "entities/wmt-2014", "target": "entities/google-research"}, {"source": "entities/wmt-2014", "target": "entities/nips-2017"}], "types": ["Concept", "Event", "Organization", "Product", "Summary"]};            // replaced by render_html → {nodes,edges,types}
+
+const TYPE_COLORS = {                     // clean modern palette — crisp, not neon, not muddy
+  Concept:"45,212,191", Product:"74,222,128", Summary:"56,189,248",
+  Work:"129,140,248", Organization:"192,132,252", Person:"250,204,21",
+  Place:"244,114,182", Event:"251,191,36", Entity:"148,163,184"
+};
+const colorOf = t => TYPE_COLORS[t] || "148,163,184";
+const TAU = Math.PI * 2;                  // full circle for ctx.arc
+
+/* ===================== canvas + state ===================== */
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const panel = document.getElementById("panel");
+const legend = document.getElementById("legend");
+const search = document.getElementById("search");
+const hintEl = document.getElementById("hint");
+const modeTabs = document.getElementById("modeTabs");
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const W = () => canvas.clientWidth;
+const H = () => canvas.clientHeight;
+
+// build working nodes/edges from GRAPH (object-form edges: e.source/e.target)
+const nodes = GRAPH.nodes.map(n => ({
+  ...n, x:0, y:0, z:0, vx:0, vy:0, vz:0,
+  r: 3.5 + Math.min(18, Math.sqrt((n.in || 0) + (n.out || 0)) * 2.1),   // sqrt-scaled by degree → hubs read big, leaves stay small
+  col: colorOf(n.type),                               // cached color → no per-frame lookup
+  alpha: 1,                                            // per-node fade (legend toggle)
+  sx:0, sy:0, rz:0, pp:1, hl:1, pinned:false,          // projection cache + smoothed highlight + pinned (drag to pull out)
+  tx:0, ty:0, show:true, depth:0                        // radial layout target / visibility / layer
+}));
+const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+const edges = GRAPH.edges.filter(e => byId[e.source] && byId[e.target]);
+const adj = {}; nodes.forEach(n => adj[n.id] = new Set());
+edges.forEach(e => { adj[e.source].add(e.target); adj[e.target].add(e.source); });   // Set → O(1) neighbour test
+
+// rank nodes by degree once; top 3 hubs breathe at rest, top ~18% keep labels at rest
+const byDeg = [...nodes].sort((a,b) => (b.in+b.out)-(a.in+a.out)).map(n => n.id);
+const hubIds = new Set(byDeg.slice(0, Math.min(3, nodes.length)));
+const labelIds = new Set(byDeg.slice(0, Math.max(6, Math.round(nodes.length*0.18))));
+
+const hiddenTypes = new Set();           // legend filter
+const typeVisible = t => !hiddenTypes.has(t);
+const visible = n => n.alpha > 0.02;      // for physics/picking (fully-faded skipped)
+
+const DEF_SCALE = 0.82, DEF_YAW = 0.5, DEF_PITCH = -0.28;   // initial view → reused by reset (zoomed out so the spread-out cloud fits)
+let hover = null, drag = null, selected = null;
+let scale = DEF_SCALE, panX = 0, panY = 0;
+let yaw = DEF_YAW, pitch = DEF_PITCH;    // 3D orbit angles — drag the background to rotate
+let orbiting = false, oStartX = 0, oStartY = 0, yawStart = 0, pitchStart = 0;
+let panOrigX = 0, panOrigY = 0, pendingInspect = null;   // radial: bg-drag pan + click-to-inspect
+let didDrag = false;
+let alpha = 1;                   // simulated-annealing "temperature"; cools to 0 so motion stops
+// synthetic centre for the radial view ("OpenKB" → documents → concepts)
+const ROOT = { id:"__openkb__", label:"OpenKB", type:"__root__", x:0, y:0, sx:0, sy:0, rz:0, pp:1, r:15, show:true };
+let treeEdges = [];              // radial hierarchy edges (root→doc, doc→concept)
+const DEFAULT_SPREAD = 1.7;      // open the nebula out by default so it isn't a clump
+let spread = DEFAULT_SPREAD;     // spacing knob: >1 spreads nodes apart, <1 packs them tighter
+let mode = "graph";              // "graph" = 3D nebula (default) · "mindmap" = horizontal tree · "radial" = OpenKB-centred circle
+let idleFrames = 0;              // frames since last interaction → drives idle auto-rotation
+let autoFit = true;              // keep gently framing the cloud until the user takes control
+
+document.getElementById("ncount").textContent = nodes.length;
+document.getElementById("ecount").textContent = edges.length;
+
+/* ===================== sizing ===================== */
+function size(){
+  canvas.width = W() * DPR;
+  canvas.height = H() * DPR;
+}
+function seed(){
+  const R = 250;
+  nodes.forEach((n,i) => {
+    // spread nodes over a sphere (golden-angle spiral) so 3D structure shows from the start
+    const phi = Math.acos(1 - 2*(i+0.5)/Math.max(1,nodes.length));
+    const theta = 2.399963 * i;
+    const rad = R * (0.55 + Math.random()*0.45);
+    n.x = rad*Math.sin(phi)*Math.cos(theta);
+    n.y = rad*Math.sin(phi)*Math.sin(theta);
+    n.z = rad*Math.cos(phi);
+    n.vx = n.vy = n.vz = 0;
+  });
+}
+
+/* ===================== mind-map: OpenKB → documents → concepts (horizontal tree, DOM) ===================== */
+const mmEl = document.getElementById("mindmap");
+const mmCollapsed = new Set();   // node ids whose children are hidden
+let mmQuery = "", mmRootY = 0;
+const mmResolveSrc = s => { const id = String(s).replace(/\.md$/i, ""); return (byId[id] && byId[id].id.startsWith("summaries/")) ? id : null; };
+const ROOT_W = 104, NODE_W = 184, COL = 234, ROW = 31, PADX = 34, PADY = 30, NH = 22;
+// shared OpenKB → documents → concepts grouping (each concept under its primary source summary)
+function buildProvenance(){
+  const docs = nodes.filter(n => n.id.startsWith("summaries/") && typeVisible(n.type));
+  const kidsOf = {}; docs.forEach(d => kidsOf[d.id] = []);
+  const rootDirect = [];
+  nodes.forEach(n => {
+    if(n.id.startsWith("summaries/") || !typeVisible(n.type)) return;
+    const p = (n.sources || []).map(mmResolveSrc).filter(Boolean)[0];   // primary document
+    if(p && kidsOf[p]) kidsOf[p].push(n); else rootDirect.push(n);
+  });
+  return { docs, kidsOf, rootDirect };
+}
+function buildMindmap(){
+  const q = mmQuery.toLowerCase();
+  const keep = n => !q || n.label.toLowerCase().includes(q) || n.id.toLowerCase().includes(q);
+  const { docs, kidsOf, rootDirect } = buildProvenance();
+  const mk = n => ({ id:n.id, label:n.label, type:n.type, kids:[] });
+  const root = { id:"__openkb__", label:"OpenKB", type:"__root__", kids:[] };
+  docs.forEach(d => {
+    const kids = kidsOf[d.id].filter(keep).map(mk);
+    if(q && !keep(d) && !kids.length) return;      // search prunes empty branches
+    const dn = mk(d); dn.kids = kids; root.kids.push(dn);
+  });
+  rootDirect.filter(keep).forEach(c => root.kids.push(mk(c)));
+
+  let rows = 0, maxDepth = 0;
+  const flat = [], links = [];
+  (function place(item, depth){
+    maxDepth = Math.max(maxDepth, depth);
+    item.x = PADX + depth * COL;
+    item.w = item.id === "__openkb__" ? ROOT_W : NODE_W;
+    const expanded = item.kids.length && !mmCollapsed.has(item.id);
+    if(expanded){
+      item.kids.forEach(k => place(k, depth + 1));
+      item.y = (item.kids[0].y + item.kids[item.kids.length - 1].y) / 2;
+      item.kids.forEach(k => links.push([item, k]));
+    } else {
+      item.y = PADY + rows * ROW; rows++;
+    }
+    flat.push(item);
+  })(root, 0);
+
+  const Wpx = PADX + (maxDepth + 1) * COL + 30, Hpx = PADY + rows * ROW + 30;
+  let svg = `<svg class="mm-links" width="${Wpx}" height="${Hpx}">`;
+  links.forEach(([p, c]) => {
+    const x1 = p.x + p.w, y1 = p.y + NH/2, x2 = c.x, y2 = c.y + NH/2, mx = (x1 + x2) / 2;
+    svg += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="rgba(${colorOf(c.type)},.4)" stroke-width="1.5"/>`;
+  });
+  svg += `</svg>`;
+  let html = "";
+  flat.forEach(it => {
+    if(it.id === "__openkb__"){ html += `<div class="mm-node mm-root" style="left:${it.x}px;top:${it.y - 4}px">OpenKB</div>`; return; }
+    const col = colorOf(it.type);
+    const hasKids = it.id.startsWith("summaries/") && (kidsOf[it.id] || []).length;
+    html += `<div class="mm-node" data-id="${esc(it.id)}" title="${esc(it.label)}" `
+      + `style="left:${it.x}px;top:${it.y}px;border-color:rgba(${col},.5);background:rgba(${col},.12)">`
+      + `<span class="mm-dot" style="background:rgb(${col})"></span><span class="mm-label">${esc(it.label)}</span>`
+      + (hasKids ? `<span class="mm-caret" data-tog="${esc(it.id)}">${mmCollapsed.has(it.id) ? "+" + (kidsOf[it.id] || []).length : "−"}</span>` : ``)
+      + `</div>`;
+  });
+  const offY = Math.max(0, (mmEl.clientHeight - Hpx) / 2);   // centre vertically when it fits; else scroll
+  mmRootY = offY + flat.find(it => it.id === "__openkb__").y;  // for centring the scroll on OpenKB
+  mmEl.innerHTML = `<div class="mm-canvas" style="width:${Wpx}px;height:${Hpx}px;margin:${offY}px auto 0">${svg}${html}</div>`;
+  mmEl.querySelectorAll("[data-tog]").forEach(el => el.onclick = e => {
+    e.stopPropagation(); const id = el.dataset.tog;
+    if(mmCollapsed.has(id)) mmCollapsed.delete(id); else mmCollapsed.add(id);
+    buildMindmap();
+  });
+  mmEl.querySelectorAll(".mm-node[data-id]").forEach(el => el.onclick = () => { const m = byId[el.dataset.id]; if(m) openPanel(m); });
+}
+
+/* ===================== radial view: same OpenKB→docs→concepts tree, fanned in a circle ===================== */
+function layoutRadial(){
+  const { docs, kidsOf, rootDirect } = buildProvenance();
+  nodes.forEach(n => { n.show = false; });
+  const branches = docs.map(d => ({ node: d, kids: kidsOf[d.id], w: Math.max(1.6, kidsOf[d.id].length) }))
+    .concat(rootDirect.map(c => ({ node: c, kids: [], w: 1 })));
+  const totW = branches.reduce((s, b) => s + b.w, 0) || 1;
+  const R1 = 250 * (0.6 + 0.4 * spread), R2 = R1 + 175 * (0.6 + 0.4 * spread);
+  treeEdges = []; ROOT.show = true;
+  let a = -Math.PI;
+  branches.forEach(b => {
+    const wedge = 2 * Math.PI * b.w / totW, mid = a + wedge / 2;
+    b.node.show = true; b.node.depth = 1; b.node.tx = Math.cos(mid) * R1; b.node.ty = Math.sin(mid) * R1;
+    treeEdges.push({ a: ROOT, b: b.node });
+    b.kids.forEach((c, i) => {
+      const ca = a + wedge * (i + 0.5) / Math.max(1, b.kids.length);
+      c.show = true; c.depth = 2; c.tx = Math.cos(ca) * R2; c.ty = Math.sin(ca) * R2;
+      treeEdges.push({ a: b.node, b: c });
+    });
+    a += wedge;
+  });
+}
+function stepRadial(){
+  for(const n of nodes){
+    n.alpha += ((n.show && typeVisible(n.type) ? 1 : 0) - n.alpha) * 0.14;
+    if(n.show){ n.x += (n.tx - n.x) * 0.16; n.y += (n.ty - n.y) * 0.16; n.z += (0 - n.z) * 0.16; }
+  }
+  ROOT.x += (0 - ROOT.x) * 0.16; ROOT.y += (0 - ROOT.y) * 0.16;
+  alpha += (0 - alpha) * 0.02;
+}
+
+/* ===================== physics (adapted from okf-spec.html step()) ===================== */
+const VMAX = 9;   // per-frame speed cap → no violent swings, even on a dense hub
+const alphaTarget = n => typeVisible(n.type) ? 1 : 0;
+function step(){
+  if(mode === "radial"){ stepRadial(); return; }
+  for(let i=0;i<nodes.length;i++){
+    const a = nodes[i];
+    if(!visible(a)) continue;
+    for(let j=i+1;j<nodes.length;j++){
+      const b = nodes[j];
+      if(!visible(b)) continue;
+      let dx = a.x-b.x, dy = a.y-b.y, dz = a.z-b.z, d = Math.hypot(dx,dy,dz) || 1;
+      const dd = Math.max(d, 18);                  // floor distance so near-coincident nodes don't explode
+      const f = 3600*spread/(dd*dd) * alpha;       // spacing knob: stronger repulsion → more spread
+      a.vx += dx/d*f; a.vy += dy/d*f; a.vz += dz/d*f;
+      b.vx -= dx/d*f; b.vy -= dy/d*f; b.vz -= dz/d*f;
+    }
+    const c = 0.0011/spread*alpha;                 // gentler centering → the cloud spreads instead of clumping
+    a.vx += -a.x*c; a.vy += -a.y*c; a.vz += -a.z*c;   // pull toward origin
+  }
+  edges.forEach(e => {
+    const a = byId[e.source], b = byId[e.target];
+    if(!visible(a) || !visible(b)) return;
+    let dx = b.x-a.x, dy = b.y-a.y, dz = b.z-a.z, d = Math.hypot(dx,dy,dz) || 1;
+    // soften by the lower-degree endpoint so dense hub↔hub edges don't dominate
+    // (a leaf↔hub edge stays full strength — that's intended)
+    const s = 1 / Math.min(adj[e.source].size || 1, adj[e.target].size || 1);
+    const f = (d-118*spread)*0.012 * s * alpha;    // longer rest length when spread up → edges stretch
+    a.vx += dx/d*f; a.vy += dy/d*f; a.vz += dz/d*f;
+    b.vx -= dx/d*f; b.vy -= dy/d*f; b.vz -= dz/d*f;
+  });
+  nodes.forEach(n => {
+    // smoothly approach the legend-toggle target opacity
+    n.alpha += (alphaTarget(n) - n.alpha) * 0.12;
+    if(n === drag || n.pinned){ n.vx = n.vy = n.vz = 0; return; }   // dragged or pinned: held in place
+    n.vx *= 0.84; n.vy *= 0.84; n.vz *= 0.84;           // stronger damping dissipates energy fast
+    if(n.vx > VMAX) n.vx = VMAX; else if(n.vx < -VMAX) n.vx = -VMAX;
+    if(n.vy > VMAX) n.vy = VMAX; else if(n.vy < -VMAX) n.vy = -VMAX;
+    if(n.vz > VMAX) n.vz = VMAX; else if(n.vz < -VMAX) n.vz = -VMAX;
+    n.x += n.vx; n.y += n.vy; n.z += n.vz;
+  });
+  alpha += (0 - alpha) * 0.02;                    // anneal: forces fade → the layout settles and stops
+}
+
+const spacingCtl = document.getElementById("spacingCtl");
+function setMode(m){
+  mode = m;
+  const canvasMode = (m === "graph" || m === "radial");   // canvas: 3D nebula + radial. mind-map is DOM
+  canvas.style.display = canvasMode ? "block" : "none";
+  mmEl.style.display = (m === "mindmap") ? "block" : "none";
+  spacingCtl.style.display = (m === "mindmap") ? "none" : "flex";
+  hover = null; closePanel(); panX = 0; panY = 0; autoFit = true;
+  drag = null; orbiting = false; pendingInspect = null; didDrag = false; canvas.style.cursor = "grab";  // clear in-flight interaction
+  nodes.forEach(n => n.pinned = false);                  // pins don't carry across views / reseed
+  search.value = ""; mmQuery = "";                       // keep the search box in sync with the (cleared) filter
+  if(m === "mindmap"){ buildMindmap(); mmEl.scrollTop = Math.max(0, mmRootY - mmEl.clientHeight / 2); }
+  else if(m === "radial"){ yaw = 0; pitch = 0; scale = DEF_SCALE; layoutRadial(); alpha = 1; }
+  else { yaw = DEF_YAW; pitch = DEF_PITCH; scale = DEF_SCALE; seed(); alpha = 1; }
+  [...modeTabs.children].forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  updateHint();
+}
+function updateHint(){
+  hintEl.innerHTML =
+    mode === "mindmap" ? 'OpenKB → documents → concepts &nbsp; <kbd>+/−</kbd> expand a branch &nbsp; <kbd>click</kbd> read details'
+    : mode === "radial" ? 'centre <b>OpenKB</b> → documents → concepts &nbsp; faint = cross-refs &nbsp; <kbd>click</kbd> read &nbsp; <kbd>drag</kbd> pan'
+    : '<kbd>scroll</kbd> zoom &nbsp; <kbd>drag bg</kbd> rotate &nbsp; <kbd>click</kbd> inspect<br>'
+      + '<kbd>drag node</kbd> pull out &amp; pin &nbsp; <kbd>dbl-click</kbd> release';
+}
+
+/* ===================== 3D orbit projection + perspective ===================== */
+const FOCAL = 900;
+function project(){
+  const cyw = Math.cos(yaw), syw = Math.sin(yaw), cpt = Math.cos(pitch), spt = Math.sin(pitch);
+  const ox = W()/2 + panX, oy = H()/2 + panY;
+  for(const n of nodes){
+    const x1 = n.x*cyw + n.z*syw;          // rotate about Y (yaw)
+    const z1 = -n.x*syw + n.z*cyw;
+    const y2 = n.y*cpt - z1*spt;           // then about X (pitch)
+    const z2 = n.y*spt + z1*cpt;
+    const pp = FOCAL/Math.max(FOCAL + z2, FOCAL*0.25);   // perspective: near→larger; clamp denom so a node crossing the camera plane can't blow up to ±Infinity/NaN
+    n.rz = z2; n.pp = pp;
+    n.sx = ox + x1*pp*scale;
+    n.sy = oy + y2*pp*scale;
+  }
+}
+// inverse of project for one node, holding its current depth — used while dragging
+function unproject(sx, sy, n){
+  const cyw = Math.cos(yaw), syw = Math.sin(yaw), cpt = Math.cos(pitch), spt = Math.sin(pitch);
+  const ox = W()/2 + panX, oy = H()/2 + panY;
+  const pp = n.pp || 1, z2 = n.rz || 0;
+  const x1 = (sx - ox)/(pp*scale);
+  const y2 = (sy - oy)/(pp*scale);
+  const y = y2*cpt + z2*spt;               // invert pitch
+  const z1 = -y2*spt + z2*cpt;
+  return { x: x1*cyw - z1*syw, y, z: x1*syw + z1*cyw };   // invert yaw
+}
+function centerOn(n){ panX += (W()/2 - n.sx); panY += (H()/2 - n.sy); }
+// gently ease zoom + pan each frame so the cloud keeps filling the viewport (no sudden snap)
+function fitStep(){
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  for(const n of nodes){
+    if(!visible(n)) continue;
+    const r = n.r * n.pp * scale;
+    if(n.sx - r < minX) minX = n.sx - r;
+    if(n.sx + r > maxX) maxX = n.sx + r;
+    if(n.sy - r < minY) minY = n.sy - r;
+    if(n.sy + r > maxY) maxY = n.sy + r;
+  }
+  if(maxX <= minX || maxY <= minY) return;
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const factor = Math.min(W() * 0.9 / (maxX - minX), H() * 0.88 / (maxY - minY));
+  const tScale = Math.min(scale * factor, 4);   // cap so a tiny graph (e.g. 1 node) doesn't balloon past the zoom range
+  const Xc = (cx - (W()/2 + panX)) / scale, Yc = (cy - (H()/2 + panY)) / scale;
+  const tPanX = -Xc * tScale, tPanY = -Yc * tScale;
+  const e = 0.07;                                   // ease 7%/frame → smooth glide into frame
+  scale += (tScale - scale) * e;
+  panX += (tPanX - panX) * e;
+  panY += (tPanY - panY) * e;
+}
+
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  idleFrames = 0; autoFit = false;      // user takes control of zoom → stop auto-framing & rotation
+  const f = Math.exp(-e.deltaY * 0.0015);
+  const ns = Math.max(0.3, Math.min(9, scale*f));   // wider range so you can dive deep in
+  const k = ns/scale;
+  // anchor zoom on the cursor → drill into whatever cluster you point at
+  const dx = e.offsetX - W()/2, dy = e.offsetY - H()/2;
+  panX = dx*(1-k) + panX*k;
+  panY = dy*(1-k) + panY*k;
+  scale = ns;
+}, {passive:false});
+
+/* ===================== picking ===================== */
+function pick(sx, sy){
+  let best = null, bestDepth = Infinity;
+  for(const n of nodes){
+    if(!visible(n)) continue;
+    const rr = n.r*n.pp*scale + 6;
+    if(Math.hypot(n.sx - sx, n.sy - sy) < rr && n.rz < bestDepth){
+      best = n; bestDepth = n.rz;   // nearest (smallest depth) wins where discs overlap
+    }
+  }
+  return best;
+}
+
+/* ===================== radial rendering ===================== */
+function drawCrossEdge(e){                          // faint wikilink cross-reference; lights up on hover
+  const a = byId[e.source], b = byId[e.target];
+  if(!a.show || !b.show || a.alpha < 0.05 || b.alpha < 0.05) return;
+  const hot = hover && (e.source === hover || e.target === hover);
+  ctx.globalAlpha = hot ? 0.85 : 0.05;
+  ctx.strokeStyle = hot ? "rgba(45,212,191,.9)" : "rgba(150,180,225,.6)";
+  ctx.lineWidth = hot ? 1.4 : 0.6;
+  ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+function drawTreeEdge(e){                            // bright hierarchy spoke (root→doc, doc→concept)
+  const a = e.a, b = e.b;
+  if(b.alpha < 0.05) return;
+  ctx.globalAlpha = 0.5 * (b.alpha || 1);
+  ctx.strokeStyle = "rgba(255,255,255,.34)";
+  ctx.lineWidth = (a === ROOT) ? 1.7 : 1.0;
+  ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+function drawRoot(){
+  const x = ROOT.sx, y = ROOT.sy, r = ROOT.r;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+  ctx.fillStyle = "rgba(232,242,252,.96)";
+  ctx.shadowColor = "rgba(120,200,255,.95)"; ctx.shadowBlur = 24; ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(238,242,247,.98)"; ctx.font = "700 13px ui-monospace,monospace"; ctx.textAlign = "center";
+  ctx.shadowColor = "rgba(4,6,10,.95)"; ctx.shadowBlur = 5;
+  ctx.fillText("OpenKB", x, y + r + 16);
+  ctx.shadowBlur = 0;
+}
+
+/* ===================== rendering ===================== */
+function drawEdge(e, t){
+  const a = byId[e.source], b = byId[e.target];
+  const al = Math.min(a.alpha, b.alpha);
+  if(al < 0.02) return;
+  const hot = hover && (e.source===hover || e.target===hover);
+  const ax=a.sx, ay=a.sy, bx=b.sx, by=b.sy;
+  const fog = Math.max(0.2, Math.min(1, 1 - (a.rz+b.rz)/1300));   // far edges recede
+  const ehl = Math.max(a.hl, b.hl);                               // edge eases with its endpoints (smooth dim)
+  ctx.globalAlpha = al * fog * (hot ? 1 : (0.13 + 0.6*ehl));
+  ctx.strokeStyle = hot ? "rgba(45,212,191,.9)" : `rgba(255,255,255,${0.04 + 0.05*ehl})`;
+  ctx.lineWidth = hot ? 1.5 : 0.9;
+  ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+  // arrowhead at b, backed off by b's projected radius; sized to the node so it never engulfs a small dot
+  const ang = Math.atan2(by-ay, bx-ax);
+  const br = b.r*b.pp*scale;
+  const off = br + 3;
+  const hx = bx - Math.cos(ang)*off, hy = by - Math.sin(ang)*off;
+  const ah = Math.max(3.5, Math.min(7, br*0.95));
+  ctx.fillStyle = hot ? "rgba(45,212,191,.9)" : `rgba(255,255,255,${0.08 + 0.12*ehl})`;
+  ctx.beginPath();
+  ctx.moveTo(hx, hy);
+  ctx.lineTo(hx - Math.cos(ang-.4)*ah, hy - Math.sin(ang-.4)*ah);
+  ctx.lineTo(hx - Math.cos(ang+.4)*ah, hy - Math.sin(ang+.4)*ah);
+  ctx.fill();
+  // animated flow particle along highlighted edges
+  if(hot){
+    const k = (t*0.0006) % 1;
+    const fx = ax + (bx-ax)*k, fy = ay + (by-ay)*k;
+    ctx.shadowColor = "rgba(45,212,191,.9)"; ctx.shadowBlur = 8;
+    ctx.fillStyle = "rgba(170,255,240,.98)";
+    ctx.beginPath(); ctx.arc(fx, fy, 2.8, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ambient "comets" drifting along random filaments → the nebula feels alive even at rest
+const pulses = Array.from({length: Math.min(10, Math.max(0, edges.length))},
+  () => ({ ei: Math.floor(Math.random()*edges.length), k: Math.random(), sp: 0.003 + Math.random()*0.004 }));
+function drawPulses(t){
+  for(const p of pulses){
+    let e = edges[p.ei], a = e && byId[e.source], b = e && byId[e.target];
+    if(!e || a.alpha < 0.06 || b.alpha < 0.06){ p.ei = Math.floor(Math.random()*edges.length); p.k = 0; continue; }
+    p.k += p.sp;
+    if(p.k >= 1){ p.k = 0; p.ei = Math.floor(Math.random()*edges.length); continue; }
+    const fade = Math.sin(p.k*Math.PI);                 // fade in/out along the filament
+    const fog = Math.max(0.25, Math.min(1, 1 - (a.rz+b.rz)/1300));
+    const fx = a.sx + (b.sx-a.sx)*p.k, fy = a.sy + (b.sy-a.sy)*p.k;
+    ctx.globalAlpha = 0.85 * fade * fog;
+    ctx.shadowColor = "rgba(120,200,255,.9)"; ctx.shadowBlur = 7;
+    ctx.fillStyle = "rgba(190,225,255,.95)";
+    ctx.beginPath(); ctx.arc(fx, fy, 1.7, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
+}
+
+function drawNode(n, t){
+  if(n.alpha < 0.02) return;
+  const col = n.col;
+  const hl = n.hl;   // smoothed highlight: 1 = lit; eases down (not snaps) when another node is hovered
+  const breathe = (!hover && hubIds.has(n.id)) ? (1 + 0.05*Math.sin(t*0.0024)) : 1;
+  const pulse = (n.id===hover) ? (1.16 + 0.03*Math.sin(t*0.006)) : 1;
+  const r = Math.max(2, n.r * pulse * breathe * n.pp * scale);   // perspective: near = larger
+  const fog = Math.max(0.32, Math.min(1, 1 - n.rz/640));         // depth cue: far nodes recede
+  const x = n.sx, y = n.sy;
+  ctx.globalAlpha = n.alpha * (0.62 + 0.38*fog) * (0.45 + 0.55*hl);   // mostly solid → no muddy overlap, fog only hints depth
+  // selected ring
+  if(n.id === selected){
+    ctx.beginPath(); ctx.arc(x, y, r+6, 0, TAU);
+    ctx.strokeStyle = `rgba(${col},.85)`; ctx.lineWidth = 2; ctx.stroke();
+  }
+  // pinned marker (dashed ring → "pulled out and held")
+  if(n.pinned){
+    ctx.beginPath(); ctx.arc(x, y, r+4, 0, TAU);
+    ctx.strokeStyle = "rgba(255,255,255,.65)"; ctx.lineWidth = 1.5;
+    ctx.setLineDash([3,3]); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // hover halo
+  if(n.id === hover){
+    ctx.beginPath(); ctx.arc(x, y, r+11, 0, TAU);
+    ctx.fillStyle = `rgba(${col},.16)`; ctx.fill();
+  }
+  // disc + glow (glow eases with highlight so hovering doesn't flash the whole scene)
+  ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+  const twinkle = 0.82 + 0.18*Math.sin(t*0.0013 + n.r*3.1);   // gentle per-node shimmer
+  ctx.fillStyle = `rgba(${col},${0.5 + 0.5*hl})`;
+  ctx.shadowColor = `rgba(${col},.9)`;
+  ctx.shadowBlur = (n.id===hover ? 18 : 8) * fog * hl * twinkle;   // soft bloom → nebula glow
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // bright core spark for the nearer/brighter nodes
+  if(hl > 0.5 && fog > 0.5){
+    ctx.beginPath(); ctx.arc(x - r*0.28, y - r*0.28, r*0.3, 0, TAU);
+    ctx.fillStyle = `rgba(255,255,255,${0.35*fog})`; ctx.fill();
+  }
+  // label — declutter: hubs at rest; hovered node + neighbors; selection; zoomed in; near depth only
+  const showLabel = (mode === "radial" && n.depth <= 1) || (scale > 1.4) || (n.id === selected) || (hover ? hl > 0.55 : labelIds.has(n.id));
+  if(showLabel && fog > 0.55){
+    ctx.fillStyle = `rgba(238,242,247,${0.4 + 0.55*hl})`;
+    ctx.font = `600 11px ui-monospace,monospace`;
+    ctx.textAlign = "center";
+    ctx.shadowColor = "rgba(4,6,10,.92)"; ctx.shadowBlur = 4;   // legibility over the edge web
+    const lbl = n.label.length > 24 ? n.label.slice(0, 23) + "…" : n.label;
+    ctx.fillText(lbl, x, y + r + 12);
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
+}
+
+function frame(t){
+  if(mode === "radial"){         // canvas: OpenKB-rooted radial tree (flat)
+    if(alpha > 0.005) step();
+    project();
+    ROOT.pp = 1; ROOT.rz = 0;
+    ROOT.sx = W()/2 + panX + ROOT.x*scale; ROOT.sy = H()/2 + panY + ROOT.y*scale;
+    if(autoFit && !orbiting) fitStep();
+    const focus = hover || selected;
+    for(const n of nodes){
+      const near = !focus || n.id===focus || (adj[focus] && adj[focus].has(n.id));
+      n.hl += ((near ? 1 : 0.5) - n.hl) * 0.12;
+    }
+    ctx.setTransform(DPR,0,0,DPR,0,0); ctx.clearRect(0,0,W(),H());
+    edges.forEach(drawCrossEdge);
+    treeEdges.forEach(drawTreeEdge);
+    nodes.filter(visible).forEach(n => drawNode(n, t));
+    drawRoot();
+  } else if(mode === "graph"){          // mind-map is DOM — the canvas idles in that mode
+    if(alpha > 0.005) step();
+    project();
+    if(autoFit && !orbiting && !drag){ fitStep(); }   // smoothly keep the cloud framed to the viewport
+    idleFrames = (orbiting || drag) ? 0 : idleFrames + 1;
+    if(alpha < 0.05 && idleFrames > 150) yaw += 0.0011;   // gentle auto-rotation once settled & idle
+    const focus = hover || selected;   // hover/selection spotlights a node + its neighbours
+    for(const n of nodes){
+      const near = !focus || n.id===focus || (adj[focus] && adj[focus].has(n.id));
+      n.hl += ((near ? 1 : 0.22) - n.hl) * 0.12;
+    }
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    ctx.clearRect(0,0,W(),H());
+    edges.forEach(e => drawEdge(e, t));
+    drawPulses(t);               // ambient light travelling the filaments
+    // draw nodes far → near so nearer discs occlude farther ones (painter's algorithm)
+    nodes.filter(visible).sort((a,b) => b.rz - a.rz).forEach(n => drawNode(n, t));
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ===================== hover / drag / pan ===================== */
+canvas.addEventListener("mousemove", e => {
+  if(drag){
+    // ignore sub-pixel jitter so a plain click still inspects instead of pinning
+    if(!didDrag && Math.hypot(e.offsetX - oStartX, e.offsetY - oStartY) < 4) return;
+    didDrag = true;
+    const w = unproject(e.offsetX, e.offsetY, drag);   // move the node within the current view plane
+    drag.x = w.x; drag.y = w.y; drag.z = w.z; drag.vx = drag.vy = drag.vz = 0;
+    alpha = Math.max(alpha, 0.5);   // reheat so neighbors re-settle around the dragged node
+    return;
+  }
+  if(orbiting){
+    if(mode === "radial"){                       // flat radial → drag background to pan
+      panX = panOrigX + (e.offsetX - oStartX);
+      panY = panOrigY + (e.offsetY - oStartY);
+    } else {                                     // 3D → drag background to orbit
+      yaw = yawStart + (e.offsetX - oStartX) * 0.0045;
+      pitch = Math.max(-1.45, Math.min(1.45, pitchStart - (e.offsetY - oStartY) * 0.0045));
+    }
+    didDrag = true; return;
+  }
+  const n = pick(e.offsetX, e.offsetY);
+  hover = n ? n.id : null;
+});
+canvas.addEventListener("mousedown", e => {
+  const n = pick(e.offsetX, e.offsetY);
+  didDrag = false; idleFrames = 0; autoFit = false;   // user takes control → stop auto-framing
+  oStartX = e.offsetX; oStartY = e.offsetY;
+  if(mode === "radial"){                          // click node → inspect; drag bg → pan
+    pendingInspect = n; orbiting = true; panOrigX = panX; panOrigY = panY;
+    canvas.style.cursor = "grabbing"; return;
+  }
+  if(n){ drag = n; hover = n.id; canvas.style.cursor = "grabbing"; }
+  else { orbiting = true; yawStart = yaw; pitchStart = pitch; canvas.style.cursor = "grabbing"; }
+});
+window.addEventListener("mouseup", e => {
+  if(mode === "radial"){
+    if(pendingInspect && !didDrag) openPanel(pendingInspect);
+  } else if(drag && !didDrag){ openPanel(drag); }                  // click (no drag) → inspect
+  else if(drag && didDrag){ drag.pinned = true; alpha = Math.max(alpha, 0.5); }  // pulled out → pin it
+  drag = null; orbiting = false; pendingInspect = null;
+  canvas.style.cursor = "grab";
+});
+canvas.addEventListener("dblclick", e => {
+  const n = pick(e.offsetX, e.offsetY);
+  if(n && n.pinned){ n.pinned = false; alpha = Math.max(alpha, 0.5); }   // double-click a pinned node → release
+});
+canvas.addEventListener("mouseleave", () => { if(!drag && !orbiting) hover = null; });
+
+/* ===================== inspector panel ===================== */
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function openPanel(n){
+  selected = n.id;
+  const col = colorOf(n.type);
+  const outL = edges.filter(e => e.source===n.id).map(e => e.target);
+  const inL  = edges.filter(e => e.target===n.id).map(e => e.source);
+  const linkRows = ids => ids.length
+    ? ids.map(id => `<span class="lk" data-n="${esc(id)}">${esc(byId[id] ? byId[id].label : id)}</span>`).join("")
+    : `<div class="empty">none</div>`;
+  const srcRows = (n.sources && n.sources.length)
+    ? n.sources.map(s => `<span class="src">${esc(s)}</span>`).join("")
+    : `<div class="empty">none</div>`;
+  panel.innerHTML =
+    `<button class="x" title="close">×</button>` +
+    `<div class="chip" style="background:rgba(${col},.18);color:rgb(${col})">${esc(n.type)}</div>` +
+    `<h2>${esc(n.label)}</h2>` +
+    `<div class="id">${esc(n.id)}</div>` +
+    `<div class="desc">${esc(n.description) || '<span class="empty">No description.</span>'}</div>` +
+    `<h4>sources<span class="n">${(n.sources||[]).length}</span></h4>${srcRows}` +
+    `<h4>→ links to<span class="n">${outL.length}</span></h4>${linkRows(outL)}` +
+    `<h4>← linked from<span class="n">${inL.length}</span></h4>${linkRows(inL)}`;
+  panel.classList.add("open");
+  panel.querySelector(".x").onclick = closePanel;
+  panel.querySelectorAll("[data-n]").forEach(a => a.onclick = () => {
+    const m = byId[a.dataset.n];
+    if(!m) return;
+    if(mode === "graph" || mode === "radial"){ hover = m.id; autoFit = false; centerOn(m); }   // canvas views: bring it into view (stop auto-fit so the pan sticks)
+    openPanel(m);                                        // all modes: show its details
+  });
+}
+function closePanel(){ panel.classList.remove("open"); selected = null; }
+
+/* ===================== legend (type filter) ===================== */
+const typeCounts = {};
+nodes.forEach(n => { typeCounts[n.type] = (typeCounts[n.type]||0) + 1; });
+legend.innerHTML = `<div class="lh">type — click to filter</div>`;
+(GRAPH.types && GRAPH.types.length ? GRAPH.types : Object.keys(typeCounts).sort()).forEach(t => {
+  const row = document.createElement("div");
+  row.className = "li";
+  row.innerHTML =
+    `<span class="d" style="background:rgb(${colorOf(t)});box-shadow:0 0 10px rgba(${colorOf(t)},.8)"></span>` +
+    `<span class="nm">${esc(t)}</span><span class="ct">${typeCounts[t]||0}</span>`;
+  row.onclick = () => {
+    row.classList.toggle("off");
+    if(hiddenTypes.has(t)) hiddenTypes.delete(t); else hiddenTypes.add(t);
+    if(mode === "mindmap") buildMindmap();      // rebuild without the hidden type
+    else { if(mode === "radial") layoutRadial(); alpha = Math.max(alpha, 0.4); }   // reheat / re-fan
+  };
+  legend.appendChild(row);
+});
+
+/* ===================== search ===================== */
+search.addEventListener("input", e => {
+  const raw = e.target.value.trim();
+  if(mode === "mindmap"){ mmQuery = raw; buildMindmap(); return; }   // filter branches
+  const q = raw.toLowerCase();
+  if(!q){ hover = null; return; }
+  const m = nodes.find(n => n.label.toLowerCase().includes(q))
+         || nodes.find(n => n.id.toLowerCase().includes(q));
+  if(m){ hover = m.id; autoFit = false; centerOn(m); }   // stop auto-fit so the centring sticks
+});
+search.addEventListener("keydown", e => {
+  if(e.key === "Enter"){
+    const m = byId[hover];
+    if(m) openPanel(m);
+  }
+});
+
+/* ===================== controls (mode toggle + spacing slider + reset) ===================== */
+[...modeTabs.children].forEach(b => b.addEventListener("click", () => setMode(b.dataset.m)));
+
+const spreadEl = document.getElementById("spread");
+spreadEl.addEventListener("input", e => {
+  spread = parseFloat(e.target.value) || 1;
+  if(mode === "radial") layoutRadial();           // re-fan the rings
+  alpha = Math.max(alpha, 0.6); autoFit = true;   // reheat + re-frame to the new spacing
+});
+document.getElementById("reset").addEventListener("click", () => {
+  hover = null; closePanel();
+  if(mode === "mindmap"){
+    mmQuery = ""; search.value = ""; mmCollapsed.clear(); buildMindmap(); mmEl.scrollTop = 0; mmEl.scrollLeft = 0;
+  } else if(mode === "radial"){
+    spread = DEFAULT_SPREAD; spreadEl.value = String(DEFAULT_SPREAD); panX = 0; panY = 0;
+    scale = DEF_SCALE; yaw = 0; pitch = 0; layoutRadial();
+    alpha = Math.max(alpha, 0.9); autoFit = true;
+  } else {
+    spread = DEFAULT_SPREAD; spreadEl.value = String(DEFAULT_SPREAD); panX = 0; panY = 0;
+    scale = DEF_SCALE; yaw = DEF_YAW; pitch = DEF_PITCH;
+    nodes.forEach(n => n.pinned = false);                                    // release pinned
+    alpha = Math.max(alpha, 0.9); autoFit = true;   // re-settle + re-frame from the reset state
+  }
+});
+
+/* ===================== boot ===================== */
+window.addEventListener("resize", () => { size(); autoFit = true; if(mode === "mindmap") buildMindmap(); });
+size(); seed();
+setMode("graph");        // open on the 3D nebula
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

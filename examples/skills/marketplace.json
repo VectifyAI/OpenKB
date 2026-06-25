@@ -1,0 +1,26 @@
+{
+  "name": "vectify",
+  "owner": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  "metadata": {
+    "description": "Skills compiled from the demo-kb knowledge base via OpenKB.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "openkb",
+      "description": "Knowledge skills compiled from this OpenKB-managed knowledge base.",
+      "source": "./",
+      "version": "0.1.0",
+      "author": {
+        "name": "Your Name",
+        "email": "you@example.com"
+      },
+      "skills": [
+        "./output/skills/transformer-attention"
+      ]
+    }
+  ]
+}
