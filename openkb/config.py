@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Iterator
 
 import yaml
 
-from openkb.locks import atomic_write_text
+from openkb.locks import atomic_write_text, flock, funlock
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,11 @@ GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
 def _with_global_config_lock() -> Iterator[None]:
     GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with GLOBAL_CONFIG_LOCK_PATH.open("a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        flock(fh, exclusive=True)
         try:
             yield
         finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            funlock(fh)
 
 
 def _atomic_yaml_dump(path: Path, config: dict[str, Any]) -> None:
@@ -94,6 +94,152 @@ def resolve_entity_types(config: dict) -> list[str]:
     if "other" not in cleaned:
         cleaned.append("other")
     return cleaned
+
+
+def resolve_extra_headers(config: dict) -> dict[str, str]:
+    """Resolve the optional ``extra_headers:`` config key into a str→str dict.
+
+    Some LiteLLM providers need extra HTTP headers on every request (e.g.
+    GitHub Copilot's ``Editor-Version`` IDE-auth headers). Users opt in via
+    an ``extra_headers:`` mapping in config.yaml; the result is forwarded to
+    LiteLLM's ``extra_headers`` parameter on all LLM calls.
+
+    Values are stringified (YAML may parse version-like values as numbers).
+    Entries with a non-string/empty key or a non-scalar value are skipped.
+    A non-mapping ``extra_headers`` is ignored entirely. Warnings are logged
+    only when the key was present but malformed.
+    """
+    raw = config.get("extra_headers")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(
+            "config: 'extra_headers' must be a mapping of header name to "
+            "value, got %s — ignoring it.",
+            type(raw).__name__,
+        )
+        return {}
+    headers: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            logger.warning(
+                "config: skipping 'extra_headers' entry with non-string "
+                "or empty key: %r", key,
+            )
+            continue
+        if value is None or not isinstance(value, (str, int, float, bool)):
+            logger.warning(
+                "config: skipping 'extra_headers' entry %r with "
+                "non-scalar value: %r", key, value,
+            )
+            continue
+        headers[key.strip()] = str(value)
+    return headers
+
+
+def resolve_timeout(config: dict) -> float | None:
+    """Resolve the optional ``timeout:`` key to a finite positive number of seconds.
+
+    Returns ``None`` (use LiteLLM's default) when absent or invalid; rejects
+    bools and ``nan``/``inf``, warning when present but unusable.
+    """
+    raw = config.get("timeout")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %s — "
+            "ignoring it.",
+            type(raw).__name__,
+        )
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "config: 'timeout' must be a positive number of seconds, got %r — "
+            "ignoring it.",
+            raw,
+        )
+        return None
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "config: 'timeout' must be a finite positive number of seconds, got "
+            "%s — ignoring it.",
+            value,
+        )
+        return None
+    return value
+
+
+def resolve_litellm_settings(config: dict) -> dict[str, Any]:
+    """Resolve the optional ``litellm:`` mapping of LiteLLM module settings.
+
+    Values are forwarded verbatim (the user owns them); only the container shape
+    is enforced — returns ``{}`` if absent or not a mapping, and drops non-string
+    keys. ``cli._apply_litellm_settings`` applies them.
+    """
+    raw = config.get("litellm")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(
+            "config: 'litellm' must be a mapping of LiteLLM settings, got %s — "
+            "ignoring it.",
+            type(raw).__name__,
+        )
+        return {}
+    settings: dict[str, Any] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            logger.warning(
+                "config: skipping 'litellm' entry with non-string key %r.", key
+            )
+            continue
+        settings[key] = value
+    return settings
+
+
+# Process-wide extra headers for LLM requests, resolved from the active KB's
+# config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
+# via get_extra_headers() so the value doesn't have to be threaded through
+# every compile/agent call chain — mirroring how the API key is applied
+# globally via litellm.api_key / provider env vars.
+_runtime_extra_headers: dict[str, str] = {}
+
+
+def set_extra_headers(headers: dict[str, str]) -> None:
+    """Set the process-wide extra headers for LLM requests."""
+    global _runtime_extra_headers
+    _runtime_extra_headers = dict(headers)
+
+
+def get_extra_headers() -> dict[str, str]:
+    """Return a copy of the process-wide extra headers for LLM requests."""
+    return dict(_runtime_extra_headers)
+
+
+# Process-wide LLM request timeout (seconds), set from config by the CLI and
+# read at the call sites via get_timeout(). None = use LiteLLM's default.
+_runtime_timeout: float | None = None
+
+
+def set_timeout(timeout: float | None) -> None:
+    """Set the process-wide LLM request timeout in seconds; ``None`` clears it."""
+    global _runtime_timeout
+    _runtime_timeout = timeout
+
+
+def get_timeout() -> float | None:
+    """Return the process-wide LLM request timeout in seconds, or ``None``."""
+    return _runtime_timeout
+
+
+def get_timeout_extra_args() -> dict[str, float] | None:
+    """Timeout as Agents-SDK ``ModelSettings.extra_args`` (it has no ``timeout``
+    field), or ``None``. The LiteLLM provider forwards it to the completion call.
+    """
+    return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

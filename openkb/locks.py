@@ -2,18 +2,43 @@
 
 The lock protocol is advisory and intended for local filesystem access by
 OpenKB processes. It does not guarantee cross-host coordination on networked
-or synced filesystems where ``fcntl.flock`` may be unavailable or inconsistent.
+or synced filesystems where the underlying OS lock may be unavailable or
+inconsistent.
 """
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import Iterator
+from typing import IO, Iterator
+
+import portalocker
+
+
+def flock(fh: IO, *, exclusive: bool) -> None:
+    """Acquire an advisory lock on an open file handle (cross-platform).
+
+    Delegates to :mod:`portalocker`:
+
+    - **POSIX** — ``fcntl.flock``; the call blocks indefinitely until acquired.
+    - **Windows** — shared locks use the Win32 ``LockFileEx`` API (``pywin32``,
+      which portalocker pulls in automatically on Windows), so concurrent
+      readers are honoured; exclusive locks use ``msvcrt.locking``, which
+      retries for ~10s and then raises rather than blocking indefinitely.
+
+    On failure portalocker raises :class:`portalocker.LockException` — note this
+    is *not* an ``OSError`` (e.g. on filesystems without working lock support).
+    """
+    portalocker.lock(fh, portalocker.LOCK_EX if exclusive else portalocker.LOCK_SH)
+
+
+def funlock(fh: IO) -> None:
+    """Release a lock previously acquired with :func:`flock`."""
+    portalocker.unlock(fh)
+
 
 _LOCKS_GUARD = threading.Lock()
 _LOCAL_LOCKS: dict[Path, "_LocalRwLock"] = {}
@@ -106,14 +131,13 @@ def kb_lock(openkb_dir: Path, *, exclusive: bool) -> Iterator[None]:
     local_context = local_lock.write() if exclusive else local_lock.read()
     with local_context:
         with lock_path.open("a+", encoding="utf-8") as fh:
-            mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-            fcntl.flock(fh.fileno(), mode)
+            flock(fh, exclusive=exclusive)
             held[resolved] = (1, 0) if exclusive else (0, 1)
             try:
                 yield
             finally:
                 held.pop(resolved, None)
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                funlock(fh)
 
 
 def kb_ingest_lock(openkb_dir: Path):
@@ -127,6 +151,11 @@ def kb_read_lock(openkb_dir: Path):
 
 
 def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        # Windows cannot open a directory handle to fsync it. os.replace is
+        # atomic on NTFS (no torn/partial state), though without the dir flush
+        # the rename's durability across a crash is weaker than on POSIX.
+        return
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -154,7 +183,8 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as fh:
-            os.fchmod(fh.fileno(), _target_mode(path))
+            if hasattr(os, "fchmod"):  # not available on Windows
+                os.fchmod(fh.fileno(), _target_mode(path))
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())

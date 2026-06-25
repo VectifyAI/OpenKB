@@ -42,7 +42,11 @@ litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
 from openkb.agent.compiler import compile_long_doc
-from openkb.config import DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb
+from openkb.config import (
+    DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
+    resolve_extra_headers, set_extra_headers, resolve_timeout, set_timeout,
+    resolve_litellm_settings,
+)
 from openkb.converter import _registry_path, convert_document
 from openkb.indexer import import_cloud_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
@@ -55,12 +59,19 @@ warnings.filterwarnings("ignore")
 
 load_dotenv()  # load from cwd (covers running inside the KB dir)
 
+logger = logging.getLogger(__name__)
+
 
 _KNOWN_PROVIDER_KEYS = (
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
     "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "MOONSHOT_API_KEY",
     "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY",
 )
+
+# Providers that authenticate via OAuth device flow (subscription login
+# handled by LiteLLM itself) — no API key env var is needed, so the
+# missing-key warning would be a false alarm for them.
+_OAUTH_PROVIDERS = {"chatgpt", "github_copilot"}
 
 
 def _extract_provider(model: str) -> str | None:
@@ -75,6 +86,31 @@ def _extract_provider(model: str) -> str | None:
     if "/" in model:
         return model.split("/")[0].lower()
     return "openai"
+
+
+def _apply_litellm_settings(settings: dict) -> None:
+    """Set each ``litellm:`` key verbatim onto the litellm module (process-wide
+    globals, so they reach every LiteLLM call). Skips with a warning a key the
+    installed litellm doesn't define, or one that is a litellm function (e.g.
+    ``completion``) since overwriting it would break later calls. Applied, never
+    reset — the values persist for the life of the process.
+    """
+    for key, value in settings.items():
+        if not hasattr(litellm, key):
+            logger.warning(
+                "config: LiteLLM has no setting %r — ignoring it "
+                "(check the spelling or your installed litellm version).",
+                key,
+            )
+            continue
+        if callable(getattr(litellm, key)):
+            logger.warning(
+                "config: 'litellm.%s' is a LiteLLM function, not a setting — "
+                "refusing to overwrite it from the litellm: config block.",
+                key,
+            )
+            continue
+        setattr(litellm, key, value)
 
 
 def _setup_llm_key(kb_dir: Path | None = None) -> None:
@@ -102,23 +138,45 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     api_key = os.environ.get("LLM_API_KEY", "")
 
-    # Try to resolve the active provider from the KB config
+    # Try to resolve the active provider, extra headers, and request timeout
+    # from the KB config
     provider: str | None = None
+    extra_headers: dict[str, str] = {}
+    timeout: float | None = None
+    litellm_settings: dict = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
         if config_path.exists():
             config = load_config(config_path)
             model = config.get("model", "")
             provider = _extract_provider(str(model))
+            extra_headers = resolve_extra_headers(config)
+            timeout = resolve_timeout(config)
+            litellm_settings = resolve_litellm_settings(config)
+            # `timeout` / `extra_headers` in the block route to the per-call
+            # stashes (replacing the legacy top-level keys); the rest are globals.
+            if "extra_headers" in litellm_settings:
+                extra_headers = resolve_extra_headers(
+                    {"extra_headers": litellm_settings.pop("extra_headers")}
+                )
+            if "timeout" in litellm_settings:
+                timeout = resolve_timeout(
+                    {"timeout": litellm_settings.pop("timeout")}
+                )
+    set_extra_headers(extra_headers)
+    set_timeout(timeout)
+    _apply_litellm_settings(litellm_settings)
 
     if not api_key:
-        # Check if any provider key is already set
+        # Check if any provider key is already set. OAuth-based providers
+        # (ChatGPT subscription, GitHub Copilot) don't use API keys at all,
+        # so the warning is skipped for them.
         check_keys = (
             (f"{provider.upper()}_API_KEY",) if provider
             else _KNOWN_PROVIDER_KEYS
         )
         has_key = any(os.environ.get(k) for k in check_keys)
-        if not has_key:
+        if not has_key and provider not in _OAUTH_PROVIDERS:
             click.echo(
                 "Warning: No LLM API key found. Set one of:\n"
                 f"  1. {kb_dir / '.env' if kb_dir else '<kb_dir>/.env'} — LLM_API_KEY=sk-...\n"
@@ -289,7 +347,6 @@ def _add_single_file_locked(file_path: Path, kb_dir: Path) -> Literal["added", "
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
 
-    logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
@@ -1581,6 +1638,36 @@ def lint(ctx, fix):
     asyncio.run(run_lint(kb_dir))
 
 
+@cli.command()
+@click.option("--open/--no-open", "open_browser", default=True,
+              help="Open the graph in your browser after generating (default: on; --no-open for headless).")
+@click.pass_context
+@_with_kb_lock(exclusive=False)
+def visualize(ctx, open_browser):
+    """Render the wiki's [[wikilink]] graph as a self-contained interactive HTML page."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb import visualize as viz
+    graph = viz.build_graph(kb_dir / "wiki")
+    if not graph["nodes"]:
+        click.echo("No wiki pages to visualize yet. Run `openkb add` first.")
+        return
+    out = kb_dir / "output" / "visualize" / "graph.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(viz.render_html(graph), encoding="utf-8")
+    click.echo(f"Graph written to {out}  ({len(graph['nodes'])} nodes, {len(graph['edges'])} edges)")
+    if open_browser:
+        import webbrowser
+        try:
+            opened = webbrowser.open(out.resolve().as_uri())   # resolve() so a relative --kb-dir still yields a valid file URI
+        except Exception:
+            opened = False
+        if not opened:
+            click.echo("(couldn't launch a browser — open the file above manually, or use --no-open)")
+
+
 def print_list(kb_dir: Path) -> None:
     """Print all documents in the knowledge base. Usable from CLI and chat REPL."""
     openkb_dir = kb_dir / ".openkb"
@@ -2348,8 +2435,10 @@ def deck():
     "--skill", "skill_name",
     metavar="SKILL_NAME",
     default=None,
+    # NOTE: 'openkb-deck-neon' below must stay in sync with
+    # DEFAULT_DECK_SKILL in openkb/deck/creator.py.
     help=(
-        "Which deck skill to use. Defaults to 'openkb-deck-editorial' "
+        "Which deck skill to use. Defaults to 'openkb-deck-neon' "
         "(the built-in). Pass e.g. 'deck-guizang-editorial' to route to "
         "a third-party skill installed under ~/.openkb/skills/."
     ),
@@ -2428,7 +2517,8 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
 
     # Run the generator.
     from openkb.skill.generator import Generator
-    skill_label = skill_name if skill_name else "openkb-deck-editorial (default)"
+    from openkb.deck.creator import DEFAULT_DECK_SKILL
+    skill_label = skill_name if skill_name else f"{DEFAULT_DECK_SKILL} (default)"
     click.echo(f"Generating deck '{name}' via skill {skill_label}...")
     gen = Generator(
         target_type="deck",

@@ -97,7 +97,8 @@ def _convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> li
 
 
 def _write_long_doc_artifacts(
-    tree: dict, pages: list[dict[str, Any]], doc_name: str, doc_id: str, kb_dir: Path
+    tree: dict, pages: list[dict[str, Any]], doc_name: str, doc_id: str, kb_dir: Path,
+    description: str = "",
 ) -> Path:
     """Write ``wiki/sources/<doc_name>.json`` + ``wiki/summaries/<doc_name>.md``.
 
@@ -115,7 +116,9 @@ def _write_long_doc_artifacts(
     summaries_dir = kb_dir / "wiki" / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summaries_dir / f"{doc_name}.md"
-    summary_path.write_text(render_summary_md(tree, doc_name, doc_id), encoding="utf-8")
+    summary_path.write_text(
+        render_summary_md(tree, doc_name, doc_id, description=description), encoding="utf-8"
+    )
     return summary_path
 
 
@@ -200,7 +203,9 @@ def index_long_document(
     if not all_pages:
         raise RuntimeError(f"No page content extracted for {pdf_path.name}")
 
-    _write_long_doc_artifacts(tree, all_pages, source_name, doc_id, kb_dir)
+    _write_long_doc_artifacts(
+        tree, all_pages, source_name, doc_id, kb_dir, description=description
+    )
     return IndexResult(doc_id=doc_id, description=description, tree=tree)
 
 
@@ -273,7 +278,7 @@ def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpo
             f"No page content returned from PageIndex Cloud for doc_id={doc_id}"
         )
 
-    _write_long_doc_artifacts(tree, all_pages, doc_name, doc_id, kb_dir)
+    _write_long_doc_artifacts(tree, all_pages, doc_name, doc_id, kb_dir, description=description)
     return CloudImportResult(
         doc_id=doc_id, doc_name=doc_name, name=cloud_name, description=description,
     )

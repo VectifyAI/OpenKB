@@ -27,9 +27,42 @@ from openkb.agent.compiler import (
     _parse_entities_plan,
     _filter_entity_items,
     _ENTITY_TYPE_LIST,
+    _prepend_source_to_frontmatter,
+    _remove_source_from_frontmatter,
     remove_doc_from_entity_pages,
 )
 from openkb.config import resolve_entity_types
+
+
+class TestFrontmatterSourceMutation:
+    """``_prepend_source_to_frontmatter``/``_remove_source_from_frontmatter`` must preserve existing
+    frontmatter even when the page ends at the closing ``---`` with no trailing
+    newline — ``frontmatter.split`` then returns a block ending in a bare
+    ``\\n---`` rather than ``\\n---\\n``.
+    """
+
+    def test_prepend_preserves_keys_without_trailing_newline(self):
+        text = '---\nsources: ["summaries/p1.md"]\ntype: "Concept"\ndescription: "Focus"\n---'
+        out = _prepend_source_to_frontmatter(text, "summaries/p2.md")
+        assert out.startswith("---\n")            # opening delimiter kept
+        assert 'type: "Concept"' in out           # other keys kept
+        assert 'description: "Focus"' in out
+        assert "summaries/p1.md" in out           # existing source kept
+        assert "summaries/p2.md" in out           # new source prepended
+
+    def test_remove_preserves_keys_without_trailing_newline(self):
+        text = '---\ntype: "Organization"\nsources: ["summaries/doc.md"]\n---'
+        out, now_empty = _remove_source_from_frontmatter(text, "summaries/doc.md")
+        assert now_empty is True                  # it was the only source
+        assert 'type: "Organization"' in out      # other key preserved
+        assert "summaries/doc.md" not in out      # source removed
+
+    def test_prepend_with_body_is_unchanged(self):
+        text = '---\nsources: ["a.md"]\ntype: "Concept"\n---\n\nBody.\n'
+        out = _prepend_source_to_frontmatter(text, "b.md")
+        assert out.startswith("---\n")
+        assert "b.md" in out and "a.md" in out
+        assert out.endswith("\n\nBody.\n")         # body + closing untouched
 
 
 class TestParseJson:
@@ -200,25 +233,25 @@ class TestSanitizeConceptName:
 
 
 class TestWriteSummary:
-    def test_writes_with_frontmatter(self, tmp_path):
+    def test_writes_type_and_description(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
-        path = wiki / "summaries" / "my-doc.md"
-        assert path.exists()
-        text = path.read_text()
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent.",
+                       description="A one-line summary.")
+        text = (wiki / "summaries" / "my-doc.md").read_text()
+        assert 'type: "Summary"' in text
+        assert 'description: "A one-line summary."' in text
         assert "doc_type: short" in text
-        assert "full_text: sources/my-doc.md" in text
+        assert 'full_text: "sources/my-doc.md"' in text
         assert "# Summary" in text
 
-    def test_writes_without_brief(self, tmp_path):
+    def test_omits_description_when_empty(self, tmp_path):
         wiki = tmp_path / "wiki"
         wiki.mkdir()
-        _write_summary(wiki, "my-doc", "# Summary\n\nContent here.")
-        path = wiki / "summaries" / "my-doc.md"
-        text = path.read_text()
-        assert "doc_type: short" in text
-        assert "full_text: sources/my-doc.md" in text
+        _write_summary(wiki, "my-doc", "# Summary\n\nContent.")
+        text = (wiki / "summaries" / "my-doc.md").read_text()
+        assert 'type: "Summary"' in text
+        assert "description:" not in text
 
 
 class TestWriteConcept:
@@ -230,7 +263,7 @@ class TestWriteConcept:
         assert path.exists()
         text = path.read_text()
         assert 'sources: ["paper.pdf"]' in text
-        assert 'brief: "Mechanism for selective focus"' in text
+        assert 'description: "Mechanism for selective focus"' in text
         assert "# Attention" in text
 
     def test_new_concept_without_brief(self, tmp_path):
@@ -255,7 +288,7 @@ class TestWriteConcept:
         text = (concepts / "attention.md").read_text()
         assert "paper2.pdf" in text
         assert "paper1.pdf" in text
-        assert 'brief: "Updated brief"' in text
+        assert 'description: "Updated brief"' in text
         assert "Old brief" not in text
 
     def test_update_concept_appends_source(self, tmp_path):
@@ -287,6 +320,38 @@ class TestWriteConcept:
         assert "paper1.pdf" in text
         assert "paper2.pdf" in text
         assert "New info from paper2." in text
+
+    def test_new_concept_has_type_and_description(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "summaries/p.md",
+                       False, brief="Mechanism for selective focus")
+        text = (wiki / "concepts" / "attention.md").read_text()
+        assert 'type: "Concept"' in text
+        assert 'description: "Mechanism for selective focus"' in text
+        assert "brief:" not in text
+
+    def test_new_concept_without_description_still_has_type(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        _write_concept(wiki, "attention", "# Attention\n\nDetails.", "summaries/p.md", False)
+        text = (wiki / "concepts" / "attention.md").read_text()
+        assert 'type: "Concept"' in text
+        assert "description:" not in text
+
+    def test_update_concept_sets_type_and_description(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            '---\nsources: ["p1.pdf"]\ndescription: "Old"\n---\n\n# Attention\n\nOld.',
+            encoding="utf-8",
+        )
+        _write_concept(wiki, "attention", "New.", "summaries/p2.md", True, brief="New one")
+        text = (concepts / "attention.md").read_text()
+        assert 'type: "Concept"' in text
+        assert 'description: "New one"' in text
+        assert "Old" not in text
 
 
 class TestUpdateIndex:
@@ -549,6 +614,16 @@ class TestReadConceptBriefs:
         result = _read_concept_briefs(wiki)
         assert "- old: Old concept without brief field." in result
 
+    def test_reads_description_field(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        concepts = wiki / "concepts"
+        concepts.mkdir(parents=True)
+        (concepts / "attention.md").write_text(
+            '---\nsources: ["p.pdf"]\ndescription: "Selective focus"\n---\n\n# A\n',
+            encoding="utf-8",
+        )
+        assert "- attention: Selective focus" in _read_concept_briefs(wiki)
+
 
 class TestReadEntityBriefs:
     def test_none_when_missing(self, tmp_path):
@@ -607,6 +682,31 @@ class TestReadEntityBriefs:
         assert lines[0].startswith("- alpha ")
         assert lines[1].startswith("- zeta ")
 
+    def test_reads_description_and_lowercases_type(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "anthropic.md").write_text(
+            "---\n"
+            'sources: ["summaries/a.md", "summaries/b.md"]\n'
+            'type: "Organization"\n'
+            'description: "AI lab behind Claude."\n'
+            "---\n\n# Anthropic\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        assert out == "- anthropic (organization, 2 sources) — AI lab behind Claude."
+
+    def test_reads_legacy_brief_when_no_description(self, tmp_path):
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "openai.md").write_text(
+            "---\ntype: organization\nsources: [summaries/a.md]\n"
+            "brief: Legacy one-liner.\n---\n\n# OpenAI\n",
+            encoding="utf-8",
+        )
+        out = _read_entity_briefs(tmp_path)
+        assert "— Legacy one-liner." in out
+
 
 class TestWriteEntity:
     def test_new_entity_frontmatter(self, tmp_path):
@@ -617,8 +717,8 @@ class TestWriteEntity:
             aliases=["Anthropic PBC"],
         )
         text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
-        assert "type:" in text and "organization" in text
-        assert "brief:" in text and "AI lab behind Claude." in text
+        assert 'type: "Organization"' in text
+        assert 'description: "AI lab behind Claude."' in text
         assert "sources:" in text and "summaries/a.md" in text
         assert "Anthropic PBC" in text
         assert text.count("---") == 2  # exactly one frontmatter block
@@ -638,10 +738,10 @@ class TestWriteEntity:
         assert "summaries/b.md" in text and "summaries/a.md" in text
         # _yaml_list_line uses json.dumps: b prepended before a, double-quoted
         assert '"summaries/b.md", "summaries/a.md"' in text
-        assert "type:" in text and "organization" in text
+        assert 'type: "Organization"' in text
         assert "v2 richer." in text
         assert "v1." not in text
-        assert "brief:" in text and "b2" in text
+        assert 'description: "b2"' in text
 
     def test_update_rebuilds_frontmatter_when_no_closing_delim(self, tmp_path):
         """#11: malformed existing file (opening --- but no closing ---) must
@@ -666,9 +766,71 @@ class TestWriteEntity:
         assert "sources:" in text and "summaries/b.md" in text
         # The PRE-EXISTING source must be preserved, not dropped when rebuilding.
         assert "summaries/a.md" in text
-        assert "type:" in text and "organization" in text
-        assert "brief:" in text and "AI lab." in text
+        assert 'type: "Organization"' in text
+        assert 'description: "AI lab."' in text
         assert "v2 rewritten." in text
+
+    def test_new_entity_type_capitalized_and_description(self, tmp_path):
+        _write_entity(
+            tmp_path, "anthropic", "# Anthropic\n\nAI lab.",
+            "summaries/a.md", is_update=False,
+            brief="AI lab behind Claude.", type_="organization",
+        )
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert 'type: "Organization"' in text          # capitalized
+        assert 'description: "AI lab behind Claude."' in text
+        assert "brief:" not in text                      # renamed, not duplicated
+
+    def test_update_entity_capitalizes_type_and_writes_description(self, tmp_path):
+        _write_entity(tmp_path, "anthropic", "# A\n\nv1.", "summaries/a.md",
+                      is_update=False, brief="b1", type_="organization")
+        _write_entity(tmp_path, "anthropic", "# A\n\nv2.", "summaries/b.md",
+                      is_update=True, brief="b2", type_="organization")
+        text = (tmp_path / "entities" / "anthropic.md").read_text(encoding="utf-8")
+        assert 'type: "Organization"' in text
+        assert 'description: "b2"' in text
+        assert "brief:" not in text
+
+    def test_update_entity_strips_legacy_brief(self, tmp_path):
+        entities = tmp_path / "entities"
+        entities.mkdir(parents=True)
+        (entities / "anthropic.md").write_text(
+            '---\nsources: ["summaries/a.md"]\ntype: organization\n'
+            'brief: Old brief.\n---\n\n# Anthropic\n\nOld.',
+            encoding="utf-8",
+        )
+        _write_entity(tmp_path, "anthropic", "# Anthropic\n\nv2.", "summaries/b.md",
+                      is_update=True, brief="New desc.", type_="organization")
+        text = (entities / "anthropic.md").read_text(encoding="utf-8")
+        assert "brief:" not in text
+        assert "Old brief." not in text
+        assert 'description: "New desc."' in text
+
+    def test_entity_type_multiword_title_cased(self, tmp_path):
+        _write_entity(tmp_path, "acme", "# Acme\n\nx.", "summaries/a.md",
+                      is_update=False, brief="b", type_="real estate")
+        text = (tmp_path / "entities" / "acme.md").read_text(encoding="utf-8")
+        assert 'type: "Real Estate"' in text
+
+
+def test_update_keeps_single_blank_line_after_frontmatter(tmp_path):
+    """Regression: the update path must not accumulate a 3rd newline after ---."""
+    wiki = tmp_path / "wiki"
+    (wiki / "concepts").mkdir(parents=True)
+    (wiki / "concepts" / "x.md").write_text(
+        '---\ntype: "Concept"\nsources: ["a"]\ndescription: "old"\n---\n\n# X\n',
+        encoding="utf-8")
+    _write_concept(wiki, "x", "# X\n\nNew.", "summaries/b.md", True, brief="new")
+    ctext = (wiki / "concepts" / "x.md").read_text(encoding="utf-8")
+    assert "---\n\n\n" not in ctext and "---\n\n" in ctext
+
+    (wiki / "entities").mkdir(parents=True)
+    (wiki / "entities" / "e.md").write_text(
+        '---\nsources: ["a"]\ntype: "Person"\ndescription: "old"\n---\n\n# E\n',
+        encoding="utf-8")
+    _write_entity(wiki, "e", "# E\n\nNew.", "summaries/b.md", True, brief="new", type_="person")
+    etext = (wiki / "entities" / "e.md").read_text(encoding="utf-8")
+    assert "---\n\n\n" not in etext and "---\n\n" in etext
 
 
 class TestBacklinkSummary:
@@ -926,7 +1088,7 @@ class TestCompileShortDoc:
         (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
         summary_response = json.dumps({
-            "brief": "Discusses transformers",
+            "description": "Discusses transformers",
             "content": "# Summary\n\nThis document discusses transformers.",
         })
         concepts_list_response = json.dumps({
@@ -960,7 +1122,8 @@ class TestCompileShortDoc:
         summary_path = wiki / "summaries" / "test-doc.md"
         assert summary_path.exists()
         summary_text = summary_path.read_text()
-        assert "full_text: sources/test-doc.md" in summary_text
+        assert 'full_text: "sources/test-doc.md"' in summary_text
+        assert 'type: "Summary"' in summary_text
         # Summary body comes from the rewrite step
         assert "[[concepts/transformer]]" in summary_text
 
@@ -1612,7 +1775,7 @@ class TestBriefIntegration:
         (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
 
         summary_resp = json.dumps({
-            "brief": "A paper about transformers",
+            "description": "A paper about transformers",
             "content": "# Summary\n\nThis paper discusses transformers.",
         })
         plan_resp = json.dumps({
@@ -1621,7 +1784,7 @@ class TestBriefIntegration:
             "related": [],
         })
         concept_resp = json.dumps({
-            "brief": "NN architecture using self-attention",
+            "description": "NN architecture using self-attention",
             "content": "# Transformer\n\nA neural network architecture.",
         })
 
@@ -1637,11 +1800,11 @@ class TestBriefIntegration:
         # Summary frontmatter has doc_type and full_text
         summary_text = (wiki / "summaries" / "test-doc.md").read_text()
         assert "doc_type: short" in summary_text
-        assert "full_text: sources/test-doc.md" in summary_text
+        assert 'full_text: "sources/test-doc.md"' in summary_text
 
-        # Concept frontmatter has brief
+        # Concept frontmatter has type and description
         concept_text = (wiki / "concepts" / "transformer.md").read_text()
-        assert 'brief: "NN architecture using self-attention"' in concept_text
+        assert 'description: "NN architecture using self-attention"' in concept_text
 
         # Index has briefs
         index_text = (wiki / "index.md").read_text()
@@ -1759,7 +1922,7 @@ class TestCompileEntitiesEndToEnd:
                                              "type": "organization"}],
                                  "update": [], "related": []},
                 })
-            return json.dumps({"brief": "b", "type": "organization", "content": "# Page\n"})
+            return json.dumps({"description": "b", "type": "organization", "content": "# Page\n"})
 
         async def fake_llm_async(model, messages, label, **kw):
             return fake_llm(model, messages, label, **kw)
@@ -1777,9 +1940,7 @@ class TestCompileEntitiesEndToEnd:
         assert (wiki / "concepts" / "ai-demand.md").exists()
         assert (wiki / "entities" / "nvidia.md").exists()
         ent = (wiki / "entities" / "nvidia.md").read_text(encoding="utf-8")
-        # Frontmatter values are JSON-quoted by _yaml_kv_line (see _write_entity,
-        # Task 2), matching the tolerant assertion style in TestWriteEntity.
-        assert "type:" in ent and "organization" in ent
+        assert 'type: "Organization"' in ent
         index = (wiki / "index.md").read_text(encoding="utf-8")
         assert "[[entities/nvidia]]" in index
         summary = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
@@ -1900,7 +2061,7 @@ class TestCompileEntitiesEndToEnd:
                                              "type": "dataset"}],
                                  "update": [], "related": []},
                 })
-            return json.dumps({"brief": "b", "type": "dataset", "content": "# Page\n"})
+            return json.dumps({"description": "b", "type": "dataset", "content": "# Page\n"})
 
         async def fake_llm_async(model, messages, label, **kw):
             seen_messages.append((label, messages))
@@ -1920,7 +2081,7 @@ class TestCompileEntitiesEndToEnd:
         )
 
         ent = (wiki / "entities" / "imagenet.md").read_text(encoding="utf-8")
-        assert "type:" in ent and "dataset" in ent
+        assert 'type: "Dataset"' in ent
         # The custom type must reach the plan prompt the mock saw.
         plan_msgs = [m for (label, m) in seen_messages if label == "concepts-plan"]
         assert plan_msgs, "plan call was not made"
@@ -2046,3 +2207,101 @@ def test_plan_prompt_keeps_topic_itself_guard():
 
     assert "just the document topic itself" in _CONCEPTS_PLAN_USER
 
+
+
+class TestLLMCallExtraHeaders:
+    """Config-driven extra headers reach the litellm calls (issue #93)."""
+
+    def test_llm_call_injects_extra_headers(self):
+        from openkb.agent.compiler import _llm_call
+        from openkb.config import set_extra_headers
+
+        set_extra_headers({"Editor-Version": "vscode/1.95.0"})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["ok"]))
+            out = _llm_call("m", [{"role": "user", "content": "hi"}], "step")
+        assert out == "ok"
+        kwargs = mock_litellm.completion.call_args.kwargs
+        assert kwargs["extra_headers"] == {"Editor-Version": "vscode/1.95.0"}
+
+    def test_llm_call_no_extra_headers_by_default(self):
+        from openkb.agent.compiler import _llm_call
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["ok"]))
+            _llm_call("m", [{"role": "user", "content": "hi"}], "step")
+        assert "extra_headers" not in mock_litellm.completion.call_args.kwargs
+
+    def test_llm_call_explicit_kwarg_wins_over_config(self):
+        from openkb.agent.compiler import _llm_call
+        from openkb.config import set_extra_headers
+
+        set_extra_headers({"Editor-Version": "from-config"})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["ok"]))
+            _llm_call(
+                "m", [{"role": "user", "content": "hi"}], "step",
+                extra_headers={"Editor-Version": "explicit"},
+            )
+        kwargs = mock_litellm.completion.call_args.kwargs
+        assert kwargs["extra_headers"] == {"Editor-Version": "explicit"}
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_injects_extra_headers(self):
+        from openkb.agent.compiler import _llm_call_async
+        from openkb.config import set_extra_headers
+
+        set_extra_headers({"Copilot-Integration-Id": "vscode-chat"})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion(["ok"]))
+            out = await _llm_call_async("m", [{"role": "user", "content": "hi"}], "step")
+        assert out == "ok"
+        kwargs = mock_litellm.acompletion.call_args.kwargs
+        assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
+
+
+class TestFrontmatterDashBoundary:
+    """Regression: description containing '---' must not truncate frontmatter."""
+
+    def test_concept_round_trip_with_dashes_in_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        # Write concept with a brief containing '---'.
+        brief = "--- note ---"
+        _write_concept(wiki, "tricky", "# Body\n\nContent.", "summaries/doc.md",
+                       is_update=False, brief=brief)
+        # Round-trip: _read_concept_briefs must return the brief intact.
+        result = _read_concept_briefs(wiki)
+        assert "--- note ---" in result
+        # The body must not be corrupted.
+        text = (wiki / "concepts" / "tricky.md").read_text(encoding="utf-8")
+        assert "# Body" in text
+        assert "Content." in text
+
+    def test_entity_round_trip_with_dashes_in_brief(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+        brief = "--- note ---"
+        _write_entity(wiki, "tricky-org", "# Body\n\nContent.", "summaries/doc.md",
+                      is_update=False, brief=brief, type_="organization")
+        result = _read_entity_briefs(wiki)
+        assert "--- note ---" in result
+        text = (wiki / "entities" / "tricky-org.md").read_text(encoding="utf-8")
+        assert "# Body" in text
+        assert "Content." in text
+
+    def test_concept_update_malformed_frontmatter_rebuilds(self, tmp_path):
+        """_write_concept(is_update=True) on a file with malformed frontmatter
+        must rebuild valid frontmatter, not write a bare body."""
+        concepts = tmp_path / "concepts"
+        concepts.mkdir(parents=True)
+        # Opening '---' with no closing delimiter.
+        malformed = "---\nsources: [x]\nno close\n\nbody"
+        (concepts / "tricky.md").write_text(malformed, encoding="utf-8")
+        _write_concept(tmp_path, "tricky", "# New\n\nNew body.", "summaries/doc.md",
+                       is_update=True, brief="brief text")
+        text = (concepts / "tricky.md").read_text(encoding="utf-8")
+        assert text.startswith("---\n")
+        assert 'type: "Concept"' in text
+        # Must have a properly closed frontmatter block (two '---' occurrences).
+        assert text.count("---") >= 2
