@@ -266,6 +266,44 @@ class TestResolveDocName:
 
 
 # ---------------------------------------------------------------------------
+# resolve_doc_name_from_key
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_doc_name_from_key_clean(tmp_path):
+    from openkb.converter import resolve_doc_name_from_key
+    from openkb.state import HashRegistry
+
+    registry = HashRegistry(tmp_path / "hashes.json")
+    name = resolve_doc_name_from_key("Attention Is All You Need", "pageindex-cloud:abc", registry)
+    assert name == "Attention-Is-All-You-Need"
+
+
+def test_resolve_doc_name_from_key_collision_suffix(tmp_path):
+    import hashlib
+    from openkb.converter import resolve_doc_name_from_key
+    from openkb.state import HashRegistry
+
+    registry = HashRegistry(tmp_path / "hashes.json")
+    registry.add("hash1", {"name": "paper.pdf", "doc_name": "paper"})
+
+    path_key = "pageindex-cloud:xyz"
+    name = resolve_doc_name_from_key("paper", path_key, registry)
+    digest = hashlib.sha256(path_key.encode("utf-8")).hexdigest()[:8]
+    assert name == f"paper-{digest}"
+
+
+def test_resolve_doc_name_from_key_reuses_known_path(tmp_path):
+    from openkb.converter import resolve_doc_name_from_key
+    from openkb.state import HashRegistry
+
+    registry = HashRegistry(tmp_path / "hashes.json")
+    registry.add("h", {"doc_name": "kept-name", "path": "pageindex-cloud:dup"})
+    name = resolve_doc_name_from_key("whatever", "pageindex-cloud:dup", registry)
+    assert name == "kept-name"
+
+
+# ---------------------------------------------------------------------------
 # convert_document — doc_name collision handling
 # ---------------------------------------------------------------------------
 

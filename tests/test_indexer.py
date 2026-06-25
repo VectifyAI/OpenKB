@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from openkb.indexer import IndexResult, _normalize_page_content, index_long_document
 
@@ -37,6 +38,14 @@ class TestNormalizePageContent:
 
 
 class TestIndexLongDocument:
+    @pytest.fixture(autouse=True)
+    def _local_path_by_default(self, monkeypatch):
+        # These tests exercise the LOCAL indexing path; unset PAGEINDEX_API_KEY
+        # so they are deterministic regardless of a developer's configured key
+        # (otherwise the cloud branch reads the page count from the fake PDF and
+        # raises). Cloud-path tests in this class re-enable it via setenv.
+        monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
+
     def _make_fake_collection(self, doc_id: str, sample_tree: dict):
         """Build a mock Collection that returns the sample_tree fixture data."""
         col = MagicMock()
@@ -255,3 +264,157 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     # summary frontmatter points full_text at the doc_name artifact
     summary_text = (kb_dir / "wiki" / "summaries" / "original-abc12345.md").read_text(encoding="utf-8")
     assert "original-abc12345" in summary_text
+
+
+class TestImportCloudDocument:
+    def _fake_client(self, doc_id, sample_tree, pages):
+        col = MagicMock()
+        col.get_document.return_value = {
+            "doc_id": doc_id,
+            "doc_name": "Cloud Paper.pdf",
+            "doc_description": sample_tree["doc_description"],
+            "structure": sample_tree["structure"],
+        }
+        col.get_page_content.return_value = pages
+        client = MagicMock()
+        client.collection.return_value = col
+        return client, col
+
+    def test_writes_artifacts_and_returns_result(self, kb_dir, sample_tree, monkeypatch):
+        from openkb.indexer import CloudImportResult, import_cloud_document
+
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+        pages = [{"page": 1, "content": "Cloud page one."}]
+        client, col = self._fake_client("cloud-1", sample_tree, pages)
+
+        with patch("openkb.indexer.PageIndexClient", return_value=client):
+            result = import_cloud_document("cloud-1", kb_dir, "pageindex-cloud:cloud-1")
+
+        assert isinstance(result, CloudImportResult)
+        assert result.doc_id == "cloud-1"
+        assert result.name == "Cloud Paper.pdf"
+        assert result.doc_name == "Cloud-Paper"
+        assert (kb_dir / "wiki" / "sources" / "Cloud-Paper.json").exists()
+        assert (kb_dir / "wiki" / "summaries" / "Cloud-Paper.md").exists()
+        # col.add must never be called — the doc already exists in the cloud
+        col.add.assert_not_called()
+
+    def test_requires_api_key(self, kb_dir, monkeypatch):
+        from openkb.indexer import import_cloud_document
+
+        monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
+        try:
+            import_cloud_document("cloud-x", kb_dir, "pageindex-cloud:cloud-x")
+        except RuntimeError as exc:
+            assert "PAGEINDEX_API_KEY" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError when API key is missing")
+
+    def test_empty_pages_raise(self, kb_dir, sample_tree, monkeypatch):
+        from openkb.indexer import import_cloud_document
+
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+        client, col = self._fake_client("cloud-2", sample_tree, [])
+
+        with patch("openkb.indexer.PageIndexClient", return_value=client):
+            try:
+                import_cloud_document("cloud-2", kb_dir, "pageindex-cloud:cloud-2")
+            except RuntimeError as exc:
+                assert "No page content" in str(exc)
+            else:
+                raise AssertionError("expected RuntimeError on empty pages")
+
+
+def test_write_long_doc_artifacts_writes_json_and_summary(kb_dir, sample_tree):
+    from openkb.indexer import _write_long_doc_artifacts
+
+    pages = [{"page": 1, "content": "Hello.", "images": []}]
+    summary_path = _write_long_doc_artifacts(sample_tree, pages, "my-doc", "doc-1", kb_dir)
+
+    assert summary_path == kb_dir / "wiki" / "summaries" / "my-doc.md"
+    assert summary_path.exists()
+    json_file = kb_dir / "wiki" / "sources" / "my-doc.json"
+    assert json_file.exists()
+    assert '"content": "Hello."' in json_file.read_text(encoding="utf-8")
+    assert "doc_type: pageindex" in summary_path.read_text(encoding="utf-8")
+
+
+def test_fetch_cloud_pages_windows_over_1000_cap():
+    """get_page_content's range filter is capped at 1000 pages by parse_pages, so
+    _fetch_cloud_pages must request fixed 1000-page windows (never a wider range)
+    and concatenate them, preserving real page numbers.
+    """
+    from openkb.indexer import _fetch_cloud_pages
+
+    def fake_get(doc_id, rng):
+        start = int(rng.split("-")[0])
+        if start == 1:
+            return [{"page": p, "content": f"p{p}"} for p in range(1, 1001)]
+        if start == 1001:
+            return [{"page": p, "content": f"p{p}"} for p in range(1001, 1501)]
+        return []
+
+    col = MagicMock()
+    col.get_page_content.side_effect = fake_get
+
+    pages = _fetch_cloud_pages(col, "doc")
+    assert len(pages) == 1500
+    assert pages[0]["page"] == 1 and pages[-1]["page"] == 1500
+    ranges = [c.args[1] for c in col.get_page_content.call_args_list]
+    # Full first window → fetch the next; the short 2nd window (500<1000) stops it.
+    assert ranges == ["1-1000", "1001-2000"]
+    # Every requested window spans exactly 1000 pages → parse_pages never raises.
+    for r in ranges:
+        a, b = (int(x) for x in r.split("-"))
+        assert b - a + 1 == 1000
+
+
+def test_fetch_cloud_pages_full_window_triggers_next_fetch():
+    """A doc whose pages exactly fill the first window must still fetch the next
+    one. Regression: bounding the loop by the tree's max page index dropped the
+    straggler page(s) of a doc whose tree under-reported its page count.
+    """
+    from openkb.indexer import _fetch_cloud_pages
+
+    def fake_get(doc_id, rng):
+        start = int(rng.split("-")[0])
+        if start == 1:
+            return [{"page": p, "content": "x"} for p in range(1, 1001)]  # full window
+        if start == 1001:
+            return [{"page": 1001, "content": "x"}]  # one straggler past the window
+        return []
+
+    col = MagicMock()
+    col.get_page_content.side_effect = fake_get
+
+    pages = _fetch_cloud_pages(col, "doc")
+    assert [p["page"] for p in pages] == list(range(1, 1002))  # page 1001 NOT dropped
+
+
+def test_import_cloud_document_no_indices_avoids_oversized_range(kb_dir, monkeypatch):
+    """A cloud tree with no integer page indices must NOT request a 100000-page
+    range (parse_pages rejects >1000); it windows from page 1 instead.
+    """
+    from openkb.indexer import import_cloud_document
+
+    monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+    col = MagicMock()
+    col.get_document.return_value = {
+        "doc_id": "c", "doc_name": "NoIdx.pdf", "doc_description": "d",
+        "structure": [{"title": "n", "nodes": []}],  # no start/end_index anywhere
+    }
+    col.get_page_content.side_effect = (
+        lambda doc_id, rng: [{"page": 1, "content": "x"}] if rng == "1-1000" else []
+    )
+    client = MagicMock()
+    client.collection.return_value = col
+
+    with patch("openkb.indexer.PageIndexClient", return_value=client):
+        result = import_cloud_document("c", kb_dir, "pageindex-cloud:c")
+
+    assert result.doc_id == "c"
+    ranges = [c.args[1] for c in col.get_page_content.call_args_list]
+    assert "1-100000" not in ranges
+    for r in ranges:
+        a, b = (int(x) for x in r.split("-"))
+        assert b - a + 1 <= 1000
