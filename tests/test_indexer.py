@@ -337,3 +337,61 @@ def test_write_long_doc_artifacts_writes_json_and_summary(kb_dir, sample_tree):
     assert json_file.exists()
     assert '"content": "Hello."' in json_file.read_text(encoding="utf-8")
     assert "doc_type: pageindex" in summary_path.read_text(encoding="utf-8")
+
+
+def test_fetch_cloud_pages_windows_over_1000_cap():
+    """get_page_content's range filter is capped at 1000 pages by parse_pages, so
+    _fetch_cloud_pages must request fixed 1000-page windows (never a wider range)
+    and concatenate them, preserving real page numbers.
+    """
+    from openkb.indexer import _fetch_cloud_pages
+
+    def fake_get(doc_id, rng):
+        start = int(rng.split("-")[0])
+        if start == 1:
+            return [{"page": p, "content": f"p{p}"} for p in range(1, 1001)]
+        if start == 1001:
+            return [{"page": p, "content": f"p{p}"} for p in range(1001, 1501)]
+        return []
+
+    col = MagicMock()
+    col.get_page_content.side_effect = fake_get
+
+    pages = _fetch_cloud_pages(col, "doc", 0)  # 0 = unknown bound → loop until empty
+    assert len(pages) == 1500
+    assert pages[0]["page"] == 1 and pages[-1]["page"] == 1500
+    ranges = [c.args[1] for c in col.get_page_content.call_args_list]
+    assert ranges == ["1-1000", "1001-2000", "2001-3000"]
+    # Every requested window spans exactly 1000 pages → parse_pages never raises.
+    for r in ranges:
+        a, b = (int(x) for x in r.split("-"))
+        assert b - a + 1 == 1000
+
+
+def test_import_cloud_document_no_indices_avoids_oversized_range(kb_dir, monkeypatch):
+    """A cloud tree with no integer page indices must NOT request a 100000-page
+    range (parse_pages rejects >1000); it windows from page 1 instead.
+    """
+    from openkb.indexer import import_cloud_document
+
+    monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+    col = MagicMock()
+    col.get_document.return_value = {
+        "doc_id": "c", "doc_name": "NoIdx.pdf", "doc_description": "d",
+        "structure": [{"title": "n", "nodes": []}],  # no start/end_index anywhere
+    }
+    col.get_page_content.side_effect = (
+        lambda doc_id, rng: [{"page": 1, "content": "x"}] if rng == "1-1000" else []
+    )
+    client = MagicMock()
+    client.collection.return_value = col
+
+    with patch("openkb.indexer.PageIndexClient", return_value=client):
+        result = import_cloud_document("c", kb_dir, "pageindex-cloud:c")
+
+    assert result.doc_id == "c"
+    ranges = [c.args[1] for c in col.get_page_content.call_args_list]
+    assert "1-100000" not in ranges
+    for r in ranges:
+        a, b = (int(x) for x in r.split("-"))
+        assert b - a + 1 <= 1000

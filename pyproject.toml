@@ -61,9 +61,6 @@ testpaths = ["tests"]
 [project.optional-dependencies]
 dev = ["pytest==9.0.3", "pytest-asyncio==1.3.0"]
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.hatch.version]
 source = "vcs"
 

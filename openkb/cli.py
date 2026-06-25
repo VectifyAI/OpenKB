@@ -207,7 +207,18 @@ SUPPORTED_EXTENSIONS = {
 # Map raw doc types to display types
 _TYPE_DISPLAY_MAP = {
     "long_pdf": "pageindex",
+    "pageindex_cloud": "pageindex",
 }
+
+# Registry types that were compiled via the long-doc pipeline (tree + per-page
+# JSON source), as opposed to short docs (markdown source). Both the local
+# long-PDF type and cloud imports belong here — they share the long-doc
+# summary/source layout and recompile path.
+_LONG_DOC_TYPES = {"long_pdf", "pageindex_cloud"}
+
+
+def _is_long_doc(meta: dict) -> bool:
+    return meta.get("type") in _LONG_DOC_TYPES
 
 _SHORT_DOC_TYPES = {"pdf", "docx", "md", "markdown", "html", "htm", "txt", "csv", "pptx", "xlsx", "xls"}
 
@@ -1327,7 +1338,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
         targets = [matches[0][1]]
 
     def _classify(meta: dict) -> str:
-        return "long" if meta.get("type") == "long_pdf" else "short"
+        return "long" if _is_long_doc(meta) else "short"
 
     # --dry-run: enumerate only, no LLM calls, no writes.
     if dry_run:
@@ -1374,7 +1385,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             skipped += 1
             continue
 
-        if meta.get("type") == "long_pdf":
+        if _is_long_doc(meta):
             summary_path = wiki_dir / "summaries" / f"{name}.md"
             doc_id = meta.get("doc_id")
             if not doc_id:
