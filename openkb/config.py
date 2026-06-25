@@ -172,6 +172,34 @@ def resolve_timeout(config: dict) -> float | None:
     return value
 
 
+def resolve_litellm_settings(config: dict) -> dict[str, Any]:
+    """Resolve the optional ``litellm:`` mapping of LiteLLM module settings.
+
+    Values are forwarded verbatim (the user owns them); only the container shape
+    is enforced — returns ``{}`` if absent or not a mapping, and drops non-string
+    keys. ``cli._apply_litellm_settings`` applies them.
+    """
+    raw = config.get("litellm")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(
+            "config: 'litellm' must be a mapping of LiteLLM settings, got %s — "
+            "ignoring it.",
+            type(raw).__name__,
+        )
+        return {}
+    settings: dict[str, Any] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            logger.warning(
+                "config: skipping 'litellm' entry with non-string key %r.", key
+            )
+            continue
+        settings[key] = value
+    return settings
+
+
 # Process-wide extra headers for LLM requests, resolved from the active KB's
 # config by the CLI entry points (cli._setup_llm_key). LLM call sites read it
 # via get_extra_headers() so the value doesn't have to be threaded through
