@@ -7,7 +7,7 @@ a document already indexed in PageIndex Cloud.
 
 > **Try it with** [`../docs/deepseek-r1.pdf`](../docs/deepseek-r1.pdf) (~22 pages,
 > just over the threshold → long-doc path) or
-> [`../docs/Bishop-Pattern-Recognition-and-Machine-Learning-2006.pdf`](../docs/)
+> [`../docs/Bishop-Pattern-Recognition-and-Machine-Learning-2006.pdf`](../docs/Bishop-Pattern-Recognition-and-Machine-Learning-2006.pdf)
 > (700+ pages → exercises cloud OCR + page windowing).
 
 ---
@@ -18,8 +18,8 @@ When you `openkb add` a PDF, its page count decides the path:
 
 | Page count | Path | Engine |
 | --- | --- | --- |
-| `≤ pageindex_threshold` (default 20) | short-doc | markitdown → LLM reads full text |
-| `> pageindex_threshold` | long-doc | PageIndex tree index |
+| `< pageindex_threshold` (default 20) | short-doc | markitdown → LLM reads full text |
+| `≥ pageindex_threshold` | long-doc | PageIndex tree index |
 
 For the long-doc path, whether it runs **locally** or in the **cloud** depends only
 on one environment variable:

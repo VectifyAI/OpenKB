@@ -94,7 +94,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | --- | --- | --- |
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
-| `pageindex_threshold` | `20` | PDFs with **more** pages than this take the long-doc (PageIndex) path; fewer go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
+| `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |
 

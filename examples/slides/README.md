@@ -75,6 +75,7 @@ od:
   mode: deck
   output_path_template: "output/decks/{slug}/index.html"
   deck_grammar:
+    kind_attr: data-type
     required: [cover, closing]
     allowed: [cover, chapter, thesis, quote, compare, data, closing]
     min_distinct: 4

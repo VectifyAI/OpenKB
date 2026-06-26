@@ -77,7 +77,7 @@ Identify a doc by filename, its slug, or a unique substring:
 openkb remove attention-is-all-you-need.pdf     # exact filename
 openkb remove attention                         # unique substring
 openkb remove attention --dry-run               # preview, change nothing
-openkb remove attention --keep-empty            # keep concept pages it solely sourced
+openkb remove attention --keep-empty            # keep concept & entity pages it solely sourced
 openkb remove attention --keep-raw --yes        # leave raw/ file, no prompt
 ```
 
