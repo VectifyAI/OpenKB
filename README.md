@@ -289,7 +289,7 @@ openkb visualize            # build + open output/visualize/graph.html
 
 ### Settings
 
-OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.yaml`:
+`openkb init` writes `.openkb/config.yaml`:
 
 ```yaml
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
@@ -297,25 +297,7 @@ language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 ```
 
-Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
-
-| Provider | Model example |
-|---|---|
-| OpenAI | `gpt-5.4` |
-| Anthropic | `anthropic/claude-sonnet-4-6` |
-| Gemini | `gemini/gemini-3.1-pro-preview` |
-
-<details>
-<summary><i>Advanced options (<code>entity_types</code>, OAuth):</i></summary>
-<br>
-
-`entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
-
-Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
-
-</details>
-
-For deeper LLM/LiteLLM tuning — timeouts for slow local runtimes (Ollama, LM Studio), `drop_params`, GitHub Copilot headers, install notes — see **[`examples/configuration/`](examples/configuration/)**.
+The full settings reference — `entity_types`, OAuth providers (`chatgpt/*`, `github_copilot/*`), and LiteLLM tuning (timeouts for slow local runtimes like Ollama / LM Studio, `drop_params`, GitHub Copilot headers, install notes) — is in **[`examples/configuration/`](examples/configuration/)**.
 
 ### PageIndex Setup
 
