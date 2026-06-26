@@ -267,11 +267,11 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
 
 
 class TestImportCloudDocument:
-    def _fake_client(self, doc_id, sample_tree, pages):
+    def _fake_client(self, doc_id, sample_tree, pages, doc_name="Cloud Paper.pdf"):
         col = MagicMock()
         col.get_document.return_value = {
             "doc_id": doc_id,
-            "doc_name": "Cloud Paper.pdf",
+            "doc_name": doc_name,
             "doc_description": sample_tree["doc_description"],
             "structure": sample_tree["structure"],
         }
@@ -298,6 +298,24 @@ class TestImportCloudDocument:
         assert (kb_dir / "wiki" / "summaries" / "Cloud-Paper.md").exists()
         # col.add must never be called — the doc already exists in the cloud
         col.add.assert_not_called()
+
+    def test_windows_style_cloud_name_resolves_same_doc_name(self, kb_dir, sample_tree, monkeypatch):
+        from openkb.indexer import import_cloud_document
+
+        monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
+        pages = [{"page": 1, "content": "Cloud page one."}]
+        client, _ = self._fake_client(
+            "cloud-1", sample_tree, pages,
+            doc_name=r"C:\Users\me\Cloud Paper.pdf",
+        )
+
+        with patch("openkb.indexer.PageIndexClient", return_value=client):
+            result = import_cloud_document("cloud-1", kb_dir, "pageindex-cloud:cloud-1")
+
+        assert result.name == r"C:\Users\me\Cloud Paper.pdf"
+        assert result.doc_name == "Cloud-Paper"
+        assert (kb_dir / "wiki" / "sources" / "Cloud-Paper.json").exists()
+        assert not (kb_dir / "wiki" / "sources" / "C-Users-me-Cloud-Paper.json").exists()
 
     def test_requires_api_key(self, kb_dir, monkeypatch):
         from openkb.indexer import import_cloud_document

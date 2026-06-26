@@ -5,7 +5,7 @@ import json as json_mod
 import logging
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import os
@@ -52,6 +52,13 @@ class CloudImportData:
     description: str
     tree: dict
     all_pages: list
+
+
+def _cloud_display_stem(cloud_name: str, fallback: str) -> str:
+    """Return a platform-independent stem for a PageIndex Cloud display name."""
+    normalized = cloud_name.replace("\\", "/").rstrip("/")
+    leaf = normalized.rsplit("/", 1)[-1] if normalized else ""
+    return PurePosixPath(leaf).stem or fallback
 
 
 def _normalize_page_content(raw_pages: Any) -> list[dict[str, Any]]:
@@ -290,7 +297,7 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
     structure: list = doc.get("structure", [])
 
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
-    stem = Path(cloud_name).stem or doc_id
+    stem = _cloud_display_stem(cloud_name, doc_id)
     doc_name = resolve_doc_name_from_key(stem, path_key, registry)
 
     tree = {
