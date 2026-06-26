@@ -5,7 +5,7 @@ import json as json_mod
 import logging
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import os
@@ -35,6 +35,30 @@ class CloudImportResult:
     doc_name: str   # collision-resistant wiki slug
     name: str       # cloud display name (original filename in the cloud)
     description: str
+
+
+@dataclass
+class CloudImportData:
+    """A fetched cloud doc + its resolved wiki name, before any KB write.
+
+    Returned by :func:`prepare_cloud_import` so the caller can snapshot this
+    doc's specific paths (O(1)) before :func:`_write_long_doc_artifacts` writes
+    them — instead of copying the whole summaries/sources trees on every import.
+    """
+
+    doc_id: str
+    doc_name: str      # collision-resistant wiki slug (resolved, not yet written)
+    cloud_name: str    # cloud display name (original filename in the cloud)
+    description: str
+    tree: dict
+    all_pages: list
+
+
+def _cloud_display_stem(cloud_name: str, fallback: str) -> str:
+    """Return a platform-independent stem for a PageIndex Cloud display name."""
+    normalized = cloud_name.replace("\\", "/").rstrip("/")
+    leaf = normalized.rsplit("/", 1)[-1] if normalized else ""
+    return PurePosixPath(leaf).stem or fallback
 
 
 def _normalize_page_content(raw_pages: Any) -> list[dict[str, Any]]:
@@ -246,14 +270,13 @@ def _fetch_cloud_pages(col, doc_id: str) -> list[dict[str, Any]]:
     return pages
 
 
-def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImportResult:
-    """Import an already-indexed PageIndex Cloud document by ``doc_id``.
+def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImportData:
+    """Fetch a PageIndex Cloud doc and resolve its wiki name WITHOUT writing.
 
-    Fetches structure + OCR'd page content from the cloud (no local PDF) and
-    writes the same wiki artifacts as :func:`index_long_document`. Requires
-    ``PAGEINDEX_API_KEY``. ``path_key`` is the synthetic identity key
-    (``pageindex-cloud:<doc_id>``) used to resolve a collision-resistant
-    wiki name.
+    Cloud fetch + collision-resistant name resolution only — no KB mutation —
+    so the caller knows ``doc_name`` before writing and can snapshot just this
+    doc's paths instead of copying the whole summaries/sources trees. Name
+    resolution reads the registry but does not mutate it.
     """
     from openkb.converter import resolve_doc_name_from_key
     from openkb.state import HashRegistry
@@ -274,7 +297,7 @@ def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpo
     structure: list = doc.get("structure", [])
 
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
-    stem = Path(cloud_name).stem or doc_id
+    stem = _cloud_display_stem(cloud_name, doc_id)
     doc_name = resolve_doc_name_from_key(stem, path_key, registry)
 
     tree = {
@@ -289,7 +312,32 @@ def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpo
             f"No page content returned from PageIndex Cloud for doc_id={doc_id}"
         )
 
-    _write_long_doc_artifacts(tree, all_pages, doc_name, doc_id, kb_dir, description=description)
+    return CloudImportData(
+        doc_id=doc_id, doc_name=doc_name, cloud_name=cloud_name,
+        description=description, tree=tree, all_pages=all_pages,
+    )
+
+
+def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImportResult:
+    """Import an already-indexed PageIndex Cloud document by ``doc_id``.
+
+    Fetches structure + OCR'd page content from the cloud (no local PDF) and
+    writes the same wiki artifacts as :func:`index_long_document`. Requires
+    ``PAGEINDEX_API_KEY``. ``path_key`` is the synthetic identity key
+    (``pageindex-cloud:<doc_id>``) used to resolve a collision-resistant
+    wiki name.
+
+    Writes immediately. Callers that need to snapshot before writing (e.g. the
+    crash-safe CLI path) should call :func:`prepare_cloud_import` then
+    :func:`_write_long_doc_artifacts`, so the snapshot can cover only this
+    doc's paths.
+    """
+    cloud = prepare_cloud_import(doc_id, kb_dir, path_key)
+    _write_long_doc_artifacts(
+        cloud.tree, cloud.all_pages, cloud.doc_name, cloud.doc_id, kb_dir,
+        description=cloud.description,
+    )
     return CloudImportResult(
-        doc_id=doc_id, doc_name=doc_name, name=cloud_name, description=description,
+        doc_id=cloud.doc_id, doc_name=cloud.doc_name,
+        name=cloud.cloud_name, description=cloud.description,
     )
