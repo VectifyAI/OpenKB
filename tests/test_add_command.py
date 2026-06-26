@@ -833,6 +833,34 @@ class TestAddCommand:
             result = runner.invoke(cli, ["add"])
             assert "Provide a PATH" in result.output
 
+    def test_add_cloud_import_drains_pending_journal_under_lock(self, tmp_path):
+        """The cloud path acquires the mutation lock (the outer @_with_kb_lock
+        was removed for directory batching), so a pending journal left by a
+        crashed prior run is drained before the import proceeds — not left to
+        race with it. Regression guard: removing the _kb_mutation_lock wrap
+        would let the seeded journal (and its mutated live file) survive."""
+        from openkb.mutation import snapshot_paths
+
+        kb_dir = self._setup_kb(tmp_path)
+        # Seed an unresolved "active" journal exactly as a crashed prior
+        # mutation would leave one: snapshot a live file, mutate it, then
+        # never mark_committed / discard.
+        live = kb_dir / "wiki" / "index.md"
+        live.write_text("before-crash", encoding="utf-8")
+        snap = snapshot_paths(kb_dir, [live], operation="seed", details={})
+        live.write_text("mutated-by-crashed-run", encoding="utf-8")
+        assert snap.journal_path.exists()  # genuinely pending
+
+        with patch("openkb.cli.import_from_pageindex_cloud", return_value="added"), \
+             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+            result = CliRunner().invoke(cli, ["add", "--from-pageindex-cloud", "doc-1"])
+
+        assert result.exit_code == 0, result.output
+        # The lock drained the pending journal on acquire: live content rolled
+        # back to pre-crash, and no journal remains.
+        assert live.read_text(encoding="utf-8") == "before-crash"
+        assert not any((kb_dir / ".openkb" / "journal").glob("*.json"))
+
 
 class TestImportFromPageindexCloud:
     def _setup_kb(self, tmp_path):
@@ -909,10 +937,12 @@ class TestImportFromPageindexCloud:
         assert registry.all_entries() == {}
 
     def test_compile_failure_cleans_up_orphan_artifacts(self, tmp_path):
-        """If import succeeds (artifacts written) but compile fails twice, the
-        summary/source artifacts are cleaned up — no registry entry exists, so
-        `openkb remove` couldn't reach them otherwise — and nothing is registered
-        (so a retry isn't skipped)."""
+        """If import_cloud_document writes artifacts but compile fails twice, the
+        mutation journal rolls the wiki trees back to their pre-import state — no
+        summary/source orphans (`openkb remove` couldn't reach them otherwise),
+        no registry entry (so a retry isn't skipped), and no journal left behind.
+        The artifacts are written inside the import mock so they land after the
+        snapshot (otherwise rollback would faithfully restore them)."""
         from openkb.cli import import_from_pageindex_cloud
         from openkb.indexer import CloudImportResult
         from openkb.state import HashRegistry
@@ -921,22 +951,109 @@ class TestImportFromPageindexCloud:
         (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
         (kb_dir / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
         doc_name = "Cloud-Paper"
-        # Simulate the artifacts import_cloud_document writes before compile.
-        (kb_dir / "wiki" / "summaries" / f"{doc_name}.md").write_text("---\n---\n# s\n")
-        (kb_dir / "wiki" / "sources" / f"{doc_name}.json").write_text("[]")
         result = CloudImportResult(
             doc_id="cloud-1", doc_name=doc_name, name="Cloud Paper.pdf", description="d",
         )
 
-        with patch("openkb.cli.import_cloud_document", return_value=result), \
+        def write_artifacts(doc_id, kb, path_key):
+            # import_cloud_document writes summary + source before returning;
+            # written inside the call so the pre-import snapshot doesn't capture
+            # them and rollback removes them.
+            (kb / "wiki" / "summaries" / f"{doc_name}.md").write_text("---\n---\n# s\n")
+            (kb / "wiki" / "sources" / f"{doc_name}.json").write_text("[]")
+            return result
+
+        with patch("openkb.cli.import_cloud_document", side_effect=write_artifacts), \
              patch("openkb.cli.compile_long_doc", side_effect=RuntimeError("boom")), \
              patch("openkb.cli.time.sleep"), \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
 
         assert outcome == "failed"
-        # Orphan artifacts cleaned up (would be unreachable by `remove` otherwise).
+        # Artifacts rolled back via journal — no orphans `remove` couldn't reach.
         assert not (kb_dir / "wiki" / "summaries" / f"{doc_name}.md").exists()
         assert not (kb_dir / "wiki" / "sources" / f"{doc_name}.json").exists()
         # Nothing registered → a retry is not skipped.
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
+        # Journal rolled back + discarded, nothing active left behind.
+        assert not any((kb_dir / ".openkb" / "journal").glob("*.json"))
+
+    def test_import_cloud_failure_rolls_back_partial_writes(self, tmp_path):
+        """A crash mid-import_cloud_document — it writes live artifacts, then
+        raises — must leave no orphan. The mutation journal snapshots the wiki
+        trees before the import and rolls the partial writes back on failure,
+        restoring the KB and leaving no active journal. (Pre-journal, this
+        exception path returned "failed" with no cleanup, stranding artifacts.)"""
+        from openkb.cli import import_from_pageindex_cloud
+
+        kb_dir = self._setup_kb(tmp_path)
+        pre_hashes = (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8")
+
+        def write_then_fail(doc_id, kb, path_key):
+            # import_cloud_document writes summary + source before it can fail.
+            (kb / "wiki" / "summaries" / "Cloud.md").write_text("---\n---\n# s\n")
+            (kb / "wiki" / "sources" / "Cloud.json").write_text("[]")
+            raise RuntimeError("cloud fetch blew up")
+
+        with patch("openkb.cli.import_cloud_document", side_effect=write_then_fail), \
+             patch("openkb.cli._setup_llm_key"):
+            outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert outcome == "failed"
+        # Partial writes rolled back via journal — no orphaned artifacts.
+        assert not (kb_dir / "wiki" / "summaries" / "Cloud.md").exists()
+        assert not (kb_dir / "wiki" / "sources" / "Cloud.json").exists()
+        # Registry untouched.
+        assert (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8") == pre_hashes
+        # No active journal left stranded for a later run to clean up.
+        assert not any((kb_dir / ".openkb" / "journal").glob("*.json"))
+
+    def test_cloud_import_survives_post_commit_log_failure(self, tmp_path):
+        """A failure appending to wiki/log.md after the registry write must not
+        turn a successful, already-registered import into an uncaught error —
+        the log append is post-commit and best-effort, mirroring the add path."""
+        import hashlib
+
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.indexer import CloudImportResult
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        result = CloudImportResult(
+            doc_id="cloud-1", doc_name="Cloud", name="Cloud.pdf", description="d",
+        )
+
+        with patch("openkb.cli.import_cloud_document", return_value=result), \
+             patch("openkb.cli.compile_long_doc", return_value=None), \
+             patch("openkb.cli._setup_llm_key"), \
+             patch("openkb.cli.append_log", side_effect=OSError("disk full")):
+            outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert outcome == "added"  # registered successfully, log failure swallowed
+        synthetic = hashlib.sha256(b"pageindex-cloud:cloud-1").hexdigest()
+        assert HashRegistry(kb_dir / ".openkb" / "hashes.json").get(synthetic) is not None
+
+    def test_cloud_import_success_leaves_no_journal(self, tmp_path):
+        """A successful cloud import marks the journal committed and discards it,
+        leaving no journal behind. A stale 'committed' journal would be harmless
+        (the next drain discards it), but the success path must not leak one."""
+        import hashlib
+
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.indexer import CloudImportResult
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        result = CloudImportResult(
+            doc_id="cloud-1", doc_name="Cloud", name="Cloud.pdf", description="d",
+        )
+
+        with patch("openkb.cli.import_cloud_document", return_value=result), \
+             patch("openkb.cli.compile_long_doc", return_value=None), \
+             patch("openkb.cli._setup_llm_key"):
+            outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert outcome == "added"
+        assert not any((kb_dir / ".openkb" / "journal").glob("*.json"))
+        synthetic = hashlib.sha256(b"pageindex-cloud:cloud-1").hexdigest()
+        assert HashRegistry(kb_dir / ".openkb" / "hashes.json").get(synthetic) is not None

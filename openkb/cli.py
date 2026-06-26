@@ -557,6 +557,33 @@ def _snapshot_add_paths(kb_dir: Path, doc_name: str, final_raw: Path | None, fin
     return paths
 
 
+def _snapshot_cloud_import_paths(kb_dir: Path) -> list[Path]:
+    """Live KB paths a PageIndex Cloud import can mutate.
+
+    ``doc_name`` isn't known until :func:`import_cloud_document` runs, so the
+    summary/source trees are snapshotted at directory granularity — every writer
+    into the KB is serialized under the mutation lock, so restoring the whole
+    tree is both safe and exact. Same surfaces as :func:`_snapshot_add_paths`
+    minus the raw-less cloud entry's doc-name-specific files.
+    """
+    return [
+        kb_dir / ".openkb" / "hashes.json",
+        kb_dir / ".openkb" / "pageindex.db",
+        # SQLite sidecars may hold PageIndex state written during the import;
+        # snapshot missing paths too so rollback removes any created mid-import.
+        kb_dir / ".openkb" / "pageindex.db-wal",
+        kb_dir / ".openkb" / "pageindex.db-shm",
+        kb_dir / ".openkb" / "pageindex.db-journal",
+        kb_dir / ".openkb" / "files",
+        kb_dir / "wiki" / "summaries",
+        kb_dir / "wiki" / "sources",
+        kb_dir / "wiki" / "concepts",
+        kb_dir / "wiki" / "entities",
+        kb_dir / "wiki" / "index.md",
+        kb_dir / "wiki" / "log.md",
+    ]
+
+
 def _run_compile_with_retry(coro_factory, label: str) -> None:
     """Run an async compile coroutine once, retrying once after 2s on failure.
 
@@ -841,36 +868,6 @@ def _add_single_file_locked(file_path: Path, kb_dir: Path, *, stage: bool = True
     return _commit_prepared_add(prepared, kb_dir, model)
 
 
-def _cleanup_failed_cloud_import(kb_dir: Path, doc_name: str) -> None:
-    """Best-effort wiki cleanup after a cloud import whose compilation failed.
-
-    import_cloud_document writes the summary + per-page JSON source before
-    compile, and compile_long_doc writes concept/entity pages incrementally — so
-    a compile failure (which happens before the registry entry is added) would
-    otherwise strand wiki artifacts that ``openkb remove`` cannot reach. Mirror
-    remove's wiki cleanup (by doc_name, idempotent) but touch neither the
-    registry (no entry was added) nor PageIndex (the cloud doc is the user's).
-    """
-    from openkb.agent.compiler import (
-        remove_doc_from_concept_pages,
-        remove_doc_from_entity_pages,
-        remove_doc_from_index,
-    )
-
-    wiki_dir = kb_dir / "wiki"
-    (wiki_dir / "summaries" / f"{doc_name}.md").unlink(missing_ok=True)
-    (wiki_dir / "sources" / f"{doc_name}.json").unlink(missing_ok=True)
-    images_dir = wiki_dir / "sources" / "images" / doc_name
-    if images_dir.is_dir():
-        shutil.rmtree(images_dir, ignore_errors=True)
-    concept_result = remove_doc_from_concept_pages(wiki_dir, doc_name, keep_empty=False)
-    entity_result = remove_doc_from_entity_pages(wiki_dir, doc_name, keep_empty=False)
-    remove_doc_from_index(
-        wiki_dir, doc_name, concept_result["deleted"],
-        entity_slugs_deleted=entity_result["deleted"],
-    )
-
-
 def import_from_pageindex_cloud(
     doc_id: str, kb_dir: Path
 ) -> Literal["added", "skipped", "failed"]:
@@ -899,61 +896,103 @@ def import_from_pageindex_cloud(
         return "skipped"
 
     click.echo(f"Importing from PageIndex Cloud: {doc_id}")
+    # Snapshot the live KB trees this import mutates (summary/source/concept/
+    # entity pages, registry, PageIndex) before the first write, and journal the
+    # intent. A crash or failure anywhere in the import → compile → registry
+    # window rolls these back; mark_committed after the registry write is the
+    # commit point, mirroring the add path's discipline. doc_name is unknown
+    # until import_cloud_document runs, so summaries/sources snap at dir scope.
+    snapshot: MutationSnapshot | None = None
+    doc_name = ""
     try:
-        import_result = import_cloud_document(doc_id, kb_dir, path_key)
-    except Exception as exc:
-        click.echo(f"  [ERROR] Import failed: {exc}")
-        logger.debug("Cloud import traceback:", exc_info=True)
-        return "failed"
-
-    doc_name = import_result.doc_name
-    summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
-    click.echo(f"  Compiling imported doc (doc_id={doc_id})...")
-    compiled = False
-    for attempt in range(2):
+        snapshot = snapshot_paths(
+            kb_dir,
+            _snapshot_cloud_import_paths(kb_dir),
+            operation="cloud_import",
+            details={"doc_id": doc_id},
+            hardlink_dirs={
+                kb_dir / "wiki" / "concepts",
+                kb_dir / "wiki" / "entities",
+                kb_dir / ".openkb" / "files",
+            },
+        )
         try:
-            asyncio.run(
-                compile_long_doc(
-                    doc_name, summary_path, doc_id, kb_dir, model,
-                    doc_description=import_result.description,
-                )
-            )
-            compiled = True
-            break
+            import_result = import_cloud_document(doc_id, kb_dir, path_key)
         except Exception as exc:
-            if attempt == 0:
-                click.echo("  Retrying compilation in 2s...")
-                time.sleep(2)
-            else:
-                click.echo(f"  [ERROR] Compilation failed: {exc}")
-                logger.debug("Compilation traceback:", exc_info=True)
-    if not compiled:
-        # No registry entry exists yet, so `openkb remove` can't reach the
-        # summary/source/concept/entity artifacts already written; clean them
-        # best-effort so a failed import leaves no orphans and a retry is clean.
-        try:
-            _cleanup_failed_cloud_import(kb_dir, doc_name)
-        except Exception:
-            logger.debug("Cleanup after failed cloud import errored:", exc_info=True)
+            click.echo(f"  [ERROR] Import failed: {exc}")
+            logger.debug("Cloud import traceback:", exc_info=True)
+            raise
+
+        doc_name = import_result.doc_name
+        summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+        click.echo(f"  Compiling imported doc (doc_id={doc_id})...")
+        compiled = False
+        for attempt in range(2):
+            try:
+                asyncio.run(
+                    compile_long_doc(
+                        doc_name, summary_path, doc_id, kb_dir, model,
+                        doc_description=import_result.description,
+                    )
+                )
+                compiled = True
+                break
+            except Exception as exc:
+                if attempt == 0:
+                    click.echo("  Retrying compilation in 2s...")
+                    time.sleep(2)
+                else:
+                    click.echo(f"  [ERROR] Compilation failed: {exc}")
+                    logger.debug("Compilation traceback:", exc_info=True)
+        if not compiled:
+            raise RuntimeError("cloud import compilation failed")
+
+        # Register the raw-less cloud entry only after successful compilation.
+        registry = HashRegistry(openkb_dir / "hashes.json")
+        meta = {
+            "name": import_result.name,
+            "doc_name": doc_name,
+            "type": "pageindex_cloud",
+            "origin": "cloud",
+            "path": path_key,
+            "source_path": _registry_path(
+                kb_dir / "wiki" / "sources" / f"{doc_name}.json", kb_dir
+            ),
+            "doc_id": doc_id,
+        }
+        registry.remove_by_doc_name(doc_name)
+        registry.add(synthetic_hash, meta)
+        # Commit point: the registry write is durable. A failure in the
+        # post-commit cleanup below must not trigger a recovery rollback.
+        snapshot.mark_committed()
+    except Exception:
+        if snapshot is None:
+            # snapshot_paths failed before any mutation ran; it already removed
+            # its own backup dir, so there is nothing to roll back.
+            click.echo("  [ERROR] Failed to prepare mutation snapshot for cloud import.")
+            return "failed"
+        rollback_error = snapshot.rollback_best_effort()
+        if rollback_error is None:
+            snapshot.discard_best_effort()
+        else:
+            click.echo(
+                "  [ERROR] Rollback failed; mutation journal retained for recovery: "
+                f"{snapshot.journal_path}"
+            )
         return "failed"
 
-    # Register the raw-less cloud entry only after successful compilation.
-    registry = HashRegistry(openkb_dir / "hashes.json")
-    meta = {
-        "name": import_result.name,
-        "doc_name": doc_name,
-        "type": "pageindex_cloud",
-        "origin": "cloud",
-        "path": path_key,
-        "source_path": _registry_path(
-            kb_dir / "wiki" / "sources" / f"{doc_name}.json", kb_dir
-        ),
-        "doc_id": doc_id,
-    }
-    registry.remove_by_doc_name(doc_name)
-    registry.add(synthetic_hash, meta)
-
-    append_log(kb_dir / "wiki", "ingest", doc_name)
+    # Post-commit side effects — best-effort only (the journal is already
+    # committed). A stale "committed" journal left behind is harmless: the next
+    # recover_pending_journals sees status "committed" and discards it.
+    try:
+        append_log(kb_dir / "wiki", "ingest", doc_name)
+    except Exception as exc:
+        logger.warning("Failed to append ingest log for %s: %s", doc_name, exc)
+    cleanup_error = snapshot.discard_best_effort()
+    if cleanup_error is not None:
+        click.echo(
+            f"  [WARN] {doc_name} imported, but mutation journal cleanup failed: {cleanup_error}"
+        )
     click.echo(f"  [OK] {doc_name} imported from PageIndex Cloud.")
     return "added"
 
