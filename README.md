@@ -236,9 +236,11 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 | Command | Output |
 |---|---|
-| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Validate compiled skills (YAML frontmatter, file sizes, wikilinks, scripts). Auto-runs at end of `skill new` (`--strict` to treat warnings as failures) |
-| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Trigger-accuracy evaluation: does the `description:` field actually fire? LLM generates eval prompts; grader LLM scores activation (`--save` persists the eval set) |
-| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history for skills. Each overwrite saves the previous version to `iteration-N/` with a diff; rollback restores any iteration |
+| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Validate compiled skills (auto-runs after `skill new`) |
+| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Check the skill triggers on the right prompts |
+| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills |
+
+See **[`examples/skills/`](examples/skills/)** for how validation, evaluation, and rollback actually work.
 
 </details>
 
@@ -256,23 +258,9 @@ openkb chat --list                # list all sessions
 openkb chat --delete <id>         # delete a session
 ```
 
-Inside a chat, type `/` to access slash commands (Tab to complete).
-
-<details>
-<summary><i>More slash commands:</i></summary>
-<br>
-
-- `/help` — list available commands
-- `/status` — show knowledge base status
-- `/list` — list all documents
-- `/add <path>` — add a document or directory without leaving the chat
-- `/skill new <skill-name> "<intent>"` — compile a skill from this chat (see below)
-- `/save [name]` — export the transcript to `wiki/explorations/`
-- `/clear` — start a fresh session (the current one stays on disk)
-- `/lint` — run knowledge base lint
-- `/exit` — exit (Ctrl-D also works)
-
-</details>
+Inside a chat, type `/` to access slash commands (Tab to complete) — `/add`,
+`/skill new`, `/save`, `/lint`, and more. See [`examples/chat/`](examples/chat/)
+for the full list.
 
 <a id="skill-factory"></a>
 
@@ -285,80 +273,9 @@ openkb skill new karpathy-thinking \
   "Reason about transformers and attention in Karpathy's style"
 ```
 
-<details>
-<summary><i>Output:</i></summary>
-<br>
-
-```
-<kb>/output/skills/karpathy-thinking/
-├── SKILL.md                   # YAML frontmatter + when-to-use + approach
-├── references/                # depth material the agent loads on demand
-│   ├── methodology.md
-│   └── key-quotes.md
-└── (scripts/)                 # optional, only if intent implies computation
-```
-
-Plus an auto-updated `<kb>/.claude-plugin/marketplace.json` so the whole KB is one-line installable.
-
-</details>
-
-<details>
-<summary><i>Install locally:</i></summary>
-<br>
-
-```bash
-cp -r output/skills/karpathy-thinking ~/.claude/skills/
-```
-
-</details>
-
-<details>
-<summary><i>Share with others:</i></summary>
-<br>
-
-Push your KB to GitHub, then anyone runs:
-
-```bash
-npx skills@latest add <your-org>/<your-repo>
-```
-
-</details>
-
-<details>
-<summary><i>Iterate from chat:</i></summary>
-<br>
-
-Compilation is one-shot, but follow-up edits don't have to be. Inside `openkb chat`, you can refine without re-running the whole pipeline:
-
-```
-/skill new karpathy-thinking "Reason about transformers like Karpathy"
-[generation streams]
-> description is too generic, make it about transformer implementations specifically
-[agent edits SKILL.md frontmatter in place]
-```
-
-</details>
-
-<details>
-<summary><i>Quality gates:</i></summary>
-<br>
-
-Structural validation, trigger-accuracy + body-coverage evaluation, and full history/rollback:
-
-```bash
-# Lint structure (auto-runs at end of `skill new`)
-openkb skill validate karpathy-thinking
-openkb skill validate --strict          # treat warnings as failures
-
-# Does the description actually fire when it should?
-openkb skill eval karpathy-thinking --save
-
-# History + rollback if a new iteration regresses
-openkb skill history karpathy-thinking
-openkb skill rollback karpathy-thinking --to 2
-```
-
-</details>
+→ The output layout, local install, sharing via `npx skills add`, refining from
+chat, and the `validate` / `eval` / `history` / `rollback` quality gates are walked
+through in **[`examples/skills/`](examples/skills/)** — with a real generated skill.
 
 ### (iii) 🗺 Visualize — *see the shape of your knowledge*
 
@@ -397,6 +314,8 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
 
 </details>
+
+For deeper LLM/LiteLLM tuning — timeouts for slow local runtimes (Ollama, LM Studio), `drop_params`, GitHub Copilot headers, install notes — see **[`examples/configuration/`](examples/configuration/)**.
 
 ### PageIndex Setup
 
