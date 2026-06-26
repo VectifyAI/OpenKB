@@ -119,34 +119,9 @@ LLM_API_KEY=your_llm_api_key
 
 ### Architecture
 
-```
-raw/                              You drop files here
- │
- ├─ Short docs ──→ markitdown ──→ LLM reads full text
- │                                     │
- ├─ Long PDFs ──→ PageIndex ────→ LLM reads document trees
- │                                     │
- │                                     ▼
- │                         Wiki Compilation (using LLM)
- │                                     │
- ▼                                     ▼
-wiki/                                  │            ← the foundation
- ├── index.md            Knowledge base overview
- ├── log.md              Operations timeline
- ├── AGENTS.md           Wiki schema (LLM instructions)
- ├── sources/            Full-text conversions
- ├── summaries/          Per-document summaries
- ├── concepts/           Cross-document synthesis
- ├── entities/           Specific named things (people, orgs, places, products)
- ├── explorations/       Saved query results
- └── reports/            Lint reports
-                                       │
-                ┌──────────────────────┼──────────────────────┐
-                ▼                      ▼                      ▼
-            query / chat         Skill Factory          (future)
-          (LLM answers from    (redistributable       ppt / podcast /
-            the wiki)           agent skills)           report / …
-```
+<div align="center">
+  <img src="assets/openkb-architecture.png" alt="OpenKB Architecture: from raw documents (markitdown / PageIndex) through LLM wiki compilation to the wiki/ foundation, powering query/chat, the Skill Factory, and future generators" width="900" />
+</div>
 
 ### Short vs Long Document Handling
 
