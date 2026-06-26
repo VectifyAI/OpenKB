@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Attention Intro</title>
+<style>
+:root{--bg:#080b11;--bg-elev:#0f141d;--ink:#eef2f7;--soft:#aeb8c7;--muted:#69748a;--line:rgba(255,255,255,.09);--glass:rgba(255,255,255,.04);--teal:#2dd4bf;--sky:#38bdf8;--magenta:#e879f9;--amber:#f6b94b;--font-display:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;--font-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;--type-display:clamp(2.8rem,5.2vw,5.5rem);--type-title:clamp(1.9rem,3.2vw,3rem);--type-body:clamp(1.05rem,1.4vw,1.4rem);--type-quote:clamp(1.6rem,2.6vw,2.2rem);--type-label:clamp(.66rem,.8vw,.8rem)}*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--ink)}body{font-family:var(--font-display)}.slide{position:fixed;inset:0;display:none;flex-direction:column;justify-content:center;padding:clamp(40px,5vh,72px) clamp(56px,5vw,128px);background:var(--bg);isolation:isolate}.slide.active{display:flex}.slide::before,.slide::after{content:"";position:absolute;inset:0;pointer-events:none}.slide::before{background:radial-gradient(circle at 18% 18%,rgba(45,212,191,.14),transparent 28%),radial-gradient(circle at 82% 22%,rgba(56,189,248,.13),transparent 26%),radial-gradient(circle at 72% 80%,rgba(232,121,249,.11),transparent 24%),radial-gradient(circle at 22% 78%,rgba(246,185,75,.08),transparent 22%);filter:blur(14px)}.slide::after{opacity:.04;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");mix-blend-mode:screen}.grid{position:absolute;inset:0;background-image:radial-gradient(circle at center,rgba(255,255,255,.045) 1px,transparent 1px);background-size:34px 34px;opacity:.22;mask-image:linear-gradient(to bottom,transparent,black 10%,black 90%,transparent)}.topbar,.bottombar{position:absolute;left:0;right:0;padding:0 clamp(56px,5vw,128px);display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:var(--type-label);letter-spacing:.22em;text-transform:uppercase;color:var(--muted);z-index:2}.topbar{top:22px}.bottombar{bottom:20px}.sig{position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,var(--teal),var(--sky),var(--magenta));box-shadow:0 0 14px var(--teal)}.inner{position:relative;z-index:1;width:100%;max-width:min(1600px,92vw);margin:0 auto}.cover .inner,.closing .inner{max-width:min(1500px,92vw)}.split .inner{display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(40px,5vw,96px);align-items:center}.compare .inner{max-width:min(1180px,90vw);display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,3vw,56px);align-items:stretch}.center .inner,.quote .inner{max-width:min(900px,72vw);margin:0 auto;text-align:center}.title{font-size:var(--type-title);line-height:1.12;font-weight:800;letter-spacing:-.02em;margin:0 0 18px}.display{font-size:var(--type-display);line-height:1.05;font-weight:800;letter-spacing:-.02em;margin:0}.grad{background:linear-gradient(90deg,var(--teal),var(--sky),var(--magenta));-webkit-background-clip:text;background-clip:text;color:transparent}.soft{color:var(--soft)}.body{font-size:var(--type-body);line-height:1.6;color:var(--ink);margin:0}.mono{font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.18em}.kicker{font-family:var(--font-mono);font-size:var(--type-label);letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:18px}.glass{background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);border-radius:24px}.panel{padding:26px}.stack{display:grid;gap:14px}.chiprow{display:flex;gap:12px;flex-wrap:wrap;margin-top:24px}.chip{font-family:var(--font-mono);font-size:var(--type-label);letter-spacing:.18em;text-transform:uppercase;color:var(--soft);padding:10px 12px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.02)}.rule{width:2px;background:linear-gradient(to bottom,var(--teal),var(--sky),var(--magenta));box-shadow:0 0 18px rgba(45,212,191,.35)}.quote-mark{font-size:var(--type-quote);line-height:1.35;color:var(--soft);font-style:italic;margin:0}.quote .inner{position:relative;padding-left:28px;border-left:2px solid var(--teal);box-shadow:-10px 0 26px rgba(45,212,191,.18)}.num{font-size:clamp(4rem,12vh,9rem);line-height:1;font-weight:800;letter-spacing:-.04em;color:var(--teal);text-shadow:0 0 18px rgba(45,212,191,.38);font-family:var(--font-mono)}.dataNum{display:inline-block;width:max-content;max-width:92vw;white-space:nowrap;font-size:clamp(3.5rem,11vh,9rem);line-height:1;font-weight:800;letter-spacing:-.04em;background:linear-gradient(90deg,var(--teal),var(--sky),var(--magenta));-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 18px rgba(56,189,248,.18)}.dataNum.comp{font-size:clamp(2.4rem,7vh,5.5rem)}ul{margin:18px 0 0;padding:0;list-style:none;display:grid;gap:12px}li{position:relative;padding-left:20px}.split li::before,.compare li::before{content:"";position:absolute;left:0;top:.75em;width:8px;height:8px;border-radius:999px;background:var(--teal);box-shadow:0 0 10px rgba(45,212,191,.4)}.mini{font-family:var(--font-mono);font-size:var(--type-label);letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}.edge{display:grid;gap:14px}.flow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px}.arrow{font-family:var(--font-mono);color:var(--sky);font-size:2rem;text-shadow:0 0 12px rgba(56,189,248,.35)}.small{color:var(--soft)}@media (max-width:900px){.split .inner,.compare .inner{grid-template-columns:1fr}.topbar,.bottombar{padding:0 24px}.slide{padding:72px 24px 56px}.quote .inner{padding-left:18px}}</style>
+</head>
+<body>
+<section class="slide cover active" data-type="cover">
+  <div class="topbar"><div>OPENKB</div><div>ATTENTION INTRO</div></div>
+  <div class="grid"></div>
+  <div class="inner">
+    <div>
+      <div class="kicker">ML reading group</div>
+      <h1 class="display grad">Transformer <span class="soft">&</span><br/>self-attention</h1>
+      <p class="body soft" style="max-width:44ch;margin-top:18px">An attention-only sequence model replaces recurrence, adds positional encoding, and trains in parallel.</p>
+      <div class="chiprow">
+        <div class="chip">Attention weights relevance</div>
+        <div class="chip">No recurrence</div>
+        <div class="chip">Encoder + decoder</div>
+      </div>
+    </div>
+  </div>
+  <div class="topbar" aria-hidden="true" style="top:auto;bottom:20px;display:none"></div>
+  <div class="bottombar"><div>1 / 9</div><div>attention-is-all-you-need</div></div>
+  <div class="sig"></div>
+</section>
+<section class="slide thesis split" data-type="thesis">
+  <div class="topbar"><div>CHAPTER 01</div><div>attention-is-all-you-need</div></div><div class="grid"></div>
+  <div class="inner">
+    <div>
+      <h2 class="title">The Transformer’s claim: <span style="color:var(--teal);text-shadow:0 0 14px rgba(45,212,191,.35)">self-attention is enough</span> for sequence modeling.</h2>
+      <p class="body">The paper replaces recurrent and convolutional layers with stacked attention plus position-wise feed-forward networks, aiming for better parallelism and shorter paths between distant tokens.</p>
+    </div>
+    <div class="glass panel edge">
+      <div class="mini">Why it mattered</div>
+      <div class="stack">
+        <div class="body">Higher training parallelism</div>
+        <div class="body">Constant-depth paths within a layer</div>
+        <div class="body">Strong translation quality with less compute</div>
+      </div>
+    </div>
+  </div>
+  <div class="bottombar"><div>2 / 9</div><div>summary</div></div><div class="sig"></div>
+</section>
+<section class="slide compare" data-type="compare">
+  <div class="topbar"><div>CHAPTER 02</div><div>concepts/transformer-models</div></div><div class="grid"></div>
+  <div class="inner">
+    <div class="glass panel">
+      <div class="kicker">Before</div>
+      <h2 class="title">Recurrent / convolutional sequence models</h2>
+      <ul>
+        <li>Process tokens with more sequential steps</li>
+        <li>Long-range dependencies take longer paths</li>
+        <li>Parallelization is limited by the architecture</li>
+      </ul>
+    </div>
+    <div class="glass panel">
+      <div class="kicker">After</div>
+      <h2 class="title">Transformer stacks of attention</h2>
+      <ul>
+        <li>All positions can interact in parallel</li>
+        <li>Self-attention shortens dependency paths</li>
+        <li>Encoder and decoder both reuse attention blocks</li>
+      </ul>
+    </div>
+  </div>
+  <div class="bottombar"><div>3 / 9</div><div>transformer-models</div></div><div class="sig"></div>
+</section>
+<section class="slide center" data-type="data">
+  <div class="topbar"><div>CHAPTER 03</div><div>concepts/attention-mechanisms</div></div><div class="grid"></div>
+  <div class="inner">
+    <div class="kicker">Attention in one line</div>
+    <div class="dataNum">query × keys → weighted values</div>
+    <p class="body soft" style="margin-top:20px">A query is scored against keys, the scores become weights, and the values are combined into a context vector. Self-attention is the special case where query, key, and value all come from the same sequence.</p>
+  </div>
+  <div class="bottombar"><div>4 / 9</div><div>attention-mechanisms</div></div><div class="sig"></div>
+</section>
+<section class="slide split" data-type="thesis">
+  <div class="topbar"><div>CHAPTER 04</div><div>scaled dot-product attention</div></div><div class="grid"></div>
+  <div class="inner">
+    <div>
+      <h2 class="title">Scaled dot-product attention keeps scores from getting too sharp.</h2>
+      <p class="body">The paper scales dot products by the square root of key dimension before softmax. That prevents large raw scores from collapsing the distribution and makes training more stable.</p>
+    </div>
+    <div class="glass panel">
+      <div class="mini">Mechanism</div>
+      <div class="flow" style="margin-top:14px">
+        <div class="glass panel" style="padding:18px"><div class="mini">Q</div><div class="body">Query</div></div>
+        <div class="arrow">→</div>
+        <div class="glass panel" style="padding:18px"><div class="mini">K,V</div><div class="body">Keys + values</div></div>
+      </div>
+      <div class="body small" style="margin-top:14px">Score, scale, softmax, then sum the values.</div>
+    </div>
+  </div>
+  <div class="bottombar"><div>5 / 9</div><div>summary</div></div><div class="sig"></div>
+</section>
+<section class="slide quote" data-type="quote">
+  <div class="topbar"><div>CHAPTER 05</div><div>concepts/positional-encoding</div></div><div class="grid"></div>
+  <div class="inner">
+    <p class="quote-mark">Without recurrence or convolution, the model needs explicit position information; fixed sinusoidal encodings give each token a location while preserving parallel computation.</p>
+    <div class="mini" style="margin-top:20px">— positional encoding in the Transformer</div>
+  </div>
+  <div class="bottombar"><div>6 / 9</div><div>positional-encoding</div></div><div class="sig"></div>
+</section>
+<section class="slide compare" data-type="compare">
+  <div class="topbar"><div>CHAPTER 06</div><div>encoder / decoder</div></div><div class="grid"></div>
+  <div class="inner">
+    <div class="glass panel">
+      <div class="kicker">Encoder</div>
+      <ul>
+        <li>6 identical layers</li>
+        <li>Multi-head self-attention</li>
+        <li>Position-wise feed-forward network</li>
+      </ul>
+    </div>
+    <div class="glass panel">
+      <div class="kicker">Decoder</div>
+      <ul>
+        <li>6 identical layers</li>
+        <li>Masked self-attention + encoder attention</li>
+        <li>Residual connections and layer norm</li>
+      </ul>
+    </div>
+  </div>
+  <div class="bottombar"><div>7 / 9</div><div>architecture</div></div><div class="sig"></div>
+</section>
+<section class="slide center" data-type="data">
+  <div class="topbar"><div>CHAPTER 07</div><div>wmt-2014</div></div><div class="grid"></div>
+  <div class="inner">
+    <div class="kicker">Headline result</div>
+    <div class="dataNum comp">28.4 BLEU → 41.8 BLEU</div>
+    <p class="body soft" style="margin-top:20px">The big model reached state-of-the-art translation results on WMT 2014 English-German and English-French, while also training faster thanks to more parallel computation.</p>
+  </div>
+  <div class="bottombar"><div>8 / 9</div><div>results</div></div><div class="sig"></div>
+</section>
+<section class="slide closing" data-type="closing">
+  <div class="topbar"><div>OPENKB</div><div>NEXT STEP</div></div><div class="grid"></div>
+  <div class="inner">
+    <h1 class="display grad">Read the paper<br/>with the attention map in mind.</h1>
+    <p class="body soft" style="max-width:48ch;margin-top:18px">When you see a Transformer block, ask three questions: what is being attended to, where does order come from, and how does the stack keep information flowing across the sequence?</p>
+  </div>
+  <div class="bottombar"><div>9 / 9</div><div>thanks</div></div><div class="sig"></div>
+</section>
+<script>
+(()=>{const slides=[...document.querySelectorAll('.slide')];let i=0;const show=n=>{slides[i].classList.remove('active');i=(n+slides.length)%slides.length;slides[i].classList.add('active');};addEventListener('keydown',e=>{if(e.key==='ArrowRight')show(i+1);if(e.key==='ArrowLeft')show(i-1);if(e.key.toLowerCase()==='f')document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();if(e.key.toLowerCase()==='p')window.print();});})();
+</script>
+</body>
+</html>

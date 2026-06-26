@@ -97,8 +97,10 @@ openkb query "What are the main findings?"
 # 5. Or chat interactively
 openkb chat
 
-# (Optional) Distill a redistributable agent skill from your wiki
-openkb skill new my-expert "Reason like an expert on <your-topic>"
+# (Optional) Turn the wiki into other outputs
+openkb skill new my-expert "Reason like an expert on <your-topic>"   # a portable agent skill
+openkb visualize                                                     # an interactive knowledge graph
+openkb deck new my-deck "An intro deck on <your-topic>"              # slides — a single-file HTML deck
 ```
 
 ### Set up your LLM
@@ -171,7 +173,7 @@ A single source might touch 10--15 wiki pages. Knowledge accumulates: each docum
 
 # ⚙️ Usage
 
-OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output).
+OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output). Each links to a concrete walkthrough — a real artifact OpenKB generated from one sample paper (browse them all in [`examples/`](examples/)).
 
 ## Layer 1: 🧱 Wiki Foundation — compile and maintain
 
@@ -194,21 +196,21 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the compile pipeline on already-indexed docs without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten (`--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md`) |
 | <code>openkb&nbsp;feedback&nbsp;["msg"]</code> | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it) |
 
-<!-- | `openkb lint --fix` | Auto-fix what it can | -->
-
 </details>
+
+→ **Example:** the everyday loop walked through end to end — [`examples/commands/`](examples/commands/).
 
 ## Layer 2: 💡 Generators — turn the wiki into output
 
 A "generator" reads from the compiled wiki and produces something usable: an answer, a conversation, a skill folder. The wiki is the substrate; generators are the surfaces.
 
-| Command | Output |
-|---|---|
-| <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (`--save` to persist to `wiki/explorations/`) |
-| <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) |
-| <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views |
-| | |
-| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below) |
+| Command | Output | Example |
+|---|---|---|
+| <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (`--save` to persist to `wiki/explorations/`) | [query & save](examples/commands/) |
+| <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) | [chat](examples/chat/) |
+| <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views | [visualize](examples/visualize/) |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) | [skills](examples/skills/) |
+| <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass) | [slides](examples/slides/) |
 
 <details>
 <summary><i>More skill commands:</i></summary>
@@ -216,143 +218,23 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 | Command | Output |
 |---|---|
-| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Validate compiled skills (YAML frontmatter, file sizes, wikilinks, scripts). Auto-runs at end of `skill new` (`--strict` to treat warnings as failures) |
-| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Trigger-accuracy evaluation: does the `description:` field actually fire? LLM generates eval prompts; grader LLM scores activation (`--save` persists the eval set) |
-| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history for skills. Each overwrite saves the previous version to `iteration-N/` with a diff; rollback restores any iteration |
-
-</details>
-
-### (i) 💬 Query & Chat — *ask the wiki*
-
-`openkb query "..."` answers a single question. `openkb chat` is interactive — each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and retrieval primitives.
-
-```bash
-openkb query "What does the literature say about attention scaling?"
-
-openkb chat                       # start a new session
-openkb chat --resume              # resume the most recent session
-openkb chat --resume 20260411     # resume by id (unique prefix works)
-openkb chat --list                # list all sessions
-openkb chat --delete <id>         # delete a session
-```
-
-Inside a chat, type `/` to access slash commands (Tab to complete).
-
-<details>
-<summary><i>More slash commands:</i></summary>
-<br>
-
-- `/help` — list available commands
-- `/status` — show knowledge base status
-- `/list` — list all documents
-- `/add <path>` — add a document or directory without leaving the chat
-- `/skill new <skill-name> "<intent>"` — compile a skill from this chat (see below)
-- `/save [name]` — export the transcript to `wiki/explorations/`
-- `/clear` — start a fresh session (the current one stays on disk)
-- `/lint` — run knowledge base lint
-- `/exit` — exit (Ctrl-D also works)
+| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Validate compiled skills (auto-runs after `skill new`) |
+| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Check the skill triggers on the right prompts |
+| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills |
 
 </details>
 
 <a id="skill-factory"></a>
 
-### (ii) 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
+### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
 
-The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) can install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
-
-```bash
-openkb skill new karpathy-thinking \
-  "Reason about transformers and attention in Karpathy's style"
-```
-
-<details>
-<summary><i>Output:</i></summary>
-<br>
-
-```
-<kb>/output/skills/karpathy-thinking/
-├── SKILL.md                   # YAML frontmatter + when-to-use + approach
-├── references/                # depth material the agent loads on demand
-│   ├── methodology.md
-│   └── key-quotes.md
-└── (scripts/)                 # optional, only if intent implies computation
-```
-
-Plus an auto-updated `<kb>/.claude-plugin/marketplace.json` so the whole KB is one-line installable.
-
-</details>
-
-<details>
-<summary><i>Install locally:</i></summary>
-<br>
-
-```bash
-cp -r output/skills/karpathy-thinking ~/.claude/skills/
-```
-
-</details>
-
-<details>
-<summary><i>Share with others:</i></summary>
-<br>
-
-Push your KB to GitHub, then anyone runs:
-
-```bash
-npx skills@latest add <your-org>/<your-repo>
-```
-
-</details>
-
-<details>
-<summary><i>Iterate from chat:</i></summary>
-<br>
-
-Compilation is one-shot, but follow-up edits don't have to be. Inside `openkb chat`, you can refine without re-running the whole pipeline:
-
-```
-/skill new karpathy-thinking "Reason about transformers like Karpathy"
-[generation streams]
-> description is too generic, make it about transformer implementations specifically
-[agent edits SKILL.md frontmatter in place]
-```
-
-</details>
-
-<details>
-<summary><i>Quality gates:</i></summary>
-<br>
-
-Structural validation, trigger-accuracy + body-coverage evaluation, and full history/rollback:
-
-```bash
-# Lint structure (auto-runs at end of `skill new`)
-openkb skill validate karpathy-thinking
-openkb skill validate --strict          # treat warnings as failures
-
-# Does the description actually fire when it should?
-openkb skill eval karpathy-thinking --save
-
-# History + rollback if a new iteration regresses
-openkb skill history karpathy-thinking
-openkb skill rollback karpathy-thinking --to 2
-```
-
-</details>
-
-### (iii) 🗺 Visualize — *see the shape of your knowledge*
-
-`openkb visualize` renders the wiki as a single self-contained, offline HTML page with three views of the same knowledge base — a **3D** force graph, an OpenKB-rooted **mind-map**, and a **radial** tree — coloured by type and linked by `[[wikilinks]]`.
-
-```bash
-openkb visualize            # build + open output/visualize/graph.html
-```
+The flagship generator: `openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
 
 # 🔧 Configuration
 
 ### Settings
 
-OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.yaml`:
+`openkb init` writes `.openkb/config.yaml`:
 
 ```yaml
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
@@ -360,23 +242,7 @@ language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 ```
 
-Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/providers) (OpenAI models can omit the prefix):
-
-| Provider | Model example |
-|---|---|
-| OpenAI | `gpt-5.4` |
-| Anthropic | `anthropic/claude-sonnet-4-6` |
-| Gemini | `gemini/gemini-3.1-pro-preview` |
-
-<details>
-<summary><i>Advanced options (<code>entity_types</code>, OAuth):</i></summary>
-<br>
-
-`entity_types` (optional): a YAML list overriding the entity-type vocabulary used for entity pages; omit it to use the default `person`, `organization`, `place`, `product`, `work`, `event`, `other`.
-
-Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
-
-</details>
+The full settings reference — `entity_types`, OAuth providers (`chatgpt/*`, `github_copilot/*`), and LiteLLM tuning (timeouts for slow local runtimes like Ollama / LM Studio, `drop_params`, GitHub Copilot headers, install notes) — is in **[`examples/configuration/`](examples/configuration/)**.
 
 ### PageIndex Setup
 
@@ -397,6 +263,8 @@ Set `PAGEINDEX_API_KEY` in your `.env` to enable cloud features:
 ```
 PAGEINDEX_API_KEY=your_pageindex_api_key
 ```
+
+→ **Example:** local vs. cloud indexing, and importing a cloud-indexed doc — [`examples/pageindex-cloud/`](examples/pageindex-cloud/).
 
 ### AGENTS.md
 
