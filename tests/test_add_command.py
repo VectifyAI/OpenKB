@@ -878,16 +878,18 @@ class TestImportFromPageindexCloud:
     def test_registers_rawless_cloud_entry(self, tmp_path):
         import hashlib
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
+        from openkb.indexer import CloudImportData
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name="Cloud-Paper", name="Cloud Paper.pdf",
-            description="desc",
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name="Cloud-Paper", cloud_name="Cloud Paper.pdf",
+            description="desc", tree={}, all_pages=[],
         )
 
-        with patch("openkb.cli.import_cloud_document", return_value=result), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=data), \
+             patch("openkb.cli._write_long_doc_artifacts",
+                   return_value=kb_dir / "wiki" / "summaries" / "Cloud-Paper.md"), \
              patch("openkb.cli.compile_long_doc", return_value=None) as mock_compile, \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
@@ -906,29 +908,31 @@ class TestImportFromPageindexCloud:
 
     def test_second_import_is_skipped(self, tmp_path):
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
+        from openkb.indexer import CloudImportData
 
         kb_dir = self._setup_kb(tmp_path)
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name="Cloud-Paper", name="Cloud Paper.pdf",
-            description="desc",
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name="Cloud-Paper", cloud_name="Cloud Paper.pdf",
+            description="desc", tree={}, all_pages=[],
         )
 
-        with patch("openkb.cli.import_cloud_document", return_value=result) as mock_import, \
+        with patch("openkb.cli.prepare_cloud_import", return_value=data) as mock_prepare, \
+             patch("openkb.cli._write_long_doc_artifacts",
+                   return_value=kb_dir / "wiki" / "summaries" / "Cloud-Paper.md"), \
              patch("openkb.cli.compile_long_doc", return_value=None), \
              patch("openkb.cli._setup_llm_key"):
             import_from_pageindex_cloud("cloud-1", kb_dir)
             second = import_from_pageindex_cloud("cloud-1", kb_dir)
 
         assert second == "skipped"
-        assert mock_import.call_count == 1  # not fetched again
+        assert mock_prepare.call_count == 1  # not fetched again
 
     def test_import_failure_returns_failed_and_registers_nothing(self, tmp_path):
         from openkb.cli import import_from_pageindex_cloud
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        with patch("openkb.cli.import_cloud_document", side_effect=RuntimeError("boom")), \
+        with patch("openkb.cli.prepare_cloud_import", side_effect=RuntimeError("boom")), \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-9", kb_dir)
 
@@ -937,33 +941,35 @@ class TestImportFromPageindexCloud:
         assert registry.all_entries() == {}
 
     def test_compile_failure_cleans_up_orphan_artifacts(self, tmp_path):
-        """If import_cloud_document writes artifacts but compile fails twice, the
-        mutation journal rolls the wiki trees back to their pre-import state — no
+        """If the artifacts are written but compile fails twice, the mutation
+        journal rolls this doc's paths back to their pre-import state — no
         summary/source orphans (`openkb remove` couldn't reach them otherwise),
         no registry entry (so a retry isn't skipped), and no journal left behind.
-        The artifacts are written inside the import mock so they land after the
+        The artifacts are written inside the write mock so they land after the
         snapshot (otherwise rollback would faithfully restore them)."""
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
+        from openkb.indexer import CloudImportData
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
         (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
         (kb_dir / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
         doc_name = "Cloud-Paper"
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name=doc_name, name="Cloud Paper.pdf", description="d",
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name=doc_name, cloud_name="Cloud Paper.pdf",
+            description="d", tree={}, all_pages=[],
         )
 
-        def write_artifacts(doc_id, kb, path_key):
-            # import_cloud_document writes summary + source before returning;
-            # written inside the call so the pre-import snapshot doesn't capture
-            # them and rollback removes them.
-            (kb / "wiki" / "summaries" / f"{doc_name}.md").write_text("---\n---\n# s\n")
-            (kb / "wiki" / "sources" / f"{doc_name}.json").write_text("[]")
-            return result
+        def write_artifacts(tree, all_pages, name, doc_id, kb, description=""):
+            # _write_long_doc_artifacts writes summary + source; done inside the
+            # call so the pre-write snapshot doesn't capture them and rollback
+            # removes them.
+            (kb / "wiki" / "summaries" / f"{name}.md").write_text("---\n---\n# s\n")
+            (kb / "wiki" / "sources" / f"{name}.json").write_text("[]")
+            return kb / "wiki" / "summaries" / f"{name}.md"
 
-        with patch("openkb.cli.import_cloud_document", side_effect=write_artifacts), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=data), \
+             patch("openkb.cli._write_long_doc_artifacts", side_effect=write_artifacts), \
              patch("openkb.cli.compile_long_doc", side_effect=RuntimeError("boom")), \
              patch("openkb.cli.time.sleep"), \
              patch("openkb.cli._setup_llm_key"):
@@ -979,23 +985,28 @@ class TestImportFromPageindexCloud:
         assert not any((kb_dir / ".openkb" / "journal").glob("*.json"))
 
     def test_import_cloud_failure_rolls_back_partial_writes(self, tmp_path):
-        """A crash mid-import_cloud_document — it writes live artifacts, then
-        raises — must leave no orphan. The mutation journal snapshots the wiki
-        trees before the import and rolls the partial writes back on failure,
-        restoring the KB and leaving no active journal. (Pre-journal, this
-        exception path returned "failed" with no cleanup, stranding artifacts.)"""
+        """A crash mid-write — _write_long_doc_artifacts writes live artifacts,
+        then raises — must leave no orphan. The mutation journal snapshots this
+        doc's paths before the write and rolls the partial writes back on
+        failure, restoring the KB and leaving no active journal."""
         from openkb.cli import import_from_pageindex_cloud
+        from openkb.indexer import CloudImportData
 
         kb_dir = self._setup_kb(tmp_path)
         pre_hashes = (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8")
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name="Cloud", cloud_name="Cloud.pdf",
+            description="d", tree={}, all_pages=[],
+        )
 
-        def write_then_fail(doc_id, kb, path_key):
-            # import_cloud_document writes summary + source before it can fail.
-            (kb / "wiki" / "summaries" / "Cloud.md").write_text("---\n---\n# s\n")
-            (kb / "wiki" / "sources" / "Cloud.json").write_text("[]")
-            raise RuntimeError("cloud fetch blew up")
+        def write_then_fail(tree, all_pages, name, doc_id, kb, description=""):
+            # _write_long_doc_artifacts writes summary + source before failing.
+            (kb / "wiki" / "summaries" / f"{name}.md").write_text("---\n---\n# s\n")
+            (kb / "wiki" / "sources" / f"{name}.json").write_text("[]")
+            raise RuntimeError("write blew up")
 
-        with patch("openkb.cli.import_cloud_document", side_effect=write_then_fail), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=data), \
+             patch("openkb.cli._write_long_doc_artifacts", side_effect=write_then_fail), \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
 
@@ -1015,15 +1026,18 @@ class TestImportFromPageindexCloud:
         import hashlib
 
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
+        from openkb.indexer import CloudImportData
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name="Cloud", name="Cloud.pdf", description="d",
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name="Cloud", cloud_name="Cloud.pdf",
+            description="d", tree={}, all_pages=[],
         )
 
-        with patch("openkb.cli.import_cloud_document", return_value=result), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=data), \
+             patch("openkb.cli._write_long_doc_artifacts",
+                   return_value=kb_dir / "wiki" / "summaries" / "Cloud.md"), \
              patch("openkb.cli.compile_long_doc", return_value=None), \
              patch("openkb.cli._setup_llm_key"), \
              patch("openkb.cli.append_log", side_effect=OSError("disk full")):
@@ -1040,15 +1054,18 @@ class TestImportFromPageindexCloud:
         import hashlib
 
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
+        from openkb.indexer import CloudImportData
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name="Cloud", name="Cloud.pdf", description="d",
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name="Cloud", cloud_name="Cloud.pdf",
+            description="d", tree={}, all_pages=[],
         )
 
-        with patch("openkb.cli.import_cloud_document", return_value=result), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=data), \
+             patch("openkb.cli._write_long_doc_artifacts",
+                   return_value=kb_dir / "wiki" / "summaries" / "Cloud.md"), \
              patch("openkb.cli.compile_long_doc", return_value=None), \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
@@ -1057,3 +1074,47 @@ class TestImportFromPageindexCloud:
         assert not any((kb_dir / ".openkb" / "journal").glob("*.json"))
         synthetic = hashlib.sha256(b"pageindex-cloud:cloud-1").hexdigest()
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").get(synthetic) is not None
+
+    def test_cloud_import_snapshots_doc_specific_paths_not_whole_dirs(self, tmp_path):
+        """The cloud snapshot must cover only this doc's summary/source paths,
+        not the whole wiki/summaries and wiki/sources trees — otherwise every
+        import pays O(total corpus) copy time/disk and can fail-before-work on a
+        large KB. Resolving doc_name before writing is what makes this possible."""
+        import openkb.mutation as mut
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.indexer import CloudImportData
+
+        kb_dir = self._setup_kb(tmp_path)
+        # Pre-existing unrelated docs whose trees must NOT be swept into the snapshot.
+        (kb_dir / "wiki" / "summaries" / "other.md").write_text("# other", encoding="utf-8")
+        (kb_dir / "wiki" / "sources" / "other.json").write_text("[]", encoding="utf-8")
+
+        data = CloudImportData(
+            doc_id="cloud-1", doc_name="Cloud", cloud_name="Cloud.pdf",
+            description="d", tree={}, all_pages=[],
+        )
+        captured: dict = {}
+        real_snapshot = mut.snapshot_paths
+
+        def spy(kb, paths, *, operation, details=None, hardlink_dirs=None):
+            captured["paths"] = list(paths)
+            return real_snapshot(
+                kb, paths, operation=operation, details=details, hardlink_dirs=hardlink_dirs,
+            )
+
+        with patch("openkb.cli.prepare_cloud_import", return_value=data), \
+             patch("openkb.cli._write_long_doc_artifacts",
+                   return_value=kb_dir / "wiki" / "summaries" / "Cloud.md"), \
+             patch("openkb.cli.compile_long_doc", return_value=None), \
+             patch("openkb.cli._setup_llm_key"), \
+             patch("openkb.cli.snapshot_paths", side_effect=spy):
+            outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert outcome == "added"
+        snapshotted = {str(p) for p in captured["paths"]}
+        # Doc-specific paths ARE covered…
+        assert str(kb_dir / "wiki" / "summaries" / "Cloud.md") in snapshotted
+        assert str(kb_dir / "wiki" / "sources" / "Cloud.json") in snapshotted
+        # …the whole trees are NOT (O(1)/doc, not O(corpus)).
+        assert str(kb_dir / "wiki" / "summaries") not in snapshotted
+        assert str(kb_dir / "wiki" / "sources") not in snapshotted

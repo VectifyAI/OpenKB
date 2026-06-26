@@ -53,7 +53,7 @@ from openkb.config import (
     resolve_litellm_settings,
 )
 from openkb.converter import _convert_document_locked, _registry_path, _sanitize_stem, resolve_doc_name
-from openkb.indexer import import_cloud_document
+from openkb.indexer import _write_long_doc_artifacts, prepare_cloud_import
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
 from openkb.mutation import MutationSnapshot, publish_staged_tree, snapshot_paths
@@ -557,33 +557,6 @@ def _snapshot_add_paths(kb_dir: Path, doc_name: str, final_raw: Path | None, fin
     return paths
 
 
-def _snapshot_cloud_import_paths(kb_dir: Path) -> list[Path]:
-    """Live KB paths a PageIndex Cloud import can mutate.
-
-    ``doc_name`` isn't known until :func:`import_cloud_document` runs, so the
-    summary/source trees are snapshotted at directory granularity — every writer
-    into the KB is serialized under the mutation lock, so restoring the whole
-    tree is both safe and exact. Same surfaces as :func:`_snapshot_add_paths`
-    minus the raw-less cloud entry's doc-name-specific files.
-    """
-    return [
-        kb_dir / ".openkb" / "hashes.json",
-        kb_dir / ".openkb" / "pageindex.db",
-        # SQLite sidecars may hold PageIndex state written during the import;
-        # snapshot missing paths too so rollback removes any created mid-import.
-        kb_dir / ".openkb" / "pageindex.db-wal",
-        kb_dir / ".openkb" / "pageindex.db-shm",
-        kb_dir / ".openkb" / "pageindex.db-journal",
-        kb_dir / ".openkb" / "files",
-        kb_dir / "wiki" / "summaries",
-        kb_dir / "wiki" / "sources",
-        kb_dir / "wiki" / "concepts",
-        kb_dir / "wiki" / "entities",
-        kb_dir / "wiki" / "index.md",
-        kb_dir / "wiki" / "log.md",
-    ]
-
-
 def _run_compile_with_retry(coro_factory, label: str) -> None:
     """Run an async compile coroutine once, retrying once after 2s on failure.
 
@@ -877,6 +850,12 @@ def import_from_pageindex_cloud(
     concepts, and registers a raw-less ``pageindex_cloud`` entry. Idempotent:
     re-importing the same ``doc_id`` is skipped. The user's cloud corpus is
     never modified.
+
+    Must be called while the caller holds ``_kb_mutation_lock``: doc-level
+    rollback is correct only under mutual exclusion, and the lock drains
+    pending journals on acquire. The CLI ``add --from-pageindex-cloud`` path
+    acquires it; :func:`import_cloud_document` is the lock-free variant for
+    callers that don't need the crash-safe journaling.
     """
     import hashlib
     from openkb.state import HashRegistry
@@ -896,35 +875,42 @@ def import_from_pageindex_cloud(
         return "skipped"
 
     click.echo(f"Importing from PageIndex Cloud: {doc_id}")
-    # Snapshot the live KB trees this import mutates (summary/source/concept/
-    # entity pages, registry, PageIndex) before the first write, and journal the
-    # intent. A crash or failure anywhere in the import → compile → registry
-    # window rolls these back; mark_committed after the registry write is the
-    # commit point, mirroring the add path's discipline. doc_name is unknown
-    # until import_cloud_document runs, so summaries/sources snap at dir scope.
     snapshot: MutationSnapshot | None = None
     doc_name = ""
     try:
+        # Resolve the wiki name + fetch cloud content BEFORE writing. prepare is
+        # read-only (name resolution reads the registry but mutates nothing), so
+        # it runs outside the snapshot; a fetch failure returns "failed" with
+        # nothing to roll back. Knowing doc_name up front lets the snapshot cover
+        # only this doc's paths (O(1)/doc) instead of the whole summaries/sources
+        # trees — the cost that bit large/image-heavy KBs on every cloud import.
+        try:
+            cloud = prepare_cloud_import(doc_id, kb_dir, path_key)
+        except Exception as exc:
+            click.echo(f"  [ERROR] Import failed: {exc}")
+            logger.debug("Cloud import traceback:", exc_info=True)
+            return "failed"
+        doc_name = cloud.doc_name
+        # Snapshot the live KB paths this import mutates (this doc's summary/
+        # source, concept/entity pages, registry, PageIndex) and journal the
+        # intent. A crash or failure anywhere in the write → compile → registry
+        # window rolls these back; mark_committed after the registry write is the
+        # commit point, mirroring the add path's discipline.
         snapshot = snapshot_paths(
             kb_dir,
-            _snapshot_cloud_import_paths(kb_dir),
+            _snapshot_add_paths(kb_dir, doc_name, None, None),
             operation="cloud_import",
-            details={"doc_id": doc_id},
+            details={"doc_id": doc_id, "doc_name": doc_name},
             hardlink_dirs={
                 kb_dir / "wiki" / "concepts",
                 kb_dir / "wiki" / "entities",
                 kb_dir / ".openkb" / "files",
             },
         )
-        try:
-            import_result = import_cloud_document(doc_id, kb_dir, path_key)
-        except Exception as exc:
-            click.echo(f"  [ERROR] Import failed: {exc}")
-            logger.debug("Cloud import traceback:", exc_info=True)
-            raise
-
-        doc_name = import_result.doc_name
-        summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+        summary_path = _write_long_doc_artifacts(
+            cloud.tree, cloud.all_pages, doc_name, doc_id, kb_dir,
+            description=cloud.description,
+        )
         click.echo(f"  Compiling imported doc (doc_id={doc_id})...")
         compiled = False
         for attempt in range(2):
@@ -932,7 +918,7 @@ def import_from_pageindex_cloud(
                 asyncio.run(
                     compile_long_doc(
                         doc_name, summary_path, doc_id, kb_dir, model,
-                        doc_description=import_result.description,
+                        doc_description=cloud.description,
                     )
                 )
                 compiled = True
@@ -950,7 +936,7 @@ def import_from_pageindex_cloud(
         # Register the raw-less cloud entry only after successful compilation.
         registry = HashRegistry(openkb_dir / "hashes.json")
         meta = {
-            "name": import_result.name,
+            "name": cloud.cloud_name,
             "doc_name": doc_name,
             "type": "pageindex_cloud",
             "origin": "cloud",
