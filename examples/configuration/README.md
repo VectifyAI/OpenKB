@@ -136,6 +136,27 @@ litellm:
     Copilot-Integration-Id: vscode-chat
 ```
 
+#### OpenRouter response caching
+
+When your `model` is an `openrouter/*` model, you can opt into OpenRouter's
+[Response Caching](https://openrouter.ai/docs/guides/features/response-caching):
+identical-payload requests come back in ~80–300 ms with **zero token billing**.
+That's a direct win on the compile-retry path (a failed `add` re-runs every
+summary/plan/concept call with the same prompts) and on repeated `lint` / dev
+iteration. Send the cache headers via `extra_headers`:
+
+```yaml
+model: openrouter/anthropic/claude-sonnet-4.5
+language: en
+extra_headers:                  # top-level, or nested under `litellm:` — both work
+  X-OpenRouter-Cache: "true"
+  X-OpenRouter-Cache-TTL: "600" # optional, 1–86400s (OpenRouter default 300)
+```
+
+It's opt-in by design: responses are stored on OpenRouter, so leave it off for
+zero-data-retention / regulated content. Only `openrouter/*` models read these
+headers; other providers ignore them.
+
 ---
 
 ## 3. API keys & providers
