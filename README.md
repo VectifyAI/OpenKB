@@ -97,8 +97,10 @@ openkb query "What are the main findings?"
 # 5. Or chat interactively
 openkb chat
 
-# (Optional) Distill a redistributable agent skill from your wiki
-openkb skill new my-expert "Reason like an expert on <your-topic>"
+# (Optional) Turn the wiki into other outputs
+openkb skill new my-expert "Reason like an expert on <your-topic>"   # a portable agent skill
+openkb visualize                                                     # an interactive knowledge graph
+openkb deck new my-deck "An intro deck on <your-topic>"              # slides (install a theme first — see examples/slides/)
 ```
 
 ### Set up your LLM
@@ -191,7 +193,7 @@ A single source might touch 10--15 wiki pages. Knowledge accumulates: each docum
 
 # ⚙️ Usage
 
-OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output).
+OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output). These tables are the command inventory; step-by-step walkthroughs live in [`examples/`](examples/).
 
 ## Layer 1: 🧱 Wiki Foundation — compile and maintain
 
@@ -214,8 +216,6 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the compile pipeline on already-indexed docs without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten (`--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md`) |
 | <code>openkb&nbsp;feedback&nbsp;["msg"]</code> | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it) |
 
-<!-- | `openkb lint --fix` | Auto-fix what it can | -->
-
 </details>
 
 ## Layer 2: 💡 Generators — turn the wiki into output
@@ -228,7 +228,8 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) |
 | <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views |
 | | |
-| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#-skill-factory--drop-in-a-book-out-comes-a-digital-expert) below) |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) |
+| <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass — see [`examples/slides/`](examples/slides/)) |
 
 <details>
 <summary><i>More skill commands:</i></summary>
@@ -240,50 +241,13 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Check the skill triggers on the right prompts |
 | <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills |
 
-See **[`examples/skills/`](examples/skills/)** for how validation, evaluation, and rollback actually work.
-
 </details>
-
-### (i) 💬 Query & Chat — *ask the wiki*
-
-`openkb query "..."` answers a single question. `openkb chat` is interactive — each turn carries history, so you can dig into a topic without re-typing context. Both use the same underlying wiki and retrieval primitives.
-
-```bash
-openkb query "What does the literature say about attention scaling?"
-
-openkb chat                       # start a new session
-openkb chat --resume              # resume the most recent session
-openkb chat --resume 20260411     # resume by id (unique prefix works)
-openkb chat --list                # list all sessions
-openkb chat --delete <id>         # delete a session
-```
-
-Inside a chat, type `/` to access slash commands (Tab to complete) — `/add`,
-`/skill new`, `/save`, `/lint`, and more. See [`examples/chat/`](examples/chat/)
-for the full list.
 
 <a id="skill-factory"></a>
 
-### (ii) 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
+### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
 
-The newest generator. `openkb skill new` distills an [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from any subset of your wiki, a portable folder that major agents (Claude Code, Codex, etc.) can install and load natively. Drop in a book's worth of papers; out comes a specialist that other agents can call on.
-
-```bash
-openkb skill new karpathy-thinking \
-  "Reason about transformers and attention in Karpathy's style"
-```
-
-→ The output layout, local install, sharing via `npx skills add`, refining from
-chat, and the `validate` / `eval` / `history` / `rollback` quality gates are walked
-through in **[`examples/skills/`](examples/skills/)** — with a real generated skill.
-
-### (iii) 🗺 Visualize — *see the shape of your knowledge*
-
-`openkb visualize` renders the wiki as a single self-contained, offline HTML page with three views of the same knowledge base — a **3D** force graph, an OpenKB-rooted **mind-map**, and a **radial** tree — coloured by type and linked by `[[wikilinks]]`.
-
-```bash
-openkb visualize            # build + open output/visualize/graph.html
-```
+The flagship generator: `openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
 
 # 🔧 Configuration
 
