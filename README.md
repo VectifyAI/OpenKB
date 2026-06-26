@@ -115,26 +115,6 @@ Create a `.env` file with your LLM API key:
 LLM_API_KEY=your_llm_api_key
 ```
 
-# 📚 Examples
-
-Worked examples for each feature live in [`examples/`](examples/) — every case is a
-folder with a short walkthrough plus the **real artifact** OpenKB generated for it
-(a compiled wiki, a distilled skill, an HTML slide deck, an interactive graph).
-
-| Example | Shows |
-| --- | --- |
-| [Configuration](examples/configuration/) | `init`, `config.yaml`, API keys, LiteLLM tuning (Ollama, LM Studio, Copilot) |
-| [Commands](examples/commands/) | the everyday loop: `add` · `query` · `remove` · `recompile` · `lint` · `list` · `status` |
-| [PageIndex Cloud](examples/pageindex-cloud/) | long documents: local vs. cloud indexing, and importing cloud-indexed docs |
-| [Chat TUI](examples/chat/) | the interactive REPL: persistent sessions + slash commands |
-| [Skill Factory](examples/skills/) | distill a redistributable agent skill from your wiki |
-| [Slides](examples/slides/) | generate a single-file HTML slide deck |
-| [Visualize](examples/visualize/) | render the wiki as an interactive knowledge graph |
-
-The compiled wiki, skill, deck, and graph in those folders were **all** generated
-from a single paper — see [`examples/README.md`](examples/README.md) for the exact
-commands.
-
 # 🧩 How OpenKB Works
 
 ### Architecture
@@ -193,7 +173,7 @@ A single source might touch 10--15 wiki pages. Knowledge accumulates: each docum
 
 # ⚙️ Usage
 
-OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output). These tables are the command inventory; step-by-step walkthroughs live in [`examples/`](examples/).
+OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output). Each links to a concrete walkthrough — a real artifact OpenKB generated from one sample paper (browse them all in [`examples/`](examples/)).
 
 ## Layer 1: 🧱 Wiki Foundation — compile and maintain
 
@@ -218,18 +198,20 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 
 </details>
 
+→ **Example:** the everyday loop walked through end to end — [`examples/commands/`](examples/commands/).
+
 ## Layer 2: 💡 Generators — turn the wiki into output
 
 A "generator" reads from the compiled wiki and produces something usable: an answer, a conversation, a skill folder. The wiki is the substrate; generators are the surfaces.
 
-| Command | Output |
-|---|---|
-| <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (`--save` to persist to `wiki/explorations/`) |
-| <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) |
-| <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views |
-| | |
-| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) |
-| <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass — see [`examples/slides/`](examples/slides/)) |
+| Command | Output | Example |
+|---|---|---|
+| <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (`--save` to persist to `wiki/explorations/`) | [query & save](examples/commands/) |
+| <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) | [chat](examples/chat/) |
+| <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views | [visualize](examples/visualize/) |
+| | | |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) | [skills](examples/skills/) |
+| <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass) | [slides](examples/slides/) |
 
 <details>
 <summary><i>More skill commands:</i></summary>
@@ -282,6 +264,8 @@ Set `PAGEINDEX_API_KEY` in your `.env` to enable cloud features:
 ```
 PAGEINDEX_API_KEY=your_pageindex_api_key
 ```
+
+→ **Example:** local vs. cloud indexing, and importing a cloud-indexed doc — [`examples/pageindex-cloud/`](examples/pageindex-cloud/).
 
 ### AGENTS.md
 
