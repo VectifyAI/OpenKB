@@ -6,13 +6,6 @@ file_processing_jobs: 2          # Number of files to prepare concurrently durin
 # PageIndex indexing, LLM compilation, registry updates, and log writes remain
 # serialized under the KB mutation lock.
 
-# Optional: extra HTTP headers sent with every LLM request (forwarded to
-# LiteLLM's extra_headers). Some providers need these — e.g. GitHub Copilot
-# IDE-auth headers on older litellm versions:
-# extra_headers:
-#   Editor-Version: vscode/1.95.0
-#   Copilot-Integration-Id: vscode-chat
-
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).
@@ -21,3 +14,13 @@ file_processing_jobs: 2          # Number of files to prepare concurrently durin
 #   - organization
 #   - dataset
 #   - model
+
+# Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout` and
+# `extra_headers` apply per request, the rest are set as litellm.<key>.
+# litellm:
+#   timeout: 1200          # per-request timeout (s); raise for slow local backends (Ollama)
+#   drop_params: true      # let LiteLLM drop params a provider rejects (e.g. Ollama)
+#   num_retries: 3
+#   extra_headers:         # extra HTTP headers some providers need (e.g. GitHub Copilot)
+#     Editor-Version: vscode/1.95.0
+#     Copilot-Integration-Id: vscode-chat

@@ -114,6 +114,63 @@ def test_recompile_long_dispatches_compile_long_doc_with_doc_id(kb_dir):
 
 
 # ---------------------------------------------------------------------------
+# cloud-import dispatch (type=pageindex_cloud) — must use the LONG path
+# ---------------------------------------------------------------------------
+
+
+def _seed_cloud(kb_dir: Path) -> None:
+    """A pageindex_cloud import: long-doc layout (summary + doc_id + .json
+    source), and NO .md source (the trap the short path would fall into)."""
+    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
+        "h_c": {
+            "name": "Cloud Paper.pdf", "doc_name": "cloud-h_c",
+            "type": "pageindex_cloud", "origin": "cloud", "doc_id": "pi-cloud1",
+            "path": "pageindex-cloud:pi-cloud1",
+        },
+    }))
+    (kb_dir / "wiki" / "summaries" / "cloud-h_c.md").write_text(
+        "---\nsources: [pageindex-cloud:pi-cloud1]\n---\n# Cloud\n", encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "sources" / "cloud-h_c.json").write_text("[]", encoding="utf-8")
+    (kb_dir / "wiki" / "log.md").write_text("# Log\n\n", encoding="utf-8")
+
+
+def test_recompile_cloud_doc_dispatches_compile_long_doc(kb_dir):
+    """A pageindex_cloud doc must recompile via compile_long_doc (it has a .json
+    source + doc_id), not be misrouted to the short path that looks for a .md."""
+    _seed_cloud(kb_dir)
+    with patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_, \
+         patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+        result = _invoke(kb_dir, ["recompile", "cloud-h_c"])
+
+    assert result.exit_code == 0, result.output
+    long_.assert_called_once()
+    args = long_.call_args.args
+    assert args[0] == "cloud-h_c"            # doc_name
+    assert args[2] == "pi-cloud1"            # the cloud doc_id flows through
+    short.assert_not_called()
+    assert "recompiled 1" in result.output
+
+
+def test_recompile_dry_run_classifies_cloud_as_long(kb_dir):
+    _seed_cloud(kb_dir)
+    result = _invoke(kb_dir, ["recompile", "cloud-h_c", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "(long)" in result.output and "(short)" not in result.output
+
+
+def test_is_long_doc_and_display_type_cover_cloud():
+    """pageindex_cloud is treated as a long doc and displayed like a pageindex
+    doc in `openkb list` (no raw internal type string leaking)."""
+    from openkb.cli import _is_long_doc, _display_type
+
+    assert _is_long_doc({"type": "pageindex_cloud"}) is True
+    assert _is_long_doc({"type": "long_pdf"}) is True
+    assert _is_long_doc({"type": "md"}) is False
+    assert _display_type("pageindex_cloud") == "pageindex"
+
+
+# ---------------------------------------------------------------------------
 # --all confirmation + --yes
 # ---------------------------------------------------------------------------
 

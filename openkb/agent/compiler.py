@@ -29,7 +29,12 @@ from pathlib import Path
 import litellm
 
 from openkb import frontmatter
-from openkb.config import DEFAULT_ENTITY_TYPES, get_extra_headers, resolve_entity_types
+from openkb.config import (
+    DEFAULT_ENTITY_TYPES,
+    get_extra_headers,
+    get_timeout,
+    resolve_entity_types,
+)
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.locks import atomic_write_text
 from openkb.schema import INDEX_SEED, get_agents_md
@@ -327,6 +332,9 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
     extra_headers = get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
+    timeout = get_timeout()
+    if timeout is not None:
+        kwargs.setdefault("timeout", timeout)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -349,6 +357,9 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
     extra_headers = get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
+    timeout = get_timeout()
+    if timeout is not None:
+        kwargs.setdefault("timeout", timeout)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -941,12 +952,15 @@ def _prepend_source_to_frontmatter(text: str, source_file: str) -> str:
         return text
 
     fm_block, body = parts
-    # Split the fm_block into lines for per-line manipulation. fm_block ends
-    # with "\n---\n"; strip the trailing closing delimiter + newline to get
-    # the prefix lines (opening "---" + content lines), then re-append after.
-    fm_prefix, _, _ = fm_block.rpartition("\n---\n")
+    # Strip the trailing closing delimiter to get the prefix lines (opening
+    # "---" + content lines), then re-append it. `frontmatter.split` leaves the
+    # closing at the end of fm_block as either "\n---\n" or a bare "\n---" (when
+    # the page ends at the delimiter with no trailing newline). Assuming only
+    # "\n---\n" would, for the bare form, make the strip below collapse the
+    # whole block and drop every existing frontmatter key.
+    closing = "\n---\n" if fm_block.endswith("\n---\n") else "\n---"
+    fm_prefix = fm_block[: -len(closing)]
     fm_lines = fm_prefix.split("\n")
-    closing = "\n---\n"
 
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):
@@ -982,9 +996,12 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
         return text, False
 
     fm_block, body = parts
-    fm_prefix, _, _ = fm_block.rpartition("\n---\n")
+    # See _prepend_source_to_frontmatter: the closing delimiter may be "\n---\n"
+    # or a bare "\n---" (no trailing newline); strip whichever is present so the
+    # existing frontmatter lines (and the sources: line we need) are preserved.
+    closing = "\n---\n" if fm_block.endswith("\n---\n") else "\n---"
+    fm_prefix = fm_block[: -len(closing)]
     fm_lines = fm_prefix.split("\n")
-    closing = "\n---\n"
 
     for i, line in enumerate(fm_lines):
         if not line.lstrip().startswith("sources:"):

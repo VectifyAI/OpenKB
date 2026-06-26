@@ -207,10 +207,20 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
     # references/ wikilink resolution
     wikilinks = WIKILINK_RE.findall(text)
     for link in wikilinks:
-        # link may or may not include .md suffix
-        target = refs_dir / link
-        if not target.suffix:
-            target = target.with_suffix(".md")
+        # The link may already include the .md suffix; append it otherwise.
+        # Test the literal ".md" rather than Path.suffix — a dotted stem like
+        # "api.v2" has a truthy suffix (".v2"), so Path.suffix would skip the
+        # ".md" and then look for a non-existent extension-less file.
+        target = refs_dir / (link if link.lower().endswith(".md") else f"{link}.md")
+        # A reference must resolve to a file *under* references/ — reject any
+        # that escape it (e.g. "[[references/../SKILL]]"), which would also
+        # break the relative_to(skill_dir) call in the not-found message below.
+        if not target.resolve().is_relative_to(refs_dir.resolve()):
+            result.errors.append(
+                f"SKILL.md references [[references/{link}]] which resolves "
+                f"outside the references/ directory."
+            )
+            continue
         if not target.exists():
             result.errors.append(
                 f"SKILL.md references [[references/{link}]] but "

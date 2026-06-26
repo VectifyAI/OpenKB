@@ -1,10 +1,16 @@
+import logging
+
 from openkb.config import (
     DEFAULT_CONFIG,
     get_extra_headers,
+    get_timeout,
     load_config,
     resolve_extra_headers,
+    resolve_litellm_settings,
+    resolve_timeout,
     save_config,
     set_extra_headers,
+    set_timeout,
 )
 
 
@@ -102,3 +108,86 @@ def test_extra_headers_stash_roundtrip_and_isolation():
     assert get_extra_headers() == {"A": "1"}
     set_extra_headers({})
     assert get_extra_headers() == {}
+
+
+# --- timeout -----------------------------------------------------------------
+
+def test_resolve_timeout_absent_returns_none():
+    assert resolve_timeout({}) is None
+
+
+def test_resolve_timeout_int_and_float():
+    assert resolve_timeout({"timeout": 1200}) == 1200.0
+    assert resolve_timeout({"timeout": 0.5}) == 0.5
+
+
+def test_resolve_timeout_numeric_string_coerced():
+    assert resolve_timeout({"timeout": "1200"}) == 1200.0
+
+
+def test_resolve_timeout_rejects_non_positive():
+    assert resolve_timeout({"timeout": 0}) is None
+    assert resolve_timeout({"timeout": -10}) is None
+
+
+def test_resolve_timeout_rejects_bool():
+    # bool is a subclass of int; True/False are not durations.
+    assert resolve_timeout({"timeout": True}) is None
+
+
+def test_resolve_timeout_rejects_non_numeric():
+    assert resolve_timeout({"timeout": "soon"}) is None
+    assert resolve_timeout({"timeout": [1200]}) is None
+
+
+def test_resolve_timeout_rejects_nan_and_inf():
+    # nan/inf pass a naive `<= 0` check; YAML's .nan/.inf yield real floats.
+    assert resolve_timeout({"timeout": float("inf")}) is None
+    assert resolve_timeout({"timeout": float("nan")}) is None
+    assert resolve_timeout({"timeout": "inf"}) is None
+    assert resolve_timeout({"timeout": "nan"}) is None
+
+
+def test_timeout_stash_roundtrip_and_reset():
+    set_timeout(1200.0)
+    assert get_timeout() == 1200.0
+    set_timeout(None)
+    assert get_timeout() is None
+
+
+def test_resolve_litellm_settings_absent_returns_empty():
+    assert resolve_litellm_settings({}) == {}
+
+
+def test_resolve_litellm_settings_passes_mapping_through_verbatim():
+    # Values are forwarded as-is — no validation or coercion.
+    config = {"litellm": {"drop_params": True, "num_retries": 3, "ssl_verify": False}}
+    assert resolve_litellm_settings(config) == {
+        "drop_params": True,
+        "num_retries": 3,
+        "ssl_verify": False,
+    }
+
+
+def test_resolve_litellm_settings_non_mapping_ignored():
+    assert resolve_litellm_settings({"litellm": ["drop_params"]}) == {}
+    assert resolve_litellm_settings({"litellm": "drop_params=true"}) == {}
+    assert resolve_litellm_settings({"litellm": True}) == {}
+
+
+def test_resolve_litellm_settings_drops_non_string_keys():
+    assert resolve_litellm_settings({"litellm": {5: "x", "drop_params": True}}) == {
+        "drop_params": True
+    }
+
+
+def test_resolve_litellm_settings_warns_on_non_mapping(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_litellm_settings({"litellm": ["drop_params"]}) == {}
+    assert "must be a mapping" in caplog.text
+
+
+def test_resolve_litellm_settings_warns_on_non_string_key(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        resolve_litellm_settings({"litellm": {5: "x", "drop_params": True}})
+    assert "non-string key" in caplog.text
