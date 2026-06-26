@@ -40,13 +40,15 @@ openkb init
   `gemini/gemini-3-flash-preview`).
 - **LLM API key** — hidden input; if you provide one it's written to `.env` with
   `0600` permissions. Press Enter to skip and set it later.
-- **Language** — the output language for your wiki (`en`, `ko`, `Korean`, …).
+- **Language** — the output language for your wiki. Any language works; e.g. the
+  six official UN languages: `en` (English), `zh` (Chinese), `es` (Spanish),
+  `fr` (French), `ar` (Arabic), `ru` (Russian).
 
 Skip the prompts entirely with flags — handy in scripts:
 
 ```bash
 openkb init --model anthropic/claude-sonnet-4-6 --language en
-openkb init -m gpt-5.4 -l ko
+openkb init -m gpt-5.4 -l zh
 ```
 
 > **Non-interactive (pipes/CI):** prompts are gated on a TTY. When stdin isn't a
