@@ -29,6 +29,9 @@ def _isolate_home(monkeypatch, tmp_path):
     fake_home = tmp_path / "isolated-home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    # Neutralize the package-bundled roots so these unit tests exercise the
+    # scanning primitive in isolation; bundled discovery is covered explicitly.
+    monkeypatch.setattr("openkb.agent.skills.BUNDLED_SKILL_ROOTS", ())
 
 
 def _write_skill(
@@ -159,6 +162,30 @@ def test_scan_default_roots_listed(tmp_path: Path):
         "~/.openkb/skills",
         "~/.claude/skills",
     )
+
+
+def test_scan_includes_bundled_skills(tmp_path: Path, monkeypatch):
+    """Skills shipped with the package (deck themes / critic) are
+    discovered even for a KB with no local ``skills/`` — this is what makes
+    ``deck new`` work right after ``pip install``."""
+    bundled = tmp_path / "bundled"
+    _write_skill(bundled, "openkb-deck-neon", description="built-in deck theme")
+    monkeypatch.setattr("openkb.agent.skills.BUNDLED_SKILL_ROOTS", (str(bundled),))
+    names = {s["name"] for s in scan_local_skills(tmp_path)}
+    assert "openkb-deck-neon" in names
+
+
+def test_kb_skill_overrides_bundled(tmp_path: Path, monkeypatch):
+    """Bundled roots are scanned last (lowest priority): a same-named skill
+    in the KB wins, so users can customize a built-in theme."""
+    bundled = tmp_path / "bundled"
+    _write_skill(bundled, "openkb-deck-neon", description="BUILT-IN")
+    monkeypatch.setattr("openkb.agent.skills.BUNDLED_SKILL_ROOTS", (str(bundled),))
+    _write_skill(tmp_path / "skills", "openkb-deck-neon", description="KB OVERRIDE")
+    match = next(
+        s for s in scan_local_skills(tmp_path) if s["name"] == "openkb-deck-neon"
+    )
+    assert match["description"] == "KB OVERRIDE"
 
 
 # ─── _parse_frontmatter ──────────────────────────────────────────────────

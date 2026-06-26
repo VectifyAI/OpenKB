@@ -100,7 +100,7 @@ openkb chat
 # (Optional) Turn the wiki into other outputs
 openkb skill new my-expert "Reason like an expert on <your-topic>"   # a portable agent skill
 openkb visualize                                                     # an interactive knowledge graph
-openkb deck new my-deck "An intro deck on <your-topic>"              # slides (install a theme first — see examples/slides/)
+openkb deck new my-deck "An intro deck on <your-topic>"              # slides — a single-file HTML deck
 ```
 
 ### Set up your LLM

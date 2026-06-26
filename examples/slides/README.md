@@ -51,16 +51,16 @@ openkb deck new okf-pitch "Pitch OpenKB to a data team" \
 ## Themes
 
 Decks are rendered by a **deck skill** — a SKILL.md that defines the visual
-direction and a slide grammar. Two ship in the repo:
+direction and a slide grammar. Two ship with OpenKB (no install needed):
 
 | Skill | Look |
 | --- | --- |
 | [`openkb-deck-neon`](../../skills/openkb-deck-neon/SKILL.md) *(default)* | Dark "Aurora Glass" — near-black background, teal/sky/magenta/amber neon, glassmorphism panels. |
 | [`openkb-deck-editorial`](../../skills/openkb-deck-editorial/SKILL.md) | Warm "Editorial Monocle" — cream, serif, brick-red accent; a printed-page feel. |
 
-Drop a third-party deck skill into `~/.openkb/skills/` or `<kb>/skills/` and select
-it with `--skill`. (A KB only has a deck theme available if one is installed in one
-of those locations — copy it from the repo's [`skills/`](../../skills/) if needed.)
+Want a custom look? Drop a third-party deck skill into `~/.openkb/skills/` or
+`<kb>/skills/` and select it with `--skill` (a same-named skill there overrides
+the built-in).
 
 ---
 

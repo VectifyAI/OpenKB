@@ -9,6 +9,9 @@ Skill search roots (first hit wins on name collision):
   1. ``<kb>/skills/``         — project-local skills shipped with the KB
   2. ``~/.openkb/skills/``    — user-global skills
   3. ``~/.claude/skills/``    — Claude Code's skill dir (interop bonus)
+  4. bundled skills           — built-in deck themes / critic shipped with
+                               the package (lowest priority, so the roots
+                               above can override them)
 
 Skill file layout::
 
@@ -37,6 +40,17 @@ DEFAULT_SKILL_ROOTS: Tuple[str, ...] = (
     "skills",                  # relative to kb_dir
     "~/.openkb/skills",
     "~/.claude/skills",
+)
+
+# Skills shipped with the package so the built-in deck themes + html critic
+# work out of the box (no manual install). Two candidates cover both install
+# modes; whichever exists is scanned, at lowest priority:
+#   - wheel install:  force-included at ``openkb/_skills/``
+#   - editable/source checkout:  the repo's top-level ``skills/``
+_PKG_DIR = Path(__file__).resolve().parent.parent
+BUNDLED_SKILL_ROOTS: Tuple[str, ...] = (
+    str(_PKG_DIR / "_skills"),
+    str(_PKG_DIR.parent / "skills"),
 )
 
 
@@ -77,7 +91,12 @@ def scan_local_skills(
         List of skill metadata dicts. Empty if no skills found.
     """
     seen: dict[str, dict[str, str]] = {}
-    roots = list(DEFAULT_SKILL_ROOTS) + [str(r) for r in extra_roots]
+    # Bundled roots go last so KB/user/Claude skills override the built-ins.
+    roots = (
+        list(DEFAULT_SKILL_ROOTS)
+        + [str(r) for r in extra_roots]
+        + list(BUNDLED_SKILL_ROOTS)
+    )
     for root_spec in roots:
         root = Path(root_spec).expanduser()
         if not root.is_absolute():
