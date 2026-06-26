@@ -711,7 +711,7 @@ def _stdin_is_tty() -> bool:
     callback=_model_option_callback,
     help=(
         "LLM in LiteLLM provider/model format "
-        "(e.g. 'gpt-5.4-mini', 'anthropic/claude-sonnet-4-6'). "
+        "(e.g. 'gpt-5.4', 'anthropic/claude-sonnet-4-6'). "
         "Skips the interactive prompt when set."
     ),
 )
@@ -730,7 +730,7 @@ def init(model, language):
 
     # Interactive prompts
     click.echo("Pick an LLM in `provider/model` LiteLLM format:")
-    click.echo("  OpenAI:    gpt-5.4-mini, gpt-5.4")
+    click.echo("  OpenAI:    gpt-5.4, gpt-5.4-mini")
     click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
     click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
     click.echo("  DeepSeek:  deepseek/deepseek-v4-flash, deepseek/deepseek-v4-pro")
@@ -969,7 +969,7 @@ def _cleanup_pageindex(
 
     _setup_llm_key(kb_dir)
     config = load_config(openkb_dir / "config.yaml")
-    model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-4o-mini"))
+    model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-5.4"))
     client = PageIndexClient(model=model, storage_path=str(openkb_dir))
     col = client.collection()
 

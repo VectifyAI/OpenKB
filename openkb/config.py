@@ -14,7 +14,7 @@ from openkb.locks import atomic_write_text, flock, funlock
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "gpt-5.4-mini",
+    "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
 }
