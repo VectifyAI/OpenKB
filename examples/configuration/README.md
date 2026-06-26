@@ -5,6 +5,27 @@ Everything that controls how OpenKB talks to your LLM lives in two places:
 
 ---
 
+## Install
+
+```bash
+pip install openkb
+```
+
+OpenKB pins a **pre-release** of its PageIndex dependency
+(`pageindex==0.3.0.dev1`), which some installers skip by default. If an install
+can't resolve `pageindex`, allow pre-releases:
+
+```bash
+uv tool install openkb --prerelease=allow   # uv
+pip install --pre openkb                     # pip
+```
+
+If `openkb` isn't found *after* a successful install, the console-script directory
+isn't on your `PATH` (e.g. `pip --user` installs to `~/.local/bin`) — add it to
+`PATH`.
+
+---
+
 ## 1. Initialize a knowledge base
 
 ```bash
@@ -85,17 +106,19 @@ you set it, LiteLLM uses it. Two keys are special:
 - Every other key (`drop_params`, `num_retries`, `ssl_verify`, …) is set on the
   `litellm` module as a process-wide global.
 
-#### A local Ollama setup
+#### Slow local runtimes (Ollama, LM Studio, llama.cpp)
 
-Ollama rejects some OpenAI-style params; `drop_params` lets LiteLLM strip them
-instead of erroring, and a generous `timeout` covers slow local inference:
+Local inference can be slow — on a Mac running **LM Studio**, a single compile
+call can take minutes, and the **default request timeout will abort it** (this is
+the usual cause of failures with local runtimes). Raise `timeout` (in seconds).
+Add `drop_params` for backends that reject OpenAI-only params (e.g. Ollama):
 
 ```yaml
-model: ollama/llama3.1
+model: ollama/llama3.1     # or your LM Studio / llama.cpp model id
 language: en
 litellm:
   drop_params: true
-  timeout: 1200
+  timeout: 1200            # raise further (e.g. 3600) for large local models
 ```
 
 #### GitHub Copilot / ChatGPT-subscription providers
