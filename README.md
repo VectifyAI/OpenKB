@@ -113,6 +113,26 @@ Create a `.env` file with your LLM API key:
 LLM_API_KEY=your_llm_api_key
 ```
 
+# 📚 Examples
+
+Worked examples for each feature live in [`examples/`](examples/) — every case is a
+folder with a short walkthrough plus the **real artifact** OpenKB generated for it
+(a compiled wiki, a distilled skill, an HTML slide deck, an interactive graph).
+
+| Example | Shows |
+| --- | --- |
+| [Configuration](examples/configuration/) | `init`, `config.yaml`, API keys, LiteLLM tuning (Ollama, LM Studio, Copilot) |
+| [Commands](examples/commands/) | the everyday loop: `add` · `query` · `remove` · `recompile` · `lint` · `list` · `status` |
+| [PageIndex Cloud](examples/pageindex-cloud/) | long documents: local vs. cloud indexing, and importing cloud-indexed docs |
+| [Chat TUI](examples/chat/) | the interactive REPL: persistent sessions + slash commands |
+| [Skill Factory](examples/skills/) | distill a redistributable agent skill from your wiki |
+| [Slides](examples/slides/) | generate a single-file HTML slide deck |
+| [Visualize](examples/visualize/) | render the wiki as an interactive knowledge graph |
+
+The compiled wiki, skill, deck, and graph in those folders were **all** generated
+from a single paper — see [`examples/README.md`](examples/README.md) for the exact
+commands.
+
 # 🧩 How OpenKB Works
 
 ### Architecture
