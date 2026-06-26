@@ -120,7 +120,7 @@ LLM_API_KEY=your_llm_api_key
 ### Architecture
 
 <div align="center">
-  <img src="assets/openkb-architecture.png" alt="OpenKB Architecture: from raw documents (markitdown / PageIndex) through LLM wiki compilation to the wiki/ foundation, powering query/chat, the Skill Factory, and future generators" width="900" />
+  <img src="assets/openkb-architecture.webp" alt="OpenKB Architecture: from raw documents (markitdown / PageIndex) through LLM wiki compilation to the wiki/ foundation, powering query/chat, the Skill Factory, and future generators" width="900" />
 </div>
 
 ### Short vs Long Document Handling
