@@ -182,7 +182,8 @@ def bootstrap(
     splitting any node that overflows. Returns the number placed.
     """
     concepts_root.mkdir(parents=True, exist_ok=True)
-    flat = [p for p in concepts_root.glob("*.md") if p.name != TOPIC_FILE]
+    # Sort for a deterministic, reproducible build order.
+    flat = sorted(p for p in concepts_root.glob("*.md") if p.name != TOPIC_FILE)
     # Read every flat concept into memory and clear the root BEFORE placing, so
     # the tree grows incrementally (a split triggered mid-run must not move a
     # file we have not processed yet).
