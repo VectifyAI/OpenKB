@@ -118,3 +118,36 @@ def place_concept(
     if on_overflow is not None and child_count(node_dir) > FANOUT_K:
         on_overflow(node_dir)
     return path
+
+
+ClusterFn = Callable[[list[tuple[str, str]]], dict[str, list[str]]]
+SummarizeFn = Callable[[str, list[str]], str]
+
+
+def split_node(node_dir: Path, *, cluster: ClusterFn, summarize: SummarizeFn) -> None:
+    """Cluster a node's direct concept leaves into subtopics and move them in.
+
+    Files are moved (``Path.replace``), not copied; because wikilinks resolve
+    by bare stem, links to moved concepts keep resolving.
+    """
+    view = read_topic(node_dir.parent if node_dir.name else node_dir, node_dir.name)
+    leaves = {stem: brief for stem, brief in view.child_concepts}
+    if not leaves:
+        return
+    groups = cluster(list(leaves.items()))
+    for sub_name, stems in groups.items():
+        if not stems:
+            continue
+        sub_dir = node_dir / sub_name
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        write_topic_md(
+            sub_dir, summarize(sub_name, [leaves.get(s, "") for s in stems]), len(stems)
+        )
+        for stem in stems:
+            src = node_dir / f"{stem}.md"
+            if src.is_file():
+                src.replace(sub_dir / f"{stem}.md")
+    # refresh the split node's own summary/size
+    new_view = read_topic(node_dir.parent if node_dir.name else node_dir, node_dir.name)
+    size = len(new_view.child_topics) + len(new_view.child_concepts)
+    write_topic_md(node_dir, view.summary or node_dir.name, size)

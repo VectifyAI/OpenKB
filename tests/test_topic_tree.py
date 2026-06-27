@@ -54,3 +54,22 @@ def test_place_triggers_overflow(tmp_path):
         on_overflow=lambda d: fired.append(d),
     )
     assert fired == [root]  # K existing + 1 new > FANOUT_K
+
+
+def test_split_clusters_and_moves(tmp_path):
+    root = tmp_path / "concepts"
+    tt.write_topic_md(root, "root", 0)
+    for s in ("self-attention", "multi-head", "adam", "warmup"):
+        (root / f"{s}.md").write_text(f"# {s}\n", encoding="utf-8")
+
+    def cluster(items):
+        return {
+            "attention": ["self-attention", "multi-head"],
+            "training": ["adam", "warmup"],
+        }
+
+    tt.split_node(root, cluster=cluster, summarize=lambda n, b: f"summary of {n}")
+    assert (root / "attention" / "self-attention.md").is_file()
+    assert (root / "training" / "adam.md").is_file()
+    assert not (root / "self-attention.md").exists()  # moved, not copied
+    assert tt.read_topic(root, "attention").summary == "summary of attention"
