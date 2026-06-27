@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 from openkb import topic_tree as tt
 
@@ -93,3 +94,16 @@ def test_bootstrap_places_and_splits(tmp_path):
     assert n == len(names)
     assert (root / "_topic.md").exists()
     assert any(d.is_dir() for d in root.iterdir())  # a subtopic dir was created
+
+
+def test_make_choose_parses_pick(tmp_path):
+    from openkb import topic_tree_llm as ttl
+
+    root = tmp_path / "concepts"
+    tt.write_topic_md(root, "root", 0)
+    tt.write_topic_md(root / "attention", "att", 0)
+    view = tt.read_topic(root, "")
+    with patch.object(ttl, "_llm_call", return_value='{"pick": "attention"}'):
+        assert ttl.make_choose("gpt-5.4")(view, "q attends k") == "attention"
+    with patch.object(ttl, "_llm_call", return_value='{"pick": null}'):
+        assert ttl.make_choose("gpt-5.4")(view, "x") is None
