@@ -166,12 +166,22 @@ def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
     Used to seed the whitelist passed to :func:`strip_ghost_wikilinks` from
     both the compile pipeline and any other code path that writes
     LLM-generated content to the wiki (e.g. ``openkb query --save``).
+
+    Concepts may be nested under a topic tree, so they are indexed
+    recursively by BOTH their relative path (``concepts/<...>/<stem>``) and
+    their bare ``<stem>`` (Obsidian-style, path-independent) — the bare stem
+    is what lets a link survive a topic split that moves the file.
     """
     targets: set[str] = set()
     concepts_dir = wiki_dir / "concepts"
     summaries_dir = wiki_dir / "summaries"
     if concepts_dir.is_dir():
-        targets.update(f"concepts/{p.stem}" for p in concepts_dir.glob("*.md"))
+        for p in concepts_dir.rglob("*.md"):
+            if p.name == "_topic.md":
+                continue
+            rel = p.relative_to(wiki_dir).with_suffix("")
+            targets.add(str(rel).replace("\\", "/"))  # concepts/<...>/<stem>
+            targets.add(p.stem)  # bare <stem>
     if summaries_dir.is_dir():
         targets.update(f"summaries/{p.stem}" for p in summaries_dir.glob("*.md"))
     entities_dir = wiki_dir / "entities"
