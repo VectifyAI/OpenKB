@@ -9,6 +9,7 @@ from agents import ToolOutputImage, ToolOutputText
 from openkb.config import get_extra_headers, get_timeout_extra_args
 from openkb.agent.tools import (
     get_wiki_page_content,
+    read_topic_node,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
@@ -48,10 +49,45 @@ If you cannot find relevant information, say so clearly.
 """
 
 
+_QUERY_INSTRUCTIONS_TREE = """\
+You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching the wiki.
+
+{schema_md}
+
+## Search strategy (topic tree)
+The concepts/ wiki is a TOPIC TREE — descend it, do not enumerate everything.
+1. Call read_topic("") to see the root summary, its child topics, and any concepts there.
+2. Pick the child topic(s) most relevant to the question; call read_topic("<name>")
+   to descend (paths nest, e.g. "attention/multi-head").
+3. Repeat until you reach the relevant concept leaves (listed under "concepts here").
+4. read_file the relevant concept pages. For "who/what is X" about a named person,
+   organization, place, or product, read the matching entities/ page.
+5. For detailed source content, follow a summary page's `full_text` frontmatter:
+   short docs → read_file that path; pageindex docs → get_page_content(doc_name, pages)
+   with tight page ranges. Never fetch a whole document.
+6. Source content may reference images; use get_image when needed.
+7. If a branch has nothing useful, back up and try a sibling. Synthesize a clear,
+   concise, well-cited answer grounded in wiki content.
+
+Answer based only on wiki content. Be concise.
+Before each tool call, output one short sentence explaining the reason.
+
+If you cannot find relevant information, say so clearly.
+"""
+
+
 def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
     """Build and return the Q&A agent."""
     schema_md = get_agents_md(Path(wiki_root))
-    instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
+    from openkb.config import load_config
+
+    tree_on = bool(
+        load_config(Path(wiki_root).parent / ".openkb" / "config.yaml").get(
+            "topic_tree", False
+        )
+    )
+    template = _QUERY_INSTRUCTIONS_TREE if tree_on else _QUERY_INSTRUCTIONS_TEMPLATE
+    instructions = template.format(schema_md=schema_md)
     instructions += f"\n\nIMPORTANT: Answer in {language} language."
 
     @function_tool
@@ -88,12 +124,27 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
             return ToolOutputImage(image_url=result["image_url"])
         return ToolOutputText(text=result["text"])
 
+    @function_tool
+    def read_topic(rel: str = "") -> str:
+        """Navigate the concept topic tree top-down.
+
+        Start at "" (root); the result lists child topics and the concepts at
+        this node. Descend by calling again with a child topic's path (e.g.
+        "attention" or "attention/multi-head"); read concept leaves with
+        read_file. Do not enumerate the whole tree.
+        """
+        return read_topic_node(rel, wiki_root)
+
     from agents.model_settings import ModelSettings
+
+    tools = [read_file, get_page_content, get_image]
+    if tree_on:
+        tools.append(read_topic)
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=tools,
         model=f"litellm/{model}",
         model_settings=ModelSettings(
             parallel_tool_calls=False,

@@ -54,6 +54,32 @@ def read_wiki_file(path: str, wiki_root: str) -> str:
     return full_path.read_text(encoding="utf-8")
 
 
+def read_topic_node(rel: str, wiki_root: str) -> str:
+    """Render a topic node: its summary, child topics, and concept briefs.
+
+    Use to navigate the concept topic tree top-down: start at ``""`` (root),
+    pick a child topic, call again with its path, until you reach the concept
+    leaves you need (then read them with read_wiki_file).
+
+    Args:
+        rel: Topic path relative to ``concepts/`` (``""`` for root,
+            ``"attention"``, ``"attention/multi-head"``).
+        wiki_root: Absolute path to the wiki root directory.
+    """
+    from openkb.topic_tree import read_topic
+
+    concepts_root = Path(wiki_root) / "concepts"
+    view = read_topic(concepts_root, rel)
+    lines = [f"# topic: {rel or '(root)'}", "", view.summary, ""]
+    if view.child_topics:
+        lines.append("## child topics")
+        lines += [f"- {n}: {s}" for n, s in view.child_topics]
+    if view.child_concepts:
+        lines.append("## concepts here")
+        lines += [f"- [[{stem}]]: {brief}" for stem, brief in view.child_concepts]
+    return "\n".join(lines)
+
+
 def parse_pages(pages: str) -> list[int]:
     """Parse a page specification string into a sorted, deduplicated list of page numbers.
 
