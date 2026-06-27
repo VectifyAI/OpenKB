@@ -153,6 +153,22 @@ def split_node(node_dir: Path, *, cluster: ClusterFn, summarize: SummarizeFn) ->
     write_topic_md(node_dir, view.summary or node_dir.name, size)
 
 
+def place_topic_dir(concepts_root: Path, *, brief: str, choose: ChooseFn) -> Path:
+    """Descend with ``choose`` and return the landing topic directory WITHOUT
+    writing a concept file. Lets the caller own the concept-page format (e.g.
+    the compiler's ``_write_concept``) while the tree owns placement."""
+    rel = ""
+    for _ in range(MAX_DEPTH):
+        view = read_topic(concepts_root, rel)
+        pick = choose(view, brief)
+        if pick is None or pick not in {t for t, _ in view.child_topics}:
+            break
+        rel = f"{rel}/{pick}" if rel else pick
+    node = concepts_root if not rel else concepts_root / rel
+    node.mkdir(parents=True, exist_ok=True)
+    return node
+
+
 def bootstrap(
     concepts_root: Path,
     *,
