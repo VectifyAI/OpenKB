@@ -29,7 +29,6 @@ def test_reindex_builds_tree_links_survive_and_navigable(tmp_path):
 
     n = tt.bootstrap(
         wiki / "concepts",
-        choose=lambda v, b: None,  # drop at root → forces a split past FANOUT_K
         cluster=lambda items: {
             "group-a": [s for s, _ in items[: len(items) // 2]],
             "group-b": [s for s, _ in items[len(items) // 2:]],

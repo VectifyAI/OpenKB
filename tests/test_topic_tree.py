@@ -76,24 +76,54 @@ def test_split_clusters_and_moves(tmp_path):
     assert tt.read_topic(root, "attention").summary == "summary of attention"
 
 
-def test_bootstrap_places_and_splits(tmp_path):
+def _half_cluster(items):
+    """Deterministic fake: split the items into two halves (a/b)."""
+    half = len(items) // 2
+    return {
+        "a": [s for s, _ in items[:half]],
+        "b": [s for s, _ in items[half:]],
+    }
+
+
+def test_bootstrap_topdown_global(tmp_path):
+    """Bootstrap clusters the FULL set top-down (global view), not one-by-one."""
     root = tmp_path / "concepts"
     root.mkdir(parents=True)
-    names = [f"c{i}" for i in range(tt.FANOUT_K + 2)]  # forces one split
-    for s in names:
+    stems = [f"a{i}" for i in range(6)] + [f"b{i}" for i in range(6)]  # 12 > FANOUT_K
+    for s in stems:
         (root / f"{s}.md").write_text(f"# {s}\n", encoding="utf-8")
-    n = tt.bootstrap(
-        root,
-        choose=lambda v, b: None,  # always drop at current node
-        cluster=lambda items: {
-            "group-a": [s for s, _ in items[: len(items) // 2]],
-            "group-b": [s for s, _ in items[len(items) // 2:]],
-        },
-        summarize=lambda name, briefs: f"s {name}",
-    )
-    assert n == len(names)
+
+    def cluster(items):  # clean global split by prefix
+        return {
+            "group-a": [s for s, _ in items if s.startswith("a")],
+            "group-b": [s for s, _ in items if s.startswith("b")],
+        }
+
+    n = tt.bootstrap(root, cluster=cluster, summarize=lambda name, briefs: f"s {name}")
+    assert n == 12
     assert (root / "_topic.md").exists()
-    assert any(d.is_dir() for d in root.iterdir())  # a subtopic dir was created
+    assert (root / "group-a" / "a0.md").is_file()
+    assert (root / "group-b" / "b0.md").is_file()
+    assert not (root / "a0.md").exists()  # nothing left flat at root
+    assert tt.read_topic(root, "group-a").summary == "s group-a"
+
+
+def test_bootstrap_recurses_until_under_fanout(tmp_path):
+    """A group still larger than FANOUT_K recurses into sub-topics (depth grows)."""
+    root = tmp_path / "concepts"
+    root.mkdir(parents=True)
+    n_concepts = tt.FANOUT_K * 2 + 5  # forces >1 level of recursion
+    for i in range(n_concepts):
+        (root / f"c{i:02d}.md").write_text(f"# c{i}\n", encoding="utf-8")
+    n = tt.bootstrap(root, cluster=_half_cluster, summarize=lambda name, briefs: "s")
+    assert n == n_concepts
+    # at least one subtopic that itself has a subtopic (depth >= 2)
+    deep = [d for d in root.rglob("*") if d.is_dir() and any(c.is_dir() for c in d.iterdir())]
+    assert deep, "expected a multi-level tree (a subtopic containing subtopics)"
+    # every leaf node holds <= FANOUT_K concepts
+    for d in root.rglob("*"):
+        if d.is_dir():
+            assert tt.child_count(d) <= tt.FANOUT_K
 
 
 def test_make_choose_parses_pick(tmp_path):

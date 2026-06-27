@@ -169,37 +169,64 @@ def place_topic_dir(concepts_root: Path, *, brief: str, choose: ChooseFn) -> Pat
     return node
 
 
+def _build_subtree(
+    node_dir: Path,
+    items: list[tuple[str, str, str]],  # (stem, brief, content)
+    cluster: ClusterFn,
+    summarize: SummarizeFn,
+    depth: int,
+) -> int:
+    """Recursively build a topic subtree under ``node_dir`` (already created,
+    with its ``_topic.md``). Clusters the full item set at this level, recurses
+    into any group still larger than ``FANOUT_K``, and writes leaves otherwise."""
+    if len(items) <= FANOUT_K or depth >= MAX_DEPTH:
+        for stem, _brief_, content in items:
+            atomic_write_text(node_dir / f"{stem}.md", content)
+        return len(items)
+
+    briefs = {stem: b for stem, b, _ in items}
+    contents = {stem: c for stem, _, c in items}
+    groups = cluster([(s, briefs[s]) for s in contents])
+
+    placed = 0
+    seen: set[str] = set()
+    for name, stems in groups.items():
+        kept = [s for s in stems if s in contents and s not in seen]
+        if not kept:
+            continue
+        seen.update(kept)
+        sub = node_dir / name
+        sub.mkdir(parents=True, exist_ok=True)
+        write_topic_md(sub, summarize(name, [briefs[s] for s in kept]), len(kept))
+        placed += _build_subtree(
+            sub, [(s, briefs[s], contents[s]) for s in kept], cluster, summarize, depth + 1
+        )
+    # Any concept the clusterer dropped stays as a leaf at this node.
+    for s in [s for s in contents if s not in seen]:
+        atomic_write_text(node_dir / f"{s}.md", contents[s])
+        placed += 1
+    return placed
+
+
 def bootstrap(
     concepts_root: Path,
     *,
-    choose: ChooseFn,
     cluster: ClusterFn,
     summarize: SummarizeFn,
 ) -> int:
-    """Build a topic tree over the existing flat concept files under root.
+    """Build a topic tree over the existing flat concepts under ``concepts_root``.
 
-    Ensures a root ``_topic.md``, then places each existing flat concept,
-    splitting any node that overflows. Returns the number placed.
+    Top-down, global cold-start seed: cluster the FULL concept set into top
+    topics, recurse into any topic still over ``FANOUT_K``. Building from the
+    whole set (rather than greedily one-by-one) avoids freezing the high-level
+    taxonomy on early-arriving concepts. Returns the number placed.
     """
     concepts_root.mkdir(parents=True, exist_ok=True)
-    # Sort for a deterministic, reproducible build order.
+    # Deterministic order; read all into memory, then clear the flat root.
     flat = sorted(p for p in concepts_root.glob("*.md") if p.name != TOPIC_FILE)
-    # Read every flat concept into memory and clear the root BEFORE placing, so
-    # the tree grows incrementally (a split triggered mid-run must not move a
-    # file we have not processed yet).
-    staged = [(p.stem, _brief(p), p.read_text(encoding="utf-8")) for p in flat]
+    items = [(p.stem, _brief(p), p.read_text(encoding="utf-8")) for p in flat]
     for p in flat:
         p.unlink()
     if not (concepts_root / TOPIC_FILE).exists():
         write_topic_md(concepts_root, "Knowledge base topics.", 0)
-    placed = 0
-
-    def _split(node_dir: Path) -> None:
-        split_node(node_dir, cluster=cluster, summarize=summarize)
-
-    for stem, brief, content in staged:
-        place_concept(
-            concepts_root, stem, brief, content, choose=choose, on_overflow=_split
-        )
-        placed += 1
-    return placed
+    return _build_subtree(concepts_root, items, cluster, summarize, depth=0)

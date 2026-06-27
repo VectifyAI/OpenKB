@@ -1712,13 +1712,12 @@ def reindex(ctx):
         return
     _setup_llm_key(kb_dir)
     model = config.get("model", DEFAULT_CONFIG["model"])
-    from openkb.topic_tree_llm import make_choose, make_cluster, make_summarize
+    from openkb.topic_tree_llm import make_cluster, make_summarize
 
     concepts_root = kb_dir / "wiki" / "concepts"
     with kb_ingest_lock(kb_dir / ".openkb"):
         n = tt_bootstrap(
             concepts_root,
-            choose=make_choose(model),
             cluster=make_cluster(model),
             summarize=make_summarize(model),
         )
