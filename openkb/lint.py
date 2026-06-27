@@ -181,6 +181,7 @@ def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
                 continue
             rel = p.relative_to(wiki_dir).with_suffix("")
             targets.add(str(rel).replace("\\", "/"))  # concepts/<...>/<stem>
+            targets.add(f"concepts/{p.stem}")  # path-independent concepts/<stem>
             targets.add(p.stem)  # bare <stem>
     if summaries_dir.is_dir():
         targets.update(f"summaries/{p.stem}" for p in summaries_dir.glob("*.md"))

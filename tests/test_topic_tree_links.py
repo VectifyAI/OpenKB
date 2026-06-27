@@ -17,6 +17,18 @@ def test_targets_include_bare_stem_for_nested_concept(tmp_path):
     assert "concepts/attention-and-transformers/self-attention" in targets
 
 
+def test_dir_prefixed_link_resolves_for_nested_concept(tmp_path):
+    """Compiler-generated ``[[concepts/<stem>]]`` links must still resolve after
+    a concept is nested under a topic dir (the form real concept bodies use)."""
+    wiki = tmp_path / "wiki"
+    _mk(wiki / "concepts" / "transformer" / "self-attention.md")
+    targets = list_existing_wiki_targets(wiki)
+    assert "concepts/self-attention" in targets
+    out, ghosts = strip_ghost_wikilinks("see [[concepts/self-attention]]", targets)
+    assert ghosts == []
+    assert "[[concepts/self-attention]]" in out
+
+
 def test_bare_stem_link_not_stripped_when_nested(tmp_path):
     wiki = tmp_path / "wiki"
     _mk(wiki / "concepts" / "topic" / "self-attention.md")
