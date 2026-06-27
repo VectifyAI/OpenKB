@@ -151,3 +151,38 @@ def split_node(node_dir: Path, *, cluster: ClusterFn, summarize: SummarizeFn) ->
     new_view = read_topic(node_dir.parent if node_dir.name else node_dir, node_dir.name)
     size = len(new_view.child_topics) + len(new_view.child_concepts)
     write_topic_md(node_dir, view.summary or node_dir.name, size)
+
+
+def bootstrap(
+    concepts_root: Path,
+    *,
+    choose: ChooseFn,
+    cluster: ClusterFn,
+    summarize: SummarizeFn,
+) -> int:
+    """Build a topic tree over the existing flat concept files under root.
+
+    Ensures a root ``_topic.md``, then places each existing flat concept,
+    splitting any node that overflows. Returns the number placed.
+    """
+    concepts_root.mkdir(parents=True, exist_ok=True)
+    flat = [p for p in concepts_root.glob("*.md") if p.name != TOPIC_FILE]
+    # Read every flat concept into memory and clear the root BEFORE placing, so
+    # the tree grows incrementally (a split triggered mid-run must not move a
+    # file we have not processed yet).
+    staged = [(p.stem, _brief(p), p.read_text(encoding="utf-8")) for p in flat]
+    for p in flat:
+        p.unlink()
+    if not (concepts_root / TOPIC_FILE).exists():
+        write_topic_md(concepts_root, "Knowledge base topics.", 0)
+    placed = 0
+
+    def _split(node_dir: Path) -> None:
+        split_node(node_dir, cluster=cluster, summarize=summarize)
+
+    for stem, brief, content in staged:
+        place_concept(
+            concepts_root, stem, brief, content, choose=choose, on_overflow=_split
+        )
+        placed += 1
+    return placed

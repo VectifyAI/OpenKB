@@ -73,3 +73,23 @@ def test_split_clusters_and_moves(tmp_path):
     assert (root / "training" / "adam.md").is_file()
     assert not (root / "self-attention.md").exists()  # moved, not copied
     assert tt.read_topic(root, "attention").summary == "summary of attention"
+
+
+def test_bootstrap_places_and_splits(tmp_path):
+    root = tmp_path / "concepts"
+    root.mkdir(parents=True)
+    names = [f"c{i}" for i in range(tt.FANOUT_K + 2)]  # forces one split
+    for s in names:
+        (root / f"{s}.md").write_text(f"# {s}\n", encoding="utf-8")
+    n = tt.bootstrap(
+        root,
+        choose=lambda v, b: None,  # always drop at current node
+        cluster=lambda items: {
+            "group-a": [s for s, _ in items[: len(items) // 2]],
+            "group-b": [s for s, _ in items[len(items) // 2:]],
+        },
+        summarize=lambda name, briefs: f"s {name}",
+    )
+    assert n == len(names)
+    assert (root / "_topic.md").exists()
+    assert any(d.is_dir() for d in root.iterdir())  # a subtopic dir was created
