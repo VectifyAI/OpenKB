@@ -321,10 +321,14 @@ def find_orphans(wiki: Path) -> list[str]:
     incoming: set[str] = set()
     for links in outgoing.values():
         for lnk in links:
-            incoming.add(lnk.strip().strip("/"))
-        # Also add stems
-        for lnk in links:
-            incoming.add(Path(lnk.strip()).stem)
+            cleaned = lnk.strip().strip("/")
+            incoming.add(cleaned)
+            # Only treat a link as a bare-stem reference when it is itself a
+            # bare stem. A qualified link like ``concepts/foo`` must not mark a
+            # same-stem page in another directory (``summaries/foo``) as linked,
+            # which would hide a genuine orphan.
+            if "/" not in cleaned:
+                incoming.add(Path(cleaned).stem)
 
     orphans: list[str] = []
     for rel, links in outgoing.items():
