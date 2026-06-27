@@ -82,3 +82,39 @@ def read_topic(concepts_root: Path, rel: str = "") -> TopicNodeView:
     return TopicNodeView(
         summary=summary, child_topics=child_topics, child_concepts=child_concepts
     )
+
+
+ChooseFn = Callable[[TopicNodeView, str], Optional[str]]
+
+
+def place_concept(
+    concepts_root: Path,
+    stem: str,
+    brief: str,
+    content: str,
+    *,
+    choose: ChooseFn,
+    on_overflow: Optional[Callable[[Path], None]] = None,
+) -> Path:
+    """Descend from the root, letting ``choose`` pick a child topic at each
+    level, until it returns None; drop the concept as a leaf there.
+
+    Cost is O(depth) ``choose`` calls. ``on_overflow`` (if given) fires on
+    the landing node when its direct-child count exceeds ``FANOUT_K``.
+    """
+    rel = ""
+    for _ in range(MAX_DEPTH):
+        view = read_topic(concepts_root, rel)
+        pick = choose(view, brief)
+        if pick is None:
+            break
+        if pick not in {t for t, _ in view.child_topics}:
+            break  # choose returned a non-existent child; stop here defensively
+        rel = f"{rel}/{pick}" if rel else pick
+    node_dir = concepts_root if not rel else concepts_root / rel
+    node_dir.mkdir(parents=True, exist_ok=True)
+    path = node_dir / f"{stem}.md"
+    atomic_write_text(path, content)
+    if on_overflow is not None and child_count(node_dir) > FANOUT_K:
+        on_overflow(node_dir)
+    return path
