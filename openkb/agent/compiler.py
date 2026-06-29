@@ -31,6 +31,7 @@ import litellm
 from openkb import frontmatter
 from openkb.config import (
     DEFAULT_ENTITY_TYPES,
+    get_api_base,
     get_extra_headers,
     get_timeout,
     resolve_entity_types,
@@ -334,6 +335,9 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
     timeout = get_timeout()
     if timeout is not None:
         kwargs.setdefault("timeout", timeout)
+    api_base = get_api_base()
+    if api_base is not None:
+        kwargs.setdefault("api_base", api_base)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -359,6 +363,9 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
     timeout = get_timeout()
     if timeout is not None:
         kwargs.setdefault("timeout", timeout)
+    api_base = get_api_base()
+    if api_base is not None:
+        kwargs.setdefault("api_base", api_base)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)

@@ -45,7 +45,7 @@ from openkb.agent.compiler import compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
     resolve_extra_headers, set_extra_headers, resolve_timeout, set_timeout,
-    resolve_litellm_settings,
+    resolve_litellm_settings, resolve_api_base, set_api_base,
 )
 from openkb.converter import _registry_path, convert_document
 from openkb.indexer import import_cloud_document
@@ -138,11 +138,12 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     api_key = os.environ.get("LLM_API_KEY", "")
 
-    # Try to resolve the active provider, extra headers, and request timeout
-    # from the KB config
+    # Try to resolve the active provider, extra headers, request timeout, and
+    # custom API base URL from the KB config
     provider: str | None = None
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
+    api_base: str | None = None
     litellm_settings: dict = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
@@ -152,6 +153,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             provider = _extract_provider(str(model))
             extra_headers = resolve_extra_headers(config)
             timeout = resolve_timeout(config)
+            api_base = resolve_api_base(config)
             litellm_settings = resolve_litellm_settings(config)
             # `timeout` / `extra_headers` in the block route to the per-call
             # stashes (replacing the legacy top-level keys); the rest are globals.
@@ -163,8 +165,20 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
                 timeout = resolve_timeout(
                     {"timeout": litellm_settings.pop("timeout")}
                 )
+
+    # Fall back to LLM_API_BASE env var when api_base is not set in config.
+    if api_base is None:
+        env_api_base = os.environ.get("LLM_API_BASE", "").strip()
+        if env_api_base:
+            api_base = env_api_base
+
     set_extra_headers(extra_headers)
     set_timeout(timeout)
+    set_api_base(api_base)
+    # Also set litellm.api_base globally so third-party libraries that call
+    # litellm directly (e.g. PageIndex) also route through the custom endpoint.
+    if api_base is not None:
+        litellm.api_base = api_base
     _apply_litellm_settings(litellm_settings)
 
     if not api_key:

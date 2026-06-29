@@ -242,6 +242,44 @@ def get_timeout_extra_args() -> dict[str, float] | None:
     return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
 
 
+def resolve_api_base(config: dict) -> str | None:
+    """Resolve the optional ``api_base:`` config key to a non-empty URL string.
+
+    Returns ``None`` (use the provider default) when absent or blank; warns and
+    returns ``None`` when present but not a string.
+    """
+    raw = config.get("api_base")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        logger.warning(
+            "config: 'api_base' must be a URL string, got %s — ignoring it.",
+            type(raw).__name__,
+        )
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    return stripped
+
+
+# Process-wide custom API base URL for LLM requests, set from config / env by
+# the CLI entry points and read at call sites via get_api_base(). None means
+# use the provider's default endpoint — behaviour is identical to not setting it.
+_runtime_api_base: str | None = None
+
+
+def set_api_base(api_base: str | None) -> None:
+    """Set the process-wide custom API base URL; ``None`` clears it."""
+    global _runtime_api_base
+    _runtime_api_base = api_base or None
+
+
+def get_api_base() -> str | None:
+    """Return the process-wide custom API base URL, or ``None``."""
+    return _runtime_api_base
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     """Load YAML config from config_path, merged with DEFAULT_CONFIG.
 
