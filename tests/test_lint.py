@@ -114,6 +114,35 @@ class TestFindOrphans:
 
         assert result == []
 
+    def test_qualified_link_does_not_hide_same_stem_orphan(self, tmp_path):
+        # A qualified link [[concepts/dup]] must not mark a *different* page
+        # that merely shares the "dup" stem (summaries/dup) as linked — that
+        # page is a genuine orphan and must still be flagged.
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "dup.md").write_text("# Linked concept", encoding="utf-8")
+        (wiki / "summaries" / "linker.md").write_text(
+            "See [[concepts/dup]]", encoding="utf-8"
+        )
+        (wiki / "summaries" / "dup.md").write_text(
+            "Orphan sharing the 'dup' stem, with no links.", encoding="utf-8"
+        )
+
+        result = find_orphans(wiki)
+
+        assert "summaries/dup" in result
+        assert "concepts/dup" not in result
+
+    def test_bare_stem_link_still_matches_same_stem_page(self, tmp_path):
+        # A bare [[dup]] link (no path) intentionally resolves by stem, so a
+        # page with that stem is not considered an orphan.
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "dup.md").write_text("# A concept", encoding="utf-8")
+        (wiki / "summaries" / "linker.md").write_text("See [[dup]]", encoding="utf-8")
+
+        result = find_orphans(wiki)
+
+        assert "concepts/dup" not in result
+
 
 class TestFindMissingEntries:
     def test_no_missing_entries(self, tmp_path):
