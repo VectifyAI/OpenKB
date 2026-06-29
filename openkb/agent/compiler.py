@@ -797,13 +797,18 @@ _yaml_list_line = frontmatter.list_line
 _parse_yaml_list_value = frontmatter.parse_list_value
 
 
-def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
-    """Write or update a concept page, managing the sources frontmatter."""
-    concepts_dir = wiki_dir / "concepts"
-    concepts_dir.mkdir(parents=True, exist_ok=True)
+def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "", topic_dir: Path | None = None) -> None:
+    """Write or update a concept page, managing the sources frontmatter.
+
+    When ``topic_dir`` is given (topic-tree mode) the page is written there
+    instead of the flat ``concepts/`` directory; the basename is unchanged so
+    name-based wikilinks still resolve.
+    """
+    base_dir = topic_dir if topic_dir is not None else (wiki_dir / "concepts")
+    base_dir.mkdir(parents=True, exist_ok=True)
     safe_name = _sanitize_concept_name(name)
-    path = (concepts_dir / f"{safe_name}.md").resolve()
-    if not path.is_relative_to(concepts_dir.resolve()):
+    path = (base_dir / f"{safe_name}.md").resolve()
+    if not path.is_relative_to(base_dir.resolve()):
         logger.warning("Concept name escapes concepts dir: %s", name)
         return
 

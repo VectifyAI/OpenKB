@@ -52,6 +52,7 @@ from openkb.indexer import import_cloud_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
 from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
+from openkb.topic_tree import bootstrap as tt_bootstrap
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
 import warnings
@@ -1689,6 +1690,38 @@ def lint(ctx, fix):
         else:
             click.echo("Nothing to fix — all wikilinks resolve.")
     asyncio.run(run_lint(kb_dir))
+
+
+@cli.command()
+@click.pass_context
+def reindex(ctx):
+    """Build the concept topic tree from the existing flat wiki/concepts/ (experimental).
+
+    No-op unless `topic_tree: true` is set in .openkb/config.yaml.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    if not bool(config.get("topic_tree", False)):
+        click.echo(
+            "topic_tree is not enabled. Set `topic_tree: true` in "
+            ".openkb/config.yaml first."
+        )
+        return
+    _setup_llm_key(kb_dir)
+    model = config.get("model", DEFAULT_CONFIG["model"])
+    from openkb.topic_tree_llm import make_cluster, make_summarize
+
+    concepts_root = kb_dir / "wiki" / "concepts"
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        n = tt_bootstrap(
+            concepts_root,
+            cluster=make_cluster(model),
+            summarize=make_summarize(model),
+        )
+    click.echo(f"Reindexed {n} concept(s) into the topic tree.")
 
 
 @cli.command()
