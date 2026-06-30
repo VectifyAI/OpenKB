@@ -16,6 +16,7 @@ from pathlib import Path
 import yaml
 
 from openkb import frontmatter
+from openkb.locks import atomic_write_text
 from openkb.schema import PAGE_CONTENT_DIRS
 
 # Matches [[wikilink]] or [[subdir/link]]
@@ -249,7 +250,7 @@ def fix_broken_links(
             text, known_targets, norm_index=norm_index,
         )
         if cleaned != text:
-            md.write_text(cleaned, encoding="utf-8")
+            atomic_write_text(md, cleaned)
             files_changed += 1
             ghosts_stripped += len(ghosts)
     return files_changed, ghosts_stripped

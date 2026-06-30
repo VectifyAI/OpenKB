@@ -72,6 +72,24 @@ class TestAddCommand:
             runner.invoke(cli, ["add", str(doc)])
             mock_add.assert_called_once_with(doc, kb_dir)
 
+    def test_add_single_file_compile_failure_rolls_back_converted_artifacts(self, tmp_path):
+        from openkb.cli import add_single_file
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        doc = tmp_path / "notes.md"
+        doc.write_text("# Notes\n\nBody", encoding="utf-8")
+
+        with patch("openkb.agent.compiler.compile_short_doc", side_effect=RuntimeError("boom")), \
+             patch("openkb.cli.time.sleep"), \
+             patch("openkb.cli._setup_llm_key"):
+            outcome = add_single_file(doc, kb_dir)
+
+        assert outcome == "failed"
+        assert not (kb_dir / "raw" / "notes.md").exists()
+        assert not (kb_dir / "wiki" / "sources" / "notes.md").exists()
+        assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
+
     def test_add_directory_calls_helper_for_each_file(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         docs_dir = tmp_path / "docs"
@@ -149,12 +167,17 @@ class TestAddCommand:
             "stale-old-hash", {"name": "test.md", "doc_name": "test", "type": "md"}
         )
 
+        compile_calls = []
+
+        async def compile_noop(*args, **kwargs):
+            compile_calls.append((args, kwargs))
+
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
              patch("openkb.cli.convert_document", return_value=mock_result), \
-             patch("openkb.cli.asyncio.run") as mock_arun:
+             patch("openkb.agent.compiler.compile_short_doc", new=compile_noop):
             result = runner.invoke(cli, ["add", str(doc)])
-            mock_arun.assert_called_once()
+            assert len(compile_calls) == 1
             assert "OK" in result.output
 
         import json as json_mod
@@ -188,11 +211,15 @@ class TestAddCommand:
         doc = tmp_path / "notes.md"
         doc.write_text("# Notes, edited")  # new content hash != "old-hash"
 
-        # Compilation mocked out (asyncio.run), but convert_document REAL so
+        # Compilation mocked out, but convert_document REAL so
         # the legacy backfill actually happens on disk mid-pipeline.
+        def close_coro(coro):
+            if hasattr(coro, "close"):
+                coro.close()
+
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.asyncio.run"):
+             patch("openkb.cli.asyncio.run", side_effect=close_coro):
             result = runner.invoke(cli, ["add", str(doc)])
             assert "OK" in result.output
 
@@ -255,19 +282,31 @@ class TestImportFromPageindexCloud:
         (openkb_dir / "hashes.json").write_text(json.dumps({}))
         return tmp_path
 
+    def _cloud_data(self, doc_name="Cloud-Paper"):
+        from openkb.indexer import CloudImportData
+
+        return CloudImportData(
+            doc_id="cloud-1",
+            doc_name=doc_name,
+            cloud_name="Cloud Paper.pdf",
+            description="desc",
+            tree={
+                "doc_name": "Cloud Paper.pdf",
+                "doc_description": "desc",
+                "structure": [],
+            },
+            all_pages=[{"page": 1, "content": "Cloud page", "images": []}],
+        )
+
     def test_registers_rawless_cloud_entry(self, tmp_path):
         import hashlib
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name="Cloud-Paper", name="Cloud Paper.pdf",
-            description="desc",
-        )
+        cloud = self._cloud_data()
 
-        with patch("openkb.cli.import_cloud_document", return_value=result), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=cloud), \
              patch("openkb.cli.compile_long_doc", return_value=None) as mock_compile, \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
@@ -286,29 +325,25 @@ class TestImportFromPageindexCloud:
 
     def test_second_import_is_skipped(self, tmp_path):
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
 
         kb_dir = self._setup_kb(tmp_path)
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name="Cloud-Paper", name="Cloud Paper.pdf",
-            description="desc",
-        )
+        cloud = self._cloud_data()
 
-        with patch("openkb.cli.import_cloud_document", return_value=result) as mock_import, \
+        with patch("openkb.cli.prepare_cloud_import", return_value=cloud) as mock_prepare, \
              patch("openkb.cli.compile_long_doc", return_value=None), \
              patch("openkb.cli._setup_llm_key"):
             import_from_pageindex_cloud("cloud-1", kb_dir)
             second = import_from_pageindex_cloud("cloud-1", kb_dir)
 
         assert second == "skipped"
-        assert mock_import.call_count == 1  # not fetched again
+        assert mock_prepare.call_count == 1  # not fetched again
 
     def test_import_failure_returns_failed_and_registers_nothing(self, tmp_path):
         from openkb.cli import import_from_pageindex_cloud
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        with patch("openkb.cli.import_cloud_document", side_effect=RuntimeError("boom")), \
+        with patch("openkb.cli.prepare_cloud_import", side_effect=RuntimeError("boom")), \
              patch("openkb.cli._setup_llm_key"):
             outcome = import_from_pageindex_cloud("cloud-9", kb_dir)
 
@@ -322,21 +357,15 @@ class TestImportFromPageindexCloud:
         `openkb remove` couldn't reach them otherwise — and nothing is registered
         (so a retry isn't skipped)."""
         from openkb.cli import import_from_pageindex_cloud
-        from openkb.indexer import CloudImportResult
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
         (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
         (kb_dir / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
         doc_name = "Cloud-Paper"
-        # Simulate the artifacts import_cloud_document writes before compile.
-        (kb_dir / "wiki" / "summaries" / f"{doc_name}.md").write_text("---\n---\n# s\n")
-        (kb_dir / "wiki" / "sources" / f"{doc_name}.json").write_text("[]")
-        result = CloudImportResult(
-            doc_id="cloud-1", doc_name=doc_name, name="Cloud Paper.pdf", description="d",
-        )
+        cloud = self._cloud_data(doc_name=doc_name)
 
-        with patch("openkb.cli.import_cloud_document", return_value=result), \
+        with patch("openkb.cli.prepare_cloud_import", return_value=cloud), \
              patch("openkb.cli.compile_long_doc", side_effect=RuntimeError("boom")), \
              patch("openkb.cli.time.sleep"), \
              patch("openkb.cli._setup_llm_key"):

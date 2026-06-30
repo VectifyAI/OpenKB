@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -97,6 +98,32 @@ def _local_lock(lock_path: Path) -> _LocalRwLock:
         return lock
 
 
+def _drain_pending_journals(openkb_dir: Path) -> None:
+    """Roll back any mutation journals an interrupted process left behind.
+
+    Draining recovery is part of *taking* the mutation lock, not part of any
+    one command: a process that acquires the exclusive lock must restore the
+    KB to a known state before mutating it. Wiring this into ``kb_lock`` means
+    every exclusive-lock holder — ``add``, ``remove``, ``recompile``, ``lint``,
+    ``chat`` — drains on first acquisition, so an ``add`` that crashed mid-
+    commit cannot leave an active journal on disk that a later ``add`` rolls
+    back over the top of an intervening ``remove``/``recompile`` (clobbering
+    those edits). ``openkb_dir`` is the ``kb_dir/.openkb`` directory callers
+    pass to ``kb_lock``; the journal lives at ``openkb_dir/journal``, so the
+    KB root is ``openkb_dir.parent``.
+
+    The delayed import breaks the ``locks`` ↔ ``mutation`` cycle (``mutation``
+    imports atomic-write helpers from this module at top level). Called only
+    on first OS-lock acquisition (the reentrant branch above returns early),
+    never on a read lock, so queries pay nothing.
+    """
+    from openkb.mutation import recover_pending_journals
+
+    log = logging.getLogger(__name__)
+    for message in recover_pending_journals(openkb_dir.parent):
+        log.warning(message)
+
+
 @contextlib.contextmanager
 def kb_lock(openkb_dir: Path, *, exclusive: bool) -> Iterator[None]:
     """Hold a KB-level advisory lock."""
@@ -134,6 +161,8 @@ def kb_lock(openkb_dir: Path, *, exclusive: bool) -> Iterator[None]:
             flock(fh, exclusive=exclusive)
             held[resolved] = (1, 0) if exclusive else (0, 1)
             try:
+                if exclusive:
+                    _drain_pending_journals(openkb_dir)
                 yield
             finally:
                 held.pop(resolved, None)

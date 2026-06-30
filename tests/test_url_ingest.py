@@ -488,8 +488,11 @@ def test_add_single_file_returns_added_on_success(tmp_path):
         is_long_doc=False, file_hash="cafe" * 16,
     )
 
+    async def compile_noop(*args, **kwargs):
+        return None
+
     with patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run"):
+         patch("openkb.agent.compiler.compile_short_doc", new=compile_noop):
         outcome = add_single_file(doc, tmp_path)
 
     assert outcome == "added"
@@ -538,9 +541,12 @@ def test_add_single_file_returns_failed_on_pipeline_error(tmp_path):
         is_long_doc=False, file_hash="cafe" * 16,
     )
 
+    async def fail_compile(*args, **kwargs):
+        raise RuntimeError("LLM 503")
+
     # Make both compile attempts raise to drive the failure path.
     with patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run", side_effect=RuntimeError("LLM 503")), \
+         patch("openkb.agent.compiler.compile_short_doc", new=fail_compile), \
          patch("openkb.cli.time.sleep"):
         outcome = add_single_file(doc, tmp_path)
 
@@ -580,6 +586,34 @@ def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
     assert not fetched_path.exists()
 
 
+def test_url_ingest_uses_staged_add_for_crash_safe_conversion(tmp_path):
+    """URL ingest must keep add_single_file's default staged conversion path.
+
+    Passing stage=False writes converted source artifacts into the live KB before
+    the mutation snapshot exists, which leaves URL adds outside the rollback
+    contract.
+    """
+    from click.testing import CliRunner
+    from openkb.cli import cli
+
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+
+    fetched_path = tmp_path / "raw" / "paper.md"
+    fetched_path.write_text("# Paper", encoding="utf-8")
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
+         patch("openkb.cli.add_single_file", return_value="added") as mock_add:
+        result = runner.invoke(cli, ["add", "https://example.com/paper"])
+
+    assert result.exit_code == 0, result.output
+    mock_add.assert_called_once_with(fetched_path, tmp_path)
+
+
 def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
     """The point of the tri-state return: a pipeline failure (e.g. LLM
     timeout during compilation) must NOT delete the downloaded file —
@@ -607,11 +641,14 @@ def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
         is_long_doc=False, file_hash="cafe" * 16,
     )
 
+    async def fail_compile(*args, **kwargs):
+        raise RuntimeError("LLM 503")
+
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
          patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
          patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run", side_effect=RuntimeError("LLM 503")), \
+         patch("openkb.agent.compiler.compile_short_doc", new=fail_compile), \
          patch("openkb.cli.time.sleep"):
         result = runner.invoke(cli, ["add", "https://example.com/paper.pdf"])
 
@@ -619,3 +656,42 @@ def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
     assert "[ERROR] Compilation failed" in result.output
     # The raw file must be preserved so the user can retry.
     assert fetched_path.exists()
+
+
+def test_url_ingest_pipeline_failure_rolls_back_converted_source_but_keeps_download(tmp_path):
+    """A URL add that fails after conversion should not leave source artifacts.
+
+    The downloaded raw file is intentionally kept for retry, but converted
+    artifacts must be published only under the mutation journal so rollback can
+    remove them.
+    """
+    from click.testing import CliRunner
+    from openkb.cli import cli
+
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n")
+    (tmp_path / ".openkb" / "hashes.json").write_text("{}")
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+    (tmp_path / "wiki" / "sources").mkdir(parents=True)
+    (tmp_path / "wiki" / "concepts").mkdir(parents=True)
+    (tmp_path / "wiki" / "log.md").write_text("", encoding="utf-8")
+
+    fetched_path = tmp_path / "raw" / "paper.md"
+    fetched_path.write_text("# Paper\n\nBody", encoding="utf-8")
+
+    async def fail_compile(*args, **kwargs):
+        raise RuntimeError("LLM 503")
+
+    runner = CliRunner()
+    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
+         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
+         patch("openkb.agent.compiler.compile_short_doc", new=fail_compile), \
+         patch("openkb.cli.time.sleep"), \
+         patch("openkb.cli._setup_llm_key"):
+        result = runner.invoke(cli, ["add", "https://example.com/paper"])
+
+    assert result.exit_code == 0, result.output
+    assert "[ERROR] Compilation failed" in result.output
+    assert fetched_path.exists()
+    assert not (tmp_path / "wiki" / "sources" / "paper.md").exists()
