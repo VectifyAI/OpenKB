@@ -951,17 +951,16 @@ def add(ctx, path, from_pageindex_cloud):
         click.echo("Provide a PATH or use --from-pageindex-cloud <DOC_ID>.")
         return
 
-    # URL ingest: download into raw/ first, then call add_single_file
-    # explicitly so we can clean up the just-downloaded file if it
-    # turns out to be a duplicate (registry already has its hash).
-    # Without this, re-adding the same URL leaves an orphan in raw/
-    # that the registry can't reach via openkb remove.
+    # URL ingest: download into raw/ first, then call add_single_file explicitly.
+    # Keep staged conversion enabled so converted source artifacts do not touch
+    # the live KB before the mutation snapshot exists. The tri-state outcome
+    # still lets us clean up the just-downloaded raw file on dedup.
     from openkb.url_ingest import looks_like_url, fetch_url_to_raw
     if looks_like_url(path):
         fetched = fetch_url_to_raw(path, kb_dir)
         if fetched is None:
             return
-        outcome = add_single_file(fetched, kb_dir, stage=False)
+        outcome = add_single_file(fetched, kb_dir)
         # Only clean up on dedup-skip. On "failed" we keep the file so
         # the user can retry (e.g. transient LLM error during compile)
         # without re-downloading — and so they don't lose data when

@@ -167,12 +167,17 @@ class TestAddCommand:
             "stale-old-hash", {"name": "test.md", "doc_name": "test", "type": "md"}
         )
 
+        compile_calls = []
+
+        async def compile_noop(*args, **kwargs):
+            compile_calls.append((args, kwargs))
+
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
              patch("openkb.cli.convert_document", return_value=mock_result), \
-             patch("openkb.cli.asyncio.run") as mock_arun:
+             patch("openkb.agent.compiler.compile_short_doc", new=compile_noop):
             result = runner.invoke(cli, ["add", str(doc)])
-            mock_arun.assert_called_once()
+            assert len(compile_calls) == 1
             assert "OK" in result.output
 
         import json as json_mod
