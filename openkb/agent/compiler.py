@@ -262,10 +262,73 @@ def _cached_text(text: str) -> list[dict]:
     ephemeral cache_control marker.
 
     LiteLLM passes the marker through to Anthropic (and OpenRouter →
-    Anthropic). For providers that ignore cache_control, the list-of-blocks
-    payload remains a valid OpenAI-compatible content shape.
+    Anthropic). For other providers the marker is stripped at the request
+    egress (see :func:`_strip_cache_control`, applied in :func:`_llm_call`),
+    because not every provider merely *ignores* it — Gemini in particular
+    turns it into a 400. The list-of-blocks payload that remains is a valid
+    OpenAI-compatible content shape.
     """
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
+def _accepts_cache_control(model: str) -> bool:
+    """Whether ``model`` honours Anthropic-style ``cache_control`` markers.
+
+    The markers emitted by :func:`_cached_text` are an Anthropic feature.
+    LiteLLM forwards them to Anthropic directly, and to Anthropic (Claude)
+    models served via OpenRouter, Bedrock and Vertex. For other providers —
+    notably Gemini — LiteLLM instead translates the marker into a
+    provider-native cached-content object that conflicts with
+    ``system_instruction``/``tools`` and makes *every* request fail with
+    ``400 CachedContent can not be used with ...``. Detect the provider so the
+    marker can be dropped before it reaches such a backend.
+    """
+    # Import the real symbol rather than going through the module-level
+    # ``litellm`` reference: provider detection must stay correct even when a
+    # caller patches ``openkb.agent.compiler.litellm`` to stub out completion.
+    from litellm import get_llm_provider
+
+    try:
+        provider = get_llm_provider(model)[1]
+    except Exception:
+        provider = ""
+    lowered = model.lower()
+    if provider == "anthropic":
+        return True
+    if provider in ("openrouter", "bedrock", "vertex_ai") and (
+        "claude" in lowered or "anthropic" in lowered
+    ):
+        return True
+    return False
+
+
+def _strip_cache_control(messages: list[dict]) -> list[dict]:
+    """Return ``messages`` with every ``cache_control`` key removed.
+
+    Only list-of-blocks contents (see :func:`_cached_text`) can carry the
+    marker; plain-string contents pass through untouched. The input is not
+    mutated.
+    """
+    cleaned: list[dict] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            blocks = [
+                {k: v for k, v in block.items() if k != "cache_control"}
+                if isinstance(block, dict)
+                else block
+                for block in content
+            ]
+            msg = {**msg, "content": blocks}
+        cleaned.append(msg)
+    return cleaned
+
+
+def _prepare_messages(model: str, messages: list[dict]) -> list[dict]:
+    """Drop cache_control markers when ``model`` would reject them."""
+    if _accepts_cache_control(model):
+        return messages
+    return _strip_cache_control(messages)
 
 
 class _Spinner:
@@ -328,6 +391,7 @@ def _fmt_messages(messages: list[dict], max_content: int = 200) -> str:
 
 def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
     """Single LLM call with animated progress and debug logging."""
+    messages = _prepare_messages(model, messages)
     extra_headers = get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
@@ -353,6 +417,7 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
 
 async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
     """Async LLM call with timing output and debug logging."""
+    messages = _prepare_messages(model, messages)
     extra_headers = get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)

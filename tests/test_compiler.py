@@ -2260,6 +2260,68 @@ class TestLLMCallExtraHeaders:
         assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
 
 
+class TestCacheControlStripping:
+    """cache_control markers must only reach providers that honour them.
+
+    ``_cached_text`` tags payloads with an Anthropic ``cache_control`` marker.
+    LiteLLM turns that marker into a hard 400 for Gemini ("CachedContent can not
+    be used with system_instruction/tools") and silently wastes it on other
+    non-Anthropic providers, so ``_llm_call``/``_llm_call_async`` strip it for
+    every non-Anthropic model. Regression for the all-Gemini-compiles-fail bug.
+    """
+
+    def test_accepts_for_anthropic_providers(self):
+        from openkb.agent.compiler import _accepts_cache_control
+
+        assert _accepts_cache_control("anthropic/claude-sonnet-4-6")
+        assert _accepts_cache_control("claude-opus-4-6")
+        # Claude served via OpenRouter still honours the marker.
+        assert _accepts_cache_control("openrouter/anthropic/claude-3.5-sonnet")
+
+    def test_rejects_for_non_anthropic_providers(self):
+        from openkb.agent.compiler import _accepts_cache_control
+
+        assert not _accepts_cache_control("gemini/gemini-2.5-pro")
+        assert not _accepts_cache_control("gpt-4o")
+
+    def test_strip_removes_marker_without_mutating_input(self):
+        from openkb.agent.compiler import _cached_text, _strip_cache_control
+
+        messages = [
+            {"role": "system", "content": "plain string stays"},
+            {"role": "user", "content": _cached_text("doc")},
+        ]
+        cleaned = _strip_cache_control(messages)
+        # Plain-string content passes through untouched.
+        assert cleaned[0]["content"] == "plain string stays"
+        # Marker gone, text preserved.
+        assert cleaned[1]["content"] == [{"type": "text", "text": "doc"}]
+        # Original input is not mutated.
+        assert "cache_control" in messages[1]["content"][0]
+
+    def test_llm_call_strips_marker_for_gemini(self):
+        from openkb.agent.compiler import _cached_text, _llm_call
+
+        with patch("openkb.agent.compiler.litellm.completion",
+                   MagicMock(side_effect=_mock_completion(["ok"]))) as mock_completion:
+            _llm_call("gemini/gemini-2.5-pro",
+                      [{"role": "user", "content": _cached_text("doc")}], "step")
+        sent = mock_completion.call_args.kwargs["messages"]
+        block = sent[0]["content"][0]
+        assert "cache_control" not in block
+        assert block["text"] == "doc"
+
+    def test_llm_call_keeps_marker_for_anthropic(self):
+        from openkb.agent.compiler import _cached_text, _llm_call
+
+        with patch("openkb.agent.compiler.litellm.completion",
+                   MagicMock(side_effect=_mock_completion(["ok"]))) as mock_completion:
+            _llm_call("anthropic/claude-sonnet-4-6",
+                      [{"role": "user", "content": _cached_text("doc")}], "step")
+        sent = mock_completion.call_args.kwargs["messages"]
+        assert sent[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
 class TestFrontmatterDashBoundary:
     """Regression: description containing '---' must not truncate frontmatter."""
 
