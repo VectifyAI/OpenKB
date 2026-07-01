@@ -518,3 +518,72 @@ def test_hardlinked_dir_rollback_prunes_new_nested_blob_dirs(tmp_path):
     assert existing.stat().st_ino == existing_inode  # untouched, not recopied
     assert not (files / "col" / "newdoc.pdf").exists()
     assert not (files / "col" / "newdoc").exists()  # empty new dir pruned
+
+
+# --- track_new: cheap blob-store rollback without whole-tree snapshot -------
+
+def test_track_new_removes_new_blob_on_rollback(tmp_path):
+    """The PageIndex blob under .openkb/files gets its {doc_id} name only once
+    indexing runs — after snapshot_paths. Instead of snapshotting the whole
+    (append-only) blob store up front, the add path calls track_new() with the
+    new artifacts; rollback must then remove exactly those and leave every
+    pre-existing blob untouched.
+    """
+    kb_dir = tmp_path
+    blobs = kb_dir / ".openkb" / "files" / "col"
+    blobs.mkdir(parents=True)
+    existing = blobs / "old-doc.pdf"
+    existing.write_bytes(b"keep-me")
+    existing_inode = existing.stat().st_ino
+
+    # Snapshot does NOT include .openkb/files at all.
+    snapshot = snapshot_paths(kb_dir, [kb_dir / "wiki"], operation="add", details={})
+
+    # Indexing creates the new blob + its images subtree (doc_id now known).
+    new_blob = blobs / "new-doc.pdf"
+    new_blob.write_bytes(b"remove-me")
+    new_images = blobs / "new-doc"
+    (new_images / "images").mkdir(parents=True)
+    (new_images / "images" / "p1.png").write_bytes(b"img")
+
+    snapshot.track_new([new_blob, new_images])
+    snapshot.rollback()
+    snapshot.discard_best_effort()
+
+    assert not new_blob.exists()            # new blob removed
+    assert not new_images.exists()          # new images subtree removed
+    assert existing.read_bytes() == b"keep-me"   # pre-existing untouched
+    assert existing.stat().st_ino == existing_inode  # not recopied/relinked
+
+
+def test_track_new_persists_to_journal_for_crash_recovery(tmp_path):
+    """track_new() must rewrite the active journal so a crash *after* indexing
+    but before commit still rolls back the new blob on the next exclusive-lock
+    acquisition (recover_pending_journals), not just via in-process rollback.
+    """
+    kb_dir = tmp_path
+    blobs = kb_dir / ".openkb" / "files" / "col"
+    blobs.mkdir(parents=True)
+
+    snapshot = snapshot_paths(kb_dir, [kb_dir / "wiki"], operation="add", details={})
+    new_blob = blobs / "new-doc.pdf"
+    new_blob.write_bytes(b"remove-me")
+    snapshot.track_new([new_blob])
+    # Simulate a crash: journal left "active", no rollback()/mark_committed().
+
+    messages = recover_pending_journals(kb_dir)
+
+    assert not new_blob.exists()
+    assert any("Rolled back" in m for m in messages)
+
+
+def test_snapshot_add_paths_excludes_blob_store(tmp_path):
+    """The blob store is registered lazily via track_new(), so it must NOT be
+    in the eager add snapshot path list (that was the O(total blobs)-per-add
+    cost this change removes)."""
+    from openkb.cli import _snapshot_add_paths
+
+    paths = _snapshot_add_paths(tmp_path, "doc", None, None)
+    assert (tmp_path / ".openkb" / "files") not in paths
+    # hashes.json / pageindex.db are still snapshotted eagerly.
+    assert (tmp_path / ".openkb" / "hashes.json") in paths
