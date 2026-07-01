@@ -1,8 +1,8 @@
 """Tests for openkb.watcher (Task 12)."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-
 
 from openkb.watcher import DebouncedHandler
 

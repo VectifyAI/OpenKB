@@ -1,9 +1,8 @@
 """Tests for openkb.tree_renderer."""
+
 from __future__ import annotations
 
-
 from openkb.tree_renderer import render_summary_md
-
 
 # ---------------------------------------------------------------------------
 # render_summary_md
@@ -41,8 +40,11 @@ class TestRenderSummaryMd:
 
 
 def test_summary_md_has_type_and_description():
-    tree = {"structure": [{"title": "Intro", "start_index": 1,
-                           "end_index": 2, "summary": "x", "nodes": []}]}
+    tree = {
+        "structure": [
+            {"title": "Intro", "start_index": 1, "end_index": 2, "summary": "x", "nodes": []}
+        ]
+    }
     md = render_summary_md(tree, "my-doc", "doc-123", description="Quarterly report.")
     assert 'type: "Summary"' in md
     assert 'description: "Quarterly report."' in md
@@ -52,6 +54,7 @@ def test_summary_md_has_type_and_description():
 
 def test_summary_full_text_quoted_yaml_safe():
     import yaml
+
     tree = {"structure": []}
     md = render_summary_md(tree, "weird: name", "doc-1", description="d")
     # full_text is JSON-quoted, so a source name with a colon stays valid YAML

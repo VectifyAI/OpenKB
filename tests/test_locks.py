@@ -1,4 +1,5 @@
 """Tests for OpenKB KB locks and atomic writes."""
+
 from __future__ import annotations
 
 import json

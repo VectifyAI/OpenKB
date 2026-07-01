@@ -1,4 +1,5 @@
 """Image extraction and copy utilities for the OpenKB converter pipeline."""
+
 from __future__ import annotations
 
 import base64
@@ -12,10 +13,10 @@ import pymupdf
 logger = logging.getLogger(__name__)
 
 # Matches: ![alt](data:image/ext;base64,DATA)
-_BASE64_RE = re.compile(r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)')
+_BASE64_RE = re.compile(r"!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)")
 
 # Matches: ![alt](relative/path) — excludes http(s):// and data: URIs
-_RELATIVE_RE = re.compile(r'!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)')
+_RELATIVE_RE = re.compile(r"!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)")
 
 
 # Minimum pixel dimension — skip icons, bullets, and tiny artifacts
@@ -119,11 +120,13 @@ def convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> lis
                     except Exception:
                         logger.warning("Failed to save image block on page %d", page_num)
 
-            pages.append({
-                "page": page_num,
-                "content": "\n".join(parts),
-                "images": page_images,
-            })
+            pages.append(
+                {
+                    "page": page_num,
+                    "content": "\n".join(parts),
+                    "images": page_images,
+                }
+            )
     return pages
 
 
@@ -211,9 +214,7 @@ def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str
     return result
 
 
-def copy_relative_images(
-    markdown: str, source_dir: Path, doc_name: str, images_dir: Path
-) -> str:
+def copy_relative_images(markdown: str, source_dir: Path, doc_name: str, images_dir: Path) -> str:
     """Copy locally-referenced images into the KB images directory and rewrite links.
 
     For each ``![alt](relative/path)`` match (skipping http/https and data URIs):
@@ -231,9 +232,7 @@ def copy_relative_images(
             logger.warning("Image path escapes source dir: %s; skipping.", rel_path)
             continue
         if not src.exists():
-            logger.warning(
-                "Relative image not found: %s; leaving original link.", src
-            )
+            logger.warning("Relative image not found: %s; leaving original link.", src)
             continue
 
         filename = src.name

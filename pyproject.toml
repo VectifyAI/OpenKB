@@ -59,7 +59,7 @@ openkb = "openkb.cli:cli"
 testpaths = ["tests"]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.3", "pytest-asyncio==1.3.0"]
+dev = ["pytest==9.0.3", "pytest-asyncio==1.3.0", "ruff==0.9.7", "mypy==1.15.0"]
 
 [tool.hatch.version]
 source = "vcs"
@@ -74,3 +74,67 @@ packages = ["openkb"]
 "skills/openkb-deck-neon" = "openkb/_skills/openkb-deck-neon"
 "skills/openkb-deck-editorial" = "openkb/_skills/openkb-deck-editorial"
 "skills/openkb-html-critic" = "openkb/_skills/openkb-html-critic"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+# Start conservative (pyflakes + pycodestyle errors + isort); ratchet up later.
+# E501 (line-too-long) is dropped: `ruff format` already wraps code lines to
+# `line-length`, and the remaining violations are all long string literals
+# (docstrings, CLI help text, prompt templates) that reflowing would either
+# fail to shorten or would alter the rendered/user-facing text. Revisit if
+# stricter line discipline is wanted later (e.g. via `noqa` on individual
+# strings instead of a blanket drop).
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# cli.py deliberately interleaves imports with side-effecting setup code
+# (warning filters that must apply before `markitdown`/`litellm` import,
+# `set_tracing_disabled()` before other agents-SDK usage, an
+# `os.environ.setdefault(...)` that must run before `import litellm`).
+# Reordering to satisfy E402/I001 would risk changing import-time behavior,
+# so both are ignored here rather than fixed.
+"openkb/cli.py" = ["E402", "I001"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["openkb"]
+# Lenient to start (codebase not previously type-checked); ratchet up over time.
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = false
+# PyYAML ships without a py.typed marker or bundled stubs; ignore_missing_imports
+# doesn't cover this case (mypy treats "known-untyped third-party package" as a
+# distinct import-untyped diagnostic). Installing types-PyYAML is deferred —
+# add it to the dev extra if yaml-touching code gets tightened later.
+#
+# Some transitive dependency (reached via litellm/openai-agents -> pydantic,
+# not imported by openkb directly) resolves to numpy's bundled stubs, which
+# use a `type X = ...` alias statement requiring Python 3.12+ parser support —
+# incompatible with this project's `python_version = "3.10"` target and fatal
+# to the whole run (a [syntax] error, not a suppressible diagnostic). A
+# per-module `follow_imports = "skip"` override was not sufficient to avoid
+# the parse; only the global default reliably avoids reaching that stub, so
+# it's set here rather than scoped narrower.
+follow_imports = "skip"
+# agent/compiler.py (and a few call sites elsewhere) push loosely-shaped
+# dict/list data parsed from LLM JSON output through plain `Any`-typed
+# helpers, which mypy flags heavily on first run (union-attr on Any|None,
+# missing var annotations for accumulator lists, argument/return type
+# mismatches against str-typed signatures). This is real pre-existing
+# untyped-data debt, not a mypy setup problem — ratchet this down by adding
+# proper TypedDict/dataclass shapes for the LLM response payloads as a
+# follow-up, rather than fixing ad hoc during the initial CI-gate rollout.
+disable_error_code = [
+    "import-untyped",
+    "union-attr",
+    "var-annotated",
+    "arg-type",
+    "return-value",
+    "operator",
+    "type-var",
+    "dict-item",
+]

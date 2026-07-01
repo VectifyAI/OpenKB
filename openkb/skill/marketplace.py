@@ -18,6 +18,7 @@ to a SKILL.md changes the description after compile, the manifest is
 NOT auto-regenerated; re-run ``openkb skill new`` or
 ``/skill new`` to refresh it.
 """
+
 from __future__ import annotations
 
 import json
@@ -41,7 +42,9 @@ def _git_owner(kb_dir: Path) -> dict[str, str]:
         try:
             result = subprocess.run(
                 ["git", "config", "--get", key],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
                 cwd=str(kb_dir),
             )
             return result.stdout.strip()
@@ -61,10 +64,7 @@ def _list_skill_dirs(kb_dir: Path) -> list[Path]:
     root = skills_root(kb_dir)
     if not root.is_dir():
         return []
-    return sorted(
-        d for d in root.iterdir()
-        if d.is_dir() and (d / "SKILL.md").exists()
-    )
+    return sorted(d for d in root.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
 
 
 def _build_manifest(kb_dir: Path) -> dict[str, Any]:
@@ -75,9 +75,7 @@ def _build_manifest(kb_dir: Path) -> dict[str, Any]:
     # Naming convention is locked to `openkb@vectify` so users get one
     # canonical install command regardless of which KB they're consuming;
     # different KBs are distinguished by <owner>/<repo> URL.
-    metadata_desc = (
-        f"Skills compiled from the {kb_dir.name} knowledge base via OpenKB."
-    )
+    metadata_desc = f"Skills compiled from the {kb_dir.name} knowledge base via OpenKB."
     plugin_desc = "Knowledge skills compiled from this OpenKB-managed knowledge base."
 
     # Pull KB config for version if available; default to 0.1.0

@@ -17,6 +17,7 @@ of MB). HTML responses are passed through trafilatura's main-content
 extractor — saving the raw HTML directly would feed nav/footer/cookie
 chrome into the LLM and produce noisy summaries.
 """
+
 from __future__ import annotations
 
 import re
@@ -143,9 +144,7 @@ def _unique_path(target: Path) -> Path:
         candidate = parent / f"{stem}_{i}{suffix}"
         if not candidate.exists():
             return candidate
-    raise RuntimeError(
-        f"Could not find a free filename for {target} after 10k attempts"
-    )
+    raise RuntimeError(f"Could not find a free filename for {target} after 10k attempts")
 
 
 def _download_pdf_chunked(response, head_bytes: bytes, target: Path) -> None:
@@ -180,12 +179,13 @@ def _extract_html(url: str, raw_dir: Path) -> Path | None:
         return None
 
     markdown = trafilatura.extract(
-        raw_html, output_format="markdown", include_links=True,
+        raw_html,
+        output_format="markdown",
+        include_links=True,
     )
     if not markdown:
         click.echo(
-            "  [ERROR] No main content extracted — page may be empty, "
-            "JS-rendered, or paywalled.",
+            "  [ERROR] No main content extracted — page may be empty, JS-rendered, or paywalled.",
             err=True,
         )
         return None
@@ -233,7 +233,8 @@ def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
     click.echo(f"Downloading: {url}")
 
     request = urllib.request.Request(
-        url, headers={"User-Agent": _USER_AGENT, "Accept": "*/*"},
+        url,
+        headers={"User-Agent": _USER_AGENT, "Accept": "*/*"},
     )
     try:
         response = urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS)
@@ -261,7 +262,8 @@ def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
             # URL.
             final_url = response.geturl() or url
             filename = _pdf_filename(
-                final_url, response.headers.get("Content-Disposition"),
+                final_url,
+                response.headers.get("Content-Disposition"),
             )
             target = _unique_path(raw_dir / filename)
             _download_pdf_chunked(response, head_bytes, target)

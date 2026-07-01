@@ -1,4 +1,5 @@
 """Sanity test for deck package path helpers — mirrors test_skill_factory expectations."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,4 +16,7 @@ def test_deck_dir(tmp_path: Path):
 
 
 def test_deck_workspace_dir(tmp_path: Path):
-    assert deck_workspace_dir(tmp_path, "transformers") == tmp_path / "output" / "decks" / "transformers-workspace"
+    assert (
+        deck_workspace_dir(tmp_path, "transformers")
+        == tmp_path / "output" / "decks" / "transformers-workspace"
+    )

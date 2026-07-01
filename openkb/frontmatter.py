@@ -6,6 +6,7 @@ delimiter is always matched at the start of a line (``\\n---``), so a ``---``
 that appears inside a quoted value never truncates the block — the failure
 mode that ad-hoc ``text.find("---", 3)`` parsing was prone to.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,7 +45,7 @@ def parse_list_value(line: str) -> list[str] | None:
     if colon == -1:
         return None
     try:
-        parsed = yaml.safe_load(line[colon + 1:])
+        parsed = yaml.safe_load(line[colon + 1 :])
     except yaml.YAMLError:
         return None
     if not isinstance(parsed, list):
@@ -71,7 +72,7 @@ def split(text: str) -> tuple[str, str] | None:
     after = text.find("\n", nl + 1)  # newline ending the closing '---' line
     if after == -1:
         return text, ""
-    return text[:after + 1], text[after + 1:]
+    return text[: after + 1], text[after + 1 :]
 
 
 def parse(text: str) -> dict:
@@ -80,8 +81,8 @@ def parse(text: str) -> dict:
     if parts is None:
         return {}
     fm_block = parts[0]
-    inner = fm_block[3:]                 # drop opening '---'
-    close = inner.rfind("\n---")        # drop closing '---' line
+    inner = fm_block[3:]  # drop opening '---'
+    close = inner.rfind("\n---")  # drop closing '---' line
     if close != -1:
         inner = inner[:close]
     try:
@@ -100,8 +101,9 @@ def set_line(fm_block: str, key: str, value: str) -> str:
     """
     line = kv_line(key, value)
     if re.search(rf"^{re.escape(key)}:", fm_block, flags=re.MULTILINE):
-        return re.sub(rf"^{re.escape(key)}:.*", lambda _m: line, fm_block,
-                      count=1, flags=re.MULTILINE)
+        return re.sub(
+            rf"^{re.escape(key)}:.*", lambda _m: line, fm_block, count=1, flags=re.MULTILINE
+        )
     return fm_block.replace("---\n", f"---\n{line}\n", 1)
 
 

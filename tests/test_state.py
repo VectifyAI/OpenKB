@@ -1,4 +1,5 @@
 import json
+
 from openkb.state import HashRegistry
 
 
@@ -84,13 +85,16 @@ def test_load_existing_json(tmp_path):
 
 def test_get_by_path_matches_path_raw_path_and_source_path(tmp_path):
     reg = HashRegistry(tmp_path / "hashes.json")
-    reg.add("h1", {
-        "name": "report.md",
-        "doc_name": "report",
-        "path": "inputs/report.md",
-        "raw_path": "raw/report.md",
-        "source_path": "wiki/sources/report.md",
-    })
+    reg.add(
+        "h1",
+        {
+            "name": "report.md",
+            "doc_name": "report",
+            "path": "inputs/report.md",
+            "raw_path": "raw/report.md",
+            "source_path": "wiki/sources/report.md",
+        },
+    )
     assert reg.get_by_path("inputs/report.md")["doc_name"] == "report"
     assert reg.get_by_path("raw/report.md")["doc_name"] == "report"
     assert reg.get_by_path("wiki/sources/report.md")["doc_name"] == "report"
@@ -129,8 +133,7 @@ def test_find_legacy_by_stem_matches_pre_doc_name_entry_by_filename_stem(tmp_pat
 
 def test_find_legacy_by_stem_entry_with_path_is_not_legacy(tmp_path):
     reg = HashRegistry(tmp_path / "hashes.json")
-    reg.add("h1", {"name": "report.md", "doc_name": "report",
-                   "path": "inputs/report.md"})
+    reg.add("h1", {"name": "report.md", "doc_name": "report", "path": "inputs/report.md"})
     assert reg.find_legacy_by_stem("report") is None
 
 
@@ -153,6 +156,7 @@ def test_find_legacy_by_stem_first_match_wins_on_duplicates(tmp_path):
 def test_find_legacy_by_stem_nfkc_normalizes_both_sides(tmp_path):
     # macOS hands back NFD filenames; registry may hold NFC. Both must match.
     import unicodedata
+
     reg = HashRegistry(tmp_path / "hashes.json")
     nfc = unicodedata.normalize("NFC", "café")
     nfd = unicodedata.normalize("NFD", "café")

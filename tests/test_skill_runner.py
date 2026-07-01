@@ -17,10 +17,11 @@ we can verify the assembly path end-to-end without spending tokens:
   ``validate_deck`` runs with the skill's grammar after the agent finishes
 * MaxTurnsExceeded → RuntimeError translation with a useful message
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

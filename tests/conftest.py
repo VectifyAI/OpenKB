@@ -1,4 +1,5 @@
 import json
+
 import pytest
 
 
@@ -6,6 +7,7 @@ import pytest
 def _reset_extra_headers():
     """Keep the process-wide LLM extra-headers / timeout stashes from leaking across tests."""
     from openkb.config import set_extra_headers, set_timeout
+
     yield
     set_extra_headers({})
     set_timeout(None)

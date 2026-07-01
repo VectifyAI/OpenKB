@@ -4,6 +4,7 @@ Covers the allow-list (``wiki/explorations/**`` and ``output/**``), path
 traversal rejection, the bare-directory guard (e.g. ``"output"`` alone),
 and automatic parent-directory creation.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

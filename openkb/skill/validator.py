@@ -18,6 +18,7 @@ This is the deterministic counterpart to ``openkb skill eval`` — eval
 measures whether the description fires; validate ensures the structure
 is well-formed.
 """
+
 from __future__ import annotations
 
 import ast
@@ -30,9 +31,10 @@ import yaml  # already a project dep (pyyaml)
 
 from openkb.skill import (
     extract_body as _extract_body,
+)
+from openkb.skill import (
     extract_frontmatter as _extract_frontmatter,
 )
-
 
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 DESCRIPTION_MAX_CHARS = 1024
@@ -48,7 +50,12 @@ FOREIGN_WIKILINK_RE = re.compile(
     re.IGNORECASE,
 )
 ALLOWED_FRONTMATTER_KEYS = {
-    "name", "description", "license", "allowed-tools", "metadata", "compatibility",
+    "name",
+    "description",
+    "license",
+    "allowed-tools",
+    "metadata",
+    "compatibility",
 }
 
 
@@ -92,18 +99,14 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
     # File size
     skill_size = skill_md.stat().st_size
     if skill_size > SKILL_MD_MAX_BYTES:
-        result.errors.append(
-            f"SKILL.md is {skill_size} bytes; max is {SKILL_MD_MAX_BYTES} bytes."
-        )
+        result.errors.append(f"SKILL.md is {skill_size} bytes; max is {SKILL_MD_MAX_BYTES} bytes.")
 
     text = skill_md.read_text(encoding="utf-8")
 
     # Frontmatter
     fm = _extract_frontmatter(text)
     if fm is None:
-        result.errors.append(
-            "SKILL.md has no YAML frontmatter (must start with `---` ... `---`)."
-        )
+        result.errors.append("SKILL.md has no YAML frontmatter (must start with `---` ... `---`).")
         return result
 
     try:
@@ -134,8 +137,7 @@ def validate_skill(skill_dir: Path, *, strict: bool = False) -> ValidationResult
     else:
         if name != skill_dir.name:
             result.errors.append(
-                f"Frontmatter 'name: {name}' doesn't match directory name "
-                f"'{skill_dir.name}'."
+                f"Frontmatter 'name: {name}' doesn't match directory name '{skill_dir.name}'."
             )
         if not SKILL_NAME_RE.match(name) or len(name) > NAME_MAX_LEN:
             result.errors.append(

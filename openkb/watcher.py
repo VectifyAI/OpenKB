@@ -3,6 +3,7 @@
 Watches for new or modified files and debounces rapid bursts of events
 before calling the user's callback with a sorted list of affected paths.
 """
+
 from __future__ import annotations
 
 import threading
@@ -27,7 +28,9 @@ class DebouncedHandler(FileSystemEventHandler):
             flushing. Defaults to 2.0 seconds.
     """
 
-    def __init__(self, callback: Callable[[list[str]], None], debounce_seconds: float = 2.0) -> None:
+    def __init__(
+        self, callback: Callable[[list[str]], None], debounce_seconds: float = 2.0
+    ) -> None:
         super().__init__()
         self._callback = callback
         self._debounce_seconds = debounce_seconds

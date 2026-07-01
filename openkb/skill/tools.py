@@ -20,14 +20,21 @@ These helpers enforce write boundaries at the Python level — every write
 resolves its target path, then verifies it stays inside the skill root.
 Path traversal (``..``) and absolute paths are rejected outright.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from openkb.agent.tools import (
     get_wiki_page_content as _get_wiki_page_content,
+)
+from openkb.agent.tools import (
     list_wiki_files as _list_wiki_files,
+)
+from openkb.agent.tools import (
     read_wiki_file as _read_wiki_file,
+)
+from openkb.agent.tools import (
     read_wiki_image as _read_wiki_image,
 )
 

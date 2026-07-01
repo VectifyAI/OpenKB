@@ -10,6 +10,7 @@ After the new skill is generated, :func:`write_diff` drops a
 ``diff.md`` inside the saved iteration capturing the structural delta
 (description change, ref/script add/remove, SKILL.md line-count delta).
 """
+
 from __future__ import annotations
 
 import re
@@ -18,7 +19,11 @@ from pathlib import Path
 
 from openkb.skill import (
     extract_description,
+)
+from openkb.skill import (
     skill_dir as _skill_dir,
+)
+from openkb.skill import (
     skill_workspace_dir as _workspace_dir,
 )
 
@@ -78,9 +83,7 @@ def save_iteration(kb_dir: Path, skill_name: str) -> Path | None:
     return dest
 
 
-def restore_iteration(
-    kb_dir: Path, skill_name: str, n: int | None = None
-) -> Path:
+def restore_iteration(kb_dir: Path, skill_name: str, n: int | None = None) -> Path:
     """Restore an iteration as the current skill.
 
     If ``n`` is ``None``, restore the highest-numbered iteration. Raises
@@ -90,9 +93,7 @@ def restore_iteration(
     """
     iters = list_iterations(kb_dir, skill_name)
     if not iters:
-        raise FileNotFoundError(
-            f"No iterations exist for skill {skill_name!r}."
-        )
+        raise FileNotFoundError(f"No iterations exist for skill {skill_name!r}.")
 
     if n is None:
         src = iters[-1]
@@ -102,9 +103,7 @@ def restore_iteration(
             None,
         )
         if match is None:
-            raise FileNotFoundError(
-                f"Iteration {n} not found for skill {skill_name!r}."
-            )
+            raise FileNotFoundError(f"Iteration {n} not found for skill {skill_name!r}.")
         src = match
 
     # Save the current state before overwriting it — rollback is a mutation
@@ -128,11 +127,7 @@ def _list_files(root: Path, subdir: str) -> set[str]:
     base = root / subdir
     if not base.is_dir():
         return set()
-    return {
-        str(p.relative_to(root)).replace("\\", "/")
-        for p in base.rglob("*")
-        if p.is_file()
-    }
+    return {str(p.relative_to(root)).replace("\\", "/") for p in base.rglob("*") if p.is_file()}
 
 
 def _line_count(path: Path) -> int:
@@ -186,12 +181,8 @@ def write_diff(prev: Path, curr: Path, diff_path: Path) -> None:
 
     lines.append("## SKILL.md line count\n")
     sign = "+" if delta >= 0 else ""
-    lines.append(
-        f"- before: {prev_lc} lines"
-    )
-    lines.append(
-        f"- after:  {curr_lc} lines ({sign}{delta})\n"
-    )
+    lines.append(f"- before: {prev_lc} lines")
+    lines.append(f"- after:  {curr_lc} lines ({sign}{delta})\n")
 
     diff_path.parent.mkdir(parents=True, exist_ok=True)
     diff_path.write_text("\n".join(lines), encoding="utf-8")

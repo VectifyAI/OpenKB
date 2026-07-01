@@ -8,6 +8,7 @@ without blocking, for a key the installed LiteLLM doesn't expose (typo / version
 mismatch) and refuses to overwrite a LiteLLM *function*. Settings are sticky:
 applied, never reset — see ``test_apply_is_sticky_not_reset``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -163,9 +164,9 @@ def test_litellm_block_timeout_wins_over_legacy_toplevel(tmp_path, monkeypatch):
     _write_kb_config(
         tmp_path,
         "model: gpt-4o-mini\n"
-        "timeout: 30\n"          # legacy top-level
+        "timeout: 30\n"  # legacy top-level
         "litellm:\n"
-        "  timeout: 1200\n",     # canonical — wins
+        "  timeout: 1200\n",  # canonical — wins
     )
     _setup_llm_key(tmp_path)
     assert get_timeout() == 1200.0
@@ -210,11 +211,7 @@ def test_litellm_block_empty_extra_headers_clears_legacy(tmp_path, monkeypatch):
     _isolate_env(monkeypatch)
     _write_kb_config(
         tmp_path,
-        "model: gpt-4o-mini\n"
-        "extra_headers:\n"
-        "  X-Top: toplevel\n"
-        "litellm:\n"
-        "  extra_headers: {}\n",
+        "model: gpt-4o-mini\nextra_headers:\n  X-Top: toplevel\nlitellm:\n  extra_headers: {}\n",
     )
     _setup_llm_key(tmp_path)
     assert get_extra_headers() == {}

@@ -8,7 +8,9 @@ PAGE_CONTENT_DIRS = ("summaries", "concepts", "entities")
 
 # Canonical empty index.md seed. Used by `openkb init` and the compiler's
 # lazy-create path so they never drift.
-INDEX_SEED = "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n"
+INDEX_SEED = (
+    "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Entities\n\n## Explorations\n"
+)
 
 AGENTS_MD = """\
 # Wiki Schema

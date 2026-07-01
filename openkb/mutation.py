@@ -1,4 +1,5 @@
 """Transactional helpers for KB mutation paths."""
+
 from __future__ import annotations
 
 import errno
@@ -271,6 +272,7 @@ def _restore_hardlinked_dir(backup: Path, target: Path) -> None:
     (e.g. the EXDEV/EACCES fallback fired at snapshot time): every file then has
     a different inode, so every file is treated as modified and recopied.
     """
+
     def _file_key(path: Path) -> tuple[int, int]:
         st = path.stat()  # follows symlinks; these trees hold regular files only
         return (st.st_dev, st.st_ino)
@@ -296,8 +298,9 @@ def _restore_hardlinked_dir(backup: Path, target: Path) -> None:
 
     # Pass 3: prune directories the mutation created that are now empty.
     if target.exists():
-        for d in sorted((p for p in target.rglob("*") if p.is_dir()),
-                        key=lambda p: len(p.parts), reverse=True):
+        for d in sorted(
+            (p for p in target.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True
+        ):
             if not (backup / d.relative_to(target)).exists() and not any(d.iterdir()):
                 d.rmdir()
 

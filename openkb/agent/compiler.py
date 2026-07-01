@@ -14,6 +14,7 @@ summary prefix across N+M concept-generation calls). Providers that do not
 support cache_control receive a normalized list-of-blocks content payload,
 which LiteLLM passes through cleanly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -258,6 +259,7 @@ Return ONLY the Markdown content (no frontmatter, no code fences).
 # LLM helpers
 # ---------------------------------------------------------------------------
 
+
 def _cached_text(text: str) -> list[dict]:
     """Wrap a text payload into a content-block list with an Anthropic
     ephemeral cache_control marker.
@@ -412,7 +414,9 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
     _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     spinner.stop(_format_usage(time.time() - t0, response.usage))
-    logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
+    logger.debug(
+        "LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else "")
+    )
     return content.strip()
 
 
@@ -438,7 +442,9 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
     elapsed = time.time() - t0
     sys.stdout.write(f"    {step_name}... {_format_usage(elapsed, response.usage)}\n")
     sys.stdout.flush()
-    logger.debug("LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else ""))
+    logger.debug(
+        "LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else "")
+    )
     return content.strip()
 
 
@@ -472,8 +478,7 @@ def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None
     if finish_reason != "length":
         return
     cap = f" (max_tokens={max_tokens})" if max_tokens else ""
-    logger.warning("LLM [%s] hit length limit%s — output may be truncated.",
-                   step_name, cap)
+    logger.warning("LLM [%s] hit length limit%s — output may be truncated.", step_name, cap)
     sys.stdout.write(f"    [WARN] {step_name} hit length limit{cap} — output may be truncated.\n")
     sys.stdout.flush()
 
@@ -481,10 +486,11 @@ def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None
 def _parse_json(text: str) -> list | dict:
     """Parse JSON from LLM response, handling fences, prose, and malformed JSON."""
     from json_repair import repair_json
+
     cleaned = text.strip()
     if cleaned.startswith("```"):
         first_nl = cleaned.find("\n")
-        cleaned = cleaned[first_nl + 1:] if first_nl != -1 else cleaned[3:]
+        cleaned = cleaned[first_nl + 1 :] if first_nl != -1 else cleaned[3:]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
     result = json.loads(repair_json(cleaned.strip()))
@@ -496,10 +502,15 @@ def _parse_json(text: str) -> list | dict:
 def _filter_concept_items(items: list, label: str) -> list[dict]:
     """Keep only dicts that carry a non-empty ``name``; warn about anything else."""
     if not isinstance(items, list):
-        logger.warning("concepts plan: %s was %s, expected list — dropping",
-                       label, type(items).__name__)
+        logger.warning(
+            "concepts plan: %s was %s, expected list — dropping", label, type(items).__name__
+        )
         return []
-    valid = [c for c in items if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()]
+    valid = [
+        c
+        for c in items
+        if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip()
+    ]
     if len(valid) < len(items):
         reasons: list[str] = []
         for c in items:
@@ -509,7 +520,9 @@ def _filter_concept_items(items: list, label: str) -> list[dict]:
                 reasons.append("dict-missing-name")
         logger.warning(
             "concepts plan: dropped %d malformed %s item(s) (reasons: %s)",
-            len(items) - len(valid), label, ", ".join(sorted(set(reasons))),
+            len(items) - len(valid),
+            label,
+            ", ".join(sorted(set(reasons))),
         )
     return valid
 
@@ -523,22 +536,24 @@ def _require_nonempty_content(content, name: str) -> None:
 def _filter_related_slugs(items: list) -> list[str]:
     """Keep only non-empty string slugs; warn about anything else."""
     if not isinstance(items, list):
-        logger.warning("concepts plan: related was %s, expected list — dropping",
-                       type(items).__name__)
+        logger.warning(
+            "concepts plan: related was %s, expected list — dropping", type(items).__name__
+        )
         return []
     valid = [s for s in items if isinstance(s, str) and s.strip()]
     if len(valid) < len(items):
-        bad_types = sorted({type(s).__name__ for s in items if not (isinstance(s, str) and s.strip())})
+        bad_types = sorted(
+            {type(s).__name__ for s in items if not (isinstance(s, str) and s.strip())}
+        )
         logger.warning(
             "concepts plan: dropped %d malformed related item(s) (types: %s)",
-            len(items) - len(valid), ", ".join(bad_types),
+            len(items) - len(valid),
+            ", ".join(bad_types),
         )
     return valid
 
 
-def _filter_entity_items(
-    items: object, valid_types: frozenset | None = None
-) -> list[dict]:
+def _filter_entity_items(items: object, valid_types: frozenset | None = None) -> list[dict]:
     """Validate entity create/update objects: require name+title, coerce type.
 
     Each kept item is normalized to ``{"name", "title", "type"}`` where
@@ -589,6 +604,7 @@ def _parse_entities_plan(parsed: object, valid_types: frozenset | None = None) -
 # ---------------------------------------------------------------------------
 # File I/O helpers
 # ---------------------------------------------------------------------------
+
 
 def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
     """Read current index.md content and list of existing concept slugs."""
@@ -690,11 +706,7 @@ def _iter_h2_headings(lines: list[str]) -> list[tuple[int, str]]:
     Used by ``_get_section_bounds`` so heading lookup and the next-section
     boundary share one scan and one normalization rule.
     """
-    return [
-        (i, line.rstrip())
-        for i, line in enumerate(lines)
-        if line.startswith("## ")
-    ]
+    return [(i, line.rstrip()) for i, line in enumerate(lines) if line.startswith("## ")]
 
 
 def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
@@ -743,7 +755,9 @@ def _ensure_h2_section(lines: list[str], heading: str, *, quiet: bool = False) -
 
 
 def _ensure_h2_section_before(
-    lines: list[str], heading: str, before: str,
+    lines: list[str],
+    heading: str,
+    before: str,
 ) -> None:
     """Ensure H2 ``heading`` exists, inserting it just before ``before``.
 
@@ -764,7 +778,8 @@ def _ensure_h2_section_before(
     logger.warning(
         "Wiki index is missing %r section; inserting it before %r. "
         "Check whether the file was hand-edited away from the canonical layout.",
-        heading, before,
+        heading,
+        before,
     )
     lines[insert_at:insert_at] = [heading, ""]
 
@@ -828,9 +843,9 @@ def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
     return False
 
 
-
-def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
-                    doc_type: str = "short", description: str = "") -> None:
+def _write_summary(
+    wiki_dir: Path, doc_name: str, summary: str, doc_type: str = "short", description: str = ""
+) -> None:
     """Write summary page with frontmatter."""
     parts = frontmatter.split(summary)
     if parts is not None:
@@ -848,7 +863,7 @@ def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
     atomic_write_text(summaries_dir / f"{doc_name}.md", fm_block + summary)
 
 
-_SAFE_NAME_RE = re.compile(r'[^\w\-]')
+_SAFE_NAME_RE = re.compile(r"[^\w\-]")
 
 
 def _sanitize_concept_name(name: str) -> str:
@@ -863,7 +878,9 @@ _yaml_list_line = frontmatter.list_line
 _parse_yaml_list_value = frontmatter.parse_list_value
 
 
-def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = "") -> None:
+def _write_concept(
+    wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = ""
+) -> None:
     """Write or update a concept page, managing the sources frontmatter."""
     concepts_dir = wiki_dir / "concepts"
     concepts_dir.mkdir(parents=True, exist_ok=True)
@@ -933,8 +950,13 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
 
 
 def _write_entity(
-    wiki_dir: Path, name: str, content: str, source_file: str,
-    is_update: bool, brief: str = "", type_: str = "other",
+    wiki_dir: Path,
+    name: str,
+    content: str,
+    source_file: str,
+    is_update: bool,
+    brief: str = "",
+    type_: str = "other",
     aliases: list[str] | None = None,
 ) -> None:
     """Write or update an entity page in entities/, managing frontmatter.
@@ -1084,7 +1106,10 @@ def _remove_source_from_frontmatter(text: str, source_file: str) -> tuple[str, b
 
 
 def _add_related_link(
-    wiki_dir: Path, slug: str, doc_name: str, source_file: str,
+    wiki_dir: Path,
+    slug: str,
+    doc_name: str,
+    source_file: str,
     page_dir: str = "concepts",
 ) -> bool:
     """Add a cross-reference link to an existing page (no LLM call).
@@ -1112,8 +1137,12 @@ def _add_related_link(
 
 
 def _backlink_summary_pages(
-    wiki_dir: Path, doc_name: str, slugs: list[str],
-    *, page_dir: str, section: str,
+    wiki_dir: Path,
+    doc_name: str,
+    slugs: list[str],
+    *,
+    page_dir: str,
+    section: str,
 ) -> None:
     """Append missing ``[[{page_dir}/slug]]`` wikilinks to the summary page.
 
@@ -1138,7 +1167,11 @@ def _backlink_summary_pages(
 
 
 def _backlink_pages(
-    wiki_dir: Path, doc_name: str, slugs: list[str], *, page_dir: str,
+    wiki_dir: Path,
+    doc_name: str,
+    slugs: list[str],
+    *,
+    page_dir: str,
 ) -> None:
     """Append the source summary wikilink to each page under '## Related
     Documents'. Shared by the concept and entity page-backlink wrappers."""
@@ -1161,8 +1194,11 @@ def _backlink_pages(
 def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
     """Link the summary page back to every related concept (no LLM call)."""
     _backlink_summary_pages(
-        wiki_dir, doc_name, concept_slugs,
-        page_dir="concepts", section="## Related Concepts",
+        wiki_dir,
+        doc_name,
+        concept_slugs,
+        page_dir="concepts",
+        section="## Related Concepts",
     )
 
 
@@ -1174,8 +1210,11 @@ def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) 
 def _backlink_summary_entities(wiki_dir: Path, doc_name: str, entity_slugs: list[str]) -> None:
     """Link the summary page back to every related entity under '## Entities'."""
     _backlink_summary_pages(
-        wiki_dir, doc_name, entity_slugs,
-        page_dir="entities", section="## Entities",
+        wiki_dir,
+        doc_name,
+        entity_slugs,
+        page_dir="entities",
+        section="## Entities",
     )
 
 
@@ -1308,7 +1347,10 @@ def remove_doc_from_concept_pages(
     add``. Returns ``{"modified": [slugs...], "deleted": [slugs...]}``.
     """
     return _remove_doc_from_pages(
-        wiki_dir, doc_name, page_dir="concepts", keep_empty=keep_empty,
+        wiki_dir,
+        doc_name,
+        page_dir="concepts",
+        keep_empty=keep_empty,
     )
 
 
@@ -1324,12 +1366,19 @@ def remove_doc_from_entity_pages(
     Returns ``{"modified": [...], "deleted": [...]}``.
     """
     return _remove_doc_from_pages(
-        wiki_dir, doc_name, page_dir="entities", keep_empty=keep_empty,
+        wiki_dir,
+        doc_name,
+        page_dir="entities",
+        keep_empty=keep_empty,
     )
 
 
-def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: list[str],
-                          entity_slugs_deleted: list[str] | None = None) -> None:
+def remove_doc_from_index(
+    wiki_dir: Path,
+    doc_name: str,
+    concept_slugs_deleted: list[str],
+    entity_slugs_deleted: list[str] | None = None,
+) -> None:
     """Remove the document's entry from ``index.md`` along with any concept
     and entity entries for pages that were deleted as a side effect.
 
@@ -1352,7 +1401,7 @@ def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: 
         while _remove_section_entry(lines, "## Concepts", concept_link):
             pass
 
-    for slug in (entity_slugs_deleted or []):
+    for slug in entity_slugs_deleted or []:
         entity_link = f"[[entities/{slug}]]"
         while _remove_section_entry(lines, "## Entities", entity_link):
             pass
@@ -1361,8 +1410,11 @@ def remove_doc_from_index(wiki_dir: Path, doc_name: str, concept_slugs_deleted: 
 
 
 def _update_index(
-    wiki_dir: Path, doc_name: str, concept_names: list[str],
-    doc_brief: str = "", concept_briefs: dict[str, str] | None = None,
+    wiki_dir: Path,
+    doc_name: str,
+    concept_names: list[str],
+    doc_brief: str = "",
+    concept_briefs: dict[str, str] | None = None,
     doc_type: str = "short",
     entity_names: list[str] | None = None,
     entity_meta: dict[str, tuple[str, str]] | None = None,
@@ -1484,15 +1536,23 @@ async def _compile_concepts(
     # (system + doc + summary) for the plan call and every concept call.
     summary_msg = {"role": "assistant", "content": _cached_text(summary)}
 
-    plan_raw = _llm_call(model, [
-        system_msg,
-        doc_msg,
-        summary_msg,
-        {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
-            concept_briefs=concept_briefs,
-            entity_briefs=entity_briefs,
-        ).replace("__ENTITY_TYPES__", types_str)},
-    ], "concepts-plan", response_format=_JSON_RESPONSE_FORMAT)
+    plan_raw = _llm_call(
+        model,
+        [
+            system_msg,
+            doc_msg,
+            summary_msg,
+            {
+                "role": "user",
+                "content": _CONCEPTS_PLAN_USER.format(
+                    concept_briefs=concept_briefs,
+                    entity_briefs=entity_briefs,
+                ).replace("__ENTITY_TYPES__", types_str),
+            },
+        ],
+        "concepts-plan",
+        response_format=_JSON_RESPONSE_FORMAT,
+    )
 
     def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
@@ -1509,7 +1569,9 @@ async def _compile_concepts(
         if ghosts:
             logger.info(
                 "stripped %d ghost wikilink(s) from fallback v1 summary %s: %s",
-                len(ghosts), doc_name, ghosts[:5],
+                len(ghosts),
+                doc_name,
+                ghosts[:5],
             )
         _write_summary(wiki_dir, doc_name, cleaned, description=doc_brief)
 
@@ -1519,10 +1581,10 @@ async def _compile_concepts(
         preview = plan_raw[:500] + ("..." if len(plan_raw) > 500 else "")
         logger.warning(
             "Failed to parse concepts plan: %s. Raw output (first 500 chars): %r",
-            exc, preview,
+            exc,
+            preview,
         )
-        logger.debug("Concepts plan raw output (full, %d chars): %s",
-                     len(plan_raw), plan_raw)
+        logger.debug("Concepts plan raw output (full, %d chars): %s", len(plan_raw), plan_raw)
         sys.stdout.write(
             f"    [WARN] concepts plan unparseable for {doc_name} — "
             f"no concept pages generated. See log (stderr) for details.\n"
@@ -1545,7 +1607,8 @@ async def _compile_concepts(
         logger.warning(
             "Concepts plan parsed to a %s scalar, not an object/array — "
             "treating as empty plan for %s.",
-            type(parsed).__name__, doc_name,
+            type(parsed).__name__,
+            doc_name,
         )
         if rewrite_summary:
             _write_v1_summary_stripped()
@@ -1553,14 +1616,11 @@ async def _compile_concepts(
         return
 
     if isinstance(parsed, list):
-        plan = {"create": _filter_concept_items(parsed, "list"),
-                "update": [], "related": []}
+        plan = {"create": _filter_concept_items(parsed, "list"), "update": [], "related": []}
         entities_plan = {"create": [], "update": [], "related": []}
     else:
         concepts_group = (
-            parsed.get("concepts")
-            if isinstance(parsed.get("concepts"), dict)
-            else parsed
+            parsed.get("concepts") if isinstance(parsed.get("concepts"), dict) else parsed
         )
         plan = {
             "create": _filter_concept_items(concepts_group.get("create", []), "create"),
@@ -1584,11 +1644,13 @@ async def _compile_concepts(
     # producing a flood of dangling wikilinks. Drop the non-existent ones so
     # body references to them are stripped as ghosts instead.
     related_items = [
-        s for s in related_items
+        s
+        for s in related_items
         if (wiki_dir / "concepts" / f"{_sanitize_concept_name(s)}.md").exists()
     ]
     entity_related = [
-        s for s in entity_related
+        s
+        for s in entity_related
         if (wiki_dir / "entities" / f"{_sanitize_concept_name(s)}.md").exists()
     ]
 
@@ -1608,8 +1670,12 @@ async def _compile_concepts(
     else:
         original_total = _raw_group_count(concepts_group) + _raw_group_count(parsed.get("entities"))
     post_filter_total = (
-        len(create_items) + len(update_items) + len(related_items)
-        + len(entity_create) + len(entity_update) + len(entity_related)
+        len(create_items)
+        + len(update_items)
+        + len(related_items)
+        + len(entity_create)
+        + len(entity_update)
+        + len(entity_related)
     )
     if original_total > 0 and post_filter_total == 0:
         sys.stdout.write(
@@ -1618,8 +1684,14 @@ async def _compile_concepts(
         )
         sys.stdout.flush()
 
-    if (not create_items and not update_items and not related_items
-            and not entity_create and not entity_update and not entity_related):
+    if (
+        not create_items
+        and not update_items
+        and not related_items
+        and not entity_create
+        and not entity_update
+        and not entity_related
+    ):
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
@@ -1629,14 +1701,10 @@ async def _compile_concepts(
     # combines what already exists on disk with what *this* round will
     # produce (plan.create + plan.update + plan.related), plus the
     # summary about to be written for this document.
-    planned_slugs = {
-        _sanitize_concept_name(c["name"]) for c in create_items + update_items
-    } | {
+    planned_slugs = {_sanitize_concept_name(c["name"]) for c in create_items + update_items} | {
         _sanitize_concept_name(s) for s in related_items
     }
-    entity_planned = {
-        _sanitize_concept_name(e["name"]) for e in entity_create + entity_update
-    } | {
+    entity_planned = {_sanitize_concept_name(e["name"]) for e in entity_create + entity_update} | {
         _sanitize_concept_name(s) for s in entity_related
     }
     known_targets: set[str] = (
@@ -1658,9 +1726,11 @@ async def _compile_concepts(
     # via _CONCEPTS_PLAN_USER instead.
     known_targets_msg = {
         "role": "user",
-        "content": _cached_text(_KNOWN_TARGETS_USER.format(
-            known_targets=known_targets_str,
-        )),
+        "content": _cached_text(
+            _KNOWN_TARGETS_USER.format(
+                known_targets=known_targets_str,
+            )
+        ),
     }
 
     # --- Step 3: Generate/update concept pages concurrently (A cached) ---
@@ -1670,16 +1740,25 @@ async def _compile_concepts(
         name = concept["name"]
         title = concept.get("title", name)
         async with semaphore:
-            raw = await _llm_call_async(model, [
-                system_msg,
-                doc_msg,             # cached (BP1)
-                summary_msg,         # cached (BP2)
-                known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _CONCEPT_PAGE_USER.format(
-                    title=title, doc_name=doc_name,
-                    update_instruction="",
-                )},
-            ], f"concept: {name}", response_format=_JSON_RESPONSE_FORMAT)
+            raw = await _llm_call_async(
+                model,
+                [
+                    system_msg,
+                    doc_msg,  # cached (BP1)
+                    summary_msg,  # cached (BP2)
+                    known_targets_msg,  # cached (BP3) — whitelist
+                    {
+                        "role": "user",
+                        "content": _CONCEPT_PAGE_USER.format(
+                            title=title,
+                            doc_name=doc_name,
+                            update_instruction="",
+                        ),
+                    },
+                ],
+                f"concept: {name}",
+                response_format=_JSON_RESPONSE_FORMAT,
+            )
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("description", "")
@@ -1705,16 +1784,25 @@ async def _compile_concepts(
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
-            raw = await _llm_call_async(model, [
-                system_msg,
-                doc_msg,             # cached (BP1)
-                summary_msg,         # cached (BP2)
-                known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _CONCEPT_UPDATE_USER.format(
-                    title=title, doc_name=doc_name,
-                    existing_content=existing_content,
-                )},
-            ], f"update: {name}", response_format=_JSON_RESPONSE_FORMAT)
+            raw = await _llm_call_async(
+                model,
+                [
+                    system_msg,
+                    doc_msg,  # cached (BP1)
+                    summary_msg,  # cached (BP2)
+                    known_targets_msg,  # cached (BP3) — whitelist
+                    {
+                        "role": "user",
+                        "content": _CONCEPT_UPDATE_USER.format(
+                            title=title,
+                            doc_name=doc_name,
+                            existing_content=existing_content,
+                        ),
+                    },
+                ],
+                f"update: {name}",
+                response_format=_JSON_RESPONSE_FORMAT,
+            )
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("description", "")
@@ -1731,15 +1819,25 @@ async def _compile_concepts(
         title = ent.get("title", name)
         etype = ent.get("type", "other")
         async with semaphore:
-            raw = await _llm_call_async(model, [
-                system_msg,
-                doc_msg,             # cached (BP1)
-                summary_msg,         # cached (BP2)
-                known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _ENTITY_PAGE_USER.format(
-                    title=title, type=etype, doc_name=doc_name,
-                ).replace("__ENTITY_TYPES__", types_str)},
-            ], f"entity: {name}", response_format=_JSON_RESPONSE_FORMAT)
+            raw = await _llm_call_async(
+                model,
+                [
+                    system_msg,
+                    doc_msg,  # cached (BP1)
+                    summary_msg,  # cached (BP2)
+                    known_targets_msg,  # cached (BP3) — whitelist
+                    {
+                        "role": "user",
+                        "content": _ENTITY_PAGE_USER.format(
+                            title=title,
+                            type=etype,
+                            doc_name=doc_name,
+                        ).replace("__ENTITY_TYPES__", types_str),
+                    },
+                ],
+                f"entity: {name}",
+                response_format=_JSON_RESPONSE_FORMAT,
+            )
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("description", "")
@@ -1764,16 +1862,26 @@ async def _compile_concepts(
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
-            raw = await _llm_call_async(model, [
-                system_msg,
-                doc_msg,             # cached (BP1)
-                summary_msg,         # cached (BP2)
-                known_targets_msg,   # cached (BP3) — whitelist
-                {"role": "user", "content": _ENTITY_UPDATE_USER.format(
-                    title=title, type=etype, doc_name=doc_name,
-                    existing_content=existing_content,
-                ).replace("__ENTITY_TYPES__", types_str)},
-            ], f"entity-update: {name}", response_format=_JSON_RESPONSE_FORMAT)
+            raw = await _llm_call_async(
+                model,
+                [
+                    system_msg,
+                    doc_msg,  # cached (BP1)
+                    summary_msg,  # cached (BP2)
+                    known_targets_msg,  # cached (BP3) — whitelist
+                    {
+                        "role": "user",
+                        "content": _ENTITY_UPDATE_USER.format(
+                            title=title,
+                            type=etype,
+                            doc_name=doc_name,
+                            existing_content=existing_content,
+                        ).replace("__ENTITY_TYPES__", types_str),
+                    },
+                ],
+                f"entity-update: {name}",
+                response_format=_JSON_RESPONSE_FORMAT,
+            )
         try:
             parsed = _parse_json(raw)
             brief = parsed.get("description", "")
@@ -1844,10 +1952,7 @@ async def _compile_concepts(
         # self-contained — per-failure WARNINGs go to stderr.
         written = len(pending_writes)
         if written < total:
-            reason = (
-                ", ".join(sorted(set(failure_types)))
-                if failure_types else "see log (stderr)"
-            )
+            reason = ", ".join(sorted(set(failure_types))) if failure_types else "see log (stderr)"
             sys.stdout.write(
                 f"    [WARN] {total} concept(s) planned but only {written} written "
                 f"for {doc_name} ({reason}).\n"
@@ -1868,7 +1973,8 @@ async def _compile_concepts(
         if ewritten < etotal:
             reason = (
                 ", ".join(sorted(set(entity_failure_types)))
-                if entity_failure_types else "see log (stderr)"
+                if entity_failure_types
+                else "see log (stderr)"
             )
             sys.stdout.write(
                 f"    [WARN] {etotal} entity(ies) planned but only {ewritten} written "
@@ -1882,12 +1988,13 @@ async def _compile_concepts(
         if ghosts:
             logger.info(
                 "stripped %d ghost wikilink(s) from entity %s: %s",
-                len(ghosts), name, ghosts[:5],
+                len(ghosts),
+                name,
+                ghosts[:5],
             )
         safe = _sanitize_concept_name(name)
         is_update = (wiki_dir / "entities" / f"{safe}.md").exists()
-        _write_entity(wiki_dir, name, cleaned, source_file, is_update,
-                      brief=brief, type_=etype)
+        _write_entity(wiki_dir, name, cleaned, source_file, is_update, brief=brief, type_=etype)
         entity_names.append(safe)
         entity_meta[safe] = (etype, brief)
 
@@ -1899,7 +2006,9 @@ async def _compile_concepts(
         if ghosts:
             logger.info(
                 "stripped %d ghost wikilink(s) from concept %s: %s",
-                len(ghosts), name, ghosts[:5],
+                len(ghosts),
+                name,
+                ghosts[:5],
             )
         pending_writes[i] = (name, cleaned, is_update, brief)
 
@@ -1915,13 +2024,17 @@ async def _compile_concepts(
         try:
             # No max_tokens cap — matches the v1 summary call. The rewrite
             # prompt asks the model to keep length within ±20% of the v1.
-            rewrite_raw = _llm_call(model, [
-                system_msg,
-                doc_msg,            # cached (BP1)
-                summary_msg,        # cached (BP2) — contains the v1 summary text
-                known_targets_msg,  # cached (BP3) — whitelist
-                {"role": "user", "content": _SUMMARY_REWRITE_USER},
-            ], "summary-rewrite")
+            rewrite_raw = _llm_call(
+                model,
+                [
+                    system_msg,
+                    doc_msg,  # cached (BP1)
+                    summary_msg,  # cached (BP2) — contains the v1 summary text
+                    known_targets_msg,  # cached (BP3) — whitelist
+                    {"role": "user", "content": _SUMMARY_REWRITE_USER},
+                ],
+                "summary-rewrite",
+            )
             candidate = rewrite_raw.strip()
             # Strip frontmatter if the model added one anyway.
             cand_parts = frontmatter.split(candidate)
@@ -1929,18 +2042,19 @@ async def _compile_concepts(
                 candidate = cand_parts[1].lstrip("\n")
             # Safety net: strip any wikilink the rewrite emitted that is
             # not in the whitelist.
-            candidate, summary_ghosts = strip_ghost_wikilinks(
-                candidate, known_targets
-            )
+            candidate, summary_ghosts = strip_ghost_wikilinks(candidate, known_targets)
             if summary_ghosts:
                 logger.info(
                     "stripped %d ghost wikilink(s) from summary %s: %s",
-                    len(summary_ghosts), doc_name, summary_ghosts[:5],
+                    len(summary_ghosts),
+                    doc_name,
+                    summary_ghosts[:5],
                 )
         except Exception as exc:
             logger.warning(
                 "summary-rewrite failed for %s: %s. Falling back to v1.",
-                doc_name, exc,
+                doc_name,
+                exc,
             )
             candidate = None
 
@@ -1956,19 +2070,27 @@ async def _compile_concepts(
                     doc_name,
                 )
             final_summary, fallback_ghosts = strip_ghost_wikilinks(
-                summary, known_targets,
+                summary,
+                known_targets,
             )
             if fallback_ghosts:
                 logger.info(
                     "stripped %d ghost wikilink(s) from v1 fallback summary %s: %s",
-                    len(fallback_ghosts), doc_name, fallback_ghosts[:5],
+                    len(fallback_ghosts),
+                    doc_name,
+                    fallback_ghosts[:5],
                 )
         _write_summary(wiki_dir, doc_name, final_summary, description=doc_brief)
 
     # --- Write concept pages to disk ---
     for name, page_content, is_update, brief in pending_writes:
         _write_concept(
-            wiki_dir, name, page_content, source_file, is_update, brief=brief,
+            wiki_dir,
+            name,
+            page_content,
+            source_file,
+            is_update,
+            brief=brief,
         )
 
     # --- Step 3b: Process related items (code only, no LLM) ---
@@ -1987,7 +2109,8 @@ async def _compile_concepts(
     # cross-refs are written in the same "See also:" form the concept path
     # uses — and torn down symmetrically by _remove_doc_from_pages.
     entity_related_slugs = [
-        slug for slug in (_sanitize_concept_name(s) for s in entity_related)
+        slug
+        for slug in (_sanitize_concept_name(s) for s in entity_related)
         if _add_related_link(wiki_dir, slug, doc_name, source_file, page_dir="entities")
     ]
 
@@ -1997,10 +2120,16 @@ async def _compile_concepts(
         _backlink_entities(wiki_dir, doc_name, entity_backlink_slugs)
 
     # --- Step 4: Update index (code only) ---
-    _update_index(wiki_dir, doc_name, concept_names,
-                  doc_brief=doc_brief, concept_briefs=concept_briefs_map,
-                  doc_type=doc_type, entity_names=entity_names,
-                  entity_meta=entity_meta)
+    _update_index(
+        wiki_dir,
+        doc_name,
+        concept_names,
+        doc_brief=doc_brief,
+        concept_briefs=concept_briefs_map,
+        doc_type=doc_type,
+        entity_names=entity_names,
+        entity_meta=entity_meta,
+    )
 
 
 async def compile_short_doc(
@@ -2029,20 +2158,31 @@ async def compile_short_doc(
     # Base context A: system + document. cache_control marker on the doc
     # message creates a cache breakpoint that covers (system + doc) for
     # every downstream call (summary, concepts-plan, every concept page).
-    system_msg = {"role": "system", "content": _SYSTEM_TEMPLATE.format(
-        schema_md=schema_md, language=language,
-    )}
-    doc_msg = {"role": "user", "content": _cached_text(_SUMMARY_USER.format(
-        doc_name=doc_name, content=content,
-    ))}
+    system_msg = {
+        "role": "system",
+        "content": _SYSTEM_TEMPLATE.format(
+            schema_md=schema_md,
+            language=language,
+        ),
+    }
+    doc_msg = {
+        "role": "user",
+        "content": _cached_text(
+            _SUMMARY_USER.format(
+                doc_name=doc_name,
+                content=content,
+            )
+        ),
+    }
 
     # --- Step 1: Generate summary (v1, held in memory) ---
     # The summary is NOT written to disk yet — it's used as cache context
     # for the plan + concept-generation calls, then rewritten into a final
     # v2 (with a whitelist of known wikilink targets) inside
     # _compile_concepts before being written to disk.
-    summary_raw = _llm_call(model, [system_msg, doc_msg], "summary",
-                             response_format=_JSON_RESPONSE_FORMAT)
+    summary_raw = _llm_call(
+        model, [system_msg, doc_msg], "summary", response_format=_JSON_RESPONSE_FORMAT
+    )
     try:
         summary_parsed = _parse_json(summary_raw)
         doc_brief = summary_parsed.get("description", "")
@@ -2054,9 +2194,18 @@ async def compile_short_doc(
     # --- Steps 2-4: Concept plan → generate/update → summary rewrite → index ---
     try:
         await _compile_concepts(
-            wiki_dir, kb_dir, model, system_msg, doc_msg,
-            summary, doc_name, max_concurrency, doc_brief=doc_brief,
-            doc_type="short", rewrite_summary=True, entity_types=entity_types,
+            wiki_dir,
+            kb_dir,
+            model,
+            system_msg,
+            doc_msg,
+            summary,
+            doc_name,
+            max_concurrency,
+            doc_brief=doc_brief,
+            doc_type="short",
+            rewrite_summary=True,
+            entity_types=entity_types,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this
@@ -2105,12 +2254,23 @@ async def compile_long_doc(
 
     # Base context A. cache_control marker on the doc message creates a
     # cache breakpoint covering (system + doc) for every concept call.
-    system_msg = {"role": "system", "content": _SYSTEM_TEMPLATE.format(
-        schema_md=schema_md, language=language,
-    )}
-    doc_msg = {"role": "user", "content": _cached_text(_LONG_DOC_SUMMARY_USER.format(
-        doc_name=doc_name, doc_id=doc_id, content=summary_content,
-    ))}
+    system_msg = {
+        "role": "system",
+        "content": _SYSTEM_TEMPLATE.format(
+            schema_md=schema_md,
+            language=language,
+        ),
+    }
+    doc_msg = {
+        "role": "user",
+        "content": _cached_text(
+            _LONG_DOC_SUMMARY_USER.format(
+                doc_name=doc_name,
+                doc_id=doc_id,
+                content=summary_content,
+            )
+        ),
+    }
 
     # --- Step 1: Generate overview ---
     overview = _llm_call(model, [system_msg, doc_msg], "overview")
@@ -2118,9 +2278,17 @@ async def compile_long_doc(
     # --- Steps 2-4: Concept plan → generate/update → index ---
     try:
         await _compile_concepts(
-            wiki_dir, kb_dir, model, system_msg, doc_msg,
-            overview, doc_name, max_concurrency, doc_brief=doc_description,
-            doc_type="pageindex", entity_types=entity_types,
+            wiki_dir,
+            kb_dir,
+            model,
+            system_msg,
+            doc_msg,
+            overview,
+            doc_name,
+            max_concurrency,
+            doc_brief=doc_description,
+            doc_type="pageindex",
+            entity_types=entity_types,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this

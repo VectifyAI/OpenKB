@@ -20,6 +20,7 @@ type, the ``target_type`` check in ``__init__``, the ``if/else`` in
 (score 70 in the architectural review); current ``if/else`` is
 intentional v0.x scope.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,9 +34,10 @@ from openkb.skill.creator import run_skill_create
 from openkb.skill.marketplace import regenerate_marketplace
 from openkb.skill.validator import (
     ValidationResult as SkillValidationResult,
+)
+from openkb.skill.validator import (
     validate_skill,
 )
-
 
 TargetType = Literal["skill", "deck"]
 AnyValidationResult = Union[SkillValidationResult, DeckValidationResult]
@@ -67,9 +69,9 @@ class Generator:
         skill_name: str | None = None,
     ) -> None:
         """Args:
-            skill_name: For ``target_type="deck"``, which deck skill to use.
-                Defaults to :data:`openkb.deck.creator.DEFAULT_DECK_SKILL`
-                (``"openkb-deck-neon"``). Ignored for skill target.
+        skill_name: For ``target_type="deck"``, which deck skill to use.
+            Defaults to :data:`openkb.deck.creator.DEFAULT_DECK_SKILL`
+            (``"openkb-deck-neon"``). Ignored for skill target.
         """
         if target_type not in ("skill", "deck"):
             raise ValueError(

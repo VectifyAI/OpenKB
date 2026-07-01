@@ -5,6 +5,7 @@ for the html-critic skill. It does path resolution, file-not-found
 gating, and translates SkillNotFoundError / RuntimeError into
 user-visible error messages — none of that was exercised before.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,9 +50,7 @@ async def test_critique_missing_file_prints_error(tmp_path: Path, capsys):
     run_skill — no point asking the critic to read a nonexistent file."""
     kb_dir = _make_kb_with_config(tmp_path)
     with patch("openkb.agent.skill_runner.run_skill", new=AsyncMock()) as run_skill:
-        await _handle_slash_critique(
-            "output/decks/ghost/index.html", kb_dir, _STYLE
-        )
+        await _handle_slash_critique("output/decks/ghost/index.html", kb_dir, _STYLE)
 
     out = capsys.readouterr().out
     assert "[ERROR]" in out
@@ -69,9 +68,7 @@ async def test_critique_invokes_html_critic_skill(tmp_path: Path, capsys):
     target.write_text("<html>existing deck</html>", encoding="utf-8")
 
     with patch("openkb.agent.skill_runner.run_skill", new=AsyncMock()) as run_skill:
-        await _handle_slash_critique(
-            "output/decks/real/index.html", kb_dir, _STYLE
-        )
+        await _handle_slash_critique("output/decks/real/index.html", kb_dir, _STYLE)
 
     run_skill.assert_called_once()
     kwargs = run_skill.call_args.kwargs
@@ -111,9 +108,7 @@ async def test_critique_catches_skill_not_found(tmp_path: Path, capsys):
     target.write_text("<html></html>", encoding="utf-8")
 
     async def missing(**_):
-        raise SkillNotFoundError(
-            "Skill 'openkb-html-critic' not found. Available: foo."
-        )
+        raise SkillNotFoundError("Skill 'openkb-html-critic' not found. Available: foo.")
 
     with patch("openkb.agent.skill_runner.run_skill", new=AsyncMock(side_effect=missing)):
         # Should NOT raise — chat turn must survive

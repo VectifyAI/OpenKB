@@ -9,6 +9,7 @@ The remaining surface to test is small: ``run_deck_create`` is a thin
 wrapper that calls ``run_skill`` (mocked here), returns the producer
 skill's ``SkillRunResult``, and optionally chains the critic skill.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

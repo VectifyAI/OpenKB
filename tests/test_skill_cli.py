@@ -3,6 +3,7 @@
 The agent runner is patched so these tests don't burn LLM tokens. They
 verify the CLI wiring: KB detection, name validation, overwrite logic,
 marketplace.json regeneration, exit codes."""
+
 from __future__ import annotations
 
 import json
@@ -41,8 +42,10 @@ def test_skill_new_succeeds_and_writes_files(tmp_path):
     async def fake_run(kb_dir, skill_name, intent, model):
         _fake_compile(kb_dir, skill_name)
 
-    with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=kb),
+        patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)),
+    ):
         result = runner.invoke(cli, ["skill", "new", "demo", "test intent"])
 
     assert result.exit_code == 0, result.output
@@ -122,8 +125,10 @@ def test_skill_new_overwrites_with_yes_flag(tmp_path):
     async def fake_run(kb_dir, skill_name, intent, model):
         _fake_compile(kb_dir, skill_name)
 
-    with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=kb),
+        patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)),
+    ):
         result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
 
     assert result.exit_code == 0, result.output
@@ -146,8 +151,10 @@ def test_skill_new_saves_iteration_when_overwriting(tmp_path):
     async def fake_run(kb_dir, skill_name, intent, model):
         _fake_compile(kb_dir, skill_name)
 
-    with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=kb),
+        patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)),
+    ):
         result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
 
     assert result.exit_code == 0, result.output
@@ -164,13 +171,9 @@ def test_skill_history_command_lists_iterations(tmp_path):
     kb = _make_kb(tmp_path)
     ws = kb / "output" / "skills" / "demo-workspace"
     (ws / "iteration-1").mkdir(parents=True)
-    (ws / "iteration-1" / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: v1\n---\n"
-    )
+    (ws / "iteration-1" / "SKILL.md").write_text("---\nname: demo\ndescription: v1\n---\n")
     (ws / "iteration-2").mkdir(parents=True)
-    (ws / "iteration-2" / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: v2\n---\n"
-    )
+    (ws / "iteration-2" / "SKILL.md").write_text("---\nname: demo\ndescription: v2\n---\n")
 
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb):
@@ -202,9 +205,7 @@ def test_skill_rollback_restores_from_workspace(tmp_path):
     # Current skill is "broken"
     current = kb / "output" / "skills" / "demo"
     current.mkdir(parents=True)
-    (current / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: broken\n---\n"
-    )
+    (current / "SKILL.md").write_text("---\nname: demo\ndescription: broken\n---\n")
 
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb):
@@ -222,22 +223,16 @@ def test_skill_rollback_to_specific_iteration(tmp_path):
     kb = _make_kb(tmp_path)
     ws = kb / "output" / "skills" / "demo-workspace"
     (ws / "iteration-1").mkdir(parents=True)
-    (ws / "iteration-1" / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: v1\n---\n"
-    )
+    (ws / "iteration-1" / "SKILL.md").write_text("---\nname: demo\ndescription: v1\n---\n")
     (ws / "iteration-2").mkdir(parents=True)
-    (ws / "iteration-2" / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: v2\n---\n"
-    )
+    (ws / "iteration-2" / "SKILL.md").write_text("---\nname: demo\ndescription: v2\n---\n")
     current = kb / "output" / "skills" / "demo"
     current.mkdir(parents=True)
     (current / "SKILL.md").write_text("placeholder")
 
     runner = CliRunner()
     with patch("openkb.cli._find_kb_dir", return_value=kb):
-        result = runner.invoke(
-            cli, ["skill", "rollback", "demo", "--to", "1", "-y"]
-        )
+        result = runner.invoke(cli, ["skill", "rollback", "demo", "--to", "1", "-y"])
 
     assert result.exit_code == 0, result.output
     assert "v1" in (current / "SKILL.md").read_text()
@@ -298,9 +293,10 @@ def test_skill_new_keeps_existing_skill_when_key_setup_fails(tmp_path):
     (target / "stale.txt").write_text("priceless")
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.cli._setup_llm_key",
-               side_effect=RuntimeError("no API key configured")):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=kb),
+        patch("openkb.cli._setup_llm_key", side_effect=RuntimeError("no API key configured")),
+    ):
         result = runner.invoke(cli, ["skill", "new", "demo", "x", "-y"])
 
     assert result.exit_code != 0
@@ -311,6 +307,7 @@ def test_skill_new_keeps_existing_skill_when_key_setup_fails(tmp_path):
 # --------------------------------------------------------------------------
 # `openkb skill eval` — trigger-accuracy evaluator
 # --------------------------------------------------------------------------
+
 
 def _make_skill_dir(kb_dir, name="demo", description="Triggers for demo questions."):
     """Create a minimal compiled skill on disk under <kb>/output/skills/<name>."""
@@ -332,10 +329,14 @@ def test_skill_eval_runs_with_provided_eval_set(tmp_path):
     eval_dir = kb / ".openkb" / "eval-sets"
     eval_dir.mkdir(parents=True)
     eval_path = eval_dir / "demo.json"
-    eval_path.write_text(json.dumps({
-        "should_trigger": ["t0", "t1"],
-        "should_not": ["n0", "n1"],
-    }))
+    eval_path.write_text(
+        json.dumps(
+            {
+                "should_trigger": ["t0", "t1"],
+                "should_not": ["n0", "n1"],
+            }
+        )
+    )
 
     async def perfect_grader(description, question, *, model):
         return "trigger" if question.startswith("t") else "no-trigger"
@@ -344,13 +345,22 @@ def test_skill_eval_runs_with_provided_eval_set(tmp_path):
         return "supported", ""
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.skill.evaluator.grade_one", side_effect=perfect_grader), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=perfect_coverage):
-        result = runner.invoke(cli, [
-            "skill", "eval", "demo", "--eval-set", str(eval_path),
-        ])
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=kb),
+        patch("openkb.cli._setup_llm_key", return_value=None),
+        patch("openkb.skill.evaluator.grade_one", side_effect=perfect_grader),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=perfect_coverage),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "skill",
+                "eval",
+                "demo",
+                "--eval-set",
+                str(eval_path),
+            ],
+        )
 
     assert result.exit_code == 0, result.output
     assert "Trigger accuracy" in result.output
@@ -367,10 +377,14 @@ def test_skill_eval_reports_misses(tmp_path):
     eval_dir = kb / ".openkb" / "eval-sets"
     eval_dir.mkdir(parents=True)
     eval_path = eval_dir / "demo.json"
-    eval_path.write_text(json.dumps({
-        "should_trigger": ["t0", "t1"],
-        "should_not": ["n0", "n1"],
-    }))
+    eval_path.write_text(
+        json.dumps(
+            {
+                "should_trigger": ["t0", "t1"],
+                "should_not": ["n0", "n1"],
+            }
+        )
+    )
 
     async def biased_grader(description, question, *, model):
         return "trigger"
@@ -379,13 +393,22 @@ def test_skill_eval_reports_misses(tmp_path):
         return "supported", ""
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=kb), \
-         patch("openkb.cli._setup_llm_key", return_value=None), \
-         patch("openkb.skill.evaluator.grade_one", side_effect=biased_grader), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=perfect_coverage):
-        result = runner.invoke(cli, [
-            "skill", "eval", "demo", "--eval-set", str(eval_path),
-        ])
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=kb),
+        patch("openkb.cli._setup_llm_key", return_value=None),
+        patch("openkb.skill.evaluator.grade_one", side_effect=biased_grader),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=perfect_coverage),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "skill",
+                "eval",
+                "demo",
+                "--eval-set",
+                str(eval_path),
+            ],
+        )
 
     assert result.exit_code == 0, result.output
     assert "Trigger accuracy" in result.output

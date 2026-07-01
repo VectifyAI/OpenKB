@@ -1,4 +1,5 @@
 """Tests for openkb.indexer."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -10,10 +11,16 @@ from openkb.indexer import IndexResult, _normalize_page_content, index_long_docu
 
 class TestNormalizePageContent:
     def test_normalizes_pageindex_dicts(self):
-        pages = _normalize_page_content([
-            {"page_number": "2", "markdown": "  Page two  ", "images": [{"path": "sources/images/doc/a.png"}]},
-            {"page_num": 3, "text": "Page three", "images": "bad"},
-        ])
+        pages = _normalize_page_content(
+            [
+                {
+                    "page_number": "2",
+                    "markdown": "  Page two  ",
+                    "images": [{"path": "sources/images/doc/a.png"}],
+                },
+                {"page_num": 3, "text": "Page three", "images": "bad"},
+            ]
+        )
 
         assert pages == [
             {
@@ -80,8 +87,10 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
             result = index_long_document(pdf_path, kb_dir)
 
         assert isinstance(result, IndexResult)
@@ -92,6 +101,7 @@ class TestIndexLongDocument:
     def test_source_page_written_as_json(self, kb_dir, sample_tree, tmp_path):
         """Long doc source should be written as JSON, not markdown."""
         import json as json_mod
+
         doc_id = "abc-123"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
 
@@ -106,8 +116,10 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
             index_long_document(pdf_path, kb_dir)
 
         json_file = kb_dir / "wiki" / "sources" / "sample.json"
@@ -128,8 +140,10 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
             index_long_document(pdf_path, kb_dir)
 
         summary_file = kb_dir / "wiki" / "summaries" / "sample.md"
@@ -149,8 +163,10 @@ class TestIndexLongDocument:
         pdf_path = tmp_path / "report.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls, \
-             patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()):
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls,
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
             index_long_document(pdf_path, kb_dir)
 
         # Verify PageIndexClient was instantiated with correct IndexConfig
@@ -177,9 +193,11 @@ class TestIndexLongDocument:
         pdf_path.write_bytes(b"%PDF-1.4 fake")
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.indexer._get_pdf_page_count", return_value=2), \
-             patch("openkb.indexer._convert_pdf_to_pages") as local_pages:
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.indexer._get_pdf_page_count", return_value=2),
+            patch("openkb.indexer._convert_pdf_to_pages") as local_pages,
+        ):
             index_long_document(pdf_path, kb_dir)
 
         local_pages.assert_not_called()
@@ -187,7 +205,9 @@ class TestIndexLongDocument:
         assert '"content": "Cloud page one."' in json_file.read_text(encoding="utf-8")
         assert '"content": "Cloud page two."' in json_file.read_text(encoding="utf-8")
 
-    def test_invalid_cloud_page_content_falls_back_to_local(self, kb_dir, sample_tree, tmp_path, monkeypatch):
+    def test_invalid_cloud_page_content_falls_back_to_local(
+        self, kb_dir, sample_tree, tmp_path, monkeypatch
+    ):
         doc_id = "cloud-456"
         fake_col = self._make_fake_collection(doc_id, sample_tree)
         fake_col.get_page_content.return_value = {"bad": "shape"}
@@ -199,9 +219,13 @@ class TestIndexLongDocument:
         pdf_path.write_bytes(b"%PDF-1.4 fake")
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.indexer._get_pdf_page_count", return_value=2), \
-             patch("openkb.indexer._convert_pdf_to_pages", return_value=self._fake_pages()) as local_pages:
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.indexer._get_pdf_page_count", return_value=2),
+            patch(
+                "openkb.indexer._convert_pdf_to_pages", return_value=self._fake_pages()
+            ) as local_pages,
+        ):
             index_long_document(pdf_path, kb_dir)
 
         local_pages.assert_called_once()
@@ -219,9 +243,11 @@ class TestIndexLongDocument:
         pdf_path.write_bytes(b"%PDF-1.4 fake")
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
 
-        with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-             patch("openkb.indexer._get_pdf_page_count", return_value=2), \
-             patch("openkb.indexer._convert_pdf_to_pages", return_value=[]):
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.indexer._get_pdf_page_count", return_value=2),
+            patch("openkb.indexer._convert_pdf_to_pages", return_value=[]),
+        ):
             try:
                 index_long_document(pdf_path, kb_dir)
             except RuntimeError as exc:
@@ -246,10 +272,13 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     pdf = kb_dir / "raw" / "original.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
 
-    with patch("openkb.indexer.PageIndexClient", return_value=fake_client), \
-         patch("openkb.indexer._get_pdf_page_count", return_value=30), \
-         patch("openkb.indexer._convert_pdf_to_pages",
-               return_value=[{"page": 1, "text": "p1"}]) as mock_convert:
+    with (
+        patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+        patch("openkb.indexer._get_pdf_page_count", return_value=30),
+        patch(
+            "openkb.indexer._convert_pdf_to_pages", return_value=[{"page": 1, "text": "p1"}]
+        ) as mock_convert,
+    ):
         result = index_long_document(pdf, kb_dir, doc_name="original-abc12345")
 
     assert result.doc_id == "doc-123"
@@ -262,7 +291,9 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     expected_images = kb_dir / "wiki" / "sources" / "images" / "original-abc12345"
     mock_convert.assert_called_once_with(pdf, "original-abc12345", expected_images)
     # summary frontmatter points full_text at the doc_name artifact
-    summary_text = (kb_dir / "wiki" / "summaries" / "original-abc12345.md").read_text(encoding="utf-8")
+    summary_text = (kb_dir / "wiki" / "summaries" / "original-abc12345.md").read_text(
+        encoding="utf-8"
+    )
     assert "original-abc12345" in summary_text
 
 
@@ -400,7 +431,9 @@ def test_import_cloud_document_no_indices_avoids_oversized_range(kb_dir, monkeyp
     monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
     col = MagicMock()
     col.get_document.return_value = {
-        "doc_id": "c", "doc_name": "NoIdx.pdf", "doc_description": "d",
+        "doc_id": "c",
+        "doc_name": "NoIdx.pdf",
+        "doc_description": "d",
         "structure": [{"title": "n", "nodes": []}],  # no start/end_index anywhere
     }
     col.get_page_content.side_effect = (

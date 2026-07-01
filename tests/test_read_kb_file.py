@@ -8,6 +8,7 @@ inspect — particularly that it **cannot** see ``.openkb/config.yaml``
 (which contains the LLM API key path), ``.env``, or anything outside
 ``wiki/``, ``output/``, ``skills/``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

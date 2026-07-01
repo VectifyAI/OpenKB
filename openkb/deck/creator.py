@@ -15,6 +15,7 @@ This module exists only to:
 * surface a clean ``Path``-returning interface for callers that don't
   care about skill plumbing.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,7 +28,6 @@ from openkb.agent.skill_runner import (
     run_skill,
 )
 from openkb.deck import deck_dir
-
 
 DEFAULT_DECK_SKILL = "openkb-deck-neon"
 """Skill name routed to when the CLI / chat doesn't pass ``--skill``."""

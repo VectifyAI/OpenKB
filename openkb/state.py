@@ -69,12 +69,8 @@ class HashRegistry:
         for file_hash, metadata in self._data.items():
             if metadata.get("path"):
                 continue
-            entry_name = metadata.get("doc_name") or Path(
-                metadata.get("name", "")
-            ).stem
-            if unicodedata.normalize("NFKC", entry_name) == unicodedata.normalize(
-                "NFKC", stem
-            ):
+            entry_name = metadata.get("doc_name") or Path(metadata.get("name", "")).stem
+            if unicodedata.normalize("NFKC", entry_name) == unicodedata.normalize("NFKC", stem):
                 return file_hash, metadata
         return None
 

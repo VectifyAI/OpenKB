@@ -1,4 +1,5 @@
 """Knowledge lint agent for semantic quality checks on the wiki."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,9 +9,9 @@ from agents.model_settings import ModelSettings
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
 from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
-from openkb.schema import get_agents_md
 
 _LINTER_INSTRUCTIONS_TEMPLATE = """\
 You are OpenKB's semantic lint agent. Your job is to audit the wiki

@@ -12,6 +12,7 @@ in ``openkb.agent.query``. The differences:
   success — an agent that gets confused and never writes the required
   output should fail loudly rather than silently produce an empty dir.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,16 +21,24 @@ from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from agents.model_settings import ModelSettings
 
 from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.prompts import load_prompt
+from openkb.schema import get_agents_md
 from openkb.skill import skill_dir
 from openkb.skill.tools import (
     get_skill_page_content as _get_page_content_impl,
+)
+from openkb.skill.tools import (
     list_wiki_dir as _list_wiki_dir_impl,
+)
+from openkb.skill.tools import (
     read_skill_image as _read_image_impl,
+)
+from openkb.skill.tools import (
     read_wiki_file_for_skill as _read_wiki_file_impl,
+)
+from openkb.skill.tools import (
     write_skill_file as _write_skill_file_impl,
 )
-from openkb.prompts import load_prompt
-from openkb.schema import get_agents_md
 
 MAX_TURNS = 80  # higher than query (50) because compile can write multiple files
 
@@ -118,6 +127,7 @@ def build_skill_create_agent(
         """
         # Lazy import to avoid a circular dependency at module load time.
         from openkb.agent.query import run_query
+
         kb_dir = Path(wiki_root).parent
         return await run_query(question, kb_dir, model, stream=False)
 

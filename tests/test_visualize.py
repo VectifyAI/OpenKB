@@ -15,13 +15,17 @@ def test_build_graph_nodes_edges_types(tmp_path):
     wiki = _wiki(tmp_path)
     (wiki / "summaries" / "paper.md").write_text(
         '---\ntype: "Summary"\ndescription: "A paper."\nfull_text: "sources/paper.json"\n---\n\n'
-        "Discusses [[concepts/attention]] and [[entities/anthropic]].\n", encoding="utf-8")
+        "Discusses [[concepts/attention]] and [[entities/anthropic]].\n",
+        encoding="utf-8",
+    )
     (wiki / "concepts" / "attention.md").write_text(
         '---\ntype: "Concept"\ndescription: "Focus."\nsources: ["summaries/paper"]\n---\n\n'
-        "Used by [[concepts/attention]] (self) and [[concepts/missing]] (broken).\n", encoding="utf-8")
+        "Used by [[concepts/attention]] (self) and [[concepts/missing]] (broken).\n",
+        encoding="utf-8",
+    )
     (wiki / "entities" / "anthropic.md").write_text(
-        '---\ntype: "Organization"\ndescription: "AI lab."\n---\n\n'
-        "# Anthropic\n", encoding="utf-8")
+        '---\ntype: "Organization"\ndescription: "AI lab."\n---\n\n# Anthropic\n', encoding="utf-8"
+    )
     (wiki / "concepts" / "orphan.md").write_text("# Orphan\n\nNo links.\n", encoding="utf-8")
 
     g = build_graph(wiki)
@@ -47,8 +51,21 @@ def test_build_graph_empty_wiki(tmp_path):
 
 
 def test_render_html_self_contained():
-    g = {"nodes":[{"id":"concepts/a","label":"a","type":"Concept","description":"x—y","sources":[],"out":0,"in":0}],
-         "edges":[], "types":["Concept"]}
+    g = {
+        "nodes": [
+            {
+                "id": "concepts/a",
+                "label": "a",
+                "type": "Concept",
+                "description": "x—y",
+                "sources": [],
+                "out": 0,
+                "in": 0,
+            }
+        ],
+        "edges": [],
+        "types": ["Concept"],
+    }
     html = render_html(g)
     assert "<canvas" in html
     assert '"concepts/a"' in html and '"Concept"' in html

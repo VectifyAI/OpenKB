@@ -8,6 +8,7 @@ What we DO verify:
   * End-to-end run_eval with mocked grading
   * Save/load round-trip for persisted eval sets
 """
+
 from __future__ import annotations
 
 import json
@@ -183,8 +184,10 @@ async def test_run_eval_happy_path_all_correct(tmp_path):
         match = next(p for p in eval_set if p.question == question)
         return match.expected
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=_supported_coverage):
+    with (
+        patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=_supported_coverage),
+    ):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert isinstance(result, EvalResult)
@@ -208,8 +211,10 @@ async def test_run_eval_reports_misses(tmp_path):
     async def fake_grade(description, question, *, model):
         return "trigger"
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=_supported_coverage):
+    with (
+        patch("openkb.skill.evaluator.grade_one", side_effect=fake_grade),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=_supported_coverage),
+    ):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert result.total == 6
@@ -241,8 +246,10 @@ async def test_run_eval_reports_coverage_gaps(tmp_path):
             return "unsupported", "body has no material"
         return "supported", ""
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=perfect_trigger), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=hollow_coverage):
+    with (
+        patch("openkb.skill.evaluator.grade_one", side_effect=perfect_trigger),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=hollow_coverage),
+    ):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     # Trigger accuracy is still perfect.
@@ -258,14 +265,10 @@ async def test_run_eval_reports_coverage_gaps(tmp_path):
 @pytest.mark.asyncio
 async def test_grade_coverage_parses_supported_verdict():
     async def fake_runner(*args, **kwargs):
-        return SimpleNamespace(
-            final_output="VERDICT: SUPPORTED\nREASON: body covers this directly"
-        )
+        return SimpleNamespace(final_output="VERDICT: SUPPORTED\nREASON: body covers this directly")
 
     with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
-        verdict, reason = await grade_coverage(
-            "body content", "question?", model="gpt-4o-mini"
-        )
+        verdict, reason = await grade_coverage("body content", "question?", model="gpt-4o-mini")
     assert verdict == "supported"
     assert reason == "body covers this directly"
 
@@ -276,9 +279,7 @@ async def test_grade_coverage_reports_ambiguous_on_unparseable_output():
         return SimpleNamespace(final_output="hmm not sure")
 
     with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
-        verdict, reason = await grade_coverage(
-            "body", "q?", model="gpt-4o-mini"
-        )
+        verdict, reason = await grade_coverage("body", "q?", model="gpt-4o-mini")
     # Ambiguous is a third state — not collapsed into unsupported, so
     # grader-malfunction doesn't silently inflate coverage_misses.
     assert verdict == "ambiguous"
@@ -303,8 +304,10 @@ async def test_run_eval_segregates_ambiguous_from_coverage_misses(tmp_path):
             return "unsupported", "body gap"
         return "ambiguous", "unparseable grader output: 'xxx'"
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=perfect_trigger), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=mixed_coverage):
+    with (
+        patch("openkb.skill.evaluator.grade_one", side_effect=perfect_trigger),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=mixed_coverage),
+    ):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     assert result.trigger_questions == 3
@@ -335,8 +338,10 @@ async def test_run_eval_captures_grader_failures_without_aborting(tmp_path):
             raise RuntimeError("malformed grader output")
         return "supported", ""
 
-    with patch("openkb.skill.evaluator.grade_one", side_effect=flaky_trigger), \
-         patch("openkb.skill.evaluator.grade_coverage", side_effect=flaky_coverage):
+    with (
+        patch("openkb.skill.evaluator.grade_one", side_effect=flaky_trigger),
+        patch("openkb.skill.evaluator.grade_coverage", side_effect=flaky_coverage),
+    ):
         result = await run_eval(skill_dir, model="gpt-4o-mini", eval_set=eval_set)
 
     # 4 prompts total; one trigger errored, one coverage errored.
@@ -391,8 +396,7 @@ async def test_generate_eval_set_translates_max_turns_to_runtime_error(tmp_path)
     async def fake_runner(*args, **kwargs):
         raise MaxTurnsExceeded("ran out")
 
-    with patch("openkb.skill.evaluator.Runner.run",
-               new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="max-turn cap"):
             await generate_eval_set(skill_dir, model="gpt-4o-mini")
 
@@ -405,7 +409,6 @@ async def test_generate_eval_set_translates_malformed_json_to_runtime_error(tmp_
     async def fake_runner(*args, **kwargs):
         return SimpleNamespace(final_output="this is not json at all")
 
-    with patch("openkb.skill.evaluator.Runner.run",
-               new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="non-JSON output"):
             await generate_eval_set(skill_dir, model="gpt-4o-mini")

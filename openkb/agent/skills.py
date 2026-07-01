@@ -28,6 +28,7 @@ Frontmatter::
     ---
     <skill body — instructions the agent reads when it loads the skill>
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,9 +36,8 @@ from typing import Iterable, Tuple
 
 import yaml
 
-
 DEFAULT_SKILL_ROOTS: Tuple[str, ...] = (
-    "skills",                  # relative to kb_dir
+    "skills",  # relative to kb_dir
     "~/.openkb/skills",
     "~/.claude/skills",
 )
@@ -70,7 +70,7 @@ def _parse_frontmatter(text: str) -> Tuple[dict, str]:
         meta = yaml.safe_load("\n".join(lines[1:end])) or {}
     except yaml.YAMLError:
         meta = {}
-    body = "\n".join(lines[end + 1:])
+    body = "\n".join(lines[end + 1 :])
     return meta if isinstance(meta, dict) else {}, body
 
 
@@ -92,11 +92,7 @@ def scan_local_skills(
     """
     seen: dict[str, dict[str, str]] = {}
     # Bundled roots go last so KB/user/Claude skills override the built-ins.
-    roots = (
-        list(DEFAULT_SKILL_ROOTS)
-        + [str(r) for r in extra_roots]
-        + list(BUNDLED_SKILL_ROOTS)
-    )
+    roots = list(DEFAULT_SKILL_ROOTS) + [str(r) for r in extra_roots] + list(BUNDLED_SKILL_ROOTS)
     for root_spec in roots:
         root = Path(root_spec).expanduser()
         if not root.is_absolute():

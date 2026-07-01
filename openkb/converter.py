@@ -1,4 +1,5 @@
 """Document conversion pipeline for OpenKB."""
+
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +14,7 @@ import pymupdf
 from markitdown import MarkItDown
 
 from openkb.config import load_config
-from openkb.images import copy_relative_images, extract_base64_images, convert_pdf_with_images
+from openkb.images import convert_pdf_with_images, copy_relative_images, extract_base64_images
 from openkb.locks import atomic_write_text, kb_ingest_lock
 from openkb.state import HashRegistry
 

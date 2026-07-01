@@ -7,6 +7,7 @@ test_deck_prompt assertion that the built-in deck skill loads), so
 edge-case behavior (precedence, malformed frontmatter, missing fields,
 description truncation) was silently uncovered.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -182,9 +183,7 @@ def test_kb_skill_overrides_bundled(tmp_path: Path, monkeypatch):
     _write_skill(bundled, "openkb-deck-neon", description="BUILT-IN")
     monkeypatch.setattr("openkb.agent.skills.BUNDLED_SKILL_ROOTS", (str(bundled),))
     _write_skill(tmp_path / "skills", "openkb-deck-neon", description="KB OVERRIDE")
-    match = next(
-        s for s in scan_local_skills(tmp_path) if s["name"] == "openkb-deck-neon"
-    )
+    match = next(s for s in scan_local_skills(tmp_path) if s["name"] == "openkb-deck-neon")
     assert match["description"] == "KB OVERRIDE"
 
 

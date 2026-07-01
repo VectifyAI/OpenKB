@@ -4,6 +4,7 @@ Failure messages carry remediation (rule + why + how to fix) so the guidance
 lands directly in agent context. Existing over-limit files are grandfathered
 and tracked in docs/internal/tech-debt.md.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,14 +1,13 @@
 """PageIndex indexer for long documents."""
+
 from __future__ import annotations
 
 import json as json_mod
 import logging
-
+import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
-
-import os
 
 from pageindex import IndexConfig, PageIndexClient
 
@@ -32,8 +31,8 @@ class CloudImportResult:
     """Result of importing an existing PageIndex Cloud document."""
 
     doc_id: str
-    doc_name: str   # collision-resistant wiki slug
-    name: str       # cloud display name (original filename in the cloud)
+    doc_name: str  # collision-resistant wiki slug
+    name: str  # cloud display name (original filename in the cloud)
     description: str
 
 
@@ -47,8 +46,8 @@ class CloudImportData:
     """
 
     doc_id: str
-    doc_name: str      # collision-resistant wiki slug (resolved, not yet written)
-    cloud_name: str    # cloud display name (original filename in the cloud)
+    doc_name: str  # collision-resistant wiki slug (resolved, not yet written)
+    cloud_name: str  # cloud display name (original filename in the cloud)
     description: str
     tree: dict
     all_pages: list
@@ -94,16 +93,19 @@ def _normalize_page_content(raw_pages: Any) -> list[dict[str, Any]]:
         if not isinstance(images, list):
             images = []
         normalized_images = [
-            image for image in images
+            image
+            for image in images
             if isinstance(image, dict) and isinstance(image.get("path"), str)
         ]
 
         if content or normalized_images:
-            pages.append({
-                "page": page_number,
-                "content": content,
-                "images": normalized_images,
-            })
+            pages.append(
+                {
+                    "page": page_number,
+                    "content": content,
+                    "images": normalized_images,
+                }
+            )
 
     return pages
 
@@ -121,7 +123,11 @@ def _convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> li
 
 
 def _write_long_doc_artifacts(
-    tree: dict, pages: list[dict[str, Any]], doc_name: str, doc_id: str, kb_dir: Path,
+    tree: dict,
+    pages: list[dict[str, Any]],
+    doc_name: str,
+    doc_id: str,
+    kb_dir: Path,
     description: str = "",
 ) -> Path:
     """Write ``wiki/sources/<doc_name>.json`` + ``wiki/summaries/<doc_name>.md``.
@@ -134,7 +140,8 @@ def _write_long_doc_artifacts(
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     (sources_dir / f"{doc_name}.json").write_text(
-        json_mod.dumps(pages, ensure_ascii=False, indent=2), encoding="utf-8",
+        json_mod.dumps(pages, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
     summaries_dir = kb_dir / "wiki" / "summaries"
@@ -146,9 +153,7 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
-def index_long_document(
-    pdf_path: Path, kb_dir: Path, doc_name: str | None = None
-) -> IndexResult:
+def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
     """Index a long PDF document using PageIndex and write wiki pages.
 
     ``doc_name`` is the collision-resistant wiki name used for all written
@@ -181,12 +186,22 @@ def index_long_document(
     for attempt in range(1, max_retries + 1):
         try:
             doc_id = col.add(str(pdf_path))
-            logger.info("PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt)
+            logger.info(
+                "PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt
+            )
             break
         except Exception as exc:
-            logger.warning("PageIndex attempt %d/%d failed for %s: %s", attempt, max_retries, pdf_path.name, exc)
+            logger.warning(
+                "PageIndex attempt %d/%d failed for %s: %s",
+                attempt,
+                max_retries,
+                pdf_path.name,
+                exc,
+            )
             if attempt == max_retries:
-                raise RuntimeError(f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}") from exc
+                raise RuntimeError(
+                    f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}"
+                ) from exc
 
     # Fetch complete document (metadata + structure + text)
     doc = col.get_document(doc_id, include_text=True)
@@ -221,15 +236,17 @@ def index_long_document(
 
     if not all_pages:
         if pageindex_api_key:
-            logger.warning("Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name)
-        all_pages = _normalize_page_content(_convert_pdf_to_pages(pdf_path, source_name, images_dir))
+            logger.warning(
+                "Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name
+            )
+        all_pages = _normalize_page_content(
+            _convert_pdf_to_pages(pdf_path, source_name, images_dir)
+        )
 
     if not all_pages:
         raise RuntimeError(f"No page content extracted for {pdf_path.name}")
 
-    _write_long_doc_artifacts(
-        tree, all_pages, source_name, doc_id, kb_dir, description=description
-    )
+    _write_long_doc_artifacts(tree, all_pages, source_name, doc_id, kb_dir, description=description)
     return IndexResult(doc_id=doc_id, description=description, tree=tree)
 
 
@@ -284,8 +301,7 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
     if not pageindex_api_key:
         raise RuntimeError(
-            "Importing from PageIndex Cloud requires the PAGEINDEX_API_KEY "
-            "environment variable."
+            "Importing from PageIndex Cloud requires the PAGEINDEX_API_KEY environment variable."
         )
 
     client = PageIndexClient(api_key=pageindex_api_key)
@@ -308,13 +324,15 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
 
     all_pages = _fetch_cloud_pages(col, doc_id)
     if not all_pages:
-        raise RuntimeError(
-            f"No page content returned from PageIndex Cloud for doc_id={doc_id}"
-        )
+        raise RuntimeError(f"No page content returned from PageIndex Cloud for doc_id={doc_id}")
 
     return CloudImportData(
-        doc_id=doc_id, doc_name=doc_name, cloud_name=cloud_name,
-        description=description, tree=tree, all_pages=all_pages,
+        doc_id=doc_id,
+        doc_name=doc_name,
+        cloud_name=cloud_name,
+        description=description,
+        tree=tree,
+        all_pages=all_pages,
     )
 
 
@@ -334,10 +352,16 @@ def import_cloud_document(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpo
     """
     cloud = prepare_cloud_import(doc_id, kb_dir, path_key)
     _write_long_doc_artifacts(
-        cloud.tree, cloud.all_pages, cloud.doc_name, cloud.doc_id, kb_dir,
+        cloud.tree,
+        cloud.all_pages,
+        cloud.doc_name,
+        cloud.doc_id,
+        kb_dir,
         description=cloud.description,
     )
     return CloudImportResult(
-        doc_id=cloud.doc_id, doc_name=cloud.doc_name,
-        name=cloud.cloud_name, description=cloud.description,
+        doc_id=cloud.doc_id,
+        doc_name=cloud.doc_name,
+        name=cloud.cloud_name,
+        description=cloud.description,
     )

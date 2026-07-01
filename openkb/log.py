@@ -1,4 +1,5 @@
 """Append-only operation log for the wiki (log.md)."""
+
 from __future__ import annotations
 
 from datetime import datetime

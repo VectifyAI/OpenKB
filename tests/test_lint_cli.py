@@ -1,4 +1,5 @@
 """Tests for the openkb lint CLI command."""
+
 from __future__ import annotations
 
 import json
@@ -54,8 +55,10 @@ class TestLintCommand:
 
     def test_lint_no_kb(self, tmp_path):
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path), \
-             patch("openkb.cli._find_kb_dir", return_value=None):
+        with (
+            runner.isolated_filesystem(temp_dir=tmp_path),
+            patch("openkb.cli._find_kb_dir", return_value=None),
+        ):
             result = runner.invoke(cli, ["lint"])
             assert "No knowledge base found" in result.output
 
@@ -65,9 +68,11 @@ class TestLintCommand:
         hashes = {"abc": {"name": "paper.pdf", "type": "pdf"}}
         (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps(hashes))
         runner = CliRunner()
-        with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli._setup_llm_key"), \
-             patch("openkb.agent.linter.run_knowledge_lint", return_value="No issues."):
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.cli._setup_llm_key"),
+            patch("openkb.agent.linter.run_knowledge_lint", return_value="No issues."),
+        ):
             result = runner.invoke(cli, ["lint"])
         assert result.exit_code == 0
         assert "Running structural lint" in result.output

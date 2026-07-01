@@ -1,4 +1,5 @@
 """Markdown renderers for PageIndex tree structures."""
+
 from __future__ import annotations
 
 from openkb import frontmatter
@@ -34,8 +35,7 @@ def _render_nodes_summary(nodes: list[dict], depth: int) -> str:
     return "\n".join(lines)
 
 
-def render_summary_md(tree: dict, source_name: str, doc_id: str,
-                      description: str = "") -> str:
+def render_summary_md(tree: dict, source_name: str, doc_id: str, description: str = "") -> str:
     """Render the summary Markdown page for a PageIndex tree.
 
     Renders each node as a heading with page range and its summary text.

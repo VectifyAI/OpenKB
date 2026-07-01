@@ -1,4 +1,5 @@
 """Tests for openkb.agent.query (Task 11)."""
+
 from __future__ import annotations
 
 import io
@@ -93,9 +94,7 @@ class TestFmtFallback:
 
     @staticmethod
     def _boom(*_args, **_kwargs):
-        raise AssertionError(
-            "print_formatted_text must not run when output is not a TTY"
-        )
+        raise AssertionError("print_formatted_text must not run when output is not a TTY")
 
     def test_fmt_falls_back_when_stdout_is_not_tty(self, monkeypatch):
         from openkb.agent import chat
@@ -154,9 +153,7 @@ class TestQueryAgentExtraHeaders:
 
         set_extra_headers({"Editor-Version": "vscode/1.95.0"})
         agent = build_query_agent(str(tmp_path), "github_copilot/gpt-5-mini")
-        assert agent.model_settings.extra_headers == {
-            "Editor-Version": "vscode/1.95.0"
-        }
+        assert agent.model_settings.extra_headers == {"Editor-Version": "vscode/1.95.0"}
         # Existing settings are preserved.
         assert agent.model_settings.parallel_tool_calls is False
 

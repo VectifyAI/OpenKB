@@ -1,8 +1,8 @@
 """Tests for openkb.lint (Task 13)."""
+
 from __future__ import annotations
 
 from pathlib import Path
-
 
 from openkb.lint import (
     _EXCLUDED_FILES,
@@ -30,9 +30,7 @@ def _make_wiki(tmp_path: Path) -> Path:
     (wiki / "summaries").mkdir(parents=True)
     (wiki / "concepts").mkdir(parents=True)
     (wiki / "reports").mkdir(parents=True)
-    (wiki / "index.md").write_text(
-        "# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8"
-    )
+    (wiki / "index.md").write_text("# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8")
     return wiki
 
 
@@ -82,9 +80,7 @@ class TestFindOrphans:
     def test_linked_page_is_not_orphan(self, tmp_path):
         wiki = _make_wiki(tmp_path)
         (wiki / "concepts" / "attention.md").write_text("# Attention")
-        (wiki / "summaries" / "paper.md").write_text(
-            "See [[concepts/attention]]", encoding="utf-8"
-        )
+        (wiki / "summaries" / "paper.md").write_text("See [[concepts/attention]]", encoding="utf-8")
 
         result = find_orphans(wiki)
 
@@ -120,9 +116,7 @@ class TestFindOrphans:
         # page is a genuine orphan and must still be flagged.
         wiki = _make_wiki(tmp_path)
         (wiki / "concepts" / "dup.md").write_text("# Linked concept", encoding="utf-8")
-        (wiki / "summaries" / "linker.md").write_text(
-            "See [[concepts/dup]]", encoding="utf-8"
-        )
+        (wiki / "summaries" / "linker.md").write_text("See [[concepts/dup]]", encoding="utf-8")
         (wiki / "summaries" / "dup.md").write_text(
             "Orphan sharing the 'dup' stem, with no links.", encoding="utf-8"
         )
@@ -325,9 +319,7 @@ class TestCheckIndexSync:
 
     def test_broken_index_link(self, tmp_path):
         wiki = _make_wiki(tmp_path)
-        (wiki / "index.md").write_text(
-            "# Index\n\n## Documents\n- [[summaries/ghost]]\n"
-        )
+        (wiki / "index.md").write_text("# Index\n\n## Documents\n- [[summaries/ghost]]\n")
 
         result = check_index_sync(wiki)
 
@@ -347,15 +339,12 @@ class TestCheckIndexSync:
         (wiki / "entities").mkdir()
         (wiki / "entities" / "ada-lovelace.md").write_text("# Ada Lovelace")
         # index.md has no mention of the entity
-        (wiki / "index.md").write_text(
-            "# Index\n\n## Documents\n\n## Concepts\n\n## Entities\n"
-        )
+        (wiki / "index.md").write_text("# Index\n\n## Documents\n\n## Concepts\n\n## Entities\n")
 
         result = check_index_sync(wiki)
 
         assert any(
-            "entities/ada-lovelace.md not mentioned in index.md" in issue
-            for issue in result
+            "entities/ada-lovelace.md not mentioned in index.md" in issue for issue in result
         )
 
     def test_missing_index_md(self, tmp_path):
@@ -540,10 +529,7 @@ class TestStripGhostWikilinks:
         amortize the index build across many calls.
         """
         known = {"concepts/gist-memory", "concepts/attention"}
-        text = (
-            "See [[concepts/gist_memory]] and [[concepts/attention]] and "
-            "[[concepts/missing]]."
-        )
+        text = "See [[concepts/gist_memory]] and [[concepts/attention]] and [[concepts/missing]]."
 
         # Default (no norm_index passed)
         out_a, ghosts_a = strip_ghost_wikilinks(text, known)
@@ -604,10 +590,12 @@ class TestFixBrokenLinksRestrictTo:
         touched = wiki / "concepts" / "touched.md"
         untouched = wiki / "concepts" / "untouched.md"
         touched.write_text(
-            "# touched\n\nGhost [[concepts/ghost]] here.\n", encoding="utf-8",
+            "# touched\n\nGhost [[concepts/ghost]] here.\n",
+            encoding="utf-8",
         )
         untouched.write_text(
-            "# untouched\n\nGhost [[concepts/ghost]] here.\n", encoding="utf-8",
+            "# untouched\n\nGhost [[concepts/ghost]] here.\n",
+            encoding="utf-8",
         )
 
         files_changed, ghosts = fix_broken_links(wiki, restrict_to=[touched])
@@ -689,11 +677,14 @@ def test_flags_missing_type_and_description(tmp_path):
     for sub in ("summaries", "concepts", "entities"):
         (wiki / sub).mkdir(parents=True)
     (wiki / "concepts" / "good.md").write_text(
-        '---\ntype: "Concept"\ndescription: "ok"\n---\n\n# Good\n', encoding="utf-8")
+        '---\ntype: "Concept"\ndescription: "ok"\n---\n\n# Good\n', encoding="utf-8"
+    )
     (wiki / "concepts" / "no_type.md").write_text(
-        '---\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+        '---\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8"
+    )
     (wiki / "summaries" / "no_desc.md").write_text(
-        '---\ntype: "Summary"\n---\n\n# Bad\n', encoding="utf-8")
+        '---\ntype: "Summary"\n---\n\n# Bad\n', encoding="utf-8"
+    )
     issues = find_missing_okf_fields(wiki)
     assert any("no_type.md" in i and "type" in i for i in issues)
     assert any("no_desc.md" in i and "description" in i for i in issues)
@@ -704,7 +695,8 @@ def test_flags_null_type_as_missing(tmp_path):
     wiki = tmp_path / "wiki"
     (wiki / "concepts").mkdir(parents=True)
     (wiki / "concepts" / "null_type.md").write_text(
-        '---\ntype: null\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+        '---\ntype: null\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8"
+    )
     issues = find_missing_okf_fields(wiki)
     assert any("null_type.md" in i and "type" in i for i in issues)
 
@@ -713,7 +705,8 @@ def test_flags_non_string_type_as_missing(tmp_path):
     wiki = tmp_path / "wiki"
     (wiki / "concepts").mkdir(parents=True)
     (wiki / "concepts" / "bool_type.md").write_text(
-        '---\ntype: true\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8")
+        '---\ntype: true\ndescription: "x"\n---\n\n# Bad\n', encoding="utf-8"
+    )
     issues = find_missing_okf_fields(wiki)
     assert any("bool_type.md" in i and "type" in i for i in issues)
 
@@ -760,9 +753,7 @@ class TestLoadWikiPages:
         assert "idea.md" in paths
         assert "person.md" in paths
 
-    def test_shared_pages_yields_identical_results_find_invalid_frontmatter(
-        self, tmp_path
-    ):
+    def test_shared_pages_yields_identical_results_find_invalid_frontmatter(self, tmp_path):
         """Calling ``find_invalid_frontmatter`` with a pre-loaded ``pages``
         dict must produce the same issues as calling it without one."""
         wiki = _make_wiki(tmp_path)
@@ -778,9 +769,7 @@ class TestLoadWikiPages:
 
         assert standalone == shared
 
-    def test_shared_pages_yields_identical_results_find_missing_okf_fields(
-        self, tmp_path
-    ):
+    def test_shared_pages_yields_identical_results_find_missing_okf_fields(self, tmp_path):
         """Calling ``find_missing_okf_fields`` with a pre-loaded ``pages``
         dict must produce the same issues as calling it without one."""
         wiki = _make_wiki(tmp_path)

@@ -32,6 +32,7 @@ Flow:
 Uses the same LiteLLM model the rest of the KB uses (config.yaml). No
 real LLM calls in tests — both generator and graders are patched.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,14 +42,12 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-
 from agents import Agent, Runner
 from agents.exceptions import MaxTurnsExceeded
 from agents.model_settings import ModelSettings
 
 from openkb.config import get_extra_headers, get_timeout_extra_args
 from openkb.skill import extract_body, extract_frontmatter
-
 
 EVAL_DEFAULT_COUNT = 10  # 10 trigger + 10 no-trigger = 20 prompts
 REFERENCES_PREVIEW_BYTES = 4000  # cap reference content fed to the eval LLM
@@ -81,6 +80,7 @@ class EvalMiss:
 @dataclass
 class CoverageMiss:
     """A should-trigger prompt the description promises but the body can't support."""
+
     prompt: EvalPrompt
     reason: str = ""
 
@@ -130,11 +130,7 @@ class EvalResult:
     def coverage_passed(self) -> int:
         # Ambiguous and errored outputs are excluded from both numerator
         # and denominator — see ``coverage_rate``.
-        scored = (
-            self.trigger_questions
-            - len(self.coverage_ambiguous)
-            - len(self.coverage_errors)
-        )
+        scored = self.trigger_questions - len(self.coverage_ambiguous) - len(self.coverage_errors)
         return scored - len(self.coverage_misses)
 
     @property
@@ -143,11 +139,7 @@ class EvalResult:
         # on. A garbled run that flips half the outputs to ambiguous or
         # errors out should narrow the denominator, not pretend half the
         # body is hollow.
-        scored = (
-            self.trigger_questions
-            - len(self.coverage_ambiguous)
-            - len(self.coverage_errors)
-        )
+        scored = self.trigger_questions - len(self.coverage_ambiguous) - len(self.coverage_errors)
         return self.coverage_passed / scored if scored else 0.0
 
 
@@ -427,9 +419,9 @@ async def run_eval(
         async with sem:
             return await grade_one(desc, p.question, model=model)
 
-    async def _coverage(p: EvalPrompt) -> tuple[
-        Literal["supported", "unsupported", "ambiguous"], str
-    ]:
+    async def _coverage(
+        p: EvalPrompt,
+    ) -> tuple[Literal["supported", "unsupported", "ambiguous"], str]:
         async with sem:
             return await grade_coverage(content, p.question, model=model)
 
@@ -452,34 +444,28 @@ async def run_eval(
     # even though the gather() above completed out of order.
     for prompt, graded in zip(eval_set, trigger_results):
         if isinstance(graded, BaseException):
-            result.trigger_errors.append(
-                CoverageMiss(prompt=prompt, reason=str(graded))
-            )
+            result.trigger_errors.append(CoverageMiss(prompt=prompt, reason=str(graded)))
             continue
         if graded != prompt.expected:
             result.misses.append(EvalMiss(prompt=prompt, graded=graded))
 
     for prompt, outcome in zip(coverage_prompts, coverage_results):
         if isinstance(outcome, BaseException):
-            result.coverage_errors.append(
-                CoverageMiss(prompt=prompt, reason=str(outcome))
-            )
+            result.coverage_errors.append(CoverageMiss(prompt=prompt, reason=str(outcome)))
             continue
         verdict, reason = outcome
         if verdict == "ambiguous":
-            result.coverage_ambiguous.append(
-                CoverageMiss(prompt=prompt, reason=reason)
-            )
+            result.coverage_ambiguous.append(CoverageMiss(prompt=prompt, reason=reason))
         elif verdict == "unsupported":
-            result.coverage_misses.append(
-                CoverageMiss(prompt=prompt, reason=reason)
-            )
+            result.coverage_misses.append(CoverageMiss(prompt=prompt, reason=reason))
 
     return result
 
 
 def save_eval_set(
-    kb_dir: Path, skill_name: str, prompts: list[EvalPrompt],
+    kb_dir: Path,
+    skill_name: str,
+    prompts: list[EvalPrompt],
 ) -> Path:
     """Persist an eval set to ``<kb>/.openkb/eval-sets/<skill_name>.json``."""
     out_dir = kb_dir / ".openkb" / "eval-sets"

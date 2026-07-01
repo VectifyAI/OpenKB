@@ -29,7 +29,6 @@ from openkb.agent import compiler
 from openkb.cli import cli
 from openkb.schema import AGENTS_MD
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -37,29 +36,42 @@ from openkb.schema import AGENTS_MD
 
 def _invoke(kb_dir, args, input_text=None):
     return CliRunner().invoke(
-        cli, ["--kb-dir", str(kb_dir), *args], input=input_text,
+        cli,
+        ["--kb-dir", str(kb_dir), *args],
+        input=input_text,
     )
 
 
 def _seed_short(kb_dir: Path) -> None:
     """One short doc with a source file on disk."""
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_s": {"name": "notes.md", "doc_name": "notes-h_s", "type": "md"},
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_s": {"name": "notes.md", "doc_name": "notes-h_s", "type": "md"},
+            }
+        )
+    )
     (kb_dir / "wiki" / "sources" / "notes-h_s.md").write_text(
-        "# Notes\n\nbody\n", encoding="utf-8",
+        "# Notes\n\nbody\n",
+        encoding="utf-8",
     )
     (kb_dir / "wiki" / "log.md").write_text("# Log\n\n", encoding="utf-8")
 
 
 def _seed_long(kb_dir: Path) -> None:
     """One long (PageIndex) doc with a summary file + doc_id on disk."""
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_l": {
-            "name": "paper.pdf", "doc_name": "paper-h_l",
-            "type": "long_pdf", "doc_id": "doc-abc123",
-        },
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_l": {
+                    "name": "paper.pdf",
+                    "doc_name": "paper-h_l",
+                    "type": "long_pdf",
+                    "doc_id": "doc-abc123",
+                },
+            }
+        )
+    )
     (kb_dir / "wiki" / "summaries" / "paper-h_l.md").write_text(
         "---\nsources: [raw/paper.pdf]\nbrief: P\n---\n# Paper\n",
         encoding="utf-8",
@@ -74,8 +86,10 @@ def _seed_long(kb_dir: Path) -> None:
 
 def test_recompile_short_dispatches_compile_short_doc(kb_dir):
     _seed_short(kb_dir)
-    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short, \
-         patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_:
+    with (
+        patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short,
+        patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_,
+    ):
         result = _invoke(kb_dir, ["recompile", "notes.md"])
 
     assert result.exit_code == 0, result.output
@@ -95,9 +109,11 @@ def test_recompile_short_dispatches_compile_short_doc(kb_dir):
 
 def test_recompile_long_dispatches_compile_long_doc_with_doc_id(kb_dir):
     _seed_long(kb_dir)
-    with patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_, \
-         patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short, \
-         patch("openkb.indexer.index_long_document") as index:
+    with (
+        patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_,
+        patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short,
+        patch("openkb.indexer.index_long_document") as index,
+    ):
         result = _invoke(kb_dir, ["recompile", "paper.pdf"])
 
     assert result.exit_code == 0, result.output
@@ -121,15 +137,23 @@ def test_recompile_long_dispatches_compile_long_doc_with_doc_id(kb_dir):
 def _seed_cloud(kb_dir: Path) -> None:
     """A pageindex_cloud import: long-doc layout (summary + doc_id + .json
     source), and NO .md source (the trap the short path would fall into)."""
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_c": {
-            "name": "Cloud Paper.pdf", "doc_name": "cloud-h_c",
-            "type": "pageindex_cloud", "origin": "cloud", "doc_id": "pi-cloud1",
-            "path": "pageindex-cloud:pi-cloud1",
-        },
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_c": {
+                    "name": "Cloud Paper.pdf",
+                    "doc_name": "cloud-h_c",
+                    "type": "pageindex_cloud",
+                    "origin": "cloud",
+                    "doc_id": "pi-cloud1",
+                    "path": "pageindex-cloud:pi-cloud1",
+                },
+            }
+        )
+    )
     (kb_dir / "wiki" / "summaries" / "cloud-h_c.md").write_text(
-        "---\nsources: [pageindex-cloud:pi-cloud1]\n---\n# Cloud\n", encoding="utf-8",
+        "---\nsources: [pageindex-cloud:pi-cloud1]\n---\n# Cloud\n",
+        encoding="utf-8",
     )
     (kb_dir / "wiki" / "sources" / "cloud-h_c.json").write_text("[]", encoding="utf-8")
     (kb_dir / "wiki" / "log.md").write_text("# Log\n\n", encoding="utf-8")
@@ -139,15 +163,17 @@ def test_recompile_cloud_doc_dispatches_compile_long_doc(kb_dir):
     """A pageindex_cloud doc must recompile via compile_long_doc (it has a .json
     source + doc_id), not be misrouted to the short path that looks for a .md."""
     _seed_cloud(kb_dir)
-    with patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_, \
-         patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+    with (
+        patch("openkb.agent.compiler.compile_long_doc", new_callable=AsyncMock) as long_,
+        patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short,
+    ):
         result = _invoke(kb_dir, ["recompile", "cloud-h_c"])
 
     assert result.exit_code == 0, result.output
     long_.assert_called_once()
     args = long_.call_args.args
-    assert args[0] == "cloud-h_c"            # doc_name
-    assert args[2] == "pi-cloud1"            # the cloud doc_id flows through
+    assert args[0] == "cloud-h_c"  # doc_name
+    assert args[2] == "pi-cloud1"  # the cloud doc_id flows through
     short.assert_not_called()
     assert "recompiled 1" in result.output
 
@@ -162,7 +188,7 @@ def test_recompile_dry_run_classifies_cloud_as_long(kb_dir):
 def test_is_long_doc_and_display_type_cover_cloud():
     """pageindex_cloud is treated as a long doc and displayed like a pageindex
     doc in `openkb list` (no raw internal type string leaking)."""
-    from openkb.cli import _is_long_doc, _display_type
+    from openkb.cli import _display_type, _is_long_doc
 
     assert _is_long_doc({"type": "pageindex_cloud"}) is True
     assert _is_long_doc({"type": "long_pdf"}) is True
@@ -203,8 +229,10 @@ def test_recompile_all_yes_bypasses_confirmation(kb_dir):
 def test_recompile_dry_run_no_calls_no_writes(kb_dir):
     _seed_short(kb_dir)
     log_before = (kb_dir / "wiki" / "log.md").read_text()
-    with patch("openkb.agent.compiler.compile_short_doc") as short, \
-         patch("openkb.agent.compiler.compile_long_doc") as long_:
+    with (
+        patch("openkb.agent.compiler.compile_short_doc") as short,
+        patch("openkb.agent.compiler.compile_long_doc") as long_,
+    ):
         result = _invoke(kb_dir, ["recompile", "--all", "--dry-run"])
 
     assert result.exit_code == 0, result.output
@@ -223,10 +251,14 @@ def test_recompile_dry_run_no_calls_no_writes(kb_dir):
 
 def test_recompile_skips_short_missing_source(kb_dir):
     """Short doc with no source on disk is warned + skipped; others run."""
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_ok": {"name": "ok.md", "doc_name": "ok-h_ok", "type": "md"},
-        "h_miss": {"name": "gone.md", "doc_name": "gone-h_miss", "type": "md"},
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_ok": {"name": "ok.md", "doc_name": "ok-h_ok", "type": "md"},
+                "h_miss": {"name": "gone.md", "doc_name": "gone-h_miss", "type": "md"},
+            }
+        )
+    )
     (kb_dir / "wiki" / "sources" / "ok-h_ok.md").write_text("# ok\n")
     (kb_dir / "wiki" / "log.md").write_text("# Log\n\n", encoding="utf-8")
 
@@ -243,9 +275,13 @@ def test_recompile_skips_short_missing_source(kb_dir):
 
 def test_recompile_skips_long_missing_doc_id(kb_dir):
     """Long doc lacking doc_id is warned + skipped; others run."""
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_l": {"name": "legacy.pdf", "doc_name": "legacy-h_l", "type": "long_pdf"},
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_l": {"name": "legacy.pdf", "doc_name": "legacy-h_l", "type": "long_pdf"},
+            }
+        )
+    )
     (kb_dir / "wiki" / "summaries" / "legacy-h_l.md").write_text("# legacy\n")
     (kb_dir / "wiki" / "log.md").write_text("# Log\n\n", encoding="utf-8")
 
@@ -260,12 +296,18 @@ def test_recompile_skips_long_missing_doc_id(kb_dir):
 
 def test_recompile_skips_long_missing_summary(kb_dir):
     """Long doc with doc_id but no summary on disk is warned + skipped."""
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_l": {
-            "name": "paper.pdf", "doc_name": "paper-h_l",
-            "type": "long_pdf", "doc_id": "doc-x",
-        },
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_l": {
+                    "name": "paper.pdf",
+                    "doc_name": "paper-h_l",
+                    "type": "long_pdf",
+                    "doc_id": "doc-x",
+                },
+            }
+        )
+    )
     (kb_dir / "wiki" / "log.md").write_text("# Log\n\n", encoding="utf-8")
 
     with patch("openkb.agent.compiler.compile_long_doc") as long_:
@@ -325,7 +367,7 @@ def test_recompile_refresh_schema_overwrites_when_differing(kb_dir):
     _seed_short(kb_dir)
     agents = kb_dir / "wiki" / "AGENTS.md"
     agents.write_text("OLD CUSTOM SCHEMA\n", encoding="utf-8")
-    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock):
         result = _invoke(kb_dir, ["recompile", "notes.md", "--refresh-schema"])
 
     assert result.exit_code == 0, result.output
@@ -339,7 +381,7 @@ def test_recompile_refresh_schema_noop_when_identical(kb_dir):
     _seed_short(kb_dir)
     agents = kb_dir / "wiki" / "AGENTS.md"
     agents.write_text(AGENTS_MD, encoding="utf-8")
-    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock):
         result = _invoke(kb_dir, ["recompile", "notes.md", "--refresh-schema"])
 
     assert result.exit_code == 0, result.output
@@ -350,7 +392,7 @@ def test_recompile_no_refresh_schema_by_default(kb_dir):
     _seed_short(kb_dir)
     agents = kb_dir / "wiki" / "AGENTS.md"
     agents.write_text("OLD CUSTOM SCHEMA\n", encoding="utf-8")
-    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock):
         result = _invoke(kb_dir, ["recompile", "notes.md"])
 
     assert result.exit_code == 0, result.output
@@ -365,7 +407,7 @@ def test_recompile_refresh_schema_noop_when_agents_missing(kb_dir):
     _seed_short(kb_dir)
     agents = kb_dir / "wiki" / "AGENTS.md"
     agents.unlink(missing_ok=True)
-    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock) as short:
+    with patch("openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock):
         result = _invoke(kb_dir, ["recompile", "notes.md", "--refresh-schema"])
 
     assert result.exit_code == 0, result.output
@@ -384,21 +426,30 @@ def test_compile_long_doc_backfills_summary_frontmatter(tmp_path):
     (wiki / "concepts").mkdir(parents=True)
     (tmp_path / ".openkb").mkdir()
     (tmp_path / ".openkb" / "config.yaml").write_text(
-        "model: gpt-4o-mini\nlanguage: en\n", encoding="utf-8")
+        "model: gpt-4o-mini\nlanguage: en\n", encoding="utf-8"
+    )
     summary_path = wiki / "summaries" / "long.md"
     summary_path.write_text(
         "---\ndoc_type: pageindex\nfull_text: sources/long.json\n---\n\n# Long\n",
         encoding="utf-8",
     )
-    with patch.object(compiler, "_llm_call", return_value="overview"), \
-         patch.object(compiler, "_compile_concepts", new=AsyncMock()), \
-         patch.object(compiler, "_close_async_llm_clients", new=AsyncMock()):
-        asyncio.run(compiler.compile_long_doc(
-            "long", summary_path, "doc-1", tmp_path, "gpt-4o-mini",
-            doc_description="A long report.",
-        ))
+    with (
+        patch.object(compiler, "_llm_call", return_value="overview"),
+        patch.object(compiler, "_compile_concepts", new=AsyncMock()),
+        patch.object(compiler, "_close_async_llm_clients", new=AsyncMock()),
+    ):
+        asyncio.run(
+            compiler.compile_long_doc(
+                "long",
+                summary_path,
+                "doc-1",
+                tmp_path,
+                "gpt-4o-mini",
+                doc_description="A long report.",
+            )
+        )
     text = summary_path.read_text(encoding="utf-8")
     assert 'type: "Summary"' in text
     assert 'description: "A long report."' in text
     # canonical order: type before description
-    assert text.index('type:') < text.index('description:')
+    assert text.index("type:") < text.index("description:")

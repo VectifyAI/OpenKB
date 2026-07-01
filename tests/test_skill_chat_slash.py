@@ -1,9 +1,10 @@
 """Tests for the /skill new slash command inside openkb chat."""
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat import _handle_slash
@@ -37,9 +38,7 @@ async def test_slash_skill_new_calls_generator(tmp_path):
         )
 
     with patch("openkb.skill.generator.run_skill_create", new=AsyncMock(side_effect=fake_run)):
-        action = await _handle_slash(
-            '/skill new demo "test intent"', kb, session, style
-        )
+        action = await _handle_slash('/skill new demo "test intent"', kb, session, style)
 
     assert action is None  # continues chat session
     assert (kb / "output" / "skills" / "demo" / "SKILL.md").exists()
@@ -52,7 +51,7 @@ async def test_slash_skill_new_reports_usage_when_args_missing(tmp_path):
     session = ChatSession.new(kb, "gpt-4o-mini", "en")
     style = Style.from_dict({})
 
-    action = await _handle_slash('/skill new', kb, session, style)
+    action = await _handle_slash("/skill new", kb, session, style)
     assert action is None
     # No skill written
     assert not (kb / "output").exists()
@@ -63,7 +62,7 @@ async def test_slash_skill_unknown_subcommand(tmp_path):
     kb = _make_kb(tmp_path)
     session = ChatSession.new(kb, "gpt-4o-mini", "en")
     style = Style.from_dict({})
-    action = await _handle_slash('/skill list', kb, session, style)
+    action = await _handle_slash("/skill list", kb, session, style)
     assert action is None
 
 
