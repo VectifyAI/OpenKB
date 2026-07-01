@@ -362,13 +362,18 @@ def _snapshot_add_paths(
     final_raw: Path | None,
     final_source: Path | None,
 ) -> list[Path]:
+    # NOTE: .openkb/files (the PageIndex blob store) is intentionally NOT
+    # snapshotted here. It is append-only by {doc_id}, and the doc_id is only
+    # assigned during indexing (after this snapshot). Eagerly snapshotting the
+    # whole tree cost one os.link per existing blob on every add; instead the
+    # long-doc add path registers just the new blob via snapshot.track_new()
+    # once indexing has run.
     paths = [
         kb_dir / ".openkb" / "hashes.json",
         kb_dir / ".openkb" / "pageindex.db",
         kb_dir / ".openkb" / "pageindex.db-wal",
         kb_dir / ".openkb" / "pageindex.db-shm",
         kb_dir / ".openkb" / "pageindex.db-journal",
-        kb_dir / ".openkb" / "files",
         kb_dir / "wiki" / "summaries" / f"{doc_name}.md",
         kb_dir / "wiki" / "sources" / f"{doc_name}.json",
         kb_dir / "wiki" / "sources" / "images" / doc_name,
@@ -470,7 +475,6 @@ def _add_single_file_locked(
             hardlink_dirs={
                 kb_dir / "wiki" / "concepts",
                 kb_dir / "wiki" / "entities",
-                kb_dir / ".openkb" / "files",
             },
         )
         publish_staged_tree(staging_dir, kb_dir)
@@ -494,6 +498,17 @@ def _add_single_file_locked(
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
                 raise
+
+            # Indexing just created the append-only blob(s) for this doc_id
+            # under .openkb/files/<collection>/. Register them now (their names
+            # weren't known at snapshot time) so rollback + crash recovery
+            # remove exactly this doc's blob instead of us snapshotting the
+            # whole store up front.
+            files_root = kb_dir / ".openkb" / "files"
+            if files_root.exists():
+                snapshot.track_new(
+                    sorted(files_root.glob(f"*/{index_result.doc_id}*"))
+                )
 
             summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
             _run_compile_with_retry(
@@ -618,10 +633,11 @@ def import_from_pageindex_cloud(
             _snapshot_add_paths(kb_dir, doc_name, None, None),
             operation="cloud_import",
             details={"doc_id": doc_id, "doc_name": doc_name},
+            # Cloud import reads from PageIndex Cloud and writes no local blob,
+            # so .openkb/files is never touched — nothing to snapshot there.
             hardlink_dirs={
                 kb_dir / "wiki" / "concepts",
                 kb_dir / "wiki" / "entities",
-                kb_dir / ".openkb" / "files",
             },
         )
         summary_path = _write_long_doc_artifacts(

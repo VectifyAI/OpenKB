@@ -175,6 +175,30 @@ class MutationSnapshot:
         """
         self.write_journal("committed")
 
+    def track_new(self, paths: list[Path]) -> None:
+        """Register paths created *after* the snapshot for removal on rollback.
+
+        Some artifacts get their final name only once the mutation runs — the
+        PageIndex ``{doc_id}`` blob under ``.openkb/files`` is named by indexing,
+        which happens after :func:`snapshot_paths`. Rather than eagerly
+        snapshotting the whole append-only blob store up front (an ``os.link``
+        per existing blob on *every* add — O(total blobs), not O(this doc)),
+        the caller invokes this once the new artifacts exist. Each is recorded
+        with no backup, so both :meth:`rollback` and a crash-recovery replay
+        delete exactly the new paths and nothing else. The active journal is
+        rewritten so a crash after the artifacts land but before commit still
+        cleans them up. Paths already tracked are ignored; missing paths are a
+        no-op (nothing was created).
+        """
+        changed = False
+        for path in paths:
+            target = path.resolve()
+            if target not in self.entries:
+                self.entries[target] = None
+                changed = True
+        if changed:
+            self.write_journal("active")
+
     def rollback(self) -> None:
         # Restore children before parents so directory deletes cannot remove
         # paths that still need to be restored from a more specific backup.
