@@ -488,6 +488,16 @@ def _add_single_file_locked(
             if result.raw_path is None:
                 raise RuntimeError(f"Converted long document has no raw artifact: {file_path.name}")
             click.echo("  Long document detected — indexing with PageIndex...")
+            # PageIndex content-dedups: if the same content is already indexed
+            # (e.g. hashes.json and pageindex.db diverged after a remove whose
+            # PageIndex cleanup failed), col.add() returns the EXISTING doc_id
+            # and writes no new blob. Capture the blob set *before* indexing so
+            # we register only blobs THIS add actually created — otherwise
+            # rollback would delete a prior document's blob.
+            files_root = kb_dir / ".openkb" / "files"
+            blobs_before = (
+                set(files_root.glob("*/*")) if files_root.exists() else set()
+            )
             try:
                 from openkb.indexer import index_long_document
 
@@ -499,16 +509,19 @@ def _add_single_file_locked(
                 logger.debug("Indexing traceback:", exc_info=True)
                 raise
 
-            # Indexing just created the append-only blob(s) for this doc_id
-            # under .openkb/files/<collection>/. Register them now (their names
-            # weren't known at snapshot time) so rollback + crash recovery
-            # remove exactly this doc's blob instead of us snapshotting the
-            # whole store up front.
-            files_root = kb_dir / ".openkb" / "files"
-            if files_root.exists():
-                snapshot.track_new(
-                    sorted(files_root.glob(f"*/{index_result.doc_id}*"))
-                )
+            # Register only the newly-created blob artifacts for this doc (the
+            # {doc_id} file + its images dir) — the append-only store means the
+            # name isn't known until now — so rollback + crash recovery remove
+            # exactly this add's blob, never a pre-existing one, instead of
+            # snapshotting the whole store up front. The doc_id guard + the
+            # blobs_before diff keep a dedup hit (or an unexpected empty doc_id)
+            # from registering — and later deleting — existing blobs.
+            if index_result.doc_id and files_root.exists():
+                snapshot.track_new([
+                    p
+                    for p in files_root.glob(f"*/{index_result.doc_id}*")
+                    if p not in blobs_before
+                ])
 
             summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
             _run_compile_with_retry(
