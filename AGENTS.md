@@ -33,7 +33,7 @@ humans steer, agents execute. Optimize changes for agent legibility.
 - `agent/linter.py` — semantic (LLM) wiki lint (contradictions, gaps, staleness).
 - `agent/chat.py`, `agent/chat_session.py` — chat over the wiki *(chat.py large)*.
 - `agent/query.py` — one-off query generator.
-- `agent/tools.py` — shared wiki read/write tool functions used by chat/query/linter.
+- `agent/tools.py` — shared wiki read/write tool functions used by query/linter (and by chat indirectly via `query.build_chat_agent`).
 - `agent/skills.py`, `agent/skill_runner.py`, `skill/` — Skill Factory.
 - `deck/`, `templates/`, `prompts/` — deck output, templates, prompt assets.
 
