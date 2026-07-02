@@ -392,7 +392,14 @@ def _fmt_messages(messages: list[dict], max_content: int = 200) -> str:
     return "\n".join(parts)
 
 
-def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
+class TruncatedResponseError(Exception):
+    """Raised when an LLM response hit the length cap and the caller asked to
+    treat truncation as a failure (so a partial page is skipped, not written)."""
+
+
+def _llm_call(
+    model: str, messages: list[dict], step_name: str, raise_on_truncation: bool = False, **kwargs
+) -> str:
     """Single LLM call with animated progress and debug logging."""
     messages = _prepare_messages(model, messages)
     extra_headers = get_extra_headers()
@@ -411,16 +418,22 @@ def _llm_call(model: str, messages: list[dict], step_name: str, **kwargs) -> str
 
     response = litellm.completion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
-    _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
+    truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     spinner.stop(_format_usage(time.time() - t0, response.usage))
     logger.debug(
         "LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else "")
     )
+    if raise_on_truncation and truncated:
+        raise TruncatedResponseError(
+            f"LLM [{step_name}] hit the length limit; skipping to avoid a truncated page"
+        )
     return content.strip()
 
 
-async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
+async def _llm_call_async(
+    model: str, messages: list[dict], step_name: str, raise_on_truncation: bool = False, **kwargs
+) -> str:
     """Async LLM call with timing output and debug logging."""
     messages = _prepare_messages(model, messages)
     extra_headers = get_extra_headers()
@@ -437,7 +450,7 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
 
     response = await litellm.acompletion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
-    _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
+    truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
     elapsed = time.time() - t0
     sys.stdout.write(f"    {step_name}... {_format_usage(elapsed, response.usage)}\n")
@@ -445,6 +458,10 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str, **kw
     logger.debug(
         "LLM response [%s]:\n%s", step_name, content[:500] + ("..." if len(content) > 500 else "")
     )
+    if raise_on_truncation and truncated:
+        raise TruncatedResponseError(
+            f"LLM [{step_name}] hit the length limit; skipping to avoid a truncated page"
+        )
     return content.strip()
 
 
@@ -465,22 +482,26 @@ async def _close_async_llm_clients() -> None:
         logger.debug("litellm async client cleanup failed", exc_info=True)
 
 
-def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> None:
-    """Emit a warning when the LLM hit the max_tokens cap.
+def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> bool:
+    """Warn when the LLM hit the max_tokens cap; return True if it did.
 
     ``json_repair`` will silently salvage the truncated prefix, so without
-    this the caller can't tell a short response from a cut-off one.
+    this the caller can't tell a short response from a cut-off one. Callers
+    that write a page from the response can pass ``raise_on_truncation=True``
+    to ``_llm_call``/`_llm_call_async`` to turn a truncated response into a
+    skip instead of persisting partial content.
     """
     try:
         finish_reason = response.choices[0].finish_reason
     except (AttributeError, IndexError):
-        return
+        return False
     if finish_reason != "length":
-        return
+        return False
     cap = f" (max_tokens={max_tokens})" if max_tokens else ""
     logger.warning("LLM [%s] hit length limit%s — output may be truncated.", step_name, cap)
     sys.stdout.write(f"    [WARN] {step_name} hit length limit{cap} — output may be truncated.\n")
     sys.stdout.flush()
+    return True
 
 
 def _parse_json(text: str) -> list | dict:
@@ -497,6 +518,22 @@ def _parse_json(text: str) -> list | dict:
     if not isinstance(result, (dict, list)):
         raise ValueError(f"Expected JSON object or array, got {type(result).__name__}")
     return result
+
+
+def _parse_page_json(text: str) -> dict | None:
+    """Parse an LLM page response into a single JSON object.
+
+    Unwraps a single-element ``[{...}]`` array (some models wrap the object in
+    a list). Returns ``None`` when the response is valid JSON of the wrong
+    shape (empty/multi-element array, list of scalars) so callers skip the page
+    rather than persisting the raw JSON text as its body. Propagates the
+    json/ValueError from ``_parse_json`` when the text isn't JSON at all, which
+    callers catch to fall back to treating ``raw`` as a prose-markdown body.
+    """
+    parsed = _parse_json(text)
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        parsed = parsed[0]
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _filter_concept_items(items: list, label: str) -> list[dict]:
@@ -1758,18 +1795,21 @@ async def _compile_concepts(
                 ],
                 f"concept: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                raise_on_truncation=True,
             )
         try:
-            parsed = _parse_json(raw)
-            brief = parsed.get("description", "")
-            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
-            # An empty/None ``content`` field yields "" so
-            # ``_require_nonempty_content`` raises and the page is skipped,
-            # rather than writing the raw JSON as the markdown body.
-            content = parsed.get("content") or ""
+            obj = _parse_page_json(raw)
         except (json.JSONDecodeError, ValueError):
-            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
+            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
             brief, content = "", raw
+        else:
+            if obj is None:
+                # Valid JSON, wrong shape (array/scalar): skip rather than write
+                # the JSON text as the body. Empty content trips the check below.
+                brief, content = "", ""
+            else:
+                brief = obj.get("description", "")
+                content = obj.get("content") or ""
         _require_nonempty_content(content, name)
         return name, content, False, brief
 
@@ -1802,15 +1842,19 @@ async def _compile_concepts(
                 ],
                 f"update: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                raise_on_truncation=True,
             )
         try:
-            parsed = _parse_json(raw)
-            brief = parsed.get("description", "")
-            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
-            content = parsed.get("content") or ""
+            obj = _parse_page_json(raw)
         except (json.JSONDecodeError, ValueError):
-            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
+            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
             brief, content = "", raw
+        else:
+            if obj is None:
+                brief, content = "", ""
+            else:
+                brief = obj.get("description", "")
+                content = obj.get("content") or ""
         _require_nonempty_content(content, name)
         return name, content, True, brief
 
@@ -1837,16 +1881,20 @@ async def _compile_concepts(
                 ],
                 f"entity: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                raise_on_truncation=True,
             )
         try:
-            parsed = _parse_json(raw)
-            brief = parsed.get("description", "")
-            etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
-            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
-            content = parsed.get("content") or ""
+            obj = _parse_page_json(raw)
         except (json.JSONDecodeError, ValueError):
-            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
+            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
             brief, etype_out, content = "", etype, raw
+        else:
+            if obj is None:
+                brief, etype_out, content = "", etype, ""
+            else:
+                brief = obj.get("description", "")
+                etype_out = obj.get("type") if obj.get("type") in valid_types else etype
+                content = obj.get("content") or ""
         _require_nonempty_content(content, name)
         return name, content, brief, etype_out
 
@@ -1881,16 +1929,20 @@ async def _compile_concepts(
                 ],
                 f"entity-update: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                raise_on_truncation=True,
             )
         try:
-            parsed = _parse_json(raw)
-            brief = parsed.get("description", "")
-            etype_out = parsed.get("type") if parsed.get("type") in valid_types else etype
-            # Parse succeeded: do NOT fall back to ``raw`` (the JSON string).
-            content = parsed.get("content") or ""
+            obj = _parse_page_json(raw)
         except (json.JSONDecodeError, ValueError):
-            # Parse FAILED: ``raw`` is the legitimate non-JSON body fallback.
+            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
             brief, etype_out, content = "", etype, raw
+        else:
+            if obj is None:
+                brief, etype_out, content = "", etype, ""
+            else:
+                brief = obj.get("description", "")
+                etype_out = obj.get("type") if obj.get("type") in valid_types else etype
+                content = obj.get("content") or ""
         _require_nonempty_content(content, name)
         return name, content, brief, etype_out
 
