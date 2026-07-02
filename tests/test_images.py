@@ -161,3 +161,38 @@ class TestCopyRelativeImages:
         assert "![b](sources/images/doc/b.jpg)" in result
         assert (images_dir / "a.png").exists()
         assert (images_dir / "b.jpg").exists()
+
+    def test_same_basename_different_dirs_no_overwrite(self, tmp_path):
+        # Two distinct images sharing a basename must not overwrite each other
+        # (which would lose one image and point both links at the survivor).
+        source_dir = tmp_path / "source"
+        (source_dir / "a").mkdir(parents=True)
+        (source_dir / "b").mkdir(parents=True)
+        (source_dir / "a" / "logo.png").write_bytes(FAKE_PNG)
+        (source_dir / "b" / "logo.png").write_bytes(FAKE_JPG)
+
+        images_dir = tmp_path / "images" / "doc"
+        images_dir.mkdir(parents=True)
+
+        md = "![a](a/logo.png)\n![b](b/logo.png)"
+        result = copy_relative_images(md, source_dir, "doc", images_dir)
+
+        saved = sorted(p.name for p in images_dir.iterdir())
+        assert len(saved) == 2  # both copied, neither overwritten
+        assert {(images_dir / n).read_bytes() for n in saved} == {FAKE_PNG, FAKE_JPG}
+        links = sorted(line.split("](")[1].rstrip(")") for line in result.strip().splitlines())
+        assert links[0] != links[1]  # links point at different files
+
+    def test_same_image_referenced_twice_is_copied_once(self, tmp_path):
+        # Identical source referenced twice: copy once, both links agree.
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "logo.png").write_bytes(FAKE_PNG)
+        images_dir = tmp_path / "images" / "doc"
+        images_dir.mkdir(parents=True)
+
+        md = "![x](logo.png)\n![y](logo.png)"
+        result = copy_relative_images(md, source_dir, "doc", images_dir)
+
+        assert [p.name for p in images_dir.iterdir()] == ["logo.png"]
+        assert result.count("sources/images/doc/logo.png") == 2

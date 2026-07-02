@@ -224,6 +224,13 @@ def copy_relative_images(markdown: str, source_dir: Path, doc_name: str, images_
     - Missing source file: log a warning and leave the original text unchanged.
     """
     result = markdown
+    # Track the destination chosen for each already-copied source so the same
+    # image referenced twice isn't duplicated, plus the set of taken names so
+    # two *different* sources that share a basename (e.g. ``a/logo.png`` and
+    # ``b/logo.png``) don't overwrite each other and collapse both links onto a
+    # single image.
+    assigned: dict[Path, str] = {}
+    taken: set[str] = set()
 
     for match in _RELATIVE_RE.finditer(markdown):
         alt, rel_path = match.group(1), match.group(2)
@@ -235,10 +242,17 @@ def copy_relative_images(markdown: str, source_dir: Path, doc_name: str, images_
             logger.warning("Relative image not found: %s; leaving original link.", src)
             continue
 
-        filename = src.name
-        dest = images_dir / filename
-        images_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        filename = assigned.get(src)
+        if filename is None:
+            filename = src.name
+            n = 1
+            while filename in taken:
+                filename = f"{src.stem}_{n}{src.suffix}"
+                n += 1
+            assigned[src] = filename
+            taken.add(filename)
+            images_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, images_dir / filename)
 
         new_ref = f"![{alt}](sources/images/{doc_name}/{filename})"
         result = result.replace(match.group(0), new_ref, 1)
