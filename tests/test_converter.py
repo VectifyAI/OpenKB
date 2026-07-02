@@ -146,14 +146,17 @@ class TestConvertDocumentMarkItDown:
 
         with (
             patch("openkb.converter.MarkItDown") as mock_markitdown,
-            patch("openkb.converter.extract_base64_images", return_value="converted markdown") as mock_extract,
+            patch(
+                "openkb.converter.extract_base64_images",
+                return_value="converted markdown",
+            ) as mock_extract,
         ):
             mock_markitdown.return_value.convert.return_value = mock_result
 
             result = convert_document(src, kb_dir)
 
-        mock_markitdown.assert_called_once_with(keep_data_uris=True)
-        mock_markitdown.return_value.convert.assert_called_once_with(str(src))
+        mock_markitdown.assert_called_once_with()
+        mock_markitdown.return_value.convert.assert_called_once_with(str(src), keep_data_uris=True)
         mock_extract.assert_called_once()
         assert result.skipped is False
         assert result.is_long_doc is False
