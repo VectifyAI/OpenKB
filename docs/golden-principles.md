@@ -23,8 +23,9 @@ promote it into a lint (see `tests/test_file_size.py` for the pattern).
 <a id="file-size"></a>
 - **Keep modules focused and under 800 lines** (enforced by
   `tests/test_file_size.py`). Split large modules into focused units by
-  responsibility. Existing over-limit files are grandfathered and tracked in
-  `docs/internal/tech-debt.md`.
+  responsibility. Existing over-limit files are grandfathered (with reasons)
+  in the test's `_GRANDFATHERED` set and additionally tracked in
+  `docs/internal/tech-debt.md` *(maintainer-local, not in git)*.
 
 ## Docs
 - **`AGENTS.md` is a map, not a manual.** Keep it short; deep/local docs live

@@ -10,7 +10,7 @@ humans steer, agents execute. Optimize changes for agent legibility.
 - `README.md` — user-facing overview and commands.
 
 ## Dev commands
-- Install: `pip install -e ".[dev]"`  (or `uv sync`)
+- Install: `pip install -e ".[dev]"`  (or `uv sync --extra dev` — plain `uv sync` skips the dev tools)
 - Run CLI: `openkb <command>`  (entry point: `openkb.cli:cli`)
 - Test: `pytest`
 - Lint/format/types: `ruff check .` · `ruff format .` · `mypy openkb`
