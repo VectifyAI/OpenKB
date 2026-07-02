@@ -4,6 +4,7 @@ These functions are intentionally NOT decorated with ``@function_tool`` here.
 Decoration happens when building the agent so that the same functions can be
 tested in isolation without requiring the openai-agents runtime.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -193,9 +194,7 @@ def read_kb_file(path: str, kb_root: str) -> str:
     if not rel.parts:
         return "Access denied: KB root itself is not readable."
     if rel.parts[0] not in ("wiki", "output", "skills"):
-        return (
-            "Access denied: path must be under wiki/, output/, or skills/."
-        )
+        return "Access denied: path must be under wiki/, output/, or skills/."
     if not full_path.is_file():
         return f"File not found: {path}"
     return full_path.read_text(encoding="utf-8", errors="replace")
@@ -231,16 +230,11 @@ def write_kb_file(path: str, content: str, kb_root: str) -> str:
     # Require a file path with at least one component beyond the allow-list
     # prefix, so a bare directory name (e.g. "output") does not slip through
     # and crash on write_text with IsADirectoryError.
-    allowed = (
-        len(parts) >= 3 and parts[0] == "wiki" and parts[1] == "explorations"
-    ) or (
+    allowed = (len(parts) >= 3 and parts[0] == "wiki" and parts[1] == "explorations") or (
         len(parts) >= 2 and parts[0] == "output"
     )
     if not allowed:
-        return (
-            "Access denied: path must be a file under "
-            "wiki/explorations/ or output/."
-        )
+        return "Access denied: path must be a file under wiki/explorations/ or output/."
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return f"Written: {path}"
@@ -266,4 +260,3 @@ def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return f"Written: {path}"
-

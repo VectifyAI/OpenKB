@@ -1,4 +1,5 @@
 """Tests for slash commands in the chat REPL."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat import _handle_slash, _run_add, run_chat
@@ -179,7 +179,9 @@ async def test_run_chat_handles_ctrl_c_during_slash_command(tmp_path):
         patch("openkb.agent.chat.build_chat_agent", return_value=object()),
         patch("openkb.agent.chat._print_header"),
         patch("openkb.agent.chat._make_prompt_session", return_value=prompt),
-        patch("openkb.agent.chat._handle_slash", new_callable=AsyncMock, side_effect=KeyboardInterrupt),
+        patch(
+            "openkb.agent.chat._handle_slash", new_callable=AsyncMock, side_effect=KeyboardInterrupt
+        ),
     ):
         await run_chat(kb_dir, session, no_color=True)
 
@@ -230,7 +232,8 @@ def test_save_transcript_strips_ghost_wikilinks(tmp_path):
     kb_dir = _setup_kb(tmp_path)
     # A real concept page on disk → valid wikilink target.
     (kb_dir / "wiki" / "concepts" / "attention.md").write_text(
-        "# Attention\n", encoding="utf-8",
+        "# Attention\n",
+        encoding="utf-8",
     )
 
     session = _make_session(kb_dir)

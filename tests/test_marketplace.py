@@ -1,5 +1,6 @@
 """Tests for openkb.skill.marketplace — regenerate <kb>/.claude-plugin/marketplace.json
 from <kb>/output/skills/*/SKILL.md."""
+
 from __future__ import annotations
 
 import json
@@ -18,14 +19,16 @@ def _make_kb(tmp_path):
 def _make_skill(kb, name, description):
     d = kb / "output" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
-    (d / "SKILL.md").write_text(textwrap.dedent(f"""\
+    (d / "SKILL.md").write_text(
+        textwrap.dedent(f"""\
         ---
         name: {name}
         description: {description}
         ---
 
         # {name}
-        """))
+        """)
+    )
 
 
 def test_regenerate_creates_manifest_with_one_skill(tmp_path):
@@ -114,6 +117,7 @@ def test_regenerate_includes_owner_from_git_config(tmp_path, monkeypatch):
 
     # Patch subprocess.run to return a controlled git output
     import subprocess
+
     real_run = subprocess.run
 
     def fake_run(cmd, **kwargs):
@@ -140,6 +144,7 @@ def test_regenerate_falls_back_when_no_git_config(tmp_path, monkeypatch):
     _make_skill(kb, "demo", "d")
 
     import subprocess
+
     real_run = subprocess.run
 
     def fake_run(cmd, **kwargs):

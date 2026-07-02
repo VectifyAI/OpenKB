@@ -1,4 +1,5 @@
 """Tests for :mod:`openkb.skill.workspace` — iteration save/restore + diff."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,9 +14,14 @@ from openkb.skill.workspace import (
 )
 
 
-def _make_skill(kb_dir: Path, name: str, *, description: str = "demo desc",
-                refs: list[str] | None = None,
-                skill_md_lines: int = 5) -> Path:
+def _make_skill(
+    kb_dir: Path,
+    name: str,
+    *,
+    description: str = "demo desc",
+    refs: list[str] | None = None,
+    skill_md_lines: int = 5,
+) -> Path:
     target = kb_dir / "output" / "skills" / name
     target.mkdir(parents=True, exist_ok=True)
     body = "\n".join(f"line {i}" for i in range(1, max(1, skill_md_lines) + 1))

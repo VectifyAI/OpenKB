@@ -1,4 +1,5 @@
 """Tests for chat session persistence."""
+
 from __future__ import annotations
 
 import json

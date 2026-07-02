@@ -5,6 +5,7 @@ conversation state in ``ChatSession``. Uses prompt_toolkit for the input
 line (history, editing, bottom toolbar) and streams responses directly to
 stdout to preserve the existing ``query`` visual.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,27 +27,26 @@ from openkb.agent.chat_session import ChatSession
 from openkb.agent.query import MAX_TURNS, build_chat_agent
 from openkb.log import append_log
 
-
 _STYLE_DICT: dict[str, str] = {
-    "prompt":           "bold #5fa0e0",
-    "bottom-toolbar":   "noreverse nobold #8a8a8a bg:default",
-    "toolbar":          "noreverse nobold #8a8a8a bg:default",
-    "toolbar.session":  "noreverse #8a8a8a bg:default bold",
-    "header":           "#8a8a8a",
-    "header.title":     "bold #5fa0e0",
-    "tool":             "#a8a8a8",
-    "tool.name":        "#a8a8a8 bold",
-    "slash.ok":         "ansigreen",
-    "slash.help":       "#8a8a8a",
-    "error":            "ansired bold",
-    "resume.turn":      "#5fa0e0",
-    "resume.user":      "bold",
+    "prompt": "bold #5fa0e0",
+    "bottom-toolbar": "noreverse nobold #8a8a8a bg:default",
+    "toolbar": "noreverse nobold #8a8a8a bg:default",
+    "toolbar.session": "noreverse #8a8a8a bg:default bold",
+    "header": "#8a8a8a",
+    "header.title": "bold #5fa0e0",
+    "tool": "#a8a8a8",
+    "tool.name": "#a8a8a8 bold",
+    "slash.ok": "ansigreen",
+    "slash.help": "#8a8a8a",
+    "error": "ansired bold",
+    "resume.turn": "#5fa0e0",
+    "resume.user": "bold",
     "resume.assistant": "#8a8a8a",
     # Completion menu — lightweight, no heavy background
-    "completion-menu":                    "bg:default #8a8a8a",
-    "completion-menu.completion":         "bg:default #d0d0d0",
+    "completion-menu": "bg:default #8a8a8a",
+    "completion-menu.completion": "bg:default #d0d0d0",
     "completion-menu.completion.current": "bg:#3a3a3a #ffffff bold",
-    "completion-menu.meta.completion":         "bg:default #6a6a6a",
+    "completion-menu.meta.completion": "bg:default #6a6a6a",
     "completion-menu.meta.completion.current": "bg:#3a3a3a #8a8a8a",
 }
 
@@ -114,6 +114,7 @@ def _extract_preview(text: str, limit: int = 150) -> str:
 
 def _openkb_version() -> str:
     from openkb import __version__
+
     return __version__
 
 
@@ -123,7 +124,7 @@ def _display_kb_dir(kb_dir: Path) -> str:
     if s == home:
         return "~"
     if s.startswith(home + "/"):
-        return "~" + s[len(home):]
+        return "~" + s[len(home) :]
     return s
 
 
@@ -148,8 +149,7 @@ def _print_header(session: ChatSession, kb_dir: Path, style: Style) -> None:
         style,
         (
             "class:header",
-            "Type /help for commands, Ctrl-D to exit, "
-            "Ctrl-C to abort current response.\n",
+            "Type /help for commands, Ctrl-D to exit, Ctrl-C to abort current response.\n",
         ),
     )
     print()
@@ -208,17 +208,17 @@ def _bottom_toolbar(session: ChatSession) -> FormattedText:
 
 
 _SLASH_COMMANDS: list[tuple[str, str]] = [
-    ("/exit",   "Exit (Ctrl-D also works)"),
-    ("/quit",   "Exit (alias)"),
-    ("/help",   "Show available commands"),
-    ("/clear",  "Start a fresh session"),
-    ("/save",   "Export transcript to wiki/explorations/"),
+    ("/exit", "Exit (Ctrl-D also works)"),
+    ("/quit", "Exit (alias)"),
+    ("/help", "Show available commands"),
+    ("/clear", "Start a fresh session"),
+    ("/save", "Export transcript to wiki/explorations/"),
     ("/status", "Show knowledge base status"),
-    ("/list",   "List all documents"),
-    ("/lint",   "Lint the knowledge base"),
-    ("/add",    "Add a document or directory"),
-    ("/skill",  "Compile a skill (try `/skill new <name> \"intent\"`)"),
-    ("/deck",   "Generate a deck (try `/deck new <name> \"intent\"`)"),
+    ("/list", "List all documents"),
+    ("/lint", "Lint the knowledge base"),
+    ("/add", "Add a document or directory"),
+    ("/skill", 'Compile a skill (try `/skill new <name> "intent"`)'),
+    ("/deck", 'Generate a deck (try `/deck new <name> "intent"`)'),
     ("/critique", "Run html-critic skill on a file (e.g. `/critique output/decks/foo/index.html`)"),
 ]
 
@@ -267,7 +267,9 @@ class _ChatCompleter(Completer):
                     yield Completion(cmd, start_position=-len(text), display_meta=desc)
 
 
-def _make_prompt_session(session: ChatSession, style: Style, use_color: bool, kb_dir: Path) -> PromptSession:
+def _make_prompt_session(
+    session: ChatSession, style: Style, use_color: bool, kb_dir: Path
+) -> PromptSession:
     from prompt_toolkit.filters import has_completions
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
@@ -322,8 +324,13 @@ def _make_markdown(text: str) -> Any:
 
 
 async def _run_turn(
-    agent: Any, session: ChatSession, user_input: str, style: Style,
-    *, use_color: bool = True, raw: bool = False,
+    agent: Any,
+    session: ChatSession,
+    user_input: str,
+    style: Style,
+    *,
+    use_color: bool = True,
+    raw: bool = False,
 ) -> None:
     """Run one agent turn with streaming output and persist the new history."""
     from agents import (
@@ -469,7 +476,7 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
 
 async def _run_add(arg: str, kb_dir: Path, style: Style) -> None:
     """Add a document or directory to the knowledge base from the chat REPL."""
-    from openkb.cli import add_single_file, SUPPORTED_EXTENSIONS
+    from openkb.cli import SUPPORTED_EXTENSIONS, add_single_file
 
     target = Path(arg).expanduser()
     if not target.is_absolute():
@@ -482,7 +489,8 @@ async def _run_add(arg: str, kb_dir: Path, style: Style) -> None:
 
     if target.is_dir():
         files = [
-            f for f in sorted(target.rglob("*"))
+            f
+            for f in sorted(target.rglob("*"))
             if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
         ]
         if not files:
@@ -510,7 +518,7 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"[ERROR] Could not parse: {exc}\n"))
         return
     if not parts:
-        _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
+        _fmt(style, ("class:error", 'Usage: /skill new <name> "<intent>"\n'))
         return
 
     sub = parts[0].lower()
@@ -519,7 +527,7 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     if len(parts) < 3:
-        _fmt(style, ("class:error", "Usage: /skill new <name> \"<intent>\"\n"))
+        _fmt(style, ("class:error", 'Usage: /skill new <name> "<intent>"\n'))
         return
 
     name = parts[1]
@@ -529,25 +537,34 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
     # wiki content). Chat doesn't have a -y flag, so existing skills
     # block with a clear instruction to delete first.
     from openkb.cli import _preflight_skill_new
+
     err = _preflight_skill_new(kb_dir, name)
     if err:
         _fmt(style, ("class:error", f"[ERROR] {err}\n"))
         return
 
     from openkb.skill import skill_dir
+
     target = skill_dir(kb_dir, name)
     if target.exists():
-        _fmt(style, ("class:error",
-            f"[ERROR] output/skills/{name}/ already exists. Remove it first "
-            f"with `rm -rf output/skills/{name}` and re-run.\n"))
+        _fmt(
+            style,
+            (
+                "class:error",
+                f"[ERROR] output/skills/{name}/ already exists. Remove it first "
+                f"with `rm -rf output/skills/{name}` and re-run.\n",
+            ),
+        )
         return
 
     # Load model from KB config
-    from openkb.config import load_config, DEFAULT_CONFIG
+    from openkb.config import DEFAULT_CONFIG, load_config
+
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.skill.generator import Generator
+
     _fmt(style, ("class:slash.help", f"Compiling skill '{name}'...\n"))
     gen = Generator(
         target_type="skill",
@@ -572,14 +589,24 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
             _fmt(style, ("class:error", f"  ERROR:   {err}\n"))
         for warn in result.warnings:
             _fmt(style, ("class:error", f"  WARN:    {warn}\n"))
-        _fmt(style, ("class:slash.help",
-            f"Run `openkb skill validate {name}` to re-check, or "
-            f"`openkb skill rollback {name}` to revert.\n"))
+        _fmt(
+            style,
+            (
+                "class:slash.help",
+                f"Run `openkb skill validate {name}` to re-check, or "
+                f"`openkb skill rollback {name}` to revert.\n",
+            ),
+        )
 
     _fmt(style, ("class:slash.ok", f"Saved: output/skills/{name}/\n"))
-    _fmt(style, ("class:slash.help",
-        f"Iterate: ask follow-up questions in this chat and the agent can "
-        f"edit files under output/skills/{name}/ directly.\n"))
+    _fmt(
+        style,
+        (
+            "class:slash.help",
+            f"Iterate: ask follow-up questions in this chat and the agent can "
+            f"edit files under output/skills/{name}/ directly.\n",
+        ),
+    )
 
 
 async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
@@ -597,8 +624,7 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         _fmt(style, ("class:error", f"[ERROR] Could not parse: {exc}\n"))
         return
     if not parts:
-        _fmt(style, ("class:error",
-            "Usage: /deck new [--critique] <name> \"<intent>\"\n"))
+        _fmt(style, ("class:error", 'Usage: /deck new [--critique] <name> "<intent>"\n'))
         return
 
     sub = parts[0].lower()
@@ -627,8 +653,10 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         i += 1
 
     if len(filtered) < 2:
-        _fmt(style, ("class:error",
-            "Usage: /deck new [--critique] [--skill <skill>] <name> \"<intent>\"\n"))
+        _fmt(
+            style,
+            ("class:error", 'Usage: /deck new [--critique] [--skill <skill>] <name> "<intent>"\n'),
+        )
         return
 
     name = filtered[0]
@@ -638,6 +666,7 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
     # wiki dir, wiki content). Chat has no -y flag, so existing decks
     # block with a clear instruction to delete first.
     from openkb.cli import _preflight_skill_new
+
     err = _preflight_skill_new(kb_dir, name)
     if err:
         # Reword "Skill name" → "Deck name" so error matches the command.
@@ -646,20 +675,28 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     from openkb.deck import deck_dir
+
     target = deck_dir(kb_dir, name)
     if target.exists():
-        _fmt(style, ("class:error",
-            f"[ERROR] output/decks/{name}/ already exists. Remove it first "
-            f"with `rm -rf output/decks/{name}` and re-run.\n"))
+        _fmt(
+            style,
+            (
+                "class:error",
+                f"[ERROR] output/decks/{name}/ already exists. Remove it first "
+                f"with `rm -rf output/decks/{name}` and re-run.\n",
+            ),
+        )
         return
 
     # Load model from KB config
-    from openkb.config import load_config, DEFAULT_CONFIG
+    from openkb.config import DEFAULT_CONFIG, load_config
+
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     model = config.get("model", DEFAULT_CONFIG["model"])
 
-    from openkb.skill.generator import Generator
     from openkb.deck.creator import DEFAULT_DECK_SKILL
+    from openkb.skill.generator import Generator
+
     skill_label = skill_name if skill_name else f"{DEFAULT_DECK_SKILL} (default)"
     _fmt(
         style,
@@ -692,9 +729,14 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
             _fmt(style, ("class:error", f"  WARN:    {warn}\n"))
 
     _fmt(style, ("class:slash.ok", f"Saved: output/decks/{name}/index.html\n"))
-    _fmt(style, ("class:slash.help",
-        f"Iterate: ask follow-up questions in this chat and the agent can "
-        f"edit files under output/decks/{name}/ directly.\n"))
+    _fmt(
+        style,
+        (
+            "class:slash.help",
+            f"Iterate: ask follow-up questions in this chat and the agent can "
+            f"edit files under output/decks/{name}/ directly.\n",
+        ),
+    )
 
 
 async def _handle_slash(
@@ -735,27 +777,31 @@ async def _handle_slash(
             _fmt(style, ("class:error", "Nothing to save yet.\n"))
             return None
         from openkb.locks import kb_ingest_lock
+
         with kb_ingest_lock(kb_dir / ".openkb"):
             path = _save_transcript(kb_dir, session, arg or None)
         _fmt(style, ("class:slash.ok", f"Saved to {path}\n"))
         return None
 
     if head == "/status":
-        from openkb.locks import kb_read_lock
         from openkb.cli import print_status
+        from openkb.locks import kb_read_lock
+
         with kb_read_lock(kb_dir / ".openkb"):
             print_status(kb_dir)
         return None
 
     if head == "/list":
-        from openkb.locks import kb_read_lock
         from openkb.cli import print_list
+        from openkb.locks import kb_read_lock
+
         with kb_read_lock(kb_dir / ".openkb"):
             print_list(kb_dir)
         return None
 
     if head == "/lint":
         from openkb.cli import run_lint
+
         await run_lint(kb_dir)
         return None
 
@@ -806,7 +852,6 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     from openkb.agent.skill_runner import (
-        MAX_TURNS_WITH_CRITIQUE,
         SkillNotFoundError,
         run_skill,
     )
@@ -907,6 +952,7 @@ async def run_chat(
             continue
 
         from openkb.locks import kb_ingest_lock
+
         with kb_ingest_lock(kb_dir / ".openkb"):
             append_log(kb_dir / "wiki", "query", user_input)
         try:

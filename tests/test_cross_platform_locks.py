@@ -6,6 +6,7 @@ atomic-write path still special-cases the Unix-only ``os.fchmod`` and directory
 ``os.fsync``. These tests pin the platform-neutral behaviour verifiable on
 POSIX; portalocker carries its own Windows test coverage.
 """
+
 from __future__ import annotations
 
 import ast
@@ -64,9 +65,7 @@ def test_flock_exclusive_excludes_other_process(tmp_path):
     )
 
     def run_probe() -> str:
-        result = subprocess.run(
-            [sys.executable, "-c", probe], capture_output=True, text=True
-        )
+        result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr  # probe itself ran cleanly
         return result.stdout.strip()
 

@@ -48,9 +48,7 @@ def test_mark_committed_prevents_recovery_rollback(tmp_path):
     target.parent.mkdir(parents=True)
     target.write_text("before", encoding="utf-8")
 
-    snapshot = snapshot_paths(
-        kb_dir, [target], operation="add", details={"doc_name": "doc"}
-    )
+    snapshot = snapshot_paths(kb_dir, [target], operation="add", details={"doc_name": "doc"})
     target.write_text("after", encoding="utf-8")  # the "committed" mutation
     snapshot.mark_committed()
 
@@ -116,6 +114,7 @@ def test_exclusive_lock_drains_active_journal_before_yielding(tmp_path):
 
 
 # --- publish_staged_tree: O(1) rename + durability (review #2) -------------
+
 
 def _staged_raw(staging: Path, name: str, payload: bytes) -> Path:
     src = staging / "raw" / name
@@ -196,6 +195,7 @@ def test_publish_falls_back_to_copy_on_cross_filesystem(tmp_path, monkeypatch):
 
 # --- snapshot_paths: hardlinked dir backups (review #1) --------------------
 
+
 def test_snapshot_hardlinks_marked_directory_trees(tmp_path):
     """Directory snapshots the caller marks hardlink-safe must hardlink the
     live files into the backup (shared inode) — O(1), no per-file byte copy —
@@ -242,7 +242,11 @@ def test_hardlinked_dir_rollback_correct_after_atomic_writes(tmp_path):
     existing.write_text("old-content", encoding="utf-8")
 
     snapshot = snapshot_paths(
-        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
     )
     # Mirror the (now atomic) compiler writers: rewrite the existing page via
     # atomic temp+replace, and add a brand-new page the doc creates.
@@ -269,13 +273,14 @@ def test_openkb_files_tree_is_hardlinked(tmp_path):
     live_inode = existing.stat().st_ino
 
     snapshot = snapshot_paths(
-        kb_dir, [kb_dir / ".openkb" / "files"], operation="add",
-        details={}, hardlink_dirs={kb_dir / ".openkb" / "files"},
+        kb_dir,
+        [kb_dir / ".openkb" / "files"],
+        operation="add",
+        details={},
+        hardlink_dirs={kb_dir / ".openkb" / "files"},
     )
     try:
-        backup = (
-            snapshot.backup_dir / ".openkb" / "files" / "col" / "an-existing-doc.pdf"
-        )
+        backup = snapshot.backup_dir / ".openkb" / "files" / "col" / "an-existing-doc.pdf"
         assert backup.stat().st_ino == live_inode
     finally:
         snapshot.discard_best_effort()
@@ -299,7 +304,11 @@ def test_concept_writer_is_atomic_so_hardlink_rollback_restores(tmp_path):
     existing.write_text("---\nsources: []\n---\n\noriginal body", encoding="utf-8")
 
     snapshot = snapshot_paths(
-        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
     )
     # The compiler rewrites the concept page as part of the doc ingest. If this
     # write is in-place, the hardlink backup is corrupted and rollback fails.
@@ -330,7 +339,11 @@ def test_fix_broken_links_is_atomic_so_hardlink_rollback_restores(tmp_path):
     page.write_text("# Topic\n\nGhost [[concepts/missing]] link.\n", encoding="utf-8")
 
     snapshot = snapshot_paths(
-        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
     )
     fix_broken_links(wiki, restrict_to=[page])
 
@@ -357,10 +370,15 @@ def test_hardlink_falls_back_to_copy_on_eacces(tmp_path, monkeypatch):
 
     def link_eacces(src, dst, *args, **kwargs):
         raise OSError(errno.EACCES, "simulated Windows ACL hardlink block")
+
     monkeypatch.setattr(mut.os, "link", link_eacces)
 
     snapshot = snapshot_paths(
-        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
     )
     try:
         backup = snapshot.backup_dir / "wiki" / "concepts" / "page.md"
@@ -372,6 +390,7 @@ def test_hardlink_falls_back_to_copy_on_eacces(tmp_path, monkeypatch):
 
 
 # --- recover_pending_journals: bounded retry (pre-existing issue) ----------
+
 
 def test_recovery_gives_up_on_persistently_failing_journal(tmp_path, monkeypatch):
     """A journal whose rollback keeps failing (e.g. persistent ENOSPC) must
@@ -394,6 +413,7 @@ def test_recovery_gives_up_on_persistently_failing_journal(tmp_path, monkeypatch
     # Make rollback deterministically fail.
     def boom(self):
         raise OSError("persistent rollback failure")
+
     monkeypatch.setattr(mut.MutationSnapshot, "rollback", boom)
 
     for _ in range(mut.MAX_ROLLBACK_ATTEMPTS + 1):
@@ -407,10 +427,10 @@ def test_recovery_gives_up_on_persistently_failing_journal(tmp_path, monkeypatch
 @pytest.mark.parametrize(
     "payload",
     [
-        "",                         # empty file -> JSONDecodeError
-        "{not json",                # truncated/invalid -> JSONDecodeError
-        '{"status": "active"}',     # valid JSON missing kb_dir/backup_dir -> KeyError
-        '{"not": "a journal"}',     # valid JSON, wrong shape -> KeyError
+        "",  # empty file -> JSONDecodeError
+        "{not json",  # truncated/invalid -> JSONDecodeError
+        '{"status": "active"}',  # valid JSON missing kb_dir/backup_dir -> KeyError
+        '{"not": "a journal"}',  # valid JSON, wrong shape -> KeyError
     ],
 )
 def test_recover_skips_malformed_journal_without_bricking_lock(tmp_path, payload):
@@ -442,6 +462,7 @@ def test_recover_skips_malformed_journal_without_bricking_lock(tmp_path, payload
 
 # --- O(touched) rollback for hardlinked dirs (pre-existing issue) ----------
 
+
 def test_hardlinked_dir_rollback_leaves_untouched_files_in_place(tmp_path):
     """O(touched) rollback: an untouched file in a hardlinked dir shares the
     backup's inode, so rollback must leave it in place (same inode) instead
@@ -456,7 +477,11 @@ def test_hardlinked_dir_rollback_leaves_untouched_files_in_place(tmp_path):
     keep_inode = keep.stat().st_ino
 
     snapshot = snapshot_paths(
-        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
     )
     # keep.md is not mutated — it stays shared-inode with the backup.
     snapshot.rollback()
@@ -478,7 +503,11 @@ def test_hardlinked_dir_rollback_removes_new_and_restores_modified(tmp_path):
     page.write_text("original", encoding="utf-8")
 
     snapshot = snapshot_paths(
-        kb_dir, [concepts], operation="add", details={}, hardlink_dirs={concepts},
+        kb_dir,
+        [concepts],
+        operation="add",
+        details={},
+        hardlink_dirs={concepts},
     )
     # Commit created a new page and atomically rewrote an existing one.
     (concepts / "new.md").write_text("new", encoding="utf-8")
@@ -505,7 +534,11 @@ def test_hardlinked_dir_rollback_prunes_new_nested_blob_dirs(tmp_path):
     existing_inode = existing.stat().st_ino
 
     snapshot = snapshot_paths(
-        kb_dir, [files], operation="add", details={}, hardlink_dirs={files},
+        kb_dir,
+        [files],
+        operation="add",
+        details={},
+        hardlink_dirs={files},
     )
     (files / "col" / "newdoc.pdf").write_bytes(b"new")
     (files / "col" / "newdoc" / "images").mkdir(parents=True)
@@ -521,6 +554,7 @@ def test_hardlinked_dir_rollback_prunes_new_nested_blob_dirs(tmp_path):
 
 
 # --- track_new: cheap blob-store rollback without whole-tree snapshot -------
+
 
 def test_track_new_removes_new_blob_on_rollback(tmp_path):
     """The PageIndex blob under .openkb/files gets its {doc_id} name only once
@@ -550,9 +584,9 @@ def test_track_new_removes_new_blob_on_rollback(tmp_path):
     snapshot.rollback()
     snapshot.discard_best_effort()
 
-    assert not new_blob.exists()            # new blob removed
-    assert not new_images.exists()          # new images subtree removed
-    assert existing.read_bytes() == b"keep-me"   # pre-existing untouched
+    assert not new_blob.exists()  # new blob removed
+    assert not new_images.exists()  # new images subtree removed
+    assert existing.read_bytes() == b"keep-me"  # pre-existing untouched
     assert existing.stat().st_ino == existing_inode  # not recopied/relinked
 
 

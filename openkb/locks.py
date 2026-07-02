@@ -5,6 +5,7 @@ OpenKB processes. It does not guarantee cross-host coordination on networked
 or synced filesystems where the underlying OS lock may be unavailable or
 inconsistent.
 """
+
 from __future__ import annotations
 
 import contextlib

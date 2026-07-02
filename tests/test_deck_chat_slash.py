@@ -1,9 +1,10 @@
 """Tests for the /deck new slash command inside openkb chat."""
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat import _handle_slash
@@ -37,9 +38,7 @@ async def test_slash_deck_new_invokes_generator(tmp_path):
         gen.validation = fake_validation
         gen.output_dir = kb / "output" / "decks" / "demo"
 
-        action = await _handle_slash(
-            '/deck new demo "test intent"', kb, session, style
-        )
+        action = await _handle_slash('/deck new demo "test intent"', kb, session, style)
 
     assert action is None  # continues chat session
     gen_cls.assert_called_once()
@@ -65,9 +64,7 @@ async def test_slash_deck_new_with_critique_flag(tmp_path):
         gen.validation = fake_validation
         gen.output_dir = kb / "output" / "decks" / "demo"
 
-        action = await _handle_slash(
-            '/deck new --critique demo "test intent"', kb, session, style
-        )
+        action = await _handle_slash('/deck new --critique demo "test intent"', kb, session, style)
 
     assert action is None
     gen_cls.assert_called_once()
@@ -83,7 +80,7 @@ async def test_slash_deck_new_reports_usage_when_args_missing(tmp_path):
     session = ChatSession.new(kb, "gpt-4o-mini", "en")
     style = Style.from_dict({})
 
-    action = await _handle_slash('/deck new', kb, session, style)
+    action = await _handle_slash("/deck new", kb, session, style)
     assert action is None
     # No deck written
     assert not (kb / "output").exists()
@@ -94,7 +91,7 @@ async def test_slash_deck_unknown_subcommand(tmp_path):
     kb = _make_kb(tmp_path)
     session = ChatSession.new(kb, "gpt-4o-mini", "en")
     style = Style.from_dict({})
-    action = await _handle_slash('/deck list', kb, session, style)
+    action = await _handle_slash("/deck list", kb, session, style)
     assert action is None
 
 

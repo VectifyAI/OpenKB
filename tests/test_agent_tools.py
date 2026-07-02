@@ -1,10 +1,14 @@
 """Tests for openkb.agent.tools — plain function implementations."""
+
 from __future__ import annotations
 
-
-
-from openkb.agent.tools import get_wiki_page_content, list_wiki_files, parse_pages, read_wiki_file, write_wiki_file
-
+from openkb.agent.tools import (
+    get_wiki_page_content,
+    list_wiki_files,
+    parse_pages,
+    read_wiki_file,
+    write_wiki_file,
+)
 
 # ---------------------------------------------------------------------------
 # list_wiki_files
@@ -112,9 +116,7 @@ class TestWriteWikiFile:
     def test_creates_parent_directories(self, tmp_path):
         wiki_root = str(tmp_path)
 
-        result = write_wiki_file(
-            "deep/nested/dir/file.md", "# Deep File\n", wiki_root
-        )
+        result = write_wiki_file("deep/nested/dir/file.md", "# Deep File\n", wiki_root)
 
         assert result == "Written: deep/nested/dir/file.md"
         assert (tmp_path / "deep" / "nested" / "dir" / "file.md").exists()
@@ -164,6 +166,7 @@ class TestParsePages:
 class TestGetWikiPageContent:
     def test_reads_pages_from_json(self, tmp_path):
         import json
+
         wiki_root = str(tmp_path)
         sources = tmp_path / "sources"
         sources.mkdir()
@@ -188,6 +191,7 @@ class TestGetWikiPageContent:
 
     def test_returns_error_for_no_matching_pages(self, tmp_path):
         import json
+
         wiki_root = str(tmp_path)
         sources = tmp_path / "sources"
         sources.mkdir()
@@ -198,10 +202,17 @@ class TestGetWikiPageContent:
 
     def test_includes_images_info(self, tmp_path):
         import json
+
         wiki_root = str(tmp_path)
         sources = tmp_path / "sources"
         sources.mkdir()
-        pages = [{"page": 1, "content": "Text.", "images": [{"path": "images/p/img.png", "width": 100, "height": 80}]}]
+        pages = [
+            {
+                "page": 1,
+                "content": "Text.",
+                "images": [{"path": "images/p/img.png", "width": 100, "height": 80}],
+            }
+        ]
         (sources / "doc.json").write_text(json.dumps(pages), encoding="utf-8")
         result = get_wiki_page_content("doc", "1", wiki_root)
         assert "img.png" in result

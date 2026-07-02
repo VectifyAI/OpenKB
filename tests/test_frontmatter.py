@@ -1,4 +1,5 @@
 """Tests for openkb.frontmatter — the shared frontmatter helper module."""
+
 from __future__ import annotations
 
 import yaml
@@ -34,14 +35,14 @@ class TestSplit:
         text = '---\ntype: "Concept"\n---\n\nbody here'
         block, body = fm.split(text)
         assert block == '---\ntype: "Concept"\n---\n'
-        assert body == '\nbody here'
+        assert body == "\nbody here"
         assert block + body == text  # lossless
 
     def test_dashes_inside_value_do_not_truncate(self):
         text = '---\ntype: "Concept"\ndescription: "--- x ---"\n---\nbody'
         block, body = fm.split(text)
         assert 'description: "--- x ---"' in block
-        assert body == 'body'
+        assert body == "body"
 
     def test_no_frontmatter(self):
         assert fm.split("no frontmatter here") is None

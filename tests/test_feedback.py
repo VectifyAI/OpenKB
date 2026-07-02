@@ -1,4 +1,5 @@
 """Tests for `openkb feedback` — the prefilled-GitHub-issue feedback flow."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -7,12 +8,11 @@ from urllib.parse import parse_qs, urlparse
 from click.testing import CliRunner
 
 from openkb.cli import (
+    _FEEDBACK_REPO,
     _build_feedback_url,
     _collect_feedback_diagnostics,
-    _FEEDBACK_REPO,
     cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # _build_feedback_url
@@ -84,7 +84,8 @@ def test_build_url_no_label_for_other():
 
 def test_build_url_diagnostics_attached_when_provided():
     url = _build_feedback_url(
-        "x", "bug",
+        "x",
+        "bug",
         {"openkb": "1.2.3", "python": "3.12.0", "platform": "Linux 6.0"},
     )
     params = _parse(url)
@@ -168,10 +169,10 @@ def test_feedback_empty_message_aborts_with_exit_1():
 def test_feedback_prompts_for_type_when_not_given_via_flag():
     """If --type isn't on the command line and stdin is a TTY, prompt the user."""
     runner = CliRunner()
-    with patch("webbrowser.open"), \
-         patch("openkb.cli._stdin_is_tty", return_value=True):
+    with patch("webbrowser.open"), patch("openkb.cli._stdin_is_tty", return_value=True):
         result = runner.invoke(
-            cli, ["feedback", "missing-type prompt test"],
+            cli,
+            ["feedback", "missing-type prompt test"],
             input="feature\n",
         )
 
@@ -190,8 +191,7 @@ def test_feedback_skips_type_prompt_when_stdin_is_not_a_tty():
     """In CI / piped contexts the second prompt would hang or abort
     confusingly — the command must fall through to a default."""
     runner = CliRunner()
-    with patch("webbrowser.open"), \
-         patch("openkb.cli._stdin_is_tty", return_value=False):
+    with patch("webbrowser.open"), patch("openkb.cli._stdin_is_tty", return_value=False):
         result = runner.invoke(cli, ["feedback", "non-tty feedback"])
 
     assert result.exit_code == 0, result.output
@@ -209,7 +209,8 @@ def test_feedback_warns_when_webbrowser_open_returns_false():
     runner = CliRunner()
     with patch("webbrowser.open", return_value=False) as mock_open:
         result = runner.invoke(
-            cli, ["feedback", "--type", "bug", "headless test"],
+            cli,
+            ["feedback", "--type", "bug", "headless test"],
         )
 
     assert result.exit_code == 0, result.output
@@ -224,7 +225,8 @@ def test_feedback_confirms_when_webbrowser_open_succeeds():
     runner = CliRunner()
     with patch("webbrowser.open", return_value=True):
         result = runner.invoke(
-            cli, ["feedback", "--type", "bug", "happy path"],
+            cli,
+            ["feedback", "--type", "bug", "happy path"],
         )
 
     assert result.exit_code == 0, result.output

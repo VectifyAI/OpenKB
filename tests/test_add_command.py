@@ -1,4 +1,5 @@
 """Tests for the `add` CLI command (Task 10)."""
+
 from __future__ import annotations
 
 import json
@@ -56,8 +57,10 @@ class TestAddCommand:
 
     def test_add_missing_init(self, tmp_path):
         runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=tmp_path), \
-             patch("openkb.cli._find_kb_dir", return_value=None):
+        with (
+            runner.isolated_filesystem(temp_dir=tmp_path),
+            patch("openkb.cli._find_kb_dir", return_value=None),
+        ):
             result = runner.invoke(cli, ["add", "somefile.pdf"])
             assert "No knowledge base found" in result.output
 
@@ -67,8 +70,10 @@ class TestAddCommand:
         doc.write_text("# Hello")
 
         runner = CliRunner()
-        with patch("openkb.cli.add_single_file") as mock_add, \
-             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+        with (
+            patch("openkb.cli.add_single_file") as mock_add,
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
             runner.invoke(cli, ["add", str(doc)])
             mock_add.assert_called_once_with(doc, kb_dir)
 
@@ -80,9 +85,11 @@ class TestAddCommand:
         doc = tmp_path / "notes.md"
         doc.write_text("# Notes\n\nBody", encoding="utf-8")
 
-        with patch("openkb.agent.compiler.compile_short_doc", side_effect=RuntimeError("boom")), \
-             patch("openkb.cli.time.sleep"), \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.agent.compiler.compile_short_doc", side_effect=RuntimeError("boom")),
+            patch("openkb.cli.time.sleep"),
+            patch("openkb.cli._setup_llm_key"),
+        ):
             outcome = add_single_file(doc, kb_dir)
 
         assert outcome == "failed"
@@ -126,17 +133,18 @@ class TestAddCommand:
         doc.write_bytes(b"%PDF-1.4 fake")
         conv = self._long_doc_conv(kb_dir, "paper", "cafebabe00" * 8)
 
-        with patch("openkb.cli.convert_document", return_value=conv), \
-             patch("openkb.indexer.index_long_document", side_effect=fake_index), \
-             patch("openkb.agent.compiler.compile_long_doc",
-                   side_effect=RuntimeError("boom")), \
-             patch("openkb.cli.time.sleep"), \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.cli.convert_document", return_value=conv),
+            patch("openkb.indexer.index_long_document", side_effect=fake_index),
+            patch("openkb.agent.compiler.compile_long_doc", side_effect=RuntimeError("boom")),
+            patch("openkb.cli.time.sleep"),
+            patch("openkb.cli._setup_llm_key"),
+        ):
             outcome = add_single_file(doc, kb_dir)
 
         assert outcome == "failed"
-        assert not (files / f"{new_id}.pdf").exists()   # new blob rolled back
-        assert not (files / new_id).exists()            # new images subtree rolled back
+        assert not (files / f"{new_id}.pdf").exists()  # new blob rolled back
+        assert not (files / new_id).exists()  # new images subtree rolled back
         assert other.read_bytes() == b"another-doc-keep-me"  # pre-existing survives
 
     def test_long_doc_dedup_hit_does_not_delete_existing_blob(self, tmp_path):
@@ -162,12 +170,13 @@ class TestAddCommand:
         doc.write_bytes(b"%PDF-1.4 dup")
         conv = self._long_doc_conv(kb_dir, "dup", "feedface00" * 8)
 
-        with patch("openkb.cli.convert_document", return_value=conv), \
-             patch("openkb.indexer.index_long_document", side_effect=fake_index_dedup), \
-             patch("openkb.agent.compiler.compile_long_doc",
-                   side_effect=RuntimeError("boom")), \
-             patch("openkb.cli.time.sleep"), \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.cli.convert_document", return_value=conv),
+            patch("openkb.indexer.index_long_document", side_effect=fake_index_dedup),
+            patch("openkb.agent.compiler.compile_long_doc", side_effect=RuntimeError("boom")),
+            patch("openkb.cli.time.sleep"),
+            patch("openkb.cli._setup_llm_key"),
+        ):
             outcome = add_single_file(doc, kb_dir)
 
         assert outcome == "failed"
@@ -182,8 +191,10 @@ class TestAddCommand:
         (docs_dir / "ignore.xyz").write_text("skip me")
 
         runner = CliRunner()
-        with patch("openkb.cli.add_single_file") as mock_add, \
-             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+        with (
+            patch("openkb.cli.add_single_file") as mock_add,
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
             runner.invoke(cli, ["add", str(docs_dir)])
             # Should be called for .md and .txt but not .xyz
             assert mock_add.call_count == 2
@@ -216,12 +227,15 @@ class TestAddCommand:
         doc.write_text("# Hello")
 
         from openkb.converter import ConvertResult
+
         mock_result = ConvertResult(skipped=True)
 
         runner = CliRunner()
-        with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.convert_document", return_value=mock_result), \
-             patch("openkb.cli.asyncio.run") as mock_arun:
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.cli.convert_document", return_value=mock_result),
+            patch("openkb.cli.asyncio.run") as mock_arun,
+        ):
             result = runner.invoke(cli, ["add", str(doc)])
             assert "SKIP" in result.output
             mock_arun.assert_not_called()
@@ -235,6 +249,7 @@ class TestAddCommand:
         source_path.write_text("# Hello converted")
 
         from openkb.converter import ConvertResult
+
         mock_result = ConvertResult(
             raw_path=kb_dir / "raw" / "test.md",
             source_path=source_path,
@@ -246,6 +261,7 @@ class TestAddCommand:
         # An edited doc arrives with a new content hash; the stale entry
         # for the same doc_name must be replaced, leaving exactly ONE entry.
         from openkb.state import HashRegistry
+
         HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
             "stale-old-hash", {"name": "test.md", "doc_name": "test", "type": "md"}
         )
@@ -256,17 +272,18 @@ class TestAddCommand:
             compile_calls.append((args, kwargs))
 
         runner = CliRunner()
-        with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.convert_document", return_value=mock_result), \
-             patch("openkb.agent.compiler.compile_short_doc", new=compile_noop):
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.cli.convert_document", return_value=mock_result),
+            patch("openkb.agent.compiler.compile_short_doc", new=compile_noop),
+        ):
             result = runner.invoke(cli, ["add", str(doc)])
             assert len(compile_calls) == 1
             assert "OK" in result.output
 
         import json as json_mod
-        hashes = json_mod.loads(
-            (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8")
-        )
+
+        hashes = json_mod.loads((kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8"))
         meta = hashes[mock_result.file_hash]
         assert meta["doc_name"] == "test"
         assert meta["raw_path"] == "raw/test.md"
@@ -301,24 +318,26 @@ class TestAddCommand:
                 coro.close()
 
         runner = CliRunner()
-        with patch("openkb.cli._find_kb_dir", return_value=kb_dir), \
-             patch("openkb.cli.asyncio.run", side_effect=close_coro):
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.cli.asyncio.run", side_effect=close_coro),
+        ):
             result = runner.invoke(cli, ["add", str(doc)])
             assert "OK" in result.output
 
-        hashes = json_mod.loads(
-            (kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8")
-        )
-        assert "old-hash" not in hashes          # stale entry replaced…
+        hashes = json_mod.loads((kb_dir / ".openkb" / "hashes.json").read_text(encoding="utf-8"))
+        assert "old-hash" not in hashes  # stale entry replaced…
         new_entries = [m for m in hashes.values() if m.get("doc_name") == "notes"]
-        assert len(new_entries) == 1             # …exactly one entry survives
-        assert new_entries[0]["path"]            # with path identity persisted
+        assert len(new_entries) == 1  # …exactly one entry survives
+        assert new_entries[0]["path"]  # with path identity persisted
 
     def test_add_from_pageindex_cloud_dispatches(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         runner = CliRunner()
-        with patch("openkb.cli.import_from_pageindex_cloud", return_value="added") as mock_imp, \
-             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+        with (
+            patch("openkb.cli.import_from_pageindex_cloud", return_value="added") as mock_imp,
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
             result = runner.invoke(cli, ["add", "--from-pageindex-cloud", "doc-123"])
             mock_imp.assert_called_once_with("doc-123", kb_dir)
             assert result.exit_code == 0  # success → exit 0
@@ -326,8 +345,10 @@ class TestAddCommand:
     def test_add_cloud_failure_exits_nonzero(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         runner = CliRunner()
-        with patch("openkb.cli.import_from_pageindex_cloud", return_value="failed"), \
-             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+        with (
+            patch("openkb.cli.import_from_pageindex_cloud", return_value="failed"),
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
             result = runner.invoke(cli, ["add", "--from-pageindex-cloud", "doc-x"])
             assert result.exit_code == 1  # failed import must not exit 0
 
@@ -336,9 +357,11 @@ class TestAddCommand:
         doc = tmp_path / "test.md"
         doc.write_text("# Hi")
         runner = CliRunner()
-        with patch("openkb.cli.import_from_pageindex_cloud") as mock_imp, \
-             patch("openkb.cli.add_single_file") as mock_add, \
-             patch("openkb.cli._find_kb_dir", return_value=kb_dir):
+        with (
+            patch("openkb.cli.import_from_pageindex_cloud") as mock_imp,
+            patch("openkb.cli.add_single_file") as mock_add,
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
             result = runner.invoke(cli, ["add", str(doc), "--from-pageindex-cloud", "doc-1"])
             assert "not both" in result.output
             mock_imp.assert_not_called()
@@ -383,15 +406,18 @@ class TestImportFromPageindexCloud:
 
     def test_registers_rawless_cloud_entry(self, tmp_path):
         import hashlib
+
         from openkb.cli import import_from_pageindex_cloud
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
         cloud = self._cloud_data()
 
-        with patch("openkb.cli.prepare_cloud_import", return_value=cloud), \
-             patch("openkb.cli.compile_long_doc", return_value=None) as mock_compile, \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch("openkb.cli.compile_long_doc", return_value=None) as mock_compile,
+            patch("openkb.cli._setup_llm_key"),
+        ):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
 
         assert outcome == "added"
@@ -412,9 +438,11 @@ class TestImportFromPageindexCloud:
         kb_dir = self._setup_kb(tmp_path)
         cloud = self._cloud_data()
 
-        with patch("openkb.cli.prepare_cloud_import", return_value=cloud) as mock_prepare, \
-             patch("openkb.cli.compile_long_doc", return_value=None), \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud) as mock_prepare,
+            patch("openkb.cli.compile_long_doc", return_value=None),
+            patch("openkb.cli._setup_llm_key"),
+        ):
             import_from_pageindex_cloud("cloud-1", kb_dir)
             second = import_from_pageindex_cloud("cloud-1", kb_dir)
 
@@ -426,8 +454,10 @@ class TestImportFromPageindexCloud:
         from openkb.state import HashRegistry
 
         kb_dir = self._setup_kb(tmp_path)
-        with patch("openkb.cli.prepare_cloud_import", side_effect=RuntimeError("boom")), \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.cli.prepare_cloud_import", side_effect=RuntimeError("boom")),
+            patch("openkb.cli._setup_llm_key"),
+        ):
             outcome = import_from_pageindex_cloud("cloud-9", kb_dir)
 
         assert outcome == "failed"
@@ -448,10 +478,12 @@ class TestImportFromPageindexCloud:
         doc_name = "Cloud-Paper"
         cloud = self._cloud_data(doc_name=doc_name)
 
-        with patch("openkb.cli.prepare_cloud_import", return_value=cloud), \
-             patch("openkb.cli.compile_long_doc", side_effect=RuntimeError("boom")), \
-             patch("openkb.cli.time.sleep"), \
-             patch("openkb.cli._setup_llm_key"):
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch("openkb.cli.compile_long_doc", side_effect=RuntimeError("boom")),
+            patch("openkb.cli.time.sleep"),
+            patch("openkb.cli._setup_llm_key"),
+        ):
             outcome = import_from_pageindex_cloud("cloud-1", kb_dir)
 
         assert outcome == "failed"

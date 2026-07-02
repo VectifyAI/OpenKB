@@ -1,22 +1,22 @@
 """Tests for openkb.images — base64 extraction and relative image copy."""
+
 from __future__ import annotations
 
 import base64
 
-
 from openkb.images import copy_relative_images, extract_base64_images
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
 FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8  # minimal fake PNG bytes
-FAKE_JPG = b"\xff\xd8\xff" + b"\x00" * 8        # minimal fake JPEG bytes
+FAKE_JPG = b"\xff\xd8\xff" + b"\x00" * 8  # minimal fake JPEG bytes
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +53,7 @@ class TestExtractBase64Images:
         images_dir.mkdir(parents=True)
         b64_png = _make_b64(FAKE_PNG)
         b64_jpg = _make_b64(FAKE_JPG)
-        md = (
-            f"![fig1](data:image/png;base64,{b64_png})\n"
-            f"![fig2](data:image/jpeg;base64,{b64_jpg})"
-        )
+        md = f"![fig1](data:image/png;base64,{b64_png})\n![fig2](data:image/jpeg;base64,{b64_jpg})"
         result = extract_base64_images(md, "doc", images_dir)
 
         assert "![fig1](sources/images/doc/img_001.png)" in result
@@ -70,6 +67,7 @@ class TestExtractBase64Images:
         bad = "NOT_VALID_BASE64!!!"
         md = f"![alt](data:image/png;base64,{bad})"
         import logging
+
         with caplog.at_level(logging.WARNING, logger="openkb.images"):
             result = extract_base64_images(md, "doc", images_dir)
         assert result == md  # unchanged
@@ -82,11 +80,9 @@ class TestExtractBase64Images:
         images_dir.mkdir(parents=True)
         b64 = _make_b64(FAKE_PNG)
         bad = "BADBAD!!!"
-        md = (
-            f"![good](data:image/png;base64,{b64})\n"
-            f"![bad](data:image/png;base64,{bad})"
-        )
+        md = f"![good](data:image/png;base64,{b64})\n![bad](data:image/png;base64,{bad})"
         import logging
+
         with caplog.at_level(logging.WARNING, logger="openkb.images"):
             result = extract_base64_images(md, "doc", images_dir)
         assert "![good](sources/images/doc/img_001.png)" in result
@@ -122,6 +118,7 @@ class TestCopyRelativeImages:
 
         md = "![missing](missing.png)"
         import logging
+
         with caplog.at_level(logging.WARNING, logger="openkb.images"):
             result = copy_relative_images(md, source_dir, "doc", images_dir)
         assert result == md  # unchanged

@@ -4,6 +4,7 @@ Keeping multi-paragraph LLM system prompts in `.md` files (rather than triple-
 quoted Python strings) makes them readable in editors with markdown previews
 and easier to diff/review.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

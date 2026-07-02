@@ -1,4 +1,5 @@
 """Tests for openkb.skill.tools — path-scoped IO for the skill-create agent."""
+
 from __future__ import annotations
 
 from openkb.skill.tools import (

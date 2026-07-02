@@ -62,15 +62,18 @@ def test_load_overrides_defaults(tmp_path):
 
 # --- extra_headers -----------------------------------------------------------
 
+
 def test_resolve_extra_headers_absent_returns_empty():
     assert resolve_extra_headers({}) == {}
 
 
 def test_resolve_extra_headers_valid_mapping():
-    config = {"extra_headers": {
-        "Editor-Version": "vscode/1.95.0",
-        "Copilot-Integration-Id": "vscode-chat",
-    }}
+    config = {
+        "extra_headers": {
+            "Editor-Version": "vscode/1.95.0",
+            "Copilot-Integration-Id": "vscode-chat",
+        }
+    }
     assert resolve_extra_headers(config) == {
         "Editor-Version": "vscode/1.95.0",
         "Copilot-Integration-Id": "vscode-chat",
@@ -89,13 +92,15 @@ def test_resolve_extra_headers_non_mapping_ignored():
 
 
 def test_resolve_extra_headers_skips_bad_entries():
-    config = {"extra_headers": {
-        "Good": "value",
-        "": "empty-key-skipped",
-        "NoneValue": None,
-        "ListValue": ["a"],
-        123: "non-string-key-skipped",
-    }}
+    config = {
+        "extra_headers": {
+            "Good": "value",
+            "": "empty-key-skipped",
+            "NoneValue": None,
+            "ListValue": ["a"],
+            123: "non-string-key-skipped",
+        }
+    }
     assert resolve_extra_headers(config) == {"Good": "value"}
 
 
@@ -111,6 +116,7 @@ def test_extra_headers_stash_roundtrip_and_isolation():
 
 
 # --- timeout -----------------------------------------------------------------
+
 
 def test_resolve_timeout_absent_returns_none():
     assert resolve_timeout({}) is None

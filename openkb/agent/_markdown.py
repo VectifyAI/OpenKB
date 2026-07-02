@@ -15,7 +15,6 @@ from rich.console import Group, RenderableType
 from rich.syntax import Syntax
 from rich.text import Text
 
-
 INLINE_CODE_STYLE = "blue"
 BLOCKQUOTE_BAR = "\u258e"
 

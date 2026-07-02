@@ -1,4 +1,5 @@
 """Tests for openkb.schema constants (wiki AGENTS_MD schema doc)."""
+
 from openkb.schema import AGENTS_MD
 
 

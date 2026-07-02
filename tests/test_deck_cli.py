@@ -1,4 +1,5 @@
 """Click CLI tests for `openkb deck new`. Mocks Generator.run; no LLM."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -101,9 +102,7 @@ def test_deck_new_surfaces_validation_errors(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
-    fake_validation = type(
-        "V", (), {"errors": ["bad slide count"], "warnings": [], "ok": False}
-    )()
+    fake_validation = type("V", (), {"errors": ["bad slide count"], "warnings": [], "ok": False})()
 
     with patch("openkb.skill.generator.Generator") as gen_cls:
         gen = gen_cls.return_value

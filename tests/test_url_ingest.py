@@ -1,4 +1,5 @@
 """Tests for `openkb.url_ingest` — the URL → raw/ input-acquisition layer."""
+
 from __future__ import annotations
 
 import io
@@ -13,7 +14,6 @@ from openkb.url_ingest import (
     fetch_url_to_raw,
     looks_like_url,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure helpers (no I/O)
@@ -170,6 +170,7 @@ def _fake_response(*, body: bytes, headers: dict[str, str]):
     Headers are case-insensitive in real responses; mimicking that here
     so the test doesn't depend on which case `_fetch_url_to_raw` looks up.
     """
+
     class _Headers:
         def __init__(self, d):
             self._d = {k.lower(): v for k, v in d.items()}
@@ -268,10 +269,12 @@ def test_fetch_html_routes_to_trafilatura(tmp_path):
     fake_meta = MagicMock()
     fake_meta.title = "Real Article Title"
 
-    with patch("urllib.request.urlopen", return_value=resp), \
-         patch("trafilatura.fetch_url", return_value="<html>...the real HTML...</html>"), \
-         patch("trafilatura.extract", return_value=fake_md), \
-         patch("trafilatura.extract_metadata", return_value=fake_meta):
+    with (
+        patch("urllib.request.urlopen", return_value=resp),
+        patch("trafilatura.fetch_url", return_value="<html>...the real HTML...</html>"),
+        patch("trafilatura.extract", return_value=fake_md),
+        patch("trafilatura.extract_metadata", return_value=fake_meta),
+    ):
         result = fetch_url_to_raw("https://blog.example.com/post", tmp_path)
 
     assert result is not None
@@ -290,10 +293,12 @@ def test_fetch_html_warns_on_short_extraction(tmp_path, capsys):
     fake_meta = MagicMock()
     fake_meta.title = "Title only"
 
-    with patch("urllib.request.urlopen", return_value=resp), \
-         patch("trafilatura.fetch_url", return_value="<html>shell</html>"), \
-         patch("trafilatura.extract", return_value=short_md), \
-         patch("trafilatura.extract_metadata", return_value=fake_meta):
+    with (
+        patch("urllib.request.urlopen", return_value=resp),
+        patch("trafilatura.fetch_url", return_value="<html>shell</html>"),
+        patch("trafilatura.extract", return_value=short_md),
+        patch("trafilatura.extract_metadata", return_value=fake_meta),
+    ):
         result = fetch_url_to_raw("https://spa.example.com/page", tmp_path)
 
     assert result is not None
@@ -310,9 +315,11 @@ def test_fetch_html_aborts_when_trafilatura_extracts_nothing(tmp_path):
     sniff_head = b"<html>"
     resp = _fake_response(body=sniff_head, headers={"Content-Type": "text/html"})
 
-    with patch("urllib.request.urlopen", return_value=resp), \
-         patch("trafilatura.fetch_url", return_value="<html>empty</html>"), \
-         patch("trafilatura.extract", return_value=None):
+    with (
+        patch("urllib.request.urlopen", return_value=resp),
+        patch("trafilatura.fetch_url", return_value="<html>empty</html>"),
+        patch("trafilatura.extract", return_value=None),
+    ):
         result = fetch_url_to_raw("https://js-only.example.com", tmp_path)
 
     assert result is None
@@ -337,8 +344,13 @@ def test_fetch_unsupported_content_type_rejected(tmp_path, capsys):
 def test_fetch_http_404_returns_none(tmp_path, capsys):
     """Server errors don't crash — graceful failure with stderr message."""
     import urllib.error
+
     err_resp = urllib.error.HTTPError(
-        "https://x.com/missing", 404, "Not Found", {}, None,
+        "https://x.com/missing",
+        404,
+        "Not Found",
+        {},
+        None,
     )
 
     with patch("urllib.request.urlopen", side_effect=err_resp):
@@ -427,10 +439,12 @@ def test_fetch_html_picks_unique_name_when_target_exists(tmp_path, capsys):
     fake_meta = MagicMock()
     fake_meta.title = "Introduction"
 
-    with patch("urllib.request.urlopen", return_value=resp), \
-         patch("trafilatura.fetch_url", return_value="<html>...</html>"), \
-         patch("trafilatura.extract", return_value=second_md), \
-         patch("trafilatura.extract_metadata", return_value=fake_meta):
+    with (
+        patch("urllib.request.urlopen", return_value=resp),
+        patch("trafilatura.fetch_url", return_value="<html>...</html>"),
+        patch("trafilatura.extract", return_value=second_md),
+        patch("trafilatura.extract_metadata", return_value=fake_meta),
+    ):
         result = fetch_url_to_raw("https://blog2.example.com/post", tmp_path)
 
     assert (raw_dir / "Introduction.md").read_text() == "first blog post body"
@@ -484,15 +498,19 @@ def test_add_single_file_returns_added_on_success(tmp_path):
     source_path.write_text("# Hello converted")
 
     mock_result = ConvertResult(
-        raw_path=doc, source_path=source_path,
-        is_long_doc=False, file_hash="cafe" * 16,
+        raw_path=doc,
+        source_path=source_path,
+        is_long_doc=False,
+        file_hash="cafe" * 16,
     )
 
     async def compile_noop(*args, **kwargs):
         return None
 
-    with patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.agent.compiler.compile_short_doc", new=compile_noop):
+    with (
+        patch("openkb.cli.convert_document", return_value=mock_result),
+        patch("openkb.agent.compiler.compile_short_doc", new=compile_noop),
+    ):
         outcome = add_single_file(doc, tmp_path)
 
     assert outcome == "added"
@@ -537,17 +555,21 @@ def test_add_single_file_returns_failed_on_pipeline_error(tmp_path):
     source_path.write_text("# Hello")
 
     mock_result = ConvertResult(
-        raw_path=doc, source_path=source_path,
-        is_long_doc=False, file_hash="cafe" * 16,
+        raw_path=doc,
+        source_path=source_path,
+        is_long_doc=False,
+        file_hash="cafe" * 16,
     )
 
     async def fail_compile(*args, **kwargs):
         raise RuntimeError("LLM 503")
 
     # Make both compile attempts raise to drive the failure path.
-    with patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.agent.compiler.compile_short_doc", new=fail_compile), \
-         patch("openkb.cli.time.sleep"):
+    with (
+        patch("openkb.cli.convert_document", return_value=mock_result),
+        patch("openkb.agent.compiler.compile_short_doc", new=fail_compile),
+        patch("openkb.cli.time.sleep"),
+    ):
         outcome = add_single_file(doc, tmp_path)
 
     assert outcome == "failed"
@@ -558,6 +580,7 @@ def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
     add_single_file returns "skipped" and the CLI unlinks it from raw/
     so the user doesn't accumulate untracked duplicates."""
     from click.testing import CliRunner
+
     from openkb.cli import cli
     from openkb.converter import ConvertResult
 
@@ -574,10 +597,11 @@ def test_url_ingest_cleans_up_orphan_on_dedup_skip(tmp_path, monkeypatch):
     runner = CliRunner()
     # fetch_url_to_raw is lazy-imported inside `add`, so patch it at the
     # source module — that's where the `from ... import` resolves.
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
-         patch("openkb.cli.convert_document",
-               return_value=ConvertResult(skipped=True)):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path),
+        patch("openkb.cli.convert_document", return_value=ConvertResult(skipped=True)),
+    ):
         result = runner.invoke(cli, ["add", "https://example.com/paper.pdf"])
 
     assert result.exit_code == 0, result.output
@@ -594,6 +618,7 @@ def test_url_ingest_uses_staged_add_for_crash_safe_conversion(tmp_path):
     contract.
     """
     from click.testing import CliRunner
+
     from openkb.cli import cli
 
     (tmp_path / ".openkb").mkdir()
@@ -605,9 +630,11 @@ def test_url_ingest_uses_staged_add_for_crash_safe_conversion(tmp_path):
     fetched_path.write_text("# Paper", encoding="utf-8")
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
-         patch("openkb.cli.add_single_file", return_value="added") as mock_add:
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path),
+        patch("openkb.cli.add_single_file", return_value="added") as mock_add,
+    ):
         result = runner.invoke(cli, ["add", "https://example.com/paper"])
 
     assert result.exit_code == 0, result.output
@@ -620,6 +647,7 @@ def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
     the user can retry without re-downloading, and we don't lose data
     when indexing has already succeeded but compilation hasn't."""
     from click.testing import CliRunner
+
     from openkb.cli import cli
     from openkb.converter import ConvertResult
 
@@ -637,19 +665,23 @@ def test_url_ingest_keeps_raw_file_on_pipeline_failure(tmp_path):
     source_path.write_text("# fake")
 
     mock_result = ConvertResult(
-        raw_path=fetched_path, source_path=source_path,
-        is_long_doc=False, file_hash="cafe" * 16,
+        raw_path=fetched_path,
+        source_path=source_path,
+        is_long_doc=False,
+        file_hash="cafe" * 16,
     )
 
     async def fail_compile(*args, **kwargs):
         raise RuntimeError("LLM 503")
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
-         patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.agent.compiler.compile_short_doc", new=fail_compile), \
-         patch("openkb.cli.time.sleep"):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path),
+        patch("openkb.cli.convert_document", return_value=mock_result),
+        patch("openkb.agent.compiler.compile_short_doc", new=fail_compile),
+        patch("openkb.cli.time.sleep"),
+    ):
         result = runner.invoke(cli, ["add", "https://example.com/paper.pdf"])
 
     assert result.exit_code == 0, result.output
@@ -666,6 +698,7 @@ def test_url_ingest_pipeline_failure_rolls_back_converted_source_but_keeps_downl
     remove them.
     """
     from click.testing import CliRunner
+
     from openkb.cli import cli
 
     (tmp_path / ".openkb").mkdir()
@@ -684,11 +717,13 @@ def test_url_ingest_pipeline_failure_rolls_back_converted_source_but_keeps_downl
         raise RuntimeError("LLM 503")
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path), \
-         patch("openkb.agent.compiler.compile_short_doc", new=fail_compile), \
-         patch("openkb.cli.time.sleep"), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("openkb.url_ingest.fetch_url_to_raw", return_value=fetched_path),
+        patch("openkb.agent.compiler.compile_short_doc", new=fail_compile),
+        patch("openkb.cli.time.sleep"),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         result = runner.invoke(cli, ["add", "https://example.com/paper"])
 
     assert result.exit_code == 0, result.output

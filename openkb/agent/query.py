@@ -1,21 +1,21 @@
 """Q&A agent for querying the OpenKB knowledge base."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
-from agents import Agent, Runner, function_tool
+from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
-from agents import ToolOutputImage, ToolOutputText
-from openkb.config import get_extra_headers, get_timeout_extra_args
 from openkb.agent.tools import (
     get_wiki_page_content,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
 )
+from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
-from openkb.schema import get_agents_md
 
 _QUERY_INSTRUCTIONS_TEMPLATE = """\
 You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching the wiki.
@@ -185,10 +185,7 @@ def build_chat_agent(
             """
             entry = skill_index.get(name)
             if entry is None:
-                return (
-                    f"Unknown skill: {name!r}. Call list_skills() to see "
-                    f"available skills."
-                )
+                return f"Unknown skill: {name!r}. Call list_skills() to see available skills."
             md_path = Path(entry["path"]) / "SKILL.md"
             try:
                 text = md_path.read_text(encoding="utf-8")
@@ -196,6 +193,7 @@ def build_chat_agent(
                 return f"Could not read {md_path}: {exc}"
             # Strip frontmatter, return body only.
             from openkb.agent.skills import _parse_frontmatter
+
             _, body = _parse_frontmatter(text)
             return body
 
@@ -241,9 +239,7 @@ def _format_skill_list(skills: list[dict[str, str]]) -> str:
         # Indent description; keep it one paragraph so the agent reads it fast.
         desc = " ".join(s["description"].split())
         lines.append(f"    {desc}")
-    lines.append(
-        "\nTo use a skill, call read_skill(name) and follow its instructions."
-    )
+    lines.append("\nTo use a skill, call read_skill(name) and follow its instructions.")
     return "\n".join(lines)
 
 
@@ -269,8 +265,10 @@ async def run_query(
         The agent's final answer as a string.
     """
     import sys
+
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
+
     from openkb.config import load_config
 
     openkb_dir = kb_dir / ".openkb"
@@ -286,6 +284,7 @@ async def run_query(
         return result.final_output or ""
 
     import os
+
     use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR", "")
 
     from openkb.agent.chat import (

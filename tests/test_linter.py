@@ -1,4 +1,5 @@
 """Tests for openkb.agent.linter (Task 14)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch

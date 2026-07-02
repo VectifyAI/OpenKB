@@ -26,7 +26,6 @@ from openkb.agent.compiler import (
 from openkb.cli import _resolve_doc_identifier, cli
 from openkb.state import HashRegistry
 
-
 # ---------------------------------------------------------------------------
 # _remove_source_from_frontmatter
 # ---------------------------------------------------------------------------
@@ -41,10 +40,7 @@ def test_remove_source_drops_only_target_and_marks_empty():
 
 
 def test_remove_source_keeps_others():
-    text = (
-        "---\nsources: [summaries/a.md, summaries/b.md, summaries/c.md]\n"
-        "brief: x\n---\n\nbody\n"
-    )
+    text = "---\nsources: [summaries/a.md, summaries/b.md, summaries/c.md]\nbrief: x\n---\n\nbody\n"
     rewritten, empty = _remove_source_from_frontmatter(text, "summaries/b.md")
     assert empty is False
     assert "summaries/a.md" in rewritten
@@ -80,9 +76,7 @@ def test_remove_source_noop_malformed_brackets():
 
 def _write_concept(wiki_dir: Path, slug: str, sources: list[str], body: str = "") -> Path:
     src_inline = "[" + ", ".join(sources) + "]"
-    related = "\n".join(
-        f"- [[{s.replace('.md', '')}]]" for s in sources
-    )
+    related = "\n".join(f"- [[{s.replace('.md', '')}]]" for s in sources)
     text = (
         f"---\nsources: {src_inline}\nbrief: stub\n---\n\n"
         f"# {slug}\n\n{body}\n\n"
@@ -119,7 +113,8 @@ def test_remove_doc_from_concept_pages_keeps_with_flag(kb_dir):
 def test_remove_doc_from_concept_pages_edits_multi_source(kb_dir):
     wiki = kb_dir / "wiki"
     p = _write_concept(
-        wiki, "attention",
+        wiki,
+        "attention",
         ["summaries/attn-x.md", "summaries/survey-y.md"],
     )
 
@@ -207,10 +202,14 @@ def test_remove_doc_from_index_noop_when_missing(tmp_path):
 
 def test_hash_registry_remove_by_doc_name(tmp_path):
     path = tmp_path / "hashes.json"
-    path.write_text(json.dumps({
-        "h1": {"name": "a.pdf", "doc_name": "a-h1", "type": "short"},
-        "h2": {"name": "b.pdf", "doc_name": "b-h2", "type": "short"},
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "h1": {"name": "a.pdf", "doc_name": "a-h1", "type": "short"},
+                "h2": {"name": "b.pdf", "doc_name": "b-h2", "type": "short"},
+            }
+        )
+    )
 
     reg = HashRegistry(path)
     assert reg.remove_by_doc_name("a-h1") is True
@@ -231,10 +230,14 @@ def test_hash_registry_remove_by_hash(tmp_path):
     `doc_name` key (ingested before commit c504e26).
     """
     path = tmp_path / "hashes.json"
-    path.write_text(json.dumps({
-        "h_modern": {"name": "a.pdf", "doc_name": "a-h_modern", "type": "short"},
-        "h_legacy": {"name": "b.pdf", "type": "short"},  # no doc_name
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "h_modern": {"name": "a.pdf", "doc_name": "a-h_modern", "type": "short"},
+                "h_legacy": {"name": "b.pdf", "type": "short"},  # no doc_name
+            }
+        )
+    )
 
     reg = HashRegistry(path)
 
@@ -262,37 +265,49 @@ def _make_registry(tmp_path: Path, entries: dict[str, dict]) -> HashRegistry:
 
 
 def test_resolve_identifier_exact_name_wins(tmp_path):
-    reg = _make_registry(tmp_path, {
-        "h1": {"name": "attention.pdf", "doc_name": "attention-h1"},
-        "h2": {"name": "attention-survey.pdf", "doc_name": "attention-survey-h2"},
-    })
+    reg = _make_registry(
+        tmp_path,
+        {
+            "h1": {"name": "attention.pdf", "doc_name": "attention-h1"},
+            "h2": {"name": "attention-survey.pdf", "doc_name": "attention-survey-h2"},
+        },
+    )
     matches = _resolve_doc_identifier(reg, "attention.pdf")
     assert [h for h, _ in matches] == ["h1"]
 
 
 def test_resolve_identifier_exact_doc_name(tmp_path):
-    reg = _make_registry(tmp_path, {
-        "h1": {"name": "a.pdf", "doc_name": "a-h1"},
-        "h2": {"name": "b.pdf", "doc_name": "b-h2"},
-    })
+    reg = _make_registry(
+        tmp_path,
+        {
+            "h1": {"name": "a.pdf", "doc_name": "a-h1"},
+            "h2": {"name": "b.pdf", "doc_name": "b-h2"},
+        },
+    )
     matches = _resolve_doc_identifier(reg, "b-h2")
     assert [h for h, _ in matches] == ["h2"]
 
 
 def test_resolve_identifier_fuzzy_returns_all(tmp_path):
-    reg = _make_registry(tmp_path, {
-        "h1": {"name": "attention-paper.pdf", "doc_name": "attention-paper-h1"},
-        "h2": {"name": "llm-attention.pdf", "doc_name": "llm-attention-h2"},
-        "h3": {"name": "unrelated.pdf", "doc_name": "unrelated-h3"},
-    })
+    reg = _make_registry(
+        tmp_path,
+        {
+            "h1": {"name": "attention-paper.pdf", "doc_name": "attention-paper-h1"},
+            "h2": {"name": "llm-attention.pdf", "doc_name": "llm-attention-h2"},
+            "h3": {"name": "unrelated.pdf", "doc_name": "unrelated-h3"},
+        },
+    )
     matches = _resolve_doc_identifier(reg, "attention")
     assert sorted(h for h, _ in matches) == ["h1", "h2"]
 
 
 def test_resolve_identifier_empty(tmp_path):
-    reg = _make_registry(tmp_path, {
-        "h1": {"name": "a.pdf", "doc_name": "a-h1"},
-    })
+    reg = _make_registry(
+        tmp_path,
+        {
+            "h1": {"name": "a.pdf", "doc_name": "a-h1"},
+        },
+    )
     assert _resolve_doc_identifier(reg, "nope") == []
 
 
@@ -312,16 +327,24 @@ def _seed_two_doc_kb(kb_dir: Path) -> None:
       wiki/concepts/llm.md         (sources: llm only — single-source)
       wiki/index.md with both Documents and all three Concepts entries
     """
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_a": {
-            "name": "attention.pdf", "doc_name": "attention-h_a",
-            "type": "short", "path": "raw/attention.pdf",
-        },
-        "h_l": {
-            "name": "llm-survey.pdf", "doc_name": "llm-h_l",
-            "type": "short", "path": "raw/llm-survey.pdf",
-        },
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_a": {
+                    "name": "attention.pdf",
+                    "doc_name": "attention-h_a",
+                    "type": "short",
+                    "path": "raw/attention.pdf",
+                },
+                "h_l": {
+                    "name": "llm-survey.pdf",
+                    "doc_name": "llm-h_l",
+                    "type": "short",
+                    "path": "raw/llm-survey.pdf",
+                },
+            }
+        )
+    )
     (kb_dir / "raw" / "attention.pdf").write_bytes(b"%PDF-attention")
     (kb_dir / "raw" / "llm-survey.pdf").write_bytes(b"%PDF-llm")
 
@@ -371,7 +394,9 @@ def _seed_two_doc_kb(kb_dir: Path) -> None:
 
 def _invoke(kb_dir, args, input_text=None):
     return CliRunner().invoke(
-        cli, ["--kb-dir", str(kb_dir), *args], input=input_text,
+        cli,
+        ["--kb-dir", str(kb_dir), *args],
+        input=input_text,
     )
 
 
@@ -492,7 +517,8 @@ def test_cli_remove_keep_empty_concepts(kb_dir):
     """The --keep-empty-concepts alias is still accepted (backward compat)."""
     _seed_two_doc_kb(kb_dir)
     result = _invoke(
-        kb_dir, ["remove", "attention.pdf", "--keep-empty-concepts", "--yes"],
+        kb_dir,
+        ["remove", "attention.pdf", "--keep-empty-concepts", "--yes"],
     )
 
     assert result.exit_code == 0, result.output
@@ -572,10 +598,14 @@ def _seed_legacy_kb(kb_dir: Path) -> None:
     the bare stem of the original filename — which is also what
     ``cli.py``'s ``Path(name).stem`` fallback produces on the read path.
     """
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_legacy": {"name": "ollama.md", "type": "md"},
-        "h_keep": {"name": "other.md", "type": "md"},  # untouched bystander
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_legacy": {"name": "ollama.md", "type": "md"},
+                "h_keep": {"name": "other.md", "type": "md"},  # untouched bystander
+            }
+        )
+    )
     (kb_dir / "raw" / "ollama.md").write_text("# Ollama\n", encoding="utf-8")
     (kb_dir / "raw" / "other.md").write_text("# Other\n", encoding="utf-8")
 
@@ -741,23 +771,26 @@ def test_add_persists_doc_name_for_later_remove(tmp_path):
 
     runner = CliRunner()
     # Mock convert_document + asyncio.run to skip the LLM-driven compile.
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("openkb.cli.convert_document", return_value=mock_result), \
-         patch("openkb.cli.asyncio.run"):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("openkb.cli.convert_document", return_value=mock_result),
+        patch("openkb.cli.asyncio.run"),
+    ):
         add_res = runner.invoke(cli, ["add", str(doc)])
     assert add_res.exit_code == 0, add_res.output
 
     # The registry write contract: doc_name must be present.
     hashes = json.loads((openkb_dir / "hashes.json").read_text())
     assert len(hashes) == 1
-    (_, meta), = hashes.items()
+    ((_, meta),) = hashes.items()
     assert meta["name"] == "paper.md"
     assert meta["doc_name"] == "paper"
     assert meta["type"] == "md"
 
     # And the remove command must actually drop that entry — not silently no-op.
     rm_res = runner.invoke(
-        cli, ["--kb-dir", str(tmp_path), "remove", "paper.md", "--keep-raw", "--yes"],
+        cli,
+        ["--kb-dir", str(tmp_path), "remove", "paper.md", "--keep-raw", "--yes"],
     )
     assert rm_res.exit_code == 0, rm_res.output
     assert json.loads((openkb_dir / "hashes.json").read_text()) == {}
@@ -980,19 +1013,23 @@ def test_add_long_pdf_persists_doc_id_to_registry(tmp_path):
         file_hash="cafebabe" * 8,
     )
     index_mock = IndexResult(
-        doc_id="pi-doc-abc123", description="A long PDF", tree={},
+        doc_id="pi-doc-abc123",
+        description="A long PDF",
+        tree={},
     )
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("openkb.cli.convert_document", return_value=convert_mock), \
-         patch("openkb.indexer.index_long_document", return_value=index_mock), \
-         patch("openkb.cli.asyncio.run"):
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("openkb.cli.convert_document", return_value=convert_mock),
+        patch("openkb.indexer.index_long_document", return_value=index_mock),
+        patch("openkb.cli.asyncio.run"),
+    ):
         result = runner.invoke(cli, ["add", str(pdf)])
 
     assert result.exit_code == 0, result.output
     hashes = json.loads((openkb_dir / "hashes.json").read_text())
-    (_, meta), = hashes.items()
+    ((_, meta),) = hashes.items()
     assert meta["type"] == "long_pdf"
     assert meta["doc_id"] == "pi-doc-abc123"
 
@@ -1017,7 +1054,8 @@ def _seed_long_pdf_kb(kb_dir: Path, doc_id: str | None = "pi-doc-xyz") -> None:
     (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({"h_paper": meta}))
     (kb_dir / "raw" / "paper.pdf").write_bytes(b"%PDF-fake")
     (kb_dir / "wiki" / "summaries" / "paper.md").write_text(
-        "---\nsources: [raw/paper.pdf]\nbrief: x\n---\n# Paper\n", encoding="utf-8",
+        "---\nsources: [raw/paper.pdf]\nbrief: x\n---\n# Paper\n",
+        encoding="utf-8",
     )
     (kb_dir / "wiki" / "sources" / "paper.json").write_text("[]", encoding="utf-8")
     (kb_dir / "wiki" / "index.md").write_text(
@@ -1041,8 +1079,10 @@ def test_cli_remove_calls_pageindex_delete_with_stored_doc_id(kb_dir):
     fake_client = MagicMock()
     fake_client.collection.return_value = fake_col
 
-    with patch("pageindex.PageIndexClient", return_value=fake_client) as mock_cls, \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=fake_client) as mock_cls,
+        patch("openkb.cli._setup_llm_key"),
+    ):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert result.exit_code == 0, result.output
@@ -1070,8 +1110,10 @@ def test_cli_remove_pageindex_fallback_lookup_by_doc_name(kb_dir):
     fake_client = MagicMock()
     fake_client.collection.return_value = fake_col
 
-    with patch("pageindex.PageIndexClient", return_value=fake_client), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=fake_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert result.exit_code == 0, result.output
@@ -1094,8 +1136,10 @@ def test_cli_remove_pageindex_fallback_skips_on_ambiguous_match(kb_dir):
     fake_client = MagicMock()
     fake_client.collection.return_value = fake_col
 
-    with patch("pageindex.PageIndexClient", return_value=fake_client), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=fake_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert result.exit_code == 0, result.output
@@ -1140,8 +1184,10 @@ def test_cli_remove_pageindex_failure_preserves_registry_for_retry(kb_dir):
     fake_client = MagicMock()
     fake_client.collection.side_effect = RuntimeError("LLM key missing")
 
-    with patch("pageindex.PageIndexClient", return_value=fake_client), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=fake_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     # Command exits cleanly with a WARN — not an error code — because the
@@ -1170,8 +1216,10 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
     # First attempt: PageIndex raises.
     failing_client = MagicMock()
     failing_client.collection.side_effect = RuntimeError("transient")
-    with patch("pageindex.PageIndexClient", return_value=failing_client), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=failing_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         first = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
     assert first.exit_code == 0
     assert "[WARN]" in first.output
@@ -1183,8 +1231,10 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
     working_col = MagicMock()
     working_client = MagicMock()
     working_client.collection.return_value = working_col
-    with patch("pageindex.PageIndexClient", return_value=working_client), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=working_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         second = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert second.exit_code == 0, second.output
@@ -1210,10 +1260,14 @@ def test_cli_remove_deletes_renamed_raw_copy(kb_dir):
     (kb_dir / "wiki" / "sources" / "report-aabbccdd.md").write_text("# R", encoding="utf-8")
     HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
         "h-collide",
-        {"name": "report.md", "doc_name": "report-aabbccdd", "type": "md",
-         "path": "inputs/second/report.md",
-         "raw_path": "raw/report-aabbccdd.md",
-         "source_path": "wiki/sources/report-aabbccdd.md"},
+        {
+            "name": "report.md",
+            "doc_name": "report-aabbccdd",
+            "type": "md",
+            "path": "inputs/second/report.md",
+            "raw_path": "raw/report-aabbccdd.md",
+            "source_path": "wiki/sources/report-aabbccdd.md",
+        },
     )
 
     result = _invoke(kb_dir, ["remove", "report-aabbccdd", "--yes"])
@@ -1232,9 +1286,10 @@ def test_cli_remove_deletes_renamed_raw_copy(kb_dir):
 def test_remove_cloud_doc_never_touches_pageindex(tmp_path):
     """A pageindex_cloud doc removes only local artifacts; the cloud is
     never contacted even when a pageindex.db happens to exist."""
-    import json
     from unittest.mock import patch
+
     from click.testing import CliRunner
+
     from openkb.cli import cli
     from openkb.state import HashRegistry
 
@@ -1254,19 +1309,24 @@ def test_remove_cloud_doc_never_touches_pageindex(tmp_path):
     (tmp_path / "wiki" / "summaries" / "cloud-doc.md").write_text("---\n---\n# s\n")
     (tmp_path / "wiki" / "sources" / "cloud-doc.json").write_text("[]")
     registry = HashRegistry(openkb_dir / "hashes.json")
-    registry.add("synthhash", {
-        "name": "Cloud Paper.pdf",
-        "doc_name": "cloud-doc",
-        "type": "pageindex_cloud",
-        "origin": "cloud",
-        "path": "pageindex-cloud:cloud-1",
-        "source_path": "wiki/sources/cloud-doc.json",
-        "doc_id": "cloud-1",
-    })
+    registry.add(
+        "synthhash",
+        {
+            "name": "Cloud Paper.pdf",
+            "doc_name": "cloud-doc",
+            "type": "pageindex_cloud",
+            "origin": "cloud",
+            "path": "pageindex-cloud:cloud-1",
+            "source_path": "wiki/sources/cloud-doc.json",
+            "doc_id": "cloud-1",
+        },
+    )
 
     runner = CliRunner()
-    with patch("openkb.cli._find_kb_dir", return_value=tmp_path), \
-         patch("pageindex.PageIndexClient") as mock_client:
+    with (
+        patch("openkb.cli._find_kb_dir", return_value=tmp_path),
+        patch("pageindex.PageIndexClient") as mock_client,
+    ):
         result = runner.invoke(cli, ["remove", "cloud-doc", "--yes"])
 
     assert result.exit_code == 0, result.output

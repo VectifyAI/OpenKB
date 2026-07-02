@@ -6,6 +6,7 @@ messages and full assistant replies kept as plain strings for display and
 export. Large tool-returned image payloads are replaced with lightweight
 references before the history is reused or persisted.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,10 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
-_IMAGE_HISTORY_NOTE = (
-    "Image output omitted from chat history to avoid persisting raw data URLs."
-)
+_IMAGE_HISTORY_NOTE = "Image output omitted from chat history to avoid persisting raw data URLs."
 
 
 def _utcnow_iso() -> str:
@@ -79,10 +77,7 @@ def _sanitize_history_value(value: Any, image_path: str | None = None) -> Any:
         if isinstance(image_url, str) and image_url.startswith("data:"):
             return _image_history_placeholder(image_path)
 
-    return {
-        key: _sanitize_history_value(item, image_path)
-        for key, item in value.items()
-    }
+    return {key: _sanitize_history_value(item, image_path) for key, item in value.items()}
 
 
 def sanitize_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -245,9 +240,7 @@ def resolve_session_id(kb_dir: Path, query: str) -> str | None:
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        raise ValueError(
-            f"Ambiguous session prefix '{query}' matches: {', '.join(matches)}"
-        )
+        raise ValueError(f"Ambiguous session prefix '{query}' matches: {', '.join(matches)}")
     return None
 
 
@@ -262,9 +255,7 @@ def delete_session(kb_dir: Path, session_id: str) -> bool:
 def relative_time(iso_str: str) -> str:
     """Render an ISO-8601 timestamp as a short relative string."""
     try:
-        t = datetime.strptime(iso_str, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        t = datetime.strptime(iso_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
         return iso_str or ""
     now = datetime.now(timezone.utc)

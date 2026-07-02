@@ -59,7 +59,13 @@ openkb = "openkb.cli:cli"
 testpaths = ["tests"]
 
 [project.optional-dependencies]
-dev = ["pytest==9.0.3", "pytest-asyncio==1.3.0"]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "ruff==0.9.7",
+    "mypy==1.15.0",
+    "types-PyYAML==6.0.12.20260518",
+]
 
 [tool.hatch.version]
 source = "vcs"
@@ -74,3 +80,80 @@ packages = ["openkb"]
 "skills/openkb-deck-neon" = "openkb/_skills/openkb-deck-neon"
 "skills/openkb-deck-editorial" = "openkb/_skills/openkb-deck-editorial"
 "skills/openkb-html-critic" = "openkb/_skills/openkb-html-critic"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+# Start conservative (pyflakes + pycodestyle errors + isort); ratchet up later.
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# cli.py deliberately interleaves imports with side-effecting setup code
+# (warning filters that must apply before `markitdown`/`litellm` import,
+# `set_tracing_disabled()` before other agents-SDK usage, an
+# `os.environ.setdefault(...)` that must run before `import litellm`).
+# Reordering to satisfy E402/I001 would risk changing import-time behavior,
+# so both are ignored here rather than fixed.
+#
+# E501 (line-too-long) is scoped to the files whose remaining violations are
+# long string literals (docstrings, CLI help text, prompt templates) that
+# reflowing would either fail to shorten or would alter user-facing text.
+# Everywhere else the 100-column limit is enforced. Shrink this list by
+# rewrapping the literals (or adding targeted `# noqa: E501`) over time.
+"openkb/cli.py" = ["E402", "I001", "E501"]
+"openkb/agent/chat.py" = ["E501"]
+"openkb/agent/compiler.py" = ["E501"]
+"openkb/lint.py" = ["E501"]
+"openkb/schema.py" = ["E501"]
+# Test fixtures asserting exact file contents (frontmatter/index literals);
+# rewrapping the strings would change the data under test.
+"tests/test_cli.py" = ["E501"]
+"tests/test_compiler.py" = ["E501"]
+"tests/test_remove.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["openkb"]
+# Lenient to start (codebase not previously type-checked); ratchet up over time.
+ignore_missing_imports = true
+# numpy's bundled stubs (reached transitively via litellm/openai-agents ->
+# pydantic, not imported by openkb directly) use `type X = ...` alias
+# statements requiring Python 3.12+ parser support — fatal to the whole run
+# (a [syntax] error, not a suppressible diagnostic) when they get parsed. A
+# per-module `follow_imports = "skip"` override was experimentally confirmed
+# NOT to prevent the parse; only the global default reliably avoids reaching
+# that stub, so it stays global rather than scoped narrower.
+follow_imports = "skip"
+
+# Pre-existing untyped-data debt is suppressed PER MODULE below (not
+# globally), so every other module gets full checking for these error codes.
+# Ratchet: fix a module's errors (mostly by giving LLM-JSON payloads proper
+# TypedDict/dataclass shapes), then delete its override block.
+
+[[tool.mypy.overrides]]
+# Loosely-shaped dict/list data parsed from LLM JSON output flows through
+# `Any`-typed helpers: union-attr on Any|None, unannotated accumulator lists,
+# argument/return mismatches against str-typed signatures.
+module = "openkb.agent.compiler"
+disable_error_code = [
+    "arg-type",
+    "dict-item",
+    "operator",
+    "return-value",
+    "union-attr",
+    "var-annotated",
+]
+
+[[tool.mypy.overrides]]
+module = "openkb.cli"
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = ["openkb.lint", "openkb.indexer"]
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = "openkb.skill.workspace"
+disable_error_code = ["type-var"]

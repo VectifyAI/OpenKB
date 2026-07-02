@@ -14,6 +14,7 @@ get the generic validation.
 Mirrors ``openkb/skill/validator.py``'s ``ValidationResult`` shape so
 callers can format issues identically regardless of artifact type.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -48,10 +49,11 @@ class DeckGrammar(TypedDict, total=False):
             min_distinct: 4
             max_consecutive_same: 2
     """
-    kind_attr: str             # attribute name carrying the slide kind (e.g. "data-type")
-    required: list[str]        # kinds that MUST appear at least once
-    allowed: list[str]         # whitelist; anything else is rejected
-    min_distinct: int          # warn if fewer distinct kinds present
+
+    kind_attr: str  # attribute name carrying the slide kind (e.g. "data-type")
+    required: list[str]  # kinds that MUST appear at least once
+    allowed: list[str]  # whitelist; anything else is rejected
+    min_distinct: int  # warn if fewer distinct kinds present
     max_consecutive_same: int  # warn if run-length exceeds this
 
 
@@ -71,8 +73,8 @@ EDITORIAL_MONOCLE_GRAMMAR: DeckGrammar = {
 ALLOWED_DATA_TYPES: frozenset[str] = frozenset(EDITORIAL_MONOCLE_GRAMMAR["allowed"])
 
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB
-MIN_SLIDES_HARD = 5              # error threshold (skill-agnostic)
-MIN_SLIDES_SOFT = 8              # warning threshold (count outside [8,15])
+MIN_SLIDES_HARD = 5  # error threshold (skill-agnostic)
+MIN_SLIDES_SOFT = 8  # warning threshold (count outside [8,15])
 MAX_SLIDES_SOFT = 15
 
 
@@ -169,15 +171,18 @@ def validate_deck(
     # ─── Skill-agnostic checks (always run) ──────────────────────────────────
     if n < MIN_SLIDES_HARD:
         result.errors.append(
-            f"deck has {n} slides; need at least {MIN_SLIDES_HARD} "
-            f'<section class="slide"> blocks.'
+            f'deck has {n} slides; need at least {MIN_SLIDES_HARD} <section class="slide"> blocks.'
         )
 
     if parser.external_links:
         result.errors.append(
             "deck is not self-contained: external references found: "
             + ", ".join(parser.external_links[:3])
-            + (f", … (+{len(parser.external_links) - 3} more)" if len(parser.external_links) > 3 else "")
+            + (
+                f", … (+{len(parser.external_links) - 3} more)"
+                if len(parser.external_links) > 3
+                else ""
+            )
         )
 
     if n and (n < MIN_SLIDES_SOFT or n > MAX_SLIDES_SOFT):
@@ -203,9 +208,7 @@ def _apply_grammar_checks(
 
     for required in grammar.get("required", []):
         if required not in type_set:
-            result.errors.append(
-                f'missing required slide: {kind_attr}="{required}".'
-            )
+            result.errors.append(f'missing required slide: {kind_attr}="{required}".')
 
     allowed = grammar.get("allowed")
     if allowed:
@@ -213,8 +216,7 @@ def _apply_grammar_checks(
         illegal = type_set - allowed_set - {""}
         if illegal:
             result.errors.append(
-                f"unknown {kind_attr} value(s): {sorted(illegal)!r}. "
-                f"Allowed: {sorted(allowed)!r}."
+                f"unknown {kind_attr} value(s): {sorted(illegal)!r}. Allowed: {sorted(allowed)!r}."
             )
 
     blank = sum(1 for t in slide_kinds if t == "")

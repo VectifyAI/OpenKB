@@ -6,19 +6,14 @@ After the skill-system refactor the deck prompt moved from
 skill with YAML frontmatter that ``run_skill`` loads directly). These
 tests pin the structural anchors the validator and generator depend on.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from openkb.agent.skills import _parse_frontmatter
 
-
-SKILL_MD = (
-    Path(__file__).resolve().parent.parent
-    / "skills"
-    / "openkb-deck-editorial"
-    / "SKILL.md"
-)
+SKILL_MD = Path(__file__).resolve().parent.parent / "skills" / "openkb-deck-editorial" / "SKILL.md"
 
 
 def _load() -> tuple[dict, str]:
@@ -54,7 +49,4 @@ def test_skill_description_triggers_on_deck_requests():
     meta, _ = _load()
     desc = meta["description"].lower()
     # at least one explicit trigger word
-    assert any(
-        word in desc
-        for word in ("deck", "slide", "ppt", "presentation", "演示", "幻灯")
-    )
+    assert any(word in desc for word in ("deck", "slide", "ppt", "presentation", "演示", "幻灯"))

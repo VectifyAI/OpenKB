@@ -7,6 +7,7 @@ while every other test stayed green. These tests pin the structural anchors
 the validator and generator depend on — mirroring ``test_deck_prompt.py``
 which guards the sibling deck-editorial skill.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,12 +15,7 @@ from pathlib import Path
 from openkb.agent.skills import _parse_frontmatter
 from openkb.deck.creator import DEFAULT_DECK_SKILL
 
-SKILL_MD = (
-    Path(__file__).resolve().parent.parent
-    / "skills"
-    / "openkb-deck-neon"
-    / "SKILL.md"
-)
+SKILL_MD = Path(__file__).resolve().parent.parent / "skills" / "openkb-deck-neon" / "SKILL.md"
 
 
 def _load() -> tuple[dict, str]:
@@ -84,7 +80,4 @@ def test_skill_is_self_contained_and_no_web_fonts():
 def test_skill_description_triggers_on_deck_requests():
     meta, _ = _load()
     desc = meta["description"].lower()
-    assert any(
-        word in desc
-        for word in ("deck", "slide", "ppt", "presentation", "演示", "幻灯")
-    )
+    assert any(word in desc for word in ("deck", "slide", "ppt", "presentation", "演示", "幻灯"))

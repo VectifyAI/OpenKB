@@ -1,11 +1,10 @@
 """Tests for openkb.converter."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-
 from openkb.converter import convert_document, get_pdf_page_count
-
 
 # ---------------------------------------------------------------------------
 # get_pdf_page_count
@@ -85,7 +84,9 @@ class TestConvertDocumentPdfShort:
 
         with (
             patch("openkb.converter.pymupdf.open") as mock_mu,
-            patch("openkb.converter.convert_pdf_with_images", return_value="# Short PDF\n\nConverted.") as mock_cpwi,
+            patch(
+                "openkb.converter.convert_pdf_with_images", return_value="# Short PDF\n\nConverted."
+            ) as mock_cpwi,
         ):
             fake_doc = MagicMock()
             fake_doc.page_count = 5  # below default threshold of 20
@@ -138,11 +139,13 @@ class TestConvertDocumentPdfLong:
 class TestRegistryPath:
     def test_inside_kb_is_relative_posix(self, kb_dir):
         from openkb.converter import _registry_path
+
         p = kb_dir / "raw" / "sub" / "doc.md"
         assert _registry_path(p, kb_dir) == "raw/sub/doc.md"
 
     def test_outside_kb_is_absolute_posix(self, kb_dir, tmp_path_factory):
         from openkb.converter import _registry_path
+
         outside = tmp_path_factory.mktemp("elsewhere") / "doc.md"
         result = _registry_path(outside, kb_dir)
         assert result == outside.resolve().as_posix()
@@ -157,37 +160,40 @@ class TestRegistryPath:
 class TestResolveDocName:
     def _registry(self, kb_dir):
         from openkb.state import HashRegistry
+
         return HashRegistry(kb_dir / ".openkb" / "hashes.json")
 
     def test_unique_name_stays_clean(self, kb_dir):
         from openkb.converter import resolve_doc_name
+
         src = kb_dir / "raw" / "report.md"
         src.write_text("x", encoding="utf-8")
         assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "report"
 
     def test_known_path_reuses_stored_doc_name(self, kb_dir):
         from openkb.converter import resolve_doc_name
+
         reg = self._registry(kb_dir)
-        reg.add("h1", {"name": "report.md", "doc_name": "report-x1",
-                       "path": "inputs/report.md"})
+        reg.add("h1", {"name": "report.md", "doc_name": "report-x1", "path": "inputs/report.md"})
         src = kb_dir / "inputs" / "report.md"
         src.parent.mkdir(parents=True)
         src.write_text("edited", encoding="utf-8")
         assert resolve_doc_name(src, kb_dir, reg) == "report-x1"
 
     def test_collision_gets_deterministic_suffix(self, kb_dir):
-        from openkb.converter import _registry_path, resolve_doc_name
         import hashlib
+
+        from openkb.converter import _registry_path, resolve_doc_name
+
         reg = self._registry(kb_dir)
         # "report" already taken by a different, path-indexed source
-        reg.add("h1", {"name": "report.md", "doc_name": "report",
-                       "path": "inputs/first/report.md"})
+        reg.add("h1", {"name": "report.md", "doc_name": "report", "path": "inputs/first/report.md"})
         src = kb_dir / "inputs" / "second" / "report.md"
         src.parent.mkdir(parents=True)
         src.write_text("y", encoding="utf-8")
-        expected_suffix = hashlib.sha256(
-            _registry_path(src, kb_dir).encode("utf-8")
-        ).hexdigest()[:8]
+        expected_suffix = hashlib.sha256(_registry_path(src, kb_dir).encode("utf-8")).hexdigest()[
+            :8
+        ]
         assert resolve_doc_name(src, kb_dir, reg) == f"report-{expected_suffix}"
 
     def test_unclaimed_on_disk_artifact_is_adopted(self, kb_dir):
@@ -196,6 +202,7 @@ class TestResolveDocName:
         # the authority, so the clean name is reused and the artifact will
         # be overwritten — this is what keeps retry-after-failure stable.
         from openkb.converter import resolve_doc_name
+
         (kb_dir / "wiki" / "sources" / "report.md").write_text("old", encoding="utf-8")
         src = kb_dir / "raw" / "report.md"
         src.write_text("new attempt", encoding="utf-8")
@@ -203,6 +210,7 @@ class TestResolveDocName:
 
     def test_legacy_entry_is_reused_and_backfilled(self, kb_dir):
         from openkb.converter import _registry_path, resolve_doc_name
+
         reg = self._registry(kb_dir)
         reg.add("h_old", {"name": "notes.md", "doc_name": "notes", "type": "md"})
         src = kb_dir / "raw" / "notes.md"
@@ -213,6 +221,7 @@ class TestResolveDocName:
 
     def test_stem_is_sanitized(self, kb_dir):
         from openkb.converter import resolve_doc_name
+
         src = kb_dir / "raw" / "my report (final).md"
         src.write_text("x", encoding="utf-8")
         assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "my-report-final"
@@ -221,9 +230,9 @@ class TestResolveDocName:
         # report.pdf vs an existing "report" (from report.md) — extension
         # does not disambiguate; the second source gets a suffix.
         from openkb.converter import resolve_doc_name
+
         reg = self._registry(kb_dir)
-        reg.add("h1", {"name": "report.md", "doc_name": "report",
-                       "path": "inputs/report.md"})
+        reg.add("h1", {"name": "report.md", "doc_name": "report", "path": "inputs/report.md"})
         src = kb_dir / "raw" / "report.pdf"
         src.write_bytes(b"%PDF-1.4 fake")
         name = resolve_doc_name(src, kb_dir, reg)
@@ -231,24 +240,26 @@ class TestResolveDocName:
 
     def test_cjk_stem_with_fullwidth_punctuation(self, kb_dir):
         from openkb.converter import resolve_doc_name
+
         src = kb_dir / "raw" / "技术报告（最终版）.md"
         src.write_text("x", encoding="utf-8")
         assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "技术报告-最终版"
 
     def test_all_symbol_stem_falls_back_to_document(self, kb_dir):
         from openkb.converter import resolve_doc_name
+
         src = kb_dir / "raw" / "!!!.md"
         src.write_text("x", encoding="utf-8")
         assert resolve_doc_name(src, kb_dir, self._registry(kb_dir)) == "document"
 
     def test_two_all_symbol_stems_second_gets_suffix(self, kb_dir):
         from openkb.converter import resolve_doc_name
+
         reg = self._registry(kb_dir)
         first = kb_dir / "raw" / "!!!.md"
         first.write_text("x", encoding="utf-8")
         assert resolve_doc_name(first, kb_dir, reg) == "document"
-        reg.add("h1", {"name": "!!!.md", "doc_name": "document",
-                       "path": "raw/!!!.md"})
+        reg.add("h1", {"name": "!!!.md", "doc_name": "document", "path": "raw/!!!.md"})
         second = kb_dir / "inputs" / "###.md"
         second.parent.mkdir(parents=True)
         second.write_text("y", encoding="utf-8")
@@ -259,6 +270,7 @@ class TestResolveDocName:
         # Long docs leave wiki/sources/{name}.json — without a registry
         # entry it is likewise an unclaimed leftover: clean name is reused.
         from openkb.converter import resolve_doc_name
+
         (kb_dir / "wiki" / "sources" / "report.json").write_text("[]", encoding="utf-8")
         src = kb_dir / "raw" / "report.md"
         src.write_text("x", encoding="utf-8")
@@ -281,6 +293,7 @@ def test_resolve_doc_name_from_key_clean(tmp_path):
 
 def test_resolve_doc_name_from_key_collision_suffix(tmp_path):
     import hashlib
+
     from openkb.converter import resolve_doc_name_from_key
     from openkb.state import HashRegistry
 
@@ -312,6 +325,7 @@ class TestConvertDocumentCollision:
     def test_same_basename_different_dirs_get_distinct_outputs(self, kb_dir):
         from openkb.converter import convert_document
         from openkb.state import HashRegistry
+
         first = kb_dir / "inputs" / "first" / "report.md"
         second = kb_dir / "inputs" / "second" / "report.md"
         first.parent.mkdir(parents=True)
@@ -324,8 +338,7 @@ class TestConvertDocumentCollision:
         # sees "report" as taken.
         HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
             r1.file_hash,
-            {"name": "report.md", "doc_name": r1.doc_name,
-             "path": "inputs/first/report.md"},
+            {"name": "report.md", "doc_name": r1.doc_name, "path": "inputs/first/report.md"},
         )
         r2 = convert_document(second, kb_dir)
 
@@ -339,14 +352,14 @@ class TestConvertDocumentCollision:
     def test_skipped_dedup_carries_stored_doc_name(self, kb_dir):
         from openkb.converter import convert_document
         from openkb.state import HashRegistry
+
         src = kb_dir / "inputs" / "notes.md"
         src.parent.mkdir(parents=True)
         src.write_text("# Notes", encoding="utf-8")
         first = convert_document(src, kb_dir)
         HashRegistry(kb_dir / ".openkb" / "hashes.json").add(
             first.file_hash,
-            {"name": "notes.md", "doc_name": first.doc_name,
-             "path": "inputs/notes.md"},
+            {"name": "notes.md", "doc_name": first.doc_name, "path": "inputs/notes.md"},
         )
         again = convert_document(src, kb_dir)
         assert again.skipped is True
@@ -355,6 +368,7 @@ class TestConvertDocumentCollision:
 
     def test_outputs_named_by_doc_name(self, kb_dir):
         from openkb.converter import convert_document
+
         src = kb_dir / "raw" / "my report (final).md"
         src.write_text("# R", encoding="utf-8")
         result = convert_document(src, kb_dir)
@@ -368,10 +382,11 @@ class TestConvertDocumentCollision:
         # convert succeeded but compile failed → nothing registered. The
         # retry must resolve to the SAME clean name, not a suffixed one.
         from openkb.converter import convert_document
+
         src = kb_dir / "inputs" / "report.md"
         src.parent.mkdir(parents=True)
         src.write_text("# R", encoding="utf-8")
-        first = convert_document(src, kb_dir)   # artifacts written, no registration
+        first = convert_document(src, kb_dir)  # artifacts written, no registration
         retry = convert_document(src, kb_dir)
         assert first.doc_name == "report"
         assert retry.doc_name == "report"
@@ -382,6 +397,7 @@ class TestConvertDocumentCollision:
         # WITHOUT poisoning the legacy entry's path with the copy's path.
         from openkb.converter import convert_document
         from openkb.state import HashRegistry
+
         src_a = kb_dir / "in" / "a" / "notes.md"
         src_a.parent.mkdir(parents=True)
         src_a.write_text("# Notes", encoding="utf-8")

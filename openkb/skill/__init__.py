@@ -15,6 +15,7 @@ every submodule:
 Keeping them at the package root avoids both circular imports and the
 "five files independently hardcode the same path" drift problem.
 """
+
 from __future__ import annotations
 
 import re
@@ -81,7 +82,7 @@ def extract_body(text: str) -> str:
         end = lines.index("---", 1)
     except ValueError:
         return text
-    return "\n".join(lines[end + 1:])
+    return "\n".join(lines[end + 1 :])
 
 
 def extract_description(skill_md: Path) -> str:

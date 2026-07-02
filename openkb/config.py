@@ -22,7 +22,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
 # Default entity-type vocabulary. Overridable per-KB via the optional
 # ``entity_types:`` config key (see ``resolve_entity_types``).
 DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
-    "person", "organization", "place", "product", "work", "event", "other",
+    "person",
+    "organization",
+    "place",
+    "product",
+    "work",
+    "event",
+    "other",
 )
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
@@ -123,14 +129,15 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
     for key, value in raw.items():
         if not isinstance(key, str) or not key.strip():
             logger.warning(
-                "config: skipping 'extra_headers' entry with non-string "
-                "or empty key: %r", key,
+                "config: skipping 'extra_headers' entry with non-string or empty key: %r",
+                key,
             )
             continue
         if value is None or not isinstance(value, (str, int, float, bool)):
             logger.warning(
-                "config: skipping 'extra_headers' entry %r with "
-                "non-scalar value: %r", key, value,
+                "config: skipping 'extra_headers' entry %r with non-scalar value: %r",
+                key,
+                value,
             )
             continue
         headers[key.strip()] = str(value)
@@ -148,8 +155,7 @@ def resolve_timeout(config: dict) -> float | None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         logger.warning(
-            "config: 'timeout' must be a positive number of seconds, got %s — "
-            "ignoring it.",
+            "config: 'timeout' must be a positive number of seconds, got %s — ignoring it.",
             type(raw).__name__,
         )
         return None
@@ -157,15 +163,13 @@ def resolve_timeout(config: dict) -> float | None:
         value = float(raw)
     except (TypeError, ValueError):
         logger.warning(
-            "config: 'timeout' must be a positive number of seconds, got %r — "
-            "ignoring it.",
+            "config: 'timeout' must be a positive number of seconds, got %r — ignoring it.",
             raw,
         )
         return None
     if not math.isfinite(value) or value <= 0:
         logger.warning(
-            "config: 'timeout' must be a finite positive number of seconds, got "
-            "%s — ignoring it.",
+            "config: 'timeout' must be a finite positive number of seconds, got %s — ignoring it.",
             value,
         )
         return None
@@ -184,17 +188,14 @@ def resolve_litellm_settings(config: dict) -> dict[str, Any]:
         return {}
     if not isinstance(raw, dict):
         logger.warning(
-            "config: 'litellm' must be a mapping of LiteLLM settings, got %s — "
-            "ignoring it.",
+            "config: 'litellm' must be a mapping of LiteLLM settings, got %s — ignoring it.",
             type(raw).__name__,
         )
         return {}
     settings: dict[str, Any] = {}
     for key, value in raw.items():
         if not isinstance(key, str):
-            logger.warning(
-                "config: skipping 'litellm' entry with non-string key %r.", key
-            )
+            logger.warning("config: skipping 'litellm' entry with non-string key %r.", key)
             continue
         settings[key] = value
     return settings

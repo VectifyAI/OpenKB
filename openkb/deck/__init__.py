@@ -7,6 +7,7 @@ A deck is a single self-contained ``index.html`` file at
 ``<kb>/output/decks/<name>/index.html``. Workspace iteration history lives
 at ``<kb>/output/decks/<name>-workspace/iteration-N/``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

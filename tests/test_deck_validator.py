@@ -13,6 +13,7 @@ Post-refactor the validator runs in two modes:
 Each test below explicitly picks a mode so the contract for both
 surfaces is pinned.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,7 +24,6 @@ from openkb.deck.validator import (
     ValidationResult,
     validate_deck,
 )
-
 
 # A minimal well-formed deck: 8 slides covering all required invariants.
 GOOD_DECK = """<!doctype html>
@@ -72,7 +72,9 @@ def test_missing_file(tmp_path: Path):
 def test_too_few_slides(tmp_path: Path):
     html = (
         "<html><body>"
-        + "".join(f'<section class="slide" data-type="thesis"><h2>{i}</h2></section>' for i in range(4))
+        + "".join(
+            f'<section class="slide" data-type="thesis"><h2>{i}</h2></section>' for i in range(4)
+        )
         + "</body></html>"
     )
     result = validate_deck(_write(tmp_path, html))
@@ -107,7 +109,7 @@ def test_unknown_data_type(tmp_path: Path):
 
 
 def test_missing_data_type_attr(tmp_path: Path):
-    html = GOOD_DECK.replace('data-type="quote"', '')
+    html = GOOD_DECK.replace('data-type="quote"', "")
     result = validate_deck(_write(tmp_path, html), grammar=EDITORIAL_MONOCLE_GRAMMAR)
     assert any("missing data-type" in e for e in result.errors)
 
@@ -197,7 +199,8 @@ def test_low_distinct_types_warning(tmp_path: Path):
     html = (
         "<html><body>"
         '<section class="slide" data-type="cover"></section>'
-        + '<section class="slide" data-type="thesis"></section>' * 6
+        + '<section class="slide" data-type="thesis"></section>'
+        * 6
         + '<section class="slide" data-type="closing"></section>'
         "</body></html>"
     )

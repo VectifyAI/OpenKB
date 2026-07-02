@@ -7,6 +7,7 @@ Checks for:
 - Index sync — index.md links vs actual files on disk
 - Invalid frontmatter — YAML that won't round-trip through safe_load
 """
+
 from __future__ import annotations
 
 import re
@@ -217,16 +218,15 @@ def fix_broken_links(
     # relative path (e.g. ``concepts/attention``) and the bare stem
     # (``attention``). Use the full-path keys so that links like
     # ``[[concepts/foo]]`` resolve against ``concepts/`` files only.
-    known_targets: set[str] = {
-        key for key in pages if "/" in key or key == "index"
-    }
+    known_targets: set[str] = {key for key in pages if "/" in key or key == "index"}
     # Build the normalized index once and reuse across every file —
     # otherwise strip_ghost_wikilinks would rebuild it per file (O(F·M)).
     norm_index = build_norm_index(known_targets)
 
     if restrict_to is None:
         candidates: list[Path] = [
-            md for md in wiki.rglob("*.md")
+            md
+            for md in wiki.rglob("*.md")
             if md.name not in _EXCLUDED_FILES
             and md.relative_to(wiki).parts[:1] not in (("reports",), ("sources",))
         ]
@@ -247,7 +247,9 @@ def fix_broken_links(
     for md in candidates:
         text = _read_md(md)
         cleaned, ghosts = strip_ghost_wikilinks(
-            text, known_targets, norm_index=norm_index,
+            text,
+            known_targets,
+            norm_index=norm_index,
         )
         if cleaned != text:
             atomic_write_text(md, cleaned)
@@ -304,7 +306,8 @@ def find_orphans(wiki: Path) -> list[str]:
     """
     # Exclude index, schema, log, and sources/ (sources are auto-generated, not expected to be linked)
     all_mds = [
-        p for p in wiki.rglob("*.md")
+        p
+        for p in wiki.rglob("*.md")
         if p.name not in {"index.md", *_EXCLUDED_FILES}
         and "sources" not in p.relative_to(wiki).parts
     ]
@@ -343,7 +346,10 @@ def find_orphans(wiki: Path) -> list[str]:
 
 
 def find_missing_entries(
-    raw: Path, wiki: Path, *, kb_dir: Path | None = None,
+    raw: Path,
+    wiki: Path,
+    *,
+    kb_dir: Path | None = None,
 ) -> list[str]:
     """Find files in raw/ that have no corresponding wiki entries.
 
@@ -369,7 +375,9 @@ def find_missing_entries(
     summaries_dir = wiki / "summaries"
 
     sources_stems = {p.stem for p in sources_dir.glob("*.md")} if sources_dir.exists() else set()
-    summary_stems = {p.stem for p in summaries_dir.glob("*.md")} if summaries_dir.exists() else set()
+    summary_stems = (
+        {p.stem for p in summaries_dir.glob("*.md")} if summaries_dir.exists() else set()
+    )
     known_stems = sources_stems | summary_stems
 
     registry = None
@@ -393,9 +401,7 @@ def find_missing_entries(
                 if meta is not None:
                     # Registered file — the registry's doc_name is the
                     # single source of truth for artifact names.
-                    doc_name = meta.get("doc_name") or Path(
-                        meta.get("name", f.name)
-                    ).stem
+                    doc_name = meta.get("doc_name") or Path(meta.get("name", f.name)).stem
                     present = (
                         (sources_dir / f"{doc_name}.md").exists()
                         or (sources_dir / f"{doc_name}.json").exists()
@@ -509,7 +515,7 @@ def find_invalid_frontmatter(
         # delimiter is line-anchored (frontmatter.split guarantees this),
         # so we strip the opening ``---\n`` and everything from the final
         # ``\n---`` onward.
-        inner = fm_block[4:]          # drop "---\n"
+        inner = fm_block[4:]  # drop "---\n"
         close = inner.rfind("\n---")
         if close != -1:
             inner = inner[:close]

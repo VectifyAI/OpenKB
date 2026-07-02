@@ -10,10 +10,12 @@ What we DO test:
     the CLI/chat call sites (which only catch RuntimeError) print a
     friendly message instead of leaking a traceback.
 """
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from openkb.skill.creator import (
     build_skill_create_agent,
@@ -47,13 +49,13 @@ def test_build_agent_interpolates_intent_and_name(tmp_path):
 async def test_run_skill_create_creates_output_dir(tmp_path):
     kb = _make_kb(tmp_path)
     target = kb / "output" / "skills" / "demo"
+
     # Fake the agent run: just write a minimal SKILL.md to simulate success.
     async def fake_runner(*args, **kwargs):
         target.mkdir(parents=True, exist_ok=True)
-        (target / "SKILL.md").write_text(
-            "---\nname: demo\ndescription: test\n---\n\n# demo\n"
-        )
+        (target / "SKILL.md").write_text("---\nname: demo\ndescription: test\n---\n\n# demo\n")
         from types import SimpleNamespace
+
         return SimpleNamespace(final_output="done")
 
     with patch("openkb.skill.creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
@@ -72,9 +74,11 @@ async def test_run_skill_create_raises_when_no_skill_md_written(tmp_path):
     kb = _make_kb(tmp_path)
     target = kb / "output" / "skills" / "demo"
     target.mkdir(parents=True, exist_ok=True)
+
     # Agent runs but never writes SKILL.md.
     async def fake_runner(*args, **kwargs):
         from types import SimpleNamespace
+
         return SimpleNamespace(final_output="done")
 
     with patch("openkb.skill.creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
@@ -93,13 +97,13 @@ async def test_run_skill_create_translates_max_turns_to_runtime_error(tmp_path):
     with a user-friendly message — otherwise both CLI and chat call sites
     (which only catch RuntimeError) leak a Python traceback."""
     from agents.exceptions import MaxTurnsExceeded
+
     kb = _make_kb(tmp_path)
 
     async def fake_runner(*args, **kwargs):
         raise MaxTurnsExceeded("agent ran out of turns")
 
-    with patch("openkb.skill.creator.Runner.run",
-               new=AsyncMock(side_effect=fake_runner)):
+    with patch("openkb.skill.creator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="step cap"):
             await run_skill_create(
                 kb_dir=kb,
