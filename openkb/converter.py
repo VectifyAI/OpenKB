@@ -231,7 +231,7 @@ def convert_document(
             markdown = convert_pdf_with_images(src, doc_name, images_dir)
         else:
             # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
-            mid = MarkItDown()
+            mid = MarkItDown(keep_data_uris=True)
             result = mid.convert(str(src))
             markdown = result.text_content
             markdown = extract_base64_images(markdown, doc_name, images_dir)

@@ -132,6 +132,36 @@ class TestConvertDocumentPdfLong:
 
 
 # ---------------------------------------------------------------------------
+# convert_document — MarkItDown-backed formats
+# ---------------------------------------------------------------------------
+
+
+class TestConvertDocumentMarkItDown:
+    def test_docx_conversion_enables_keep_data_uris(self, kb_dir, tmp_path):
+        src = tmp_path / "report.docx"
+        src.write_bytes(b"fake docx")
+
+        mock_result = MagicMock()
+        mock_result.text_content = "![](data:image/png;base64,abc123)"
+
+        with (
+            patch("openkb.converter.MarkItDown") as mock_markitdown,
+            patch("openkb.converter.extract_base64_images", return_value="converted markdown") as mock_extract,
+        ):
+            mock_markitdown.return_value.convert.return_value = mock_result
+
+            result = convert_document(src, kb_dir)
+
+        mock_markitdown.assert_called_once_with(keep_data_uris=True)
+        mock_markitdown.return_value.convert.assert_called_once_with(str(src))
+        mock_extract.assert_called_once()
+        assert result.skipped is False
+        assert result.is_long_doc is False
+        assert result.source_path is not None
+        assert result.source_path.read_text(encoding="utf-8") == "converted markdown"
+
+
+# ---------------------------------------------------------------------------
 # _registry_path
 # ---------------------------------------------------------------------------
 
