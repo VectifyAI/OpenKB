@@ -1770,6 +1770,189 @@ class TestCompileConceptsPlan:
         assert "[[concepts/flash-attention]]" in index_text
         assert "[[concepts/attention]]" in index_text
 
+    def test_parse_page_json_unwraps_and_guards_shape(self):
+        """#158: _parse_page_json returns an object, unwraps a single-element
+        ``[{...}]`` array, and returns None for wrong-shaped-but-valid JSON."""
+        from openkb.agent.compiler import _parse_page_json
+
+        assert _parse_page_json('{"content": "x"}') == {"content": "x"}
+        assert _parse_page_json('[{"content": "x"}]') == {"content": "x"}  # unwrapped
+        assert _parse_page_json("[]") is None
+        assert _parse_page_json('[{"a": 1}, {"b": 2}]') is None
+        assert _parse_page_json('["a", "b"]') is None
+
+    @pytest.mark.asyncio
+    async def test_page_json_wrapped_in_single_array_is_recovered(self, tmp_path):
+        """#158: a page response the model wrapped as ``[{...}]`` (instead of a
+        bare object) is unwrapped and written, not dropped with an AttributeError."""
+        wiki = self._setup_wiki(tmp_path)
+        plan_response = json.dumps(
+            {"create": [{"name": "attention", "title": "Attention"}], "update": [], "related": []}
+        )
+        array_page = json.dumps([{"brief": "b", "content": "# Attention\n\nRecovered body."}])
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
+            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([array_page]))
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+            )
+        path = wiki / "concepts" / "attention.md"
+        assert path.exists(), "single-object array should be unwrapped and written"
+        text = path.read_text()
+        assert "Recovered body." in text
+        assert "[{" not in text  # not the raw JSON array text
+
+    @pytest.mark.asyncio
+    async def test_truncated_update_preserves_existing_page(self, tmp_path):
+        """#148: an update whose response hit finish_reason='length' must not
+        overwrite the existing (complete) page with truncated content."""
+        original = "---\nsources: [old.pdf]\n---\n\n# Attention\n\nComplete original body."
+        wiki = self._setup_wiki(tmp_path, existing_concepts={"attention": original})
+        plan_response = json.dumps(
+            {"create": [], "update": [{"name": "attention", "title": "Attention"}], "related": []}
+        )
+        truncated_page = json.dumps(
+            {"brief": "x", "content": "# Attention\n\nTruncated tail cut off"}
+        )
+
+        async def truncated_acompletion(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = truncated_page
+            mock_resp.choices[0].finish_reason = "length"
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
+            mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+            )
+        text = (wiki / "concepts" / "attention.md").read_text()
+        assert "Complete original body." in text, "existing page must survive a truncated update"
+        assert "Truncated tail" not in text
+
+    @pytest.mark.asyncio
+    async def test_truncated_create_skips_partial_page(self, tmp_path):
+        """#148: a create whose response hit finish_reason='length' must not
+        write a partial page (which would be recorded as done and never retried)."""
+        wiki = self._setup_wiki(tmp_path)
+        plan_response = json.dumps(
+            {"create": [{"name": "ghost", "title": "Ghost"}], "update": [], "related": []}
+        )
+        truncated_page = json.dumps({"brief": "x", "content": "# Ghost\n\nPartial"})
+
+        async def truncated_acompletion(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = truncated_page
+            mock_resp.choices[0].finish_reason = "length"
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
+            mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+            )
+        assert not (wiki / "concepts" / "ghost.md").exists(), "truncated create must be skipped"
+
+    def test_page_fields_maps_response_shapes(self):
+        """Shared mapping used by all four page closures: object, single-element
+        array unwrap, wrong-shape skip (empty content), and non-JSON prose
+        fallback (raw written as the body)."""
+        from openkb.agent.compiler import _page_fields
+
+        brief, content, obj = _page_fields('{"description": "d", "content": "c", "type": "org"}')
+        assert (brief, content) == ("d", "c")
+        assert obj == {"description": "d", "content": "c", "type": "org"}
+        # Single-element [{...}] is unwrapped and used.
+        assert _page_fields('[{"description": "d", "content": "c"}]')[:2] == ("d", "c")
+        # Wrong shape (multi-element / empty array) → empty content so the
+        # caller's _require_nonempty_content skips the page.
+        assert _page_fields('[{"a": 1}, {"b": 2}]') == ("", "", None)
+        assert _page_fields("[]") == ("", "", None)
+        # Non-JSON prose → written verbatim as the markdown body.
+        prose = "# Heading\n\nJust markdown, not JSON."
+        assert _page_fields(prose) == ("", prose, None)
+
+    @pytest.mark.asyncio
+    async def test_truncated_entity_update_preserves_existing_page(self, tmp_path):
+        """#148 (entity path): a truncated entity update must not overwrite the
+        existing entity page with cut-off content."""
+        wiki = self._setup_wiki(tmp_path)
+        (wiki / "entities").mkdir()
+        (wiki / "entities" / "google.md").write_text(
+            "---\ntype: org\nsources: [old.pdf]\n---\n\n# Google\n\nComplete original entity body.",
+            encoding="utf-8",
+        )
+        plan_response = json.dumps(
+            {
+                "create": [],
+                "update": [],
+                "related": [],
+                "entities": {
+                    "create": [],
+                    "update": [{"name": "google", "title": "Google", "type": "org"}],
+                    "related": [],
+                },
+            }
+        )
+        truncated_page = json.dumps(
+            {"brief": "x", "content": "# Google\n\nTruncated entity tail cut"}
+        )
+
+        async def truncated_acompletion(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = truncated_page
+            mock_resp.choices[0].finish_reason = "length"
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
+            mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+            )
+        text = (wiki / "entities" / "google.md").read_text()
+        assert "Complete original entity body." in text, "existing entity must survive truncation"
+        assert "Truncated entity tail" not in text
+
     @pytest.mark.asyncio
     async def test_empty_content_skips_page_no_json_body(self, tmp_path):
         """#9: when the page LLM returns parseable JSON with empty content
