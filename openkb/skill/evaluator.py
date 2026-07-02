@@ -416,12 +416,18 @@ async def run_eval(
     content = _skill_content_block(skill_dir)
     result = EvalResult(prompts=eval_set)
 
+    # Concurrency: fall back to config file, then hard-coded default.
+    from openkb.config import load_config
+    openkb_dir = skill_dir.parent.parent.parent / ".openkb"  # <kb>/.openkb
+    config = load_config(openkb_dir / "config.yaml")
+    eval_concurrency = config.get("eval_concurrency", EVAL_CONCURRENCY)
+
     # Run grading concurrently. Each prompt is independent — graders read
     # the same `desc`/`content` strings and produce results that are then
     # appended to `result` in eval_set order below, so concurrent
     # execution is correctness-preserving. A semaphore caps simultaneous
     # LLM calls to avoid hitting provider rate limits.
-    sem = asyncio.Semaphore(EVAL_CONCURRENCY)
+    sem = asyncio.Semaphore(eval_concurrency)
 
     async def _trigger(p: EvalPrompt) -> Literal["trigger", "no-trigger"]:
         async with sem:

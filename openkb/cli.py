@@ -68,12 +68,120 @@ _KNOWN_PROVIDER_KEYS = (
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
     "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "MOONSHOT_API_KEY",
     "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY",
+    "MINIMAX_API_KEY",
 )
 
 # Providers that authenticate via OAuth device flow (subscription login
 # handled by LiteLLM itself) — no API key env var is needed, so the
 # missing-key warning would be a false alarm for them.
 _OAUTH_PROVIDERS = {"chatgpt", "github_copilot"}
+
+# Public providers with well-known official endpoints — for these the user
+# never needs to set a base URL, so ``openkb init`` skips the prompt.
+# Anything outside this set (``ollama/``, ``vllm/``, ``openrouter/``,
+# ``custom/``, ...) is presumed self-hosted / proxied and triggers the
+# base-URL prompt.
+#
+# ``minimax`` is a special case: it ships two regional endpoints (global /
+# China). It lives here so the generic base-URL prompt doesn't fire, but
+# ``openkb init`` runs a dedicated region picker for it instead.
+_KNOWN_PUBLIC_PROVIDERS: frozenset[str] = frozenset({
+    "openai", "anthropic", "gemini", "google", "deepseek", "mistral",
+    "moonshot", "zhipuai", "dashscope", "minimax",
+})
+
+# MiniMax regional endpoints. Both expose an OpenAI-compatible /v1 API
+# under the same ``minimax/`` LiteLLM provider prefix; the base URL is
+# the only differentiator. Defaults to global when no choice is made.
+_MINIMAX_GLOBAL_URL = "https://api.minimax.io/v1"
+_MINIMAX_CHINA_URL = "https://api.minimaxi.com/v1"
+
+# Maps each LiteLLM provider prefix to the env var LiteLLM reads for
+# its API key. ``openkb init`` uses this to write the *right* variable
+# into .env — not the generic ``LLM_API_KEY`` — so the file matches the
+# provider the user just picked. A value of ``None`` means the provider
+# runs locally and doesn't need a key (ollama, vllm by default).
+#
+# Sources (LiteLLM docs, verified):
+#   OPENAI_API_KEY      docs.litellm.ai/docs/set_keys
+#   ANTHROPIC_API_KEY   docs.litellm.ai/docs/providers/anthropic
+#   GEMINI_API_KEY      docs.litellm.ai/docs/providers/gemini
+#   DEEPSEEK_API_KEY    docs.litellm.ai/docs/providers/deepseek
+#   MISTRAL_API_KEY     docs.litellm.ai/docs/providers/mistral
+#   MOONSHOT_API_KEY    docs.litellm.ai/docs/providers/moonshot
+#   DASHSCOPE_API_KEY   docs.litellm.ai/docs/providers/dashscope
+#   OPENROUTER_API_KEY  docs.litellm.ai/docs/providers/openrouter
+#   MINIMAX_API_KEY     user-specified
+#   ZHIPUAI_API_KEY     the LiteLLM provider was renamed to "Z.AI" but
+#                       still uses the ``zhipuai/`` prefix, so the env
+#                       var is unchanged.
+_PROVIDER_KEY_ENV: dict[str, str | None] = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+    "zhipuai": "ZHIPUAI_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "ollama": None,    # local server, no key
+    "vllm": "HOSTED_VLLM_API_KEY",  # optional per LiteLLM docs
+}
+
+
+def _key_env_for_provider(provider: str | None) -> str | None:
+    """Return the LiteLLM ``*_API_KEY`` env var for ``provider``.
+
+    Returns ``None`` for providers that don't use a key (ollama, vllm)
+    AND for unknown providers — the latter is intentionally treated as
+    "no canonical name known", so the caller can decide whether to fall
+    back to the generic ``LLM_API_KEY``.
+    """
+    if provider is None:
+        return None
+    if provider in _PROVIDER_KEY_ENV:
+        return _PROVIDER_KEY_ENV[provider]
+    return None
+
+# LiteLLM reads these per-provider env vars to override the base URL.
+# Used by ``openkb init`` to map a user-supplied base URL into the right
+# ``*_API_BASE`` key in the KB's .env. LiteLLM also accepts ``api_base=``
+# per-call and ``litellm.api_base`` globally, but the env-var route is
+# provider-agnostic and survives model switches without code changes.
+_PROVIDER_TO_BASE_ENV: dict[str, str] = {
+    "openai": "OPENAI_API_BASE",
+    "anthropic": "ANTHROPIC_API_BASE",
+    "gemini": "GEMINI_API_BASE",
+    "google": "GOOGLE_API_BASE",
+    "deepseek": "DEEPSEEK_API_BASE",
+    "mistral": "MISTRAL_API_BASE",
+    "moonshot": "MOONSHOT_API_BASE",
+    "zhipuai": "ZHIPUAI_API_BASE",
+    "dashscope": "DASHSCOPE_API_BASE",
+    # Common proxies / aggregators. Users with truly custom providers can
+    # always edit .env by hand.
+    "openrouter": "OPENROUTER_API_BASE",
+    "ollama": "OLLAMA_API_BASE",
+    "vllm": "OPENAI_API_BASE",  # vLLM exposes an OpenAI-compatible endpoint
+    "minimax": "MINIMAX_API_BASE",
+}
+
+
+def _base_url_env_for_provider(provider: str | None) -> str | None:
+    """Return the LiteLLM ``*_API_BASE`` env var name for ``provider``.
+
+    Falls back to ``OPENAI_API_BASE`` for unknown prefixes — most local /
+    proxy servers (vLLM, LM Studio, xinference, etc.) expose an
+    OpenAI-compatible endpoint, so this covers the common case.
+    """
+    if not provider:
+        return None
+    if provider in _PROVIDER_TO_BASE_ENV:
+        return _PROVIDER_TO_BASE_ENV[provider]
+    return "OPENAI_API_BASE"
 
 
 def _extract_provider(model: str) -> str | None:
@@ -138,10 +246,11 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     if global_env.exists():
         load_dotenv(global_env, override=False)
 
-    api_key = os.environ.get("LLM_API_KEY", "")
-
-    # Try to resolve the active provider, extra headers, and request timeout
-    # from the KB config
+    # Resolve the active provider first — its key env var (e.g.
+    # ``OPENAI_API_KEY``) takes priority over the generic ``LLM_API_KEY``
+    # so users who set the provider-specific name directly (the format
+    # ``openkb init`` now writes to .env) get picked up without having to
+    # also export a generic catch-all.
     provider: str | None = None
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
@@ -169,36 +278,56 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     set_timeout(timeout)
     _apply_litellm_settings(litellm_settings)
 
+    provider_key_env = _key_env_for_provider(provider)
+    api_key = ""
+    if provider_key_env:
+        api_key = os.environ.get(provider_key_env, "").strip()
     if not api_key:
-        # Check if any provider key is already set. OAuth-based providers
-        # (ChatGPT subscription, GitHub Copilot) don't use API keys at all,
-        # so the warning is skipped for them.
-        check_keys = (
-            (f"{provider.upper()}_API_KEY",) if provider
-            else _KNOWN_PROVIDER_KEYS
+        api_key = os.environ.get("LLM_API_KEY", "").strip()
+
+    if not api_key:
+        # No key found under either the provider-specific name or the
+        # generic ``LLM_API_KEY``. OAuth-based providers (ChatGPT
+        # subscription, GitHub Copilot) don't use API keys at all, so the
+        # warning is skipped for them. Keyless self-hosted providers
+        # (ollama, vllm) likewise don't need one.
+        keyless = provider is not None and (
+            provider in _OAUTH_PROVIDERS
+            or _PROVIDER_KEY_ENV.get(provider) is None
         )
-        has_key = any(os.environ.get(k) for k in check_keys)
-        if not has_key and provider not in _OAUTH_PROVIDERS:
+        if not keyless:
+            key_hint = provider_key_env or "LLM_API_KEY"
             click.echo(
                 "Warning: No LLM API key found. Set one of:\n"
-                f"  1. {kb_dir / '.env' if kb_dir else '<kb_dir>/.env'} — LLM_API_KEY=sk-...\n"
-                f"  2. {GLOBAL_CONFIG_DIR / '.env'} — LLM_API_KEY=sk-...\n"
-                "  3. Export LLM_API_KEY in your shell profile"
+                f"  1. {kb_dir / '.env' if kb_dir else '<kb_dir>/.env'} — {key_hint}=...\n"
+                f"  2. {GLOBAL_CONFIG_DIR / '.env'} — {key_hint}=...\n"
+                f"  3. Export {key_hint} in your shell profile"
             )
     else:
         litellm.api_key = api_key
 
-        # Dynamically set the provider-specific env var when possible
-        if provider:
-            provider_env = f"{provider.upper()}_API_KEY"
-            if not os.environ.get(provider_env):
-                os.environ[provider_env] = api_key
-
-        # Fallback: also set common provider keys so multi-provider
-        # configs (e.g. PageIndex Cloud) still work
+        # Propagate the key to every provider env var we know about.
+        # This keeps multi-provider setups (e.g. PageIndex Cloud, agent
+        # calls that use a different provider than compile) working
+        # without requiring the user to duplicate the key in .env.
+        if provider_key_env and not os.environ.get(provider_key_env):
+            os.environ[provider_key_env] = api_key
         for env_var in _KNOWN_PROVIDER_KEYS:
             if not os.environ.get(env_var):
                 os.environ[env_var] = api_key
+
+    # Base URL: pick up the provider-specific *_API_BASE env var (written
+    # by `openkb init` for self-hosted / proxied providers) and apply it
+    # to litellm.api_base so LiteLLM uses it on every request. LiteLLM
+    # already reads e.g. OPENAI_API_BASE natively for some providers, but
+    # setting litellm.api_base makes the override reliable across
+    # providers and call paths.
+    base_env = _base_url_env_for_provider(provider)
+    base_url = ""
+    if base_env:
+        base_url = os.environ.get(base_env, "").strip()
+    if base_url:
+        litellm.api_base = base_url
 
 # Supported document extensions for the `add` command
 SUPPORTED_EXTENSIONS = {
@@ -837,6 +966,149 @@ def _model_option_callback(_ctx, _param, value):
     return _coerce_model(value)
 
 
+_BASE_URL_MAX_LEN = 2048
+
+
+def _coerce_base_url(value: str | None) -> str | None:
+    """Strip a base URL; treat blanks as unset; reject unsafe values.
+
+    Mirrors ``_coerce_model``. The URL is written verbatim to ``.env`` and
+    may be echoed in CLI output, so embedded control characters would
+    corrupt that file / output and are rejected. Capping length keeps
+    pathological values out of the .env file.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > _BASE_URL_MAX_LEN or any(c in value for c in "\n\r\t"):
+        raise click.BadParameter(
+            f"base URL must be {_BASE_URL_MAX_LEN} characters or fewer "
+            "with no control characters",
+            param_hint="'--base-url'",
+        )
+    return value
+
+
+def _base_url_option_callback(_ctx, _param, value):
+    return _coerce_base_url(value)
+
+
+def _build_env_content(
+    env_writes: dict[str, str], provider: str | None,
+) -> str:
+    """Build the KB-local .env content.
+
+    Always emits the file — even when the user skipped both the API-key
+    prompt and the base-URL prompt — so that the user has a discoverable
+    place to drop credentials later.
+
+    Variable naming follows the actual LiteLLM provider (e.g.
+    ``OPENAI_API_KEY`` for OpenAI, ``MINIMAX_API_KEY`` for MiniMax,
+    ``ANTHROPIC_API_BASE`` for Anthropic), not a generic catch-all — so
+    the file reads naturally to someone familiar with the provider. For
+    unknown / local providers, fall back to ``LLM_API_KEY``.
+
+    ``env_writes`` maps env-var name → value for fields that should be
+    active (uncommented). Any field not present in ``env_writes`` is
+    rendered as a commented placeholder.
+    """
+    key_env = _key_env_for_provider(provider)
+    # Unknown provider (custom/self-hosted) OR no provider context at
+    # all → fall back to LLM_API_KEY so the value still propagates
+    # through _setup_llm_key. Keyless providers are detected below by
+    # checking ``_PROVIDER_KEY_ENV`` directly.
+    if key_env is None:
+        key_env = "LLM_API_KEY"
+    # Truly keyless provider (ollama, vllm) → skip the key section
+    # entirely; emitting a placeholder would mislead the user.
+    skip_key_section = (
+        provider is not None
+        and provider in _PROVIDER_KEY_ENV
+        and _PROVIDER_KEY_ENV[provider] is None
+    )
+
+    lines: list[str] = [
+        "# OpenKB environment configuration",
+        "# Generated by `openkb init` — edit as needed. See .env.example",
+        "# for the full list of supported variables.",
+        "",
+    ]
+    if not skip_key_section:
+        key_label = key_env or "LLM_API_KEY"
+        lines += [
+            f"# {key_label} — used by LiteLLM to authenticate to "
+            f"{provider or 'your provider'}.",
+            "# Uncomment and paste your key below.",
+        ]
+        if key_env and key_env in env_writes:
+            lines.append(f"{key_env}={env_writes[key_env]}")
+        elif "LLM_API_KEY" in env_writes and key_env != "LLM_API_KEY":
+            # Caller stored the key under the generic name but the
+            # active env var should be the provider-specific one — emit
+            # the generic line commented so the user can move it.
+            lines.append(f"# {key_env}=sk-...")
+            lines.append(f"LLM_API_KEY={env_writes['LLM_API_KEY']}")
+        elif "LLM_API_KEY" in env_writes:
+            lines.append(f"LLM_API_KEY={env_writes['LLM_API_KEY']}")
+        else:
+            lines.append(f"# {key_env}=sk-...")
+        lines.append("")
+
+    base_env_var = _base_url_env_for_provider(provider)
+    if base_env_var is not None:
+        if base_env_var in env_writes:
+            lines.append(
+                f"{base_env_var}={env_writes[base_env_var]}"
+            )
+        else:
+            label = (
+                "API base URL"
+                if provider is None or provider not in _KNOWN_PUBLIC_PROVIDERS
+                else f"{provider} endpoint"
+            )
+            lines += [
+                f"# Optional: {label} override.",
+                f"# Uncomment to point at a self-hosted / proxied server.",
+                f"# {base_env_var}=https://your-endpoint/v1",
+            ]
+    return "\n".join(lines) + "\n"
+
+
+def _prompt_minimax_region() -> str:
+    """Prompt the user to pick a MiniMax regional endpoint.
+
+    MiniMax ships two endpoints under the same ``minimax/`` LiteLLM
+    provider prefix — global and China — and the only way to disambiguate
+    them is the base URL. Returns one of ``_MINIMAX_GLOBAL_URL`` or
+    ``_MINIMAX_CHINA_URL``. Accepts ``1``/``global`` (default) or
+    ``2``/``china``; anything else re-prompts so a typo never silently
+    routes the user to the wrong region.
+
+    The output uses blank lines + a clear heading so the picker can't be
+    mistaken for a continuation of the model / API-key prompts around it
+    (which would silently route the user to whichever default happens to
+    win — usually the wrong region).
+    """
+    click.echo()
+    click.echo("── MiniMax region ─────────────────────────────────")
+    click.echo("MiniMax has two regional endpoints under the same")
+    click.echo("`minimax/` LiteLLM prefix — pick one:")
+    click.echo(f"  [1] Global ({_MINIMAX_GLOBAL_URL})   [default]")
+    click.echo(f"  [2] China  ({_MINIMAX_CHINA_URL})")
+    click.echo("──────────────────────────────────────────────────")
+    while True:
+        choice = click.prompt(
+            "Region (1=Global, 2=China)", default="1", show_default=False,
+        ).strip().lower()
+        if choice in ("", "1", "global"):
+            return _MINIMAX_GLOBAL_URL
+        if choice in ("2", "china"):
+            return _MINIMAX_CHINA_URL
+        click.echo(f"Unknown choice {choice!r}; please enter 1 or 2.")
+
+
 def _stdin_is_tty() -> bool:
     """Return True when stdin is a real terminal.
 
@@ -864,7 +1136,19 @@ def _stdin_is_tty() -> bool:
     callback=_language_option_callback,
     help="Wiki output language (e.g. 'en', 'ko'). Skips the interactive prompt when set.",
 )
-def init(model, language):
+@click.option(
+    "--base-url", "-u", "base_url",
+    default=None, metavar="URL",
+    callback=_base_url_option_callback,
+    help=(
+        "LLM API base URL (for self-hosted / proxied providers, e.g. "
+        "'http://localhost:11434' for Ollama). When the chosen model is a "
+        "public provider (OpenAI, Anthropic, Gemini, DeepSeek, ...) the "
+        "interactive prompt is skipped automatically. Stored in .env as "
+        "the provider-specific *_API_BASE variable."
+    ),
+)
+def init(model, language, base_url):
     """Initialise a new knowledge base in the current directory."""
     openkb_dir = Path(".openkb")
     if openkb_dir.exists():
@@ -877,6 +1161,7 @@ def init(model, language):
     click.echo("  Anthropic: anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-6")
     click.echo("  Gemini:    gemini/gemini-3.1-pro-preview, gemini/gemini-3-flash-preview")
     click.echo("  DeepSeek:  deepseek/deepseek-v4-flash, deepseek/deepseek-v4-pro")
+    click.echo("  MiniMax:  minimax/MiniMax-M2.7, minimax/MiniMax-M3")
     click.echo("  Others:    see https://docs.litellm.ai/docs/providers")
     click.echo()
     if model is None and _stdin_is_tty():
@@ -887,6 +1172,27 @@ def init(model, language):
         ))
     if not model:
         model = DEFAULT_CONFIG["model"]
+    # Only ask for a base URL when the chosen model isn't a known public
+    # provider (i.e. it's self-hosted, proxied, or otherwise needs a
+    # non-default endpoint). The --base-url flag overrides this gate.
+    provider = _extract_provider(model)
+    # MiniMax is a known public provider but ships two regional endpoints
+    # under the same prefix — the only differentiator is the base URL, so
+    # we run a dedicated region picker instead of the generic prompt.
+    # Non-TTY (scripted init) falls back to global silently; users who
+    # need China there can pass --base-url explicitly.
+    if base_url is None and provider == "minimax" and _stdin_is_tty():
+        base_url = _coerce_base_url(_prompt_minimax_region())
+    elif base_url is None and provider == "minimax":
+        base_url = _MINIMAX_GLOBAL_URL
+    if base_url is None and _stdin_is_tty() and provider not in _KNOWN_PUBLIC_PROVIDERS:
+        base_url = _coerce_base_url(click.prompt(
+            "API base URL (for self-hosted / proxied providers, enter to skip)",
+            default="",
+            show_default=False,
+        ))
+    if not base_url:
+        base_url = None
     api_key = click.prompt(
         "LLM API Key (saved to .env, enter to skip)",
         default="",
@@ -919,24 +1225,57 @@ def init(model, language):
         "model": model,
         "language": language,
         "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
+        "eval_concurrency": DEFAULT_CONFIG["eval_concurrency"],
+        "compile_concurrency": DEFAULT_CONFIG["compile_concurrency"],
     }
     save_config(openkb_dir / "config.yaml", config)
     atomic_write_json(openkb_dir / "hashes.json", {})
 
-    # Write API key to KB-local .env (0600) if the user provided one
+    # Write the KB-local .env (0600). The file is always created — even
+    # when the user skipped both the API-key prompt and the base-URL
+    # prompt — so there's a discoverable place to drop credentials later.
+    # Missing fields are written as commented placeholders naming the
+    # right env-var for the chosen provider.
+    env_writes: dict[str, str] = {}
     if api_key:
-        env_path = Path(".env")
-        if env_path.exists():
-            click.echo(".env already exists, skipping write. Add LLM_API_KEY manually if needed.")
+        # Write under the provider-specific env var (e.g. OPENAI_API_KEY)
+        # so the file matches what LiteLLM actually reads; fall back to
+        # the generic name for unknown / keyless providers.
+        key_env = _key_env_for_provider(provider) or "LLM_API_KEY"
+        env_writes[key_env] = api_key
+    if base_url:
+        base_env_var = _base_url_env_for_provider(provider)
+        if base_env_var:
+            env_writes[base_env_var] = base_url
+    env_path = Path(".env")
+    if env_path.exists():
+        if env_writes:
+            click.echo(
+                ".env already exists, skipping write. Add the missing "
+                "entries manually if needed: " + ", ".join(env_writes),
+            )
+    else:
+        env_path.write_text(
+            _build_env_content(env_writes, provider),
+            encoding="utf-8",
+        )
+        os.chmod(env_path, 0o600)
+        if env_writes:
+            click.echo("Saved to .env: " + ", ".join(env_writes))
         else:
-            env_path.write_text(f"LLM_API_KEY={api_key}\n", encoding="utf-8")
-            os.chmod(env_path, 0o600)
-            click.echo("Saved LLM API key to .env.")
+            click.echo(
+                "Created .env with commented placeholders — "
+                "fill in your API key before running compile."
+            )
 
     # Register this KB in the global config
     register_kb(Path.cwd())
 
     click.echo("Knowledge base initialized.")
+    click.echo(
+        f"  • Review .env and {openkb_dir / 'config.yaml'} if anything "
+        "needs adjusting."
+    )
 
 
 @cli.command()
