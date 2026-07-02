@@ -1882,6 +1882,77 @@ class TestCompileConceptsPlan:
             )
         assert not (wiki / "concepts" / "ghost.md").exists(), "truncated create must be skipped"
 
+    def test_page_fields_maps_response_shapes(self):
+        """Shared mapping used by all four page closures: object, single-element
+        array unwrap, wrong-shape skip (empty content), and non-JSON prose
+        fallback (raw written as the body)."""
+        from openkb.agent.compiler import _page_fields
+
+        brief, content, obj = _page_fields('{"description": "d", "content": "c", "type": "org"}')
+        assert (brief, content) == ("d", "c")
+        assert obj == {"description": "d", "content": "c", "type": "org"}
+        # Single-element [{...}] is unwrapped and used.
+        assert _page_fields('[{"description": "d", "content": "c"}]')[:2] == ("d", "c")
+        # Wrong shape (multi-element / empty array) → empty content so the
+        # caller's _require_nonempty_content skips the page.
+        assert _page_fields('[{"a": 1}, {"b": 2}]') == ("", "", None)
+        assert _page_fields("[]") == ("", "", None)
+        # Non-JSON prose → written verbatim as the markdown body.
+        prose = "# Heading\n\nJust markdown, not JSON."
+        assert _page_fields(prose) == ("", prose, None)
+
+    @pytest.mark.asyncio
+    async def test_truncated_entity_update_preserves_existing_page(self, tmp_path):
+        """#148 (entity path): a truncated entity update must not overwrite the
+        existing entity page with cut-off content."""
+        wiki = self._setup_wiki(tmp_path)
+        (wiki / "entities").mkdir()
+        (wiki / "entities" / "google.md").write_text(
+            "---\ntype: org\nsources: [old.pdf]\n---\n\n# Google\n\nComplete original entity body.",
+            encoding="utf-8",
+        )
+        plan_response = json.dumps(
+            {
+                "create": [],
+                "update": [],
+                "related": [],
+                "entities": {
+                    "create": [],
+                    "update": [{"name": "google", "title": "Google", "type": "org"}],
+                    "related": [],
+                },
+            }
+        )
+        truncated_page = json.dumps(
+            {"brief": "x", "content": "# Google\n\nTruncated entity tail cut"}
+        )
+
+        async def truncated_acompletion(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = truncated_page
+            mock_resp.choices[0].finish_reason = "length"
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
+            mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+            )
+        text = (wiki / "entities" / "google.md").read_text()
+        assert "Complete original entity body." in text, "existing entity must survive truncation"
+        assert "Truncated entity tail" not in text
+
     @pytest.mark.asyncio
     async def test_empty_content_skips_page_no_json_body(self, tmp_path):
         """#9: when the page LLM returns parseable JSON with empty content

@@ -465,6 +465,17 @@ async def _llm_call_async(
     return content.strip()
 
 
+async def _llm_call_page_async(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
+    """``_llm_call_async`` for a step that writes a wiki page from the response.
+
+    Hard-codes ``raise_on_truncation=True`` so a truncated response skips the
+    write instead of silently persisting a partial page (#148). Use this for
+    every page-generating call so the guarantee can't be forgotten at a new
+    call site.
+    """
+    return await _llm_call_async(model, messages, step_name, raise_on_truncation=True, **kwargs)
+
+
 async def _close_async_llm_clients() -> None:
     """Close LiteLLM's cached async (aiohttp) clients for the current loop.
 
@@ -534,6 +545,30 @@ def _parse_page_json(text: str) -> dict | None:
     if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
         parsed = parsed[0]
     return parsed if isinstance(parsed, dict) else None
+
+
+def _page_fields(raw: str) -> tuple[str, str, dict | None]:
+    """Map a page LLM response to ``(brief, content, obj)``.
+
+    - JSON object (or a single-element ``[{...}]`` array): brief/content come
+      from it and ``obj`` is the dict (entity callers read ``type`` from it).
+    - Valid JSON of the wrong shape (multi/empty array, scalar): ``("", "",
+      None)`` — the empty content makes ``_require_nonempty_content`` skip the
+      page rather than persisting the raw JSON text as its body.
+    - Not JSON at all: ``("", raw, None)`` — ``raw`` is written as a
+      prose-markdown body (the legitimate fallback for models that emit
+      markdown instead of JSON).
+
+    Shared by all four page-generation closures so a new edge case is handled
+    in one place instead of four near-identical blocks.
+    """
+    try:
+        obj = _parse_page_json(raw)
+    except (json.JSONDecodeError, ValueError):
+        return "", raw, None
+    if obj is None:
+        return "", "", None
+    return obj.get("description", ""), (obj.get("content") or ""), obj
 
 
 def _filter_concept_items(items: list, label: str) -> list[dict]:
@@ -1777,7 +1812,7 @@ async def _compile_concepts(
         name = concept["name"]
         title = concept.get("title", name)
         async with semaphore:
-            raw = await _llm_call_async(
+            raw = await _llm_call_page_async(
                 model,
                 [
                     system_msg,
@@ -1795,21 +1830,8 @@ async def _compile_concepts(
                 ],
                 f"concept: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
-                raise_on_truncation=True,
             )
-        try:
-            obj = _parse_page_json(raw)
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
-            brief, content = "", raw
-        else:
-            if obj is None:
-                # Valid JSON, wrong shape (array/scalar): skip rather than write
-                # the JSON text as the body. Empty content trips the check below.
-                brief, content = "", ""
-            else:
-                brief = obj.get("description", "")
-                content = obj.get("content") or ""
+        brief, content, _ = _page_fields(raw)
         _require_nonempty_content(content, name)
         return name, content, False, brief
 
@@ -1824,7 +1846,7 @@ async def _compile_concepts(
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
-            raw = await _llm_call_async(
+            raw = await _llm_call_page_async(
                 model,
                 [
                     system_msg,
@@ -1842,19 +1864,8 @@ async def _compile_concepts(
                 ],
                 f"update: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
-                raise_on_truncation=True,
             )
-        try:
-            obj = _parse_page_json(raw)
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
-            brief, content = "", raw
-        else:
-            if obj is None:
-                brief, content = "", ""
-            else:
-                brief = obj.get("description", "")
-                content = obj.get("content") or ""
+        brief, content, _ = _page_fields(raw)
         _require_nonempty_content(content, name)
         return name, content, True, brief
 
@@ -1863,7 +1874,7 @@ async def _compile_concepts(
         title = ent.get("title", name)
         etype = ent.get("type", "other")
         async with semaphore:
-            raw = await _llm_call_async(
+            raw = await _llm_call_page_async(
                 model,
                 [
                     system_msg,
@@ -1881,20 +1892,9 @@ async def _compile_concepts(
                 ],
                 f"entity: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
-                raise_on_truncation=True,
             )
-        try:
-            obj = _parse_page_json(raw)
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
-            brief, etype_out, content = "", etype, raw
-        else:
-            if obj is None:
-                brief, etype_out, content = "", etype, ""
-            else:
-                brief = obj.get("description", "")
-                etype_out = obj.get("type") if obj.get("type") in valid_types else etype
-                content = obj.get("content") or ""
+        brief, content, obj = _page_fields(raw)
+        etype_out = obj.get("type") if obj and obj.get("type") in valid_types else etype
         _require_nonempty_content(content, name)
         return name, content, brief, etype_out
 
@@ -1910,7 +1910,7 @@ async def _compile_concepts(
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
-            raw = await _llm_call_async(
+            raw = await _llm_call_page_async(
                 model,
                 [
                     system_msg,
@@ -1929,20 +1929,9 @@ async def _compile_concepts(
                 ],
                 f"entity-update: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
-                raise_on_truncation=True,
             )
-        try:
-            obj = _parse_page_json(raw)
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON at all: ``raw`` is the legitimate prose-markdown body.
-            brief, etype_out, content = "", etype, raw
-        else:
-            if obj is None:
-                brief, etype_out, content = "", etype, ""
-            else:
-                brief = obj.get("description", "")
-                etype_out = obj.get("type") if obj.get("type") in valid_types else etype
-                content = obj.get("content") or ""
+        brief, content, obj = _page_fields(raw)
+        etype_out = obj.get("type") if obj and obj.get("type") in valid_types else etype
         _require_nonempty_content(content, name)
         return name, content, brief, etype_out
 
