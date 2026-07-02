@@ -31,12 +31,45 @@ class TestRenderSummaryMd:
         assert "(pages 0–120)" in output
         assert "(pages 121–200)" in output
 
-    def test_summary_included_not_text(self, sample_tree):
+    def test_summary_and_source_text_both_included(self, sample_tree):
         output = render_summary_md(sample_tree, "Sample Document", "doc-abc")
         assert "Summary: Overview of the document topic." in output
         assert "Summary: Historical context." in output
-        # Raw text should NOT appear in summary view
-        assert "This document introduces the core concepts of the system." not in output
+        # The real per-node source text is now quoted too, not just a
+        # paraphrase — IndexConfig(if_add_node_text=True) already fetches
+        # it, the old renderer just silently discarded it.
+        assert "Source text:" in output
+        assert "> This document introduces the core concepts of the system." in output
+
+    def test_node_without_text_has_no_source_text_block(self):
+        tree = {
+            "structure": [
+                {"title": "Intro", "start_index": 1, "end_index": 2, "summary": "x", "nodes": []}
+            ]
+        }
+        output = render_summary_md(tree, "my-doc", "doc-123")
+        assert "Source text:" not in output
+
+    def test_internal_pageindex_image_refs_are_stripped_from_source_text(self):
+        # PageIndex's own image refs point into its private
+        # .openkb/files/{doc_id}/images/... cache, which never resolves from
+        # a wiki page, so they're stripped rather than quoted verbatim.
+        tree = {
+            "structure": [
+                {
+                    "title": "Intro",
+                    "start_index": 1,
+                    "end_index": 2,
+                    "summary": "x",
+                    "text": "Some text.\n![fig](/private/cache/img.png)\nMore text.",
+                    "nodes": [],
+                }
+            ]
+        }
+        output = render_summary_md(tree, "my-doc", "doc-123")
+        assert "![fig]" not in output
+        assert "> Some text." in output
+        assert "> More text." in output
 
 
 def test_summary_md_has_type_and_description():
