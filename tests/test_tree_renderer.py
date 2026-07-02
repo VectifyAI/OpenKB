@@ -52,6 +52,101 @@ def test_summary_md_has_type_and_description():
     assert 'full_text: "sources/my-doc.json"' in md
 
 
+def test_duplicate_sibling_summaries_collapse_to_a_pointer():
+    # Two sibling nodes on the same physical page can be handed the exact
+    # same LLM-written summary (PageIndex#340). The second occurrence should
+    # collapse to a pointer instead of repeating the block verbatim.
+    tree = {
+        "structure": [
+            {
+                "title": "1.1 First item",
+                "start_index": 5,
+                "end_index": 5,
+                "summary": "Shared duplicate summary text.",
+                "nodes": [],
+            },
+            {
+                "title": "1.2 Second item",
+                "start_index": 5,
+                "end_index": 5,
+                "summary": "Shared duplicate summary text.",
+                "nodes": [],
+            },
+        ]
+    }
+    md = render_summary_md(tree, "my-doc", "doc-123")
+    assert md.count("Summary: Shared duplicate summary text.") == 1
+    assert '_(same content as "1.1 First item" above)_' in md
+
+
+def test_duplicate_summaries_collapse_across_cousins_not_just_siblings():
+    # The collision isn't confined to direct siblings — a node nested under
+    # a different parent, seen later in document order, can repeat the same
+    # summary too.
+    tree = {
+        "structure": [
+            {
+                "title": "Parent A",
+                "start_index": 1,
+                "end_index": 1,
+                "summary": "",
+                "nodes": [
+                    {
+                        "title": "Child A.1",
+                        "start_index": 1,
+                        "end_index": 1,
+                        "summary": "Cousin duplicate.",
+                        "nodes": [],
+                    }
+                ],
+            },
+            {
+                "title": "Parent B",
+                "start_index": 2,
+                "end_index": 2,
+                "summary": "",
+                "nodes": [
+                    {
+                        "title": "Child B.1",
+                        "start_index": 2,
+                        "end_index": 2,
+                        "summary": "Cousin duplicate.",
+                        "nodes": [],
+                    }
+                ],
+            },
+        ]
+    }
+    md = render_summary_md(tree, "my-doc", "doc-123")
+    assert md.count("Summary: Cousin duplicate.") == 1
+    assert '_(same content as "Child A.1" above)_' in md
+
+
+def test_distinct_summaries_are_not_collapsed():
+    tree = {
+        "structure": [
+            {
+                "title": "A",
+                "start_index": 1,
+                "end_index": 1,
+                "summary": "Summary one.",
+                "nodes": [],
+            },
+            {
+                "title": "B",
+                "start_index": 2,
+                "end_index": 2,
+                "summary": "Summary two.",
+                "nodes": [],
+            },
+        ]
+    }
+    md = render_summary_md(tree, "my-doc", "doc-123")
+    assert "Summary: Summary one." in md
+    assert "Summary: Summary two." in md
+    assert "same content as" not in md
+
+
 def test_summary_full_text_quoted_yaml_safe():
     import yaml
 
