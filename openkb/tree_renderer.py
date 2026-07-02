@@ -15,6 +15,22 @@ def _yaml_frontmatter(source_name: str, doc_id: str, description: str = "") -> s
     return "---\n" + "\n".join(lines) + "\n---\n"
 
 
+_MAX_TITLE_LEN = 80
+
+
+def _short_title(title: str) -> str:
+    """Truncate a title for heading display.
+
+    The no-TOC fallback structure generator sometimes copies an entire
+    source sentence verbatim into ``title`` when there's no natural short
+    heading to extract; left unshortened that produces unreadable
+    multi-line Markdown headings (see PageIndex#341).
+    """
+    if len(title) <= _MAX_TITLE_LEN:
+        return title
+    return title[:_MAX_TITLE_LEN].rstrip() + "…"
+
+
 def _render_nodes_summary(nodes: list[dict], depth: int) -> str:
     """Recursively render nodes for the *summary* view (summaries only)."""
     lines: list[str] = []
@@ -26,7 +42,7 @@ def _render_nodes_summary(nodes: list[dict], depth: int) -> str:
         summary = node.get("summary", "")
         children = node.get("nodes", [])
 
-        lines.append(f"{heading_prefix} {title} (pages {start}–{end})\n")
+        lines.append(f"{heading_prefix} {_short_title(title)} (pages {start}–{end})\n")
         if summary:
             lines.append(f"Summary: {summary}\n")
         if children:

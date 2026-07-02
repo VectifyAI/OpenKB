@@ -52,6 +52,38 @@ def test_summary_md_has_type_and_description():
     assert 'full_text: "sources/my-doc.json"' in md
 
 
+def test_overlong_title_is_truncated_in_heading():
+    long_title = (
+        "This is an entire source sentence copied verbatim into the title "
+        "field because the no-TOC fallback found no natural short heading "
+        "to extract from this section of the document."
+    )
+    tree = {
+        "structure": [
+            {
+                "title": long_title,
+                "start_index": 1,
+                "end_index": 2,
+                "summary": "x",
+                "nodes": [],
+            }
+        ]
+    }
+    md = render_summary_md(tree, "my-doc", "doc-123")
+    assert long_title not in md
+    assert f"# {long_title[:80]}…" in md
+
+
+def test_short_title_is_not_truncated():
+    tree = {
+        "structure": [
+            {"title": "Background", "start_index": 1, "end_index": 2, "summary": "x", "nodes": []}
+        ]
+    }
+    md = render_summary_md(tree, "my-doc", "doc-123")
+    assert "# Background (pages 1–2)" in md
+
+
 def test_summary_full_text_quoted_yaml_safe():
     import yaml
 
