@@ -370,6 +370,18 @@ def test_write_long_doc_artifacts_writes_json_and_summary(kb_dir, sample_tree):
     assert "doc_type: pageindex" in summary_path.read_text(encoding="utf-8")
 
 
+def test_write_long_doc_artifacts_embeds_page_images_in_summary(kb_dir, sample_tree):
+    # sample_tree's "Introduction" node spans pages 0-120; a page in that
+    # range should have its image embedded in the written summary, not just
+    # referenced from the sibling wiki/sources/<doc>.json file.
+    from openkb.indexer import _write_long_doc_artifacts
+
+    pages = [{"page": 5, "content": "...", "images": [{"path": "sources/images/my-doc/p5.png"}]}]
+    summary_path = _write_long_doc_artifacts(sample_tree, pages, "my-doc", "doc-1", kb_dir)
+
+    assert "![image](sources/images/my-doc/p5.png)" in summary_path.read_text(encoding="utf-8")
+
+
 def test_fetch_cloud_pages_windows_over_1000_cap():
     """get_page_content's range filter is capped at 1000 pages by parse_pages, so
     _fetch_cloud_pages must request fixed 1000-page windows (never a wider range)

@@ -135,7 +135,9 @@ def _write_long_doc_artifacts(
     Returns the summary path. Shared by :func:`index_long_document` (local)
     and :func:`import_cloud_document` (cloud) so both produce identical
     artifacts. Page images, when present, are written separately by the
-    caller's page extractor — this helper only persists page text + summary.
+    caller's page extractor — this helper persists page text + summary, and
+    passes ``pages`` through to ``render_summary_md`` so each node's images
+    get embedded in the summary too, not just the raw page JSON.
     """
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +150,8 @@ def _write_long_doc_artifacts(
     summaries_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summaries_dir / f"{doc_name}.md"
     summary_path.write_text(
-        render_summary_md(tree, doc_name, doc_id, description=description), encoding="utf-8"
+        render_summary_md(tree, doc_name, doc_id, description=description, pages=pages),
+        encoding="utf-8",
     )
     return summary_path
 
