@@ -3,13 +3,16 @@ import logging
 from openkb.config import (
     DEFAULT_CONFIG,
     get_extra_headers,
+    get_num_retries,
     get_timeout,
     load_config,
     resolve_extra_headers,
     resolve_litellm_settings,
+    resolve_num_retries,
     resolve_timeout,
     save_config,
     set_extra_headers,
+    set_num_retries,
     set_timeout,
 )
 
@@ -159,6 +162,56 @@ def test_timeout_stash_roundtrip_and_reset():
     assert get_timeout() == 1200.0
     set_timeout(None)
     assert get_timeout() is None
+
+
+# --- num_retries -------------------------------------------------------------
+
+
+def test_resolve_num_retries_absent_returns_none():
+    assert resolve_num_retries({}) is None
+
+
+def test_resolve_num_retries_int():
+    assert resolve_num_retries({"num_retries": 3}) == 3
+    assert resolve_num_retries({"num_retries": 1}) == 1
+
+
+def test_resolve_num_retries_zero_allowed():
+    # 0 is a valid retry count (no retries, but explicitly set).
+    assert resolve_num_retries({"num_retries": 0}) == 0
+
+
+def test_resolve_num_retries_rejects_negative():
+    assert resolve_num_retries({"num_retries": -1}) is None
+
+
+def test_resolve_num_retries_rejects_bool():
+    # bool is a subclass of int; True/False are not retry counts.
+    assert resolve_num_retries({"num_retries": True}) is None
+    assert resolve_num_retries({"num_retries": False}) is None
+
+
+def test_resolve_num_retries_rejects_float():
+    # A retry count is discrete; floats are rejected (no coercion).
+    assert resolve_num_retries({"num_retries": 3.5}) is None
+    assert resolve_num_retries({"num_retries": 3.0}) is None
+
+
+def test_resolve_num_retries_rejects_string():
+    # Unlike timeout, numeric strings are NOT coerced.
+    assert resolve_num_retries({"num_retries": "3"}) is None
+
+
+def test_resolve_num_retries_rejects_non_int():
+    assert resolve_num_retries({"num_retries": [3]}) is None
+    assert resolve_num_retries({"num_retries": {"a": 1}}) is None
+
+
+def test_num_retries_stash_roundtrip_and_reset():
+    set_num_retries(3)
+    assert get_num_retries() == 3
+    set_num_retries(None)
+    assert get_num_retries() is None
 
 
 def test_resolve_litellm_settings_absent_returns_empty():

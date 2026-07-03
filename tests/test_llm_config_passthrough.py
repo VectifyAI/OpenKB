@@ -156,6 +156,27 @@ def test_litellm_block_routes_timeout_and_extra_headers_per_call(tmp_path, monke
     assert callable(litellm.timeout)
 
 
+def test_litellm_block_routes_num_retries_per_call(tmp_path, monkeypatch):
+    """`num_retries` inside the litellm: block routes to the per-call stash
+    (not a litellm module global); the rest stay globals.
+    """
+    from openkb.config import get_num_retries
+
+    _isolate_env(monkeypatch)
+    _write_kb_config(
+        tmp_path,
+        "model: gpt-4o-mini\nlitellm:\n  num_retries: 4\n  drop_params: true\n",
+    )
+    litellm.drop_params = False
+    before = getattr(litellm, "num_retries", None)
+    _setup_llm_key(tmp_path)
+    assert get_num_retries() == 4
+    assert litellm.drop_params is True
+    # num_retries was routed per-call, NOT setattr'd onto the module: the
+    # module-level value is unchanged (a global 4 would have replaced it).
+    assert getattr(litellm, "num_retries", None) == before
+
+
 def test_litellm_block_timeout_wins_over_legacy_toplevel(tmp_path, monkeypatch):
     """The litellm: block value wins over the legacy top-level key."""
     from openkb.config import get_timeout

@@ -11,12 +11,13 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 #   - dataset
 #   - model
 
-# Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout` and
-# `extra_headers` apply per request, the rest are set as litellm.<key>.
+# Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout`,
+# `num_retries`, and `extra_headers` apply per request, the rest are set as
+# litellm.<key>.
 # litellm:
 #   timeout: 1200          # per-request timeout (s); raise for slow local backends (Ollama)
 #   drop_params: true      # let LiteLLM drop params a provider rejects (e.g. Ollama)
-#   num_retries: 3
+#   num_retries: 3         # retries on transient failures (e.g. model overloaded)
 #   extra_headers:         # extra HTTP headers some providers need (e.g. GitHub Copilot)
 #     Editor-Version: vscode/1.95.0
 #     Copilot-Integration-Id: vscode-chat

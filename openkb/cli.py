@@ -58,6 +58,8 @@ from openkb.config import (
     set_extra_headers,
     resolve_timeout,
     set_timeout,
+    resolve_num_retries,
+    set_num_retries,
     resolve_litellm_settings,
 )
 from openkb.add_coordinator import _cleanup_staging_dirs
@@ -169,11 +171,12 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
 
     api_key = os.environ.get("LLM_API_KEY", "")
 
-    # Try to resolve the active provider, extra headers, and request timeout
-    # from the KB config
+    # Try to resolve the active provider, extra headers, request timeout, and
+    # retry count from the KB config
     provider: str | None = None
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
+    num_retries: int | None = None
     litellm_settings: dict = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
@@ -183,17 +186,24 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             provider = _extract_provider(str(model))
             extra_headers = resolve_extra_headers(config)
             timeout = resolve_timeout(config)
+            num_retries = resolve_num_retries(config)
             litellm_settings = resolve_litellm_settings(config)
-            # `timeout` / `extra_headers` in the block route to the per-call
-            # stashes (replacing the legacy top-level keys); the rest are globals.
+            # `timeout` / `extra_headers` / `num_retries` in the block route to
+            # the per-call stashes (replacing the legacy top-level keys); the
+            # rest are globals.
             if "extra_headers" in litellm_settings:
                 extra_headers = resolve_extra_headers(
                     {"extra_headers": litellm_settings.pop("extra_headers")}
                 )
             if "timeout" in litellm_settings:
                 timeout = resolve_timeout({"timeout": litellm_settings.pop("timeout")})
+            if "num_retries" in litellm_settings:
+                num_retries = resolve_num_retries(
+                    {"num_retries": litellm_settings.pop("num_retries")}
+                )
     set_extra_headers(extra_headers)
     set_timeout(timeout)
+    set_num_retries(num_retries)
     _apply_litellm_settings(litellm_settings)
 
     if not api_key:

@@ -33,6 +33,7 @@ from openkb import frontmatter
 from openkb.config import (
     DEFAULT_ENTITY_TYPES,
     get_extra_headers,
+    get_num_retries,
     get_timeout,
     resolve_entity_types,
 )
@@ -408,6 +409,9 @@ def _llm_call(
     timeout = get_timeout()
     if timeout is not None:
         kwargs.setdefault("timeout", timeout)
+    num_retries = get_num_retries()
+    if num_retries is not None:
+        kwargs.setdefault("num_retries", num_retries)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -442,6 +446,9 @@ async def _llm_call_async(
     timeout = get_timeout()
     if timeout is not None:
         kwargs.setdefault("timeout", timeout)
+    num_retries = get_num_retries()
+    if num_retries is not None:
+        kwargs.setdefault("num_retries", num_retries)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)

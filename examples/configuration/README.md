@@ -79,12 +79,13 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 #   - dataset
 #   - model
 
-# Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout` and
-# `extra_headers` apply per request, the rest are set as litellm.<key>.
+# Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout`,
+# `num_retries`, and `extra_headers` apply per request, the rest are set as
+# litellm.<key>.
 # litellm:
 #   timeout: 1200          # per-request timeout (s); raise for slow local backends (Ollama)
 #   drop_params: true      # let LiteLLM drop params a provider rejects (e.g. Ollama)
-#   num_retries: 3
+#   num_retries: 3         # retries on transient failures (e.g. model overloaded)
 #   extra_headers:         # extra HTTP headers some providers need (e.g. GitHub Copilot)
 #     Editor-Version: vscode/1.95.0
 #     Copilot-Integration-Id: vscode-chat
@@ -101,12 +102,12 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 ### The `litellm:` block
 
 OpenKB forwards this block to LiteLLM so you can tune anything LiteLLM supports —
-you set it, LiteLLM uses it. Two keys are special:
+you set it, LiteLLM uses it. Three keys are special:
 
-- `timeout` and `extra_headers` are applied **per request** (they're needed on
-  every call).
-- Every other key (`drop_params`, `num_retries`, `ssl_verify`, …) is set on the
-  `litellm` module as a process-wide global.
+- `timeout`, `num_retries`, and `extra_headers` are applied **per request**
+  (they're needed on every call).
+- Every other key (`drop_params`, `ssl_verify`, …) is set on the `litellm`
+  module as a process-wide global.
 
 #### Slow local runtimes (Ollama, LM Studio, llama.cpp)
 

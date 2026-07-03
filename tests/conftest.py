@@ -5,12 +5,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_extra_headers():
-    """Keep the process-wide LLM extra-headers / timeout stashes from leaking across tests."""
-    from openkb.config import set_extra_headers, set_timeout
+    """Keep process-wide LLM stashes from leaking across tests.
+
+    Resets extra-headers, timeout, and num_retries between tests.
+    """
+    from openkb.config import set_extra_headers, set_num_retries, set_timeout
 
     yield
     set_extra_headers({})
     set_timeout(None)
+    set_num_retries(None)
 
 
 @pytest.fixture

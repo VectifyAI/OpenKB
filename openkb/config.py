@@ -176,6 +176,32 @@ def resolve_timeout(config: dict) -> float | None:
     return value
 
 
+def resolve_num_retries(config: dict) -> int | None:
+    """Resolve the optional ``num_retries:`` key to a non-negative int.
+
+    Returns ``None`` (use LiteLLM's default) when absent or invalid; rejects
+    bools, floats, and strings, warning when present but unusable. A retry
+    count is a discrete count, so no numeric coercion is applied (unlike
+    :func:`resolve_timeout`).
+    """
+    raw = config.get("num_retries")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        logger.warning(
+            "config: 'num_retries' must be a non-negative integer, got %s — ignoring it.",
+            type(raw).__name__,
+        )
+        return None
+    if raw < 0:
+        logger.warning(
+            "config: 'num_retries' must be a non-negative integer, got %s — ignoring it.",
+            raw,
+        )
+        return None
+    return raw
+
+
 def resolve_litellm_settings(config: dict) -> dict[str, Any]:
     """Resolve the optional ``litellm:`` mapping of LiteLLM module settings.
 
@@ -241,6 +267,22 @@ def get_timeout_extra_args() -> dict[str, float] | None:
     field), or ``None``. The LiteLLM provider forwards it to the completion call.
     """
     return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
+
+
+# Process-wide LLM request retry count, set from config by the CLI and read at
+# the call sites via get_num_retries(). None = use LiteLLM's default.
+_runtime_num_retries: int | None = None
+
+
+def set_num_retries(num_retries: int | None) -> None:
+    """Set the process-wide LLM request retry count; ``None`` clears it."""
+    global _runtime_num_retries
+    _runtime_num_retries = num_retries
+
+
+def get_num_retries() -> int | None:
+    """Return the process-wide LLM request retry count, or ``None``."""
+    return _runtime_num_retries
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
