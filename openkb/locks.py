@@ -180,6 +180,20 @@ def kb_read_lock(openkb_dir: Path):
     return kb_lock(openkb_dir, exclusive=False)
 
 
+def kb_ingest_lock_held(openkb_dir: Path) -> bool:
+    """Return True iff the *current thread* holds the exclusive ingest lock.
+
+    Reentrancy is tracked per-thread (``threading.local``), so a worker thread
+    returns ``False`` even when the main thread holds the lock. Mutation
+    primitives use this to assert they run on the lock-owning thread rather
+    than silently deadlocking on a worker's separate OS ``flock`` acquire.
+    """
+    held = _held_locks()
+    resolved = (openkb_dir / "ingest.lock").resolve()
+    exclusive_depth, _ = held.get(resolved, (0, 0))
+    return exclusive_depth > 0
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         # Windows cannot open a directory handle to fsync it. os.replace is

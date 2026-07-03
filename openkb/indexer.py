@@ -203,51 +203,72 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
                     f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}"
                 ) from exc
 
-    # Fetch complete document (metadata + structure + text)
-    doc = col.get_document(doc_id, include_text=True)
-    indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
-    description: str = doc.get("doc_description", "")
-    structure: list = doc.get("structure", [])
+    # The PageIndex blob for doc_id is now durably on disk. The add mutation no
+    # longer eagerly snapshots .openkb/files — it registers the new blob via
+    # snapshot.track_new() only on a successful return — so if any step below
+    # fails, delete the document we just added. Otherwise the blob leaks as an
+    # orphan that pageindex.db (rolled back by the snapshot) no longer refs and
+    # no reaper reclaims.
+    try:
+        # Fetch complete document (metadata + structure + text)
+        doc = col.get_document(doc_id, include_text=True)
+        indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
+        description: str = doc.get("doc_description", "")
+        structure: list = doc.get("structure", [])
 
-    # Debug: print doc keys and page_count to diagnose get_page_content range
-    logger.info("Doc keys: %s", list(doc.keys()))
-    logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
+        # Debug: print doc keys and page_count to diagnose get_page_content range
+        logger.info("Doc keys: %s", list(doc.keys()))
+        logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
 
-    tree = {
-        "doc_name": indexed_doc_name,
-        "doc_description": description,
-        "structure": structure,
-    }
+        tree = {
+            "doc_name": indexed_doc_name,
+            "doc_description": description,
+            "structure": structure,
+        }
 
-    # Write wiki/sources/ — per-page content
-    sources_dir = kb_dir / "wiki" / "sources"
-    sources_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = sources_dir / "images" / source_name
+        # Write wiki/sources/ — per-page content
+        sources_dir = kb_dir / "wiki" / "sources"
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        images_dir = sources_dir / "images" / source_name
 
-    all_pages: list[dict[str, Any]] = []
-    if pageindex_api_key:
-        # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
-        # requires a page range, so pass "1-N".
-        page_count = _get_pdf_page_count(pdf_path)
-        try:
-            all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
-        except Exception as exc:
-            logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
-
-    if not all_pages:
+        all_pages: list[dict[str, Any]] = []
         if pageindex_api_key:
-            logger.warning(
-                "Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name
+            # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
+            # requires a page range, so pass "1-N".
+            page_count = _get_pdf_page_count(pdf_path)
+            try:
+                all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
+            except Exception as exc:
+                logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
+
+        if not all_pages:
+            if pageindex_api_key:
+                logger.warning(
+                    "Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name
+                )
+            all_pages = _normalize_page_content(
+                _convert_pdf_to_pages(pdf_path, source_name, images_dir)
             )
-        all_pages = _normalize_page_content(
-            _convert_pdf_to_pages(pdf_path, source_name, images_dir)
+
+        if not all_pages:
+            raise RuntimeError(f"No page content extracted for {pdf_path.name}")
+
+        _write_long_doc_artifacts(
+            tree, all_pages, source_name, doc_id, kb_dir, description=description
         )
-
-    if not all_pages:
-        raise RuntimeError(f"No page content extracted for {pdf_path.name}")
-
-    _write_long_doc_artifacts(tree, all_pages, source_name, doc_id, kb_dir, description=description)
-    return IndexResult(doc_id=doc_id, description=description, tree=tree)
+        return IndexResult(doc_id=doc_id, description=description, tree=tree)
+    except BaseException:
+        # Best-effort: remove the blob this add created. A failure here (e.g. a
+        # second interrupt) only means the blob may stay orphaned — the original
+        # error still propagates so the caller (mutation coordinator) rolls back
+        # everything else it snapshotted.
+        try:
+            col.delete_document(doc_id)
+        except Exception:
+            logger.warning(
+                "PageIndex cleanup of %s failed after error; blob may be orphaned", doc_id
+            )
+        raise
 
 
 # PageIndex's get_page_content rejects a single page range covering more than

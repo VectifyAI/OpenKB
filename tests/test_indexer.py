@@ -98,6 +98,29 @@ class TestIndexLongDocument:
         assert result.description == sample_tree["doc_description"]
         assert result.tree is not None
 
+    def test_deletes_pageindex_doc_when_a_post_add_step_fails(self, kb_dir, sample_tree, tmp_path):
+        """The PageIndex blob is durably written by col.add(), but .openkb/files is
+        no longer in the add mutation's eager snapshot — track_new only registers
+        the blob on a successful return. So if any step after col.add() raises
+        (here: get_document), index_long_document must delete the doc it just
+        added; otherwise the blob leaks as an orphan that pageindex.db — rolled
+        back by the snapshot — no longer references, and no reaper reclaims."""
+        doc_id = "abc-123"
+        col = self._make_fake_collection(doc_id, sample_tree)
+        col.get_document.side_effect = RuntimeError("get_document blew up")
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+            with pytest.raises(RuntimeError, match="get_document blew up"):
+                index_long_document(pdf_path, kb_dir)
+
+        col.delete_document.assert_called_once_with(doc_id)
+
     def test_source_page_written_as_json(self, kb_dir, sample_tree, tmp_path):
         """Long doc source should be written as JSON, not markdown."""
         import json as json_mod

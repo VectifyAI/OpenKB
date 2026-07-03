@@ -97,6 +97,37 @@ class TestAddCommand:
         assert not (kb_dir / "wiki" / "sources" / "notes.md").exists()
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
 
+    def test_add_single_file_uses_add_mutation_coordinator(self, tmp_path):
+        from openkb.cli import add_single_file
+        from openkb.converter import ConvertResult
+
+        kb_dir = self._setup_kb(tmp_path)
+        doc = tmp_path / "coordinated.md"
+        doc.write_text("# Coordinated\n", encoding="utf-8")
+        staging_root = kb_dir / ".openkb" / "staging" / "fake"
+        source_path = staging_root / "wiki" / "sources" / "coordinated.md"
+        raw_path = staging_root / "raw" / "coordinated.md"
+        result = ConvertResult(
+            raw_path=raw_path,
+            source_path=source_path,
+            file_hash="abc123",
+            doc_name="coordinated",
+        )
+
+        with (
+            patch("openkb.cli.convert_document", return_value=result),
+            patch("openkb.cli.publish_staged_tree"),
+            patch("openkb.cli.asyncio.run"),
+            patch("openkb.cli._setup_llm_key"),
+            patch("openkb.add_coordinator.run_add_mutation", return_value=True) as mock_run,
+        ):
+            assert add_single_file(doc, kb_dir) == "added"
+
+        plan = mock_run.call_args.args[1]
+        assert plan.operation == "add"
+        assert plan.details["doc_name"] == "coordinated"
+        assert kb_dir / ".openkb" / "hashes.json" in plan.touched_paths
+
     def _long_doc_conv(self, kb_dir, name, file_hash):
         from openkb.converter import ConvertResult
 
@@ -202,6 +233,33 @@ class TestAddCommand:
             assert "a.md" in called_names
             assert "b.txt" in called_names
             assert "ignore.xyz" not in called_names
+
+    def test_add_directory_stops_after_dirty_rollback(self, tmp_path):
+        import pytest
+
+        from openkb.add_coordinator import DirtyRollbackError
+
+        kb_dir = self._setup_kb(tmp_path)
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "a.md").write_text("# A")
+        (docs_dir / "b.md").write_text("# B")
+        dirty_error = DirtyRollbackError(
+            "add",
+            kb_dir / ".openkb" / "journal" / "retained.json",
+        )
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli.add_single_file", side_effect=dirty_error) as mock_add,
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
+            with pytest.raises(DirtyRollbackError) as exc_info:
+                runner.invoke(cli, ["add", str(docs_dir)], catch_exceptions=False)
+
+        assert exc_info.value is dirty_error
+        mock_add.assert_called_once()
+        assert mock_add.call_args.args[0].name == "a.md"
 
     def test_add_unsupported_extension(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
@@ -464,6 +522,191 @@ class TestImportFromPageindexCloud:
         registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
         assert registry.all_entries() == {}
 
+    def test_cloud_import_uses_add_mutation_coordinator(self, tmp_path):
+        from openkb.cli import import_from_pageindex_cloud
+
+        kb_dir = self._setup_kb(tmp_path)
+        cloud = self._cloud_data(doc_name="Cloud-Paper")
+
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch("openkb.add_coordinator.run_add_mutation", return_value=True) as mock_run,
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            assert import_from_pageindex_cloud("cloud-1", kb_dir) == "added"
+
+        plan = mock_run.call_args.args[1]
+        assert plan.operation == "cloud_import"
+        assert plan.details == {"doc_id": "cloud-1", "doc_name": "Cloud-Paper"}
+        assert kb_dir / ".openkb" / "hashes.json" in plan.touched_paths
+
+    def test_cloud_import_rechecks_doc_name_under_lock_after_prepare_race(self, tmp_path):
+        import hashlib
+        from contextlib import contextmanager
+
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.locks import kb_ingest_lock as real_kb_ingest_lock
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        cloud = self._cloud_data(doc_name="Cloud-Paper")
+        existing_hash = "0" * 64
+        injected = {"done": False}
+
+        @contextmanager
+        def race_before_lock(openkb_dir):
+            if not injected["done"]:
+                registry = HashRegistry(openkb_dir / "hashes.json")
+                registry.add(
+                    existing_hash,
+                    {
+                        "name": "Other Cloud Paper.pdf",
+                        "doc_name": "Cloud-Paper",
+                        "type": "pageindex_cloud",
+                        "origin": "cloud",
+                        "path": "pageindex-cloud:other-cloud",
+                        "source_path": "wiki/sources/Cloud-Paper.json",
+                        "doc_id": "other-cloud",
+                    },
+                )
+                injected["done"] = True
+            with real_kb_ingest_lock(openkb_dir):
+                yield
+
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch("openkb.cli.kb_ingest_lock", side_effect=race_before_lock),
+            patch("openkb.cli.compile_long_doc", return_value=None),
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            assert import_from_pageindex_cloud("cloud-1", kb_dir) == "added"
+
+        registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
+        synthetic = hashlib.sha256(b"pageindex-cloud:cloud-1").hexdigest()
+        expected_doc_name = f"Cloud-Paper-{synthetic[:8]}"
+        assert registry.get(existing_hash)["doc_name"] == "Cloud-Paper"
+        assert registry.get(synthetic)["doc_name"] == expected_doc_name
+        assert (kb_dir / "wiki" / "sources" / f"{expected_doc_name}.json").exists()
+
+    def test_cloud_import_skips_if_same_doc_id_registered_after_fetch(self, tmp_path):
+        import hashlib
+        from contextlib import contextmanager
+
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.locks import kb_ingest_lock as real_kb_ingest_lock
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        cloud = self._cloud_data(doc_name="Cloud-Paper")
+        path_key = "pageindex-cloud:cloud-1"
+        synthetic = hashlib.sha256(path_key.encode("utf-8")).hexdigest()
+        lock_calls = {"count": 0}
+
+        @contextmanager
+        def register_same_doc_before_second_lock(openkb_dir):
+            lock_calls["count"] += 1
+            if lock_calls["count"] == 2:
+                HashRegistry(openkb_dir / "hashes.json").add(
+                    synthetic,
+                    {
+                        "name": "Cloud Paper.pdf",
+                        "doc_name": "Cloud-Paper",
+                        "type": "pageindex_cloud",
+                        "origin": "cloud",
+                        "path": path_key,
+                        "source_path": "wiki/sources/Cloud-Paper.json",
+                        "doc_id": "cloud-1",
+                    },
+                )
+            with real_kb_ingest_lock(openkb_dir):
+                yield
+
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud) as mock_prepare,
+            patch("openkb.cli.kb_ingest_lock", side_effect=register_same_doc_before_second_lock),
+            patch("openkb.cli.compile_long_doc") as mock_compile,
+            patch("openkb.add_coordinator.run_add_mutation") as mock_run,
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            assert import_from_pageindex_cloud("cloud-1", kb_dir) == "skipped"
+
+        assert lock_calls["count"] == 2
+        mock_prepare.assert_called_once()
+        mock_compile.assert_not_called()
+        mock_run.assert_not_called()
+        assert HashRegistry(kb_dir / ".openkb" / "hashes.json").is_known(synthetic)
+
+    def test_cloud_import_propagates_dirty_rollback(self, tmp_path):
+        import pytest
+
+        from openkb.add_coordinator import DirtyRollbackError
+        from openkb.cli import import_from_pageindex_cloud
+
+        kb_dir = self._setup_kb(tmp_path)
+        cloud = self._cloud_data(doc_name="Cloud-Paper")
+        dirty_error = DirtyRollbackError(
+            "cloud_import",
+            kb_dir / ".openkb" / "journal" / "retained.json",
+        )
+
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch("openkb.add_coordinator.run_add_mutation", side_effect=dirty_error),
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            with pytest.raises(DirtyRollbackError) as exc_info:
+                import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert exc_info.value is dirty_error
+
+    def test_cloud_import_failure_message_names_real_cause(self, tmp_path, capsys):
+        """A non-body failure caught at the outer except (here: name resolution)
+        must surface the real error, not be mislabeled as 'Failed to prepare
+        mutation snapshot'. run_add_mutation handles snapshot/body failures
+        itself and returns False, so the broad except only ever catches
+        pre-mutation errors that the old label misdescribed."""
+        from openkb.cli import import_from_pageindex_cloud
+
+        kb_dir = self._setup_kb(tmp_path)
+        cloud = self._cloud_data(doc_name="Cloud-Paper")
+
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch(
+                "openkb.cli.resolve_doc_name_from_key",
+                side_effect=RuntimeError("name resolution blew up"),
+            ),
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            assert import_from_pageindex_cloud("cloud-1", kb_dir) == "failed"
+
+        out = capsys.readouterr().out
+        assert "Failed to prepare mutation snapshot" not in out
+        assert "name resolution blew up" in out
+
+    def test_cloud_import_keyboard_interrupt_rolls_back_artifacts(self, tmp_path):
+        import pytest
+
+        from openkb.cli import import_from_pageindex_cloud
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        doc_name = "Cloud-Paper"
+        cloud = self._cloud_data(doc_name=doc_name)
+
+        with (
+            patch("openkb.cli.prepare_cloud_import", return_value=cloud),
+            patch("openkb.cli.compile_long_doc", side_effect=KeyboardInterrupt()),
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                import_from_pageindex_cloud("cloud-1", kb_dir)
+
+        assert not (kb_dir / "wiki" / "summaries" / f"{doc_name}.md").exists()
+        assert not (kb_dir / "wiki" / "sources" / f"{doc_name}.json").exists()
+        assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
+        assert list((kb_dir / ".openkb" / "journal").glob("*.json")) == []
+
     def test_compile_failure_cleans_up_orphan_artifacts(self, tmp_path):
         """If import succeeds (artifacts written) but compile fails twice, the
         summary/source artifacts are cleaned up — no registry entry exists, so
@@ -492,3 +735,180 @@ class TestImportFromPageindexCloud:
         assert not (kb_dir / "wiki" / "sources" / f"{doc_name}.json").exists()
         # Nothing registered → a retry is not skipped.
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
+
+
+class TestAddMutationCoordinator:
+    def _setup_kb(self, tmp_path):
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "wiki" / "sources" / "images").mkdir(parents=True)
+        (tmp_path / "wiki" / "summaries").mkdir(parents=True)
+        (tmp_path / "wiki" / "concepts").mkdir(parents=True)
+        (tmp_path / "wiki" / "entities").mkdir(parents=True)
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n", encoding="utf-8")
+        (openkb_dir / "hashes.json").write_text("{}", encoding="utf-8")
+        return tmp_path
+
+    def test_coordinator_rolls_back_before_commit_and_skips_post_commit(self, tmp_path):
+        from openkb.add_coordinator import AddMutationPlan, run_add_mutation
+        from openkb.locks import kb_ingest_lock
+
+        kb_dir = self._setup_kb(tmp_path)
+        official = kb_dir / "wiki" / "sources" / "doc.md"
+        post_commit_calls = []
+
+        def body(_snapshot):
+            official.parent.mkdir(parents=True, exist_ok=True)
+            official.write_text("# changed\n", encoding="utf-8")
+            raise RuntimeError("before commit")
+
+        plan = AddMutationPlan(
+            operation="add",
+            details={"doc_name": "doc"},
+            touched_paths=[official],
+            body=body,
+            post_commit_hooks=[lambda: post_commit_calls.append("ran")],
+        )
+
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            assert run_add_mutation(kb_dir, plan) is False
+        assert not official.exists()
+        assert post_commit_calls == []
+
+    def test_coordinator_reports_failed_mutation(self, tmp_path, capsys):
+        from openkb.add_coordinator import AddMutationPlan, run_add_mutation
+        from openkb.locks import kb_ingest_lock
+
+        kb_dir = self._setup_kb(tmp_path)
+        official = kb_dir / "wiki" / "sources" / "doc.md"
+
+        def body(_snapshot):
+            official.parent.mkdir(parents=True, exist_ok=True)
+            official.write_text("# changed\n", encoding="utf-8")
+            raise RuntimeError("boom")
+
+        plan = AddMutationPlan(
+            operation="add",
+            details={"name": "doc.md", "doc_name": "doc"},
+            touched_paths=[official],
+            body=body,
+        )
+
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            assert run_add_mutation(kb_dir, plan) is False
+
+        output = capsys.readouterr().out
+        assert "[ERROR] add failed for doc.md: boom" in output
+
+    def test_coordinator_post_commit_failure_does_not_roll_back(self, tmp_path):
+        from openkb.add_coordinator import AddMutationPlan, run_add_mutation
+        from openkb.locks import kb_ingest_lock
+
+        kb_dir = self._setup_kb(tmp_path)
+        official = kb_dir / "wiki" / "sources" / "doc.md"
+
+        def body(_snapshot):
+            official.parent.mkdir(parents=True, exist_ok=True)
+            official.write_text("# committed\n", encoding="utf-8")
+
+        def bad_hook():
+            raise RuntimeError("hook failed")
+
+        plan = AddMutationPlan(
+            operation="add",
+            details={"doc_name": "doc"},
+            touched_paths=[official],
+            body=body,
+            post_commit_hooks=[bad_hook],
+        )
+
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            assert run_add_mutation(kb_dir, plan) is True
+        assert official.read_text(encoding="utf-8") == "# committed\n"
+        assert list((kb_dir / ".openkb" / "journal").glob("*.json")) == []
+
+    def test_coordinator_keyboard_interrupt_rolls_back_and_reraises(self, tmp_path):
+        import pytest
+
+        from openkb.add_coordinator import AddMutationPlan, run_add_mutation
+        from openkb.locks import kb_ingest_lock
+
+        kb_dir = self._setup_kb(tmp_path)
+        official = kb_dir / "wiki" / "sources" / "doc.md"
+        post_commit_calls = []
+
+        def body(_snapshot):
+            official.parent.mkdir(parents=True, exist_ok=True)
+            official.write_text("# interrupted\n", encoding="utf-8")
+            raise KeyboardInterrupt()
+
+        plan = AddMutationPlan(
+            operation="add",
+            details={"doc_name": "doc"},
+            touched_paths=[official],
+            body=body,
+            post_commit_hooks=[lambda: post_commit_calls.append("ran")],
+        )
+
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            with pytest.raises(KeyboardInterrupt):
+                run_add_mutation(kb_dir, plan)
+
+        assert not official.exists()
+        assert post_commit_calls == []
+        assert list((kb_dir / ".openkb" / "journal").glob("*.json")) == []
+
+    def test_run_add_mutation_requires_lock_held(self, tmp_path):
+        import pytest
+
+        from openkb.add_coordinator import AddMutationPlan, run_add_mutation
+
+        kb_dir = self._setup_kb(tmp_path)
+
+        plan = AddMutationPlan(
+            operation="add",
+            details={"doc_name": "doc"},
+            touched_paths=[kb_dir / "wiki" / "sources" / "doc.md"],
+            body=lambda _snapshot: None,
+        )
+
+        with pytest.raises(RuntimeError, match="requires the caller to hold kb_ingest_lock"):
+            run_add_mutation(kb_dir, plan)
+
+    def test_run_add_mutation_raises_dirty_rollback_when_rollback_fails(self, tmp_path):
+        import pytest
+
+        from openkb.add_coordinator import AddMutationPlan, DirtyRollbackError, run_add_mutation
+        from openkb.locks import kb_ingest_lock
+        from openkb.mutation import MutationSnapshot
+
+        kb_dir = self._setup_kb(tmp_path)
+        official = kb_dir / "wiki" / "sources" / "doc.md"
+        official.parent.mkdir(parents=True, exist_ok=True)
+        official.write_text("# before\n", encoding="utf-8")
+
+        def body(_snapshot):
+            official.write_text("# after\n", encoding="utf-8")
+            raise RuntimeError("body fails after partial apply")
+
+        plan = AddMutationPlan(
+            operation="add",
+            details={"doc_name": "doc"},
+            touched_paths=[official],
+            body=body,
+        )
+
+        # Force rollback to fail: rollback_best_effort returns the error instead
+        # of None, so the active journal is retained for next-run recovery.
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            with patch.object(
+                MutationSnapshot, "rollback_best_effort", return_value=OSError("disk full")
+            ):
+                with pytest.raises(DirtyRollbackError) as exc_info:
+                    run_add_mutation(kb_dir, plan)
+
+        assert exc_info.value.operation == "add"
+        # The journal is retained on disk for next-run recovery.
+        assert exc_info.value.journal_path.exists()
+        assert exc_info.value.journal_path.is_file()
