@@ -535,7 +535,10 @@ def _retarget_prepared_document_artifacts(prepared, doc_name: str) -> None:
     if old_source.exists():
         text = old_source.read_text(encoding="utf-8")
         text = text.replace(f"sources/images/{old_doc_name}/", f"sources/images/{doc_name}/")
-        old_source.write_text(text, encoding="utf-8")
+        # LF-preserving rewrite: write_text without newline= would translate \n
+        # to \r\n on Windows, leaving a collision-renamed source CRLF while every
+        # other source (written via atomic_write_text in convert) stays LF.
+        atomic_write_text(old_source, text)
         old_source.rename(new_source)
         result.source_path = new_source
     # Defensive: if prepare ever writes source_path off the <doc_name>.md

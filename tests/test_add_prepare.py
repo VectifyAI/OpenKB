@@ -115,6 +115,54 @@ def test_commit_prepared_document_resolves_final_name_under_serial_owner(tmp_pat
     assert (kb_dir / "wiki" / "sources" / f"{renamed[0]['doc_name']}.md").exists()
 
 
+def test_retarget_preserves_lf_line_endings(tmp_path, monkeypatch):
+    """Renaming a prepared source on collision must keep it LF.
+
+    The convert phase writes via atomic_write_text (binary, LF preserved), but
+    retarget used Path.write_text without newline=, which on Windows translates
+    \\n to \\r\\n — so a collision-renamed source ends up CRLF while every other
+    source stays LF (inconsistent KB, noisy git diffs, stray \\r in \\n-split
+    parsers). POSIX write_text already leaves LF, so we force the Windows
+    translation to prove the contract holds regardless of platform.
+    """
+    from openkb.add_prepare import PreparedDocument
+    from openkb.cli import _retarget_prepared_document_artifacts
+    from openkb.converter import ConvertResult
+
+    staging = tmp_path / "staging"
+    (staging / "raw").mkdir(parents=True)
+    sources = staging / "wiki" / "sources"
+    sources.mkdir(parents=True)
+
+    old_name = "orig"
+    new_name = "orig-deadbeef"
+    old_source = sources / f"{old_name}.md"
+    old_source.write_text("# Title\n\nsources/images/orig/x.png\n", encoding="utf-8")
+    old_raw = staging / "raw" / f"{old_name}.md"
+    old_raw.write_text("raw\n", encoding="utf-8")
+
+    prepared = PreparedDocument(
+        input_index=0,
+        source_path=Path(f"{old_name}.md"),
+        staging_dir=staging,
+        result=ConvertResult(doc_name=old_name, raw_path=old_raw, source_path=old_source),
+    )
+
+    real_write_text = Path.write_text
+
+    def windows_translate(self, data, *args, **kwargs):
+        # Mimic Windows default text-mode write (newline=None): \n -> \r\n.
+        return real_write_text(self, data.replace("\n", "\r\n"), *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", windows_translate)
+
+    _retarget_prepared_document_artifacts(prepared, new_name)
+
+    new_source = sources / f"{new_name}.md"
+    assert new_source.exists()
+    assert b"\r\n" not in new_source.read_bytes()
+
+
 def test_commit_prepared_document_requires_serial_owner_lock(tmp_path):
     import pytest
 

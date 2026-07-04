@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import tempfile
 import threading
 from pathlib import Path
@@ -127,6 +128,32 @@ def _drain_pending_journals(openkb_dir: Path) -> None:
     _reap_prepare_staging(openkb_dir)
 
 
+def _reap_prepare_staging_onerror(func, path, exc_info) -> None:
+    """``shutil.rmtree`` onerror: clear a read-only bit so the reap self-heals.
+
+    ``shutil.copy2`` preserves a read-only source's attribute into staging; on
+    Windows ``os.unlink``/``os.rmdir`` deny a read-only entry, so rmtree would
+    leave the orphan behind on every reap ("Could not fully reap …" forever,
+    re-logged on each exclusive-lock acquisition). Adding the owner-write bit
+    clears ``FILE_ATTRIBUTE_READONLY`` and the retry succeeds (POSIX is
+    unaffected — a read-only bit never blocks unlink there). Any other error is
+    swallowed to preserve the best-effort reap this branch has always had; a
+    still-stuck orphan is reported via the ``orphan.exists()`` check below.
+    ``path`` is the absolute path shutil reports (``_rmtree_safe_fd`` →
+    ``onexc`` → here), so ``chmod`` and the retry resolve correctly.
+    """
+    exc = exc_info[1] if exc_info else None
+    if isinstance(exc, PermissionError) and func in (os.unlink, os.rmdir):
+        try:
+            os.chmod(path, os.stat(path).st_mode | stat.S_IWUSR)
+        except OSError:
+            return
+        try:
+            func(path)
+        except OSError:
+            return
+
+
 def _reap_prepare_staging(openkb_dir: Path) -> None:
     """Remove orphaned prepare-staging dirs left by interrupted prepares.
 
@@ -152,9 +179,16 @@ def _reap_prepare_staging(openkb_dir: Path) -> None:
             log.warning("Skipping symlink in prepare staging (not followed): %s", orphan)
             continue
         if orphan.is_dir():
-            shutil.rmtree(orphan, ignore_errors=True)
+            shutil.rmtree(orphan, onerror=_reap_prepare_staging_onerror)
         else:
-            orphan.unlink(missing_ok=True)
+            # Best-effort: a loose file an AV/indexer holds open on Windows
+            # raises PermissionError (missing_ok only swallows FileNotFoundError).
+            # Swallow OSError so one unreachable orphan can't escape the reap,
+            # run up through kb_lock, and stall every exclusive-lock command.
+            try:
+                orphan.unlink(missing_ok=True)
+            except OSError as exc:
+                log.debug("Could not unlink orphaned prepare staging %s: %s", orphan, exc)
         if orphan.exists():
             log.warning("Could not fully reap orphaned prepare staging: %s", orphan)
         else:

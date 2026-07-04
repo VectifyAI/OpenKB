@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -209,3 +211,78 @@ def test_reaper_does_not_follow_symlink_in_prepare_staging(tmp_path):
         pass
 
     assert (target / "keep.txt").exists()
+
+
+def test_reaper_survives_denied_unlink_of_loose_file_in_prepare_staging(tmp_path, monkeypatch):
+    """A loose file (not a dir) in staging/prepare/ whose unlink is denied must
+    not escape kb_lock and stall the whole KB.
+
+    On Windows an AV/indexer holding such a file makes os.unlink raise
+    PermissionError; ``missing_ok=True`` only swallows FileNotFoundError, so the
+    error currently propagates out of every exclusive-lock acquisition
+    (add/remove/recompile/chat). The directory branch uses rmtree and is safe;
+    this guards the asymmetric file branch.
+    """
+    openkb_dir = tmp_path / ".openkb"
+    prepare_root = openkb_dir / "staging" / "prepare"
+    prepare_root.mkdir(parents=True)
+    loose = prepare_root / "stray.dat"
+    loose.write_text("x", encoding="utf-8")
+
+    real_unlink = Path.unlink
+
+    def deny_unlink(self, *args, **kwargs):
+        if Path(self) == loose:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", deny_unlink)
+
+    # Must not raise: the reap is best-effort and must not stall the lock holder.
+    with kb_ingest_lock(openkb_dir):
+        pass
+
+
+def test_reaper_self_heals_readonly_dir_under_prepare_staging(tmp_path, monkeypatch):
+    """A read-only file inside an orphaned prepare dir must be reaped, not left
+    behind forever.
+
+    shutil.copy2 preserves a read-only source's attribute into staging; on
+    Windows os.unlink denies a read-only file and rmtree(ignore_errors=True)
+    leaves the tree behind, so the orphan resurfaces as "Could not fully reap"
+    on every lock acquisition and never self-heals. POSIX deletes read-only
+    files fine, so we simulate the Windows denial: deny once, then let the
+    retry (after the handler clears the read-only bit) succeed.
+    """
+    openkb_dir = tmp_path / ".openkb"
+    prepare_root = openkb_dir / "staging" / "prepare"
+    prepare_root.mkdir(parents=True)
+    orphan = prepare_root / "000005-doc-11223344"
+    orphan.mkdir()
+    readonly = orphan / "readonly.md"
+    readonly.write_text("locked", encoding="utf-8")
+
+    real_unlink = os.unlink
+    attempts = {"n": 0}
+
+    def deny_once_then_succeed(*args, **kwargs):
+        # shutil's POSIX fast path calls os.unlink(entry_name, dir_fd=topfd) — a
+        # relative name — so identify the read-only file by basename. Deny the
+        # first attempt (Windows Access-denied on a read-only file), then let the
+        # handler's retry (after it clears the read-only bit) succeed.
+        name = args[0] if args else kwargs.get("path")
+        if Path(str(name)).name == readonly.name:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise PermissionError(13, "Access is denied", str(name))
+        return real_unlink(*args, **kwargs)
+
+    # shutil.rmtree calls os.unlink internally; patching the shared os module
+    # makes its first attempt on the read-only file raise (Windows behaviour).
+    monkeypatch.setattr(os, "unlink", deny_once_then_succeed)
+
+    with kb_ingest_lock(openkb_dir):
+        pass
+
+    assert not orphan.exists()  # fully reaped, no residue to warn about forever
+    assert attempts["n"] == 2  # denied once, recovered on the retry
