@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -123,6 +124,41 @@ def _drain_pending_journals(openkb_dir: Path) -> None:
     log = logging.getLogger(__name__)
     for message in recover_pending_journals(openkb_dir.parent):
         log.warning(message)
+    _reap_prepare_staging(openkb_dir)
+
+
+def _reap_prepare_staging(openkb_dir: Path) -> None:
+    """Remove orphaned prepare-staging dirs left by interrupted prepares.
+
+    Prepare staging (``.openkb/staging/prepare/<idx>-<stem>-<uuid>/``) has no
+    mutation journal, so an interrupted prepare can strand it with nothing to
+    reclaim it. This runs at first exclusive-lock acquisition — under the OS
+    ``flock``, before this process creates staging of its own — so anything
+    present is an orphan from a crashed prior run and is reaped. Directory add
+    holds the same lock across its whole prepare+commit batch (via the ``add``
+    command's ``@_with_kb_lock``), so a live batch's staging is never visible to
+    another process's reaper. Scoped strictly to ``staging/prepare/``; mutation
+    journals and ``staging/rollback-*`` backups are left to
+    :func:`openkb.mutation.recover_pending_journals`.
+    """
+    log = logging.getLogger(__name__)
+    prepare_root = openkb_dir / "staging" / "prepare"
+    if not prepare_root.is_dir():
+        return
+    # Materialize first: entries are removed from this dir inside the loop.
+    for orphan in list(prepare_root.iterdir()):
+        if orphan.is_symlink():
+            # Never follow a symlink — rmtree could descend into its target.
+            log.warning("Skipping symlink in prepare staging (not followed): %s", orphan)
+            continue
+        if orphan.is_dir():
+            shutil.rmtree(orphan, ignore_errors=True)
+        else:
+            orphan.unlink(missing_ok=True)
+        if orphan.exists():
+            log.warning("Could not fully reap orphaned prepare staging: %s", orphan)
+        else:
+            log.info("Reaped orphaned prepare staging: %s", orphan)
 
 
 @contextlib.contextmanager

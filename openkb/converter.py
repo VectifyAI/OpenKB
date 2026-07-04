@@ -139,109 +139,143 @@ def get_pdf_page_count(path: Path) -> int:
         return doc.page_count
 
 
-def convert_document(
+def _convert_document_impl(
     src: Path,
     kb_dir: Path,
     *,
-    staging_dir: Path | None = None,
+    staging_dir: Path | None,
+    resolve_final_name: bool,
 ) -> ConvertResult:
-    """Convert a document and integrate it into the knowledge base.
+    # ------------------------------------------------------------------
+    # Load config & state
+    # ------------------------------------------------------------------
+    openkb_dir = kb_dir / ".openkb"
+    config = load_config(openkb_dir / "config.yaml")
+    threshold: int = config.get("pageindex_threshold", 20)
+    artifact_root = staging_dir if staging_dir is not None else kb_dir
+    registry = HashRegistry(openkb_dir / "hashes.json")
 
-    Steps:
-    1. Hash-check — skip if already known.
-    2. Copy source to ``raw/``.
-    3. If PDF and page count >= threshold → return :attr:`ConvertResult.is_long_doc`.
-    4. If ``.md`` — read, process relative images, save to ``wiki/sources/``.
-    5. Otherwise — run MarkItDown, extract base64 images, save to ``wiki/sources/``.
-    6. Register hash in the registry.
-    """
-    with kb_ingest_lock(kb_dir / ".openkb"):
-        # ------------------------------------------------------------------
-        # Load config & state
-        # ------------------------------------------------------------------
-        openkb_dir = kb_dir / ".openkb"
-        config = load_config(openkb_dir / "config.yaml")
-        threshold: int = config.get("pageindex_threshold", 20)
-        artifact_root = staging_dir if staging_dir is not None else kb_dir
-        registry = HashRegistry(openkb_dir / "hashes.json")
-
-        # ------------------------------------------------------------------
-        # 1. Hash check + identity resolution
-        # ------------------------------------------------------------------
-        file_hash = HashRegistry.hash_file(src)
-        if registry.is_known(file_hash):
-            logger.info("Skipping already-known file: %s", src.name)
-            stored = registry.get(file_hash) or {}
-            return ConvertResult(
-                skipped=True,
-                file_hash=file_hash,
-                doc_name=stored.get("doc_name") or Path(stored.get("name", src.name)).stem,
-            )
+    # ------------------------------------------------------------------
+    # 1. Hash check + identity resolution
+    # ------------------------------------------------------------------
+    file_hash = HashRegistry.hash_file(src)
+    if registry.is_known(file_hash):
+        logger.info("Skipping already-known file: %s", src.name)
+        stored = registry.get(file_hash) or {}
+        return ConvertResult(
+            skipped=True,
+            file_hash=file_hash,
+            doc_name=stored.get("doc_name") or Path(stored.get("name", src.name)).stem,
+        )
+    if resolve_final_name:
         doc_name = resolve_doc_name(
             src,
             kb_dir,
             registry,
             persist_legacy=staging_dir is None,
         )
+    else:
+        doc_name = _sanitize_stem(src.stem)
 
-        # ------------------------------------------------------------------
-        # 2. Copy to raw/
-        # ------------------------------------------------------------------
-        raw_dir = artifact_root / "raw"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        if staging_dir is None and src.resolve().is_relative_to(raw_dir.resolve()):
-            # Watch mode: the file already lives in raw/ — don't copy/rename.
-            raw_dest = src
-        else:
-            raw_dest = raw_dir / f"{doc_name}{src.suffix.lower()}"
-            shutil.copy2(src, raw_dest)
+    # ------------------------------------------------------------------
+    # 2. Copy to raw/
+    # ------------------------------------------------------------------
+    raw_dir = artifact_root / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    if staging_dir is None and src.resolve().is_relative_to(raw_dir.resolve()):
+        # Watch mode: the file already lives in raw/ — don't copy/rename.
+        raw_dest = src
+    else:
+        raw_dest = raw_dir / f"{doc_name}{src.suffix.lower()}"
+        shutil.copy2(src, raw_dest)
 
-        # ------------------------------------------------------------------
-        # 3. PDF long-doc detection
-        # ------------------------------------------------------------------
-        if src.suffix.lower() == ".pdf":
-            page_count = get_pdf_page_count(src)
-            if page_count >= threshold:
-                logger.info(
-                    "Long PDF detected (%d pages >= %d threshold): %s",
-                    page_count,
-                    threshold,
-                    src.name,
-                )
-                return ConvertResult(
-                    raw_path=raw_dest,
-                    is_long_doc=True,
-                    file_hash=file_hash,
-                    doc_name=doc_name,
-                )
+    # ------------------------------------------------------------------
+    # 3. PDF long-doc detection
+    # ------------------------------------------------------------------
+    if src.suffix.lower() == ".pdf":
+        page_count = get_pdf_page_count(src)
+        if page_count >= threshold:
+            logger.info(
+                "Long PDF detected (%d pages >= %d threshold): %s",
+                page_count,
+                threshold,
+                src.name,
+            )
+            return ConvertResult(
+                raw_path=raw_dest,
+                is_long_doc=True,
+                file_hash=file_hash,
+                doc_name=doc_name,
+            )
 
-        # ------------------------------------------------------------------
-        # 4/5. Convert to Markdown
-        # ------------------------------------------------------------------
-        sources_dir = artifact_root / "wiki" / "sources"
-        sources_dir.mkdir(parents=True, exist_ok=True)
-        images_dir = artifact_root / "wiki" / "sources" / "images" / doc_name
-        images_dir.mkdir(parents=True, exist_ok=True)
+    # ------------------------------------------------------------------
+    # 4/5. Convert to Markdown
+    # ------------------------------------------------------------------
+    sources_dir = artifact_root / "wiki" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    images_dir = artifact_root / "wiki" / "sources" / "images" / doc_name
+    images_dir.mkdir(parents=True, exist_ok=True)
 
-        if src.suffix.lower() == ".md":
-            markdown = src.read_text(encoding="utf-8")
-            markdown = copy_relative_images(markdown, src.parent, doc_name, images_dir)
-        elif src.suffix.lower() == ".pdf":
-            # Use pymupdf dict-mode for PDFs: text + images inline at correct positions
-            markdown = convert_pdf_with_images(src, doc_name, images_dir)
-        else:
-            # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
-            mid = MarkItDown()
-            result = mid.convert(str(src), keep_data_uris=True)
-            markdown = result.text_content
-            markdown = extract_base64_images(markdown, doc_name, images_dir)
+    if src.suffix.lower() == ".md":
+        markdown = src.read_text(encoding="utf-8")
+        markdown = copy_relative_images(markdown, src.parent, doc_name, images_dir)
+    elif src.suffix.lower() == ".pdf":
+        # Use pymupdf dict-mode for PDFs: text + images inline at correct positions
+        markdown = convert_pdf_with_images(src, doc_name, images_dir)
+    else:
+        # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
+        mid = MarkItDown()
+        result = mid.convert(str(src), keep_data_uris=True)
+        markdown = result.text_content
+        markdown = extract_base64_images(markdown, doc_name, images_dir)
 
-        dest_md = sources_dir / f"{doc_name}.md"
-        atomic_write_text(dest_md, markdown)
+    dest_md = sources_dir / f"{doc_name}.md"
+    atomic_write_text(dest_md, markdown)
 
-        return ConvertResult(
-            raw_path=raw_dest,
-            source_path=dest_md,
-            file_hash=file_hash,
-            doc_name=doc_name,
+    return ConvertResult(
+        raw_path=raw_dest,
+        source_path=dest_md,
+        file_hash=file_hash,
+        doc_name=doc_name,
+    )
+
+
+def convert_document(
+    src: Path,
+    kb_dir: Path,
+    *,
+    staging_dir: Path | None = None,
+) -> ConvertResult:
+    """Convert a document into live or staged raw/source artifacts.
+
+    The returned metadata is consumed by the serial add commit path, which owns
+    final registry updates. When ``staging_dir`` is provided, artifacts are
+    written under that private tree and later published by the mutation owner.
+    """
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        return _convert_document_impl(
+            src,
+            kb_dir,
+            staging_dir=staging_dir,
+            resolve_final_name=True,
         )
+
+
+def convert_document_for_prepare(
+    src: Path,
+    kb_dir: Path,
+    *,
+    staging_dir: Path,
+) -> ConvertResult:
+    """Convert into private staging without taking the KB mutation lock.
+
+    The prepared doc name is a sanitized source-stem candidate only. The serial
+    commit owner resolves the final collision-safe name against live registry
+    state before publishing staged artifacts.
+    """
+    return _convert_document_impl(
+        src,
+        kb_dir,
+        staging_dir=staging_dir,
+        resolve_final_name=False,
+    )

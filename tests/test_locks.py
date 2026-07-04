@@ -127,3 +127,85 @@ def test_atomic_write_json_replaces_file(tmp_path):
     atomic_write_json(target, {"a": {"name": "doc.pdf"}}, ensure_ascii=False)
 
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": {"name": "doc.pdf"}}
+
+
+def test_kb_ingest_lock_held_is_per_thread(tmp_path):
+    from openkb.locks import kb_ingest_lock_held
+
+    openkb_dir = tmp_path / ".openkb"
+    assert kb_ingest_lock_held(openkb_dir) is False
+
+    holder_seen = {}
+    worker_seen = {}
+
+    def worker():
+        worker_seen["held"] = kb_ingest_lock_held(openkb_dir)
+
+    with kb_ingest_lock(openkb_dir):
+        holder_seen["held"] = kb_ingest_lock_held(openkb_dir)
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+
+    assert holder_seen["held"] is True
+    # Per-thread (threading.local): a worker does not see the main thread's lock.
+    assert worker_seen["held"] is False
+    assert kb_ingest_lock_held(openkb_dir) is False
+
+
+def test_first_exclusive_lock_reaps_orphaned_prepare_staging(tmp_path):
+    openkb_dir = tmp_path / ".openkb"
+    prepare_root = openkb_dir / "staging" / "prepare"
+    prepare_root.mkdir(parents=True)
+    orphan = prepare_root / "000001-doc-abcdef12"
+    orphan.mkdir()
+    (orphan / "artifact.md").write_text("orphan", encoding="utf-8")
+
+    # A non-prepare staging dir must NOT be touched (reaper is scoped to prepare/).
+    other = openkb_dir / "staging" / "rollback-deadbeef"
+    other.mkdir(parents=True)
+    (other / "backup").write_text("keep", encoding="utf-8")
+
+    with kb_ingest_lock(openkb_dir):
+        pass
+
+    assert not orphan.exists()
+    assert not any(prepare_root.iterdir())
+    assert other.exists()  # scope: only staging/prepare/ is reaped
+
+
+def test_prepare_staging_created_under_lock_survives_then_is_reaped_next_acquire(tmp_path):
+    openkb_dir = tmp_path / ".openkb"
+    prepare_root = openkb_dir / "staging" / "prepare"
+
+    with kb_ingest_lock(openkb_dir):
+        prepare_root.mkdir(parents=True)
+        live = prepare_root / "000002-note-12345678"
+        live.mkdir()
+        (live / "x.md").write_text("live", encoding="utf-8")
+        # Reaper does not run on the reentrant acquire a commit would make, and
+        # it already ran before this staging was created, so it survives the lock.
+        assert live.exists()
+
+    # Released and re-acquired: the staging from the prior hold is now an orphan
+    # and is reaped at this new 0->1 acquisition.
+    with kb_ingest_lock(openkb_dir):
+        assert not live.exists()
+
+
+def test_reaper_does_not_follow_symlink_in_prepare_staging(tmp_path):
+    openkb_dir = tmp_path / ".openkb"
+    prepare_root = openkb_dir / "staging" / "prepare"
+    prepare_root.mkdir(parents=True)
+    # A symlink inside prepare/ must never be followed by rmtree (its target
+    # must be left intact).
+    target = tmp_path / "secret"
+    target.mkdir()
+    (target / "keep.txt").write_text("do-not-delete", encoding="utf-8")
+    link = prepare_root / "000004-link-dead0000"
+    link.symlink_to(target, target_is_directory=True)
+
+    with kb_ingest_lock(openkb_dir):
+        pass
+
+    assert (target / "keep.txt").exists()
