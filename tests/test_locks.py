@@ -12,6 +12,7 @@ from openkb.locks import (
     atomic_write_json,
     atomic_write_text,
     kb_ingest_lock,
+    kb_ingest_lock_held,
     kb_read_lock,
 )
 
@@ -75,6 +76,29 @@ def test_write_lock_can_take_nested_read(tmp_path):
     with kb_ingest_lock(openkb_dir):
         with kb_read_lock(openkb_dir):
             assert (openkb_dir / "ingest.lock").exists()
+
+
+def test_kb_ingest_lock_held_is_exclusive_and_thread_local(tmp_path):
+    openkb_dir = tmp_path / ".openkb"
+    worker_seen = []
+
+    assert not kb_ingest_lock_held(openkb_dir)
+
+    with kb_read_lock(openkb_dir):
+        assert not kb_ingest_lock_held(openkb_dir)
+
+    with kb_ingest_lock(openkb_dir):
+        assert kb_ingest_lock_held(openkb_dir)
+
+        worker = threading.Thread(
+            target=lambda: worker_seen.append(kb_ingest_lock_held(openkb_dir))
+        )
+        worker.start()
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert worker_seen == [False]
+    assert not kb_ingest_lock_held(openkb_dir)
 
 
 def test_atomic_write_text_replaces_file(tmp_path):
