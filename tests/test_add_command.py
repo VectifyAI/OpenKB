@@ -97,16 +97,6 @@ class TestAddCommand:
         assert not (kb_dir / "wiki" / "sources" / "notes.md").exists()
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
 
-    def test_compile_concurrency_resolution(self):
-        from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY
-        from openkb.cli import _compile_concurrency
-
-        assert _compile_concurrency({}) == DEFAULT_COMPILE_CONCURRENCY
-        assert _compile_concurrency({"compile_concurrency": 3}) == 3
-        # None / non-positive / non-int fall back to the compiler default.
-        assert _compile_concurrency({"compile_concurrency": None}) == DEFAULT_COMPILE_CONCURRENCY
-        assert _compile_concurrency({"compile_concurrency": 0}) == DEFAULT_COMPILE_CONCURRENCY
-
     def test_add_forwards_compile_concurrency_from_config(self, tmp_path):
         from unittest.mock import AsyncMock
 

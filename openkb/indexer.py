@@ -169,8 +169,14 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
         "if_add_doc_description": True,
     }
     max_concurrency = config.get("pageindex_max_concurrency")
-    if max_concurrency is not None and "max_concurrency" in IndexConfig.model_fields:
-        kwargs["max_concurrency"] = max_concurrency
+    if max_concurrency is not None:
+        if "max_concurrency" in IndexConfig.model_fields:
+            kwargs["max_concurrency"] = max_concurrency
+        else:
+            logger.warning(
+                "config: 'pageindex_max_concurrency' is set but the installed "
+                "PageIndex version does not support it yet — ignoring it."
+            )
     return IndexConfig(**kwargs)
 
 

@@ -70,6 +70,11 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
+# Optional: cap concurrent LLM calls to avoid provider rate limits or "too many
+# open files" on large PDFs. Omit either to use the default.
+# pageindex_max_concurrency: 10  # PageIndex indexing concurrency (null = PageIndex's own default)
+# compile_concurrency: 5         # concept/entity page generation concurrency
+
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).
@@ -95,6 +100,8 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
+| `pageindex_max_concurrency` | `null` | Caps concurrent indexing LLM calls PageIndex makes for a single long document. Lower it if you hit provider rate limits or "too many open files" on large PDFs. `null` lets PageIndex apply its own default. |
+| `compile_concurrency` | `5` | Caps concurrent LLM calls OpenKB makes while generating concept/entity pages. Lower it if your LLM provider rate-limits. |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |
 

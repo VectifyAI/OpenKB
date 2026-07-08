@@ -183,6 +183,27 @@ def resolve_timeout(config: dict) -> float | None:
     return value
 
 
+def resolve_compile_concurrency(config: dict) -> int:
+    """Resolve the optional ``compile_concurrency:`` key for the compile step
+    (concept/entity generation).
+
+    Returns ``DEFAULT_CONFIG["compile_concurrency"]`` when absent, ``None``, or
+    invalid; rejects bools and non-positive values, warning when present but
+    unusable (an explicit ``null`` is the normal "use the default" case and
+    warns silently, matching ``resolve_timeout``).
+    """
+    value = config.get("compile_concurrency")
+    if value is None:
+        return DEFAULT_CONFIG["compile_concurrency"]
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        logger.warning(
+            "config: 'compile_concurrency' must be a positive integer, got %r — using default.",
+            value,
+        )
+        return DEFAULT_CONFIG["compile_concurrency"]
+    return value
+
+
 def resolve_litellm_settings(config: dict) -> dict[str, Any]:
     """Resolve the optional ``litellm:`` mapping of LiteLLM module settings.
 
