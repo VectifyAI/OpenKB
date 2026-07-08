@@ -47,14 +47,14 @@ import litellm
 litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
-from openkb.agent.compiler import compile_long_doc
+from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG,
     load_config,
     save_config,
     load_global_config,
     register_kb,
-    resolve_compile_concurrency,
+    resolve_concurrency,
     resolve_extra_headers,
     set_extra_headers,
     resolve_timeout,
@@ -556,7 +556,7 @@ def _add_single_file_locked(
                     kb_dir,
                     model,
                     doc_description=index_result.description,
-                    max_concurrency=resolve_compile_concurrency(config),
+                    max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
                 ),
                 label=f"Compiling long doc (doc_id={index_result.doc_id})",
             )
@@ -570,7 +570,7 @@ def _add_single_file_locked(
                     source_path,
                     kb_dir,
                     model,
-                    max_concurrency=resolve_compile_concurrency(config),
+                    max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
                 ),
                 label="Compiling short doc",
             )
@@ -692,7 +692,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
                         kb_dir,
                         model,
                         doc_description=cloud.description,
-                        max_concurrency=resolve_compile_concurrency(config),
+                        max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
                     ),
                     label=f"Compiling imported doc (doc_id={doc_id})",
                 )
@@ -1645,7 +1645,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
     _setup_llm_key(kb_dir)
     config = load_config(openkb_dir / "config.yaml")
     model: str = config.get("model", DEFAULT_CONFIG["model"])
-    max_concurrency = resolve_compile_concurrency(config)
+    max_concurrency = resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY
 
     # Import lazily and reference via the module so tests can patch
     # ``openkb.agent.compiler.compile_*`` and see the call.

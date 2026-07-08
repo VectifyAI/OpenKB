@@ -11,7 +11,7 @@ from typing import Any
 
 from pageindex import IndexConfig, PageIndexClient
 
-from openkb.config import load_config
+from openkb.config import load_config, resolve_concurrency
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
@@ -156,26 +156,26 @@ def _write_long_doc_artifacts(
 def _build_index_config(config: dict[str, Any]) -> IndexConfig:
     """Build the PageIndex ``IndexConfig`` for local indexing.
 
-    Forwards the optional ``pageindex_max_concurrency`` KB setting to PageIndex,
-    which caps how many indexing LLM calls run at once (guarding against the
-    "too many open files" fd exhaustion on large documents). The value is only
-    passed when set *and* the installed PageIndex's ``IndexConfig`` declares the
-    field, so OpenKB keeps working against a pinned PageIndex that predates it
-    (``IndexConfig`` forbids unknown kwargs).
+    Forwards the KB's ``concurrency`` setting to PageIndex, which caps how many
+    indexing LLM calls run at once (guarding against "too many open files" fd
+    exhaustion on large documents). The value is only passed when set *and* the
+    installed PageIndex's ``IndexConfig`` declares the field, so OpenKB keeps
+    working against a pinned PageIndex that predates it (``IndexConfig``
+    forbids unknown kwargs).
     """
     kwargs: dict[str, Any] = {
         "if_add_node_text": True,
         "if_add_node_summary": True,
         "if_add_doc_description": True,
     }
-    max_concurrency = config.get("pageindex_max_concurrency")
-    if max_concurrency is not None:
+    concurrency = resolve_concurrency(config)
+    if concurrency is not None:
         if "max_concurrency" in IndexConfig.model_fields:
-            kwargs["max_concurrency"] = max_concurrency
+            kwargs["max_concurrency"] = concurrency
         else:
             logger.warning(
-                "config: 'pageindex_max_concurrency' is set but the installed "
-                "PageIndex version does not support it yet — ignoring it."
+                "config: 'concurrency' is set but the installed PageIndex "
+                "version does not support it yet — ignoring it."
             )
     return IndexConfig(**kwargs)
 

@@ -17,13 +17,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
-    # Cap on concurrent indexing LLM calls PageIndex makes for a single long
-    # document. None = let PageIndex apply its own default. Raise it to index
-    # faster, lower it if you hit provider rate limits or "too many open files".
-    "pageindex_max_concurrency": None,
-    # Cap on concurrent compile LLM calls OpenKB makes when generating concept
-    # and entity pages. Lower it if your LLM provider rate-limits.
-    "compile_concurrency": 5,
+    # Cap on concurrent LLM calls OpenKB makes during ingest — both PageIndex's
+    # indexing of a long document and OpenKB's own concept/entity compilation.
+    # These never run concurrently with each other for the same document, so
+    # one knob covers both. None = each stage applies its own built-in default.
+    # Lower it if you hit provider rate limits or "too many open files"; raise
+    # it to go faster.
+    "concurrency": None,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional
@@ -183,24 +183,27 @@ def resolve_timeout(config: dict) -> float | None:
     return value
 
 
-def resolve_compile_concurrency(config: dict) -> int:
-    """Resolve the optional ``compile_concurrency:`` key for the compile step
-    (concept/entity generation).
+def resolve_concurrency(config: dict) -> int | None:
+    """Resolve the optional ``concurrency:`` key — the cap on concurrent LLM
+    calls OpenKB makes during ingest (PageIndex indexing and concept/entity
+    compilation alike; they never run at the same time for one document, so
+    one setting covers both).
 
-    Returns ``DEFAULT_CONFIG["compile_concurrency"]`` when absent, ``None``, or
-    invalid; rejects bools and non-positive values, warning when present but
-    unusable (an explicit ``null`` is the normal "use the default" case and
-    warns silently, matching ``resolve_timeout``).
+    Returns ``None`` when absent, explicitly ``null``, or invalid (rejecting
+    bools and non-positive values with a warning when present but unusable —
+    an explicit ``null``/absent key is the normal "unset" case and stays
+    silent, matching ``resolve_timeout``). Callers apply their own default (or
+    omit the setting entirely) when this returns ``None``.
     """
-    value = config.get("compile_concurrency")
+    value = config.get("concurrency")
     if value is None:
-        return DEFAULT_CONFIG["compile_concurrency"]
+        return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         logger.warning(
-            "config: 'compile_concurrency' must be a positive integer, got %r — using default.",
+            "config: 'concurrency' must be a positive integer, got %r — ignoring it.",
             value,
         )
-        return DEFAULT_CONFIG["compile_concurrency"]
+        return None
     return value
 
 

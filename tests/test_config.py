@@ -5,7 +5,7 @@ from openkb.config import (
     get_extra_headers,
     get_timeout,
     load_config,
-    resolve_compile_concurrency,
+    resolve_concurrency,
     resolve_extra_headers,
     resolve_litellm_settings,
     resolve_timeout,
@@ -27,77 +27,51 @@ def test_default_config_values():
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
 
 
-def test_pageindex_max_concurrency_defaults_to_none():
-    assert DEFAULT_CONFIG["pageindex_max_concurrency"] is None
+def test_concurrency_defaults_to_none():
+    assert DEFAULT_CONFIG["concurrency"] is None
 
 
-def test_load_pageindex_max_concurrency_override(tmp_path):
+def test_load_concurrency_override(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("pageindex_max_concurrency: 12\n", encoding="utf-8")
-    assert load_config(config_path)["pageindex_max_concurrency"] == 12
+    config_path.write_text("concurrency: 12\n", encoding="utf-8")
+    assert load_config(config_path)["concurrency"] == 12
 
 
-def test_compile_concurrency_defaults_to_5():
-    assert DEFAULT_CONFIG["compile_concurrency"] == 5
+def test_resolve_concurrency_absent_is_none():
+    assert resolve_concurrency({}) is None
 
 
-def test_load_compile_concurrency_override(tmp_path):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("compile_concurrency: 3\n", encoding="utf-8")
-    assert load_config(config_path)["compile_concurrency"] == 3
+def test_resolve_concurrency_valid_value():
+    assert resolve_concurrency({"concurrency": 3}) == 3
 
 
-def test_resolve_compile_concurrency_absent_uses_default():
-    assert resolve_compile_concurrency({}) == DEFAULT_CONFIG["compile_concurrency"]
-
-
-def test_resolve_compile_concurrency_valid_value():
-    assert resolve_compile_concurrency({"compile_concurrency": 3}) == 3
-
-
-def test_resolve_compile_concurrency_rejects_bool(caplog):
+def test_resolve_concurrency_rejects_bool(caplog):
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
-        result = resolve_compile_concurrency({"compile_concurrency": True})
-    assert result == DEFAULT_CONFIG["compile_concurrency"]
-    assert "compile_concurrency" in caplog.text
+        result = resolve_concurrency({"concurrency": True})
+    assert result is None
+    assert "concurrency" in caplog.text
 
 
-def test_resolve_compile_concurrency_rejects_non_positive(caplog):
+def test_resolve_concurrency_rejects_non_positive(caplog):
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
-        assert (
-            resolve_compile_concurrency({"compile_concurrency": 0})
-            == DEFAULT_CONFIG["compile_concurrency"]
-        )
-    assert "compile_concurrency" in caplog.text
+        assert resolve_concurrency({"concurrency": 0}) is None
+    assert "concurrency" in caplog.text
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
-        assert (
-            resolve_compile_concurrency({"compile_concurrency": -1})
-            == DEFAULT_CONFIG["compile_concurrency"]
-        )
-    assert "compile_concurrency" in caplog.text
+        assert resolve_concurrency({"concurrency": -1}) is None
+    assert "concurrency" in caplog.text
 
 
-def test_resolve_compile_concurrency_rejects_non_int():
-    assert (
-        resolve_compile_concurrency({"compile_concurrency": "3"})
-        == DEFAULT_CONFIG["compile_concurrency"]
-    )
+def test_resolve_concurrency_rejects_non_int():
+    assert resolve_concurrency({"concurrency": "3"}) is None
 
 
-def test_resolve_compile_concurrency_none_is_silent(caplog):
-    # Explicit null / absent is the normal "use the default" case — no warning.
+def test_resolve_concurrency_none_is_silent(caplog):
+    # Explicit null / absent is the normal "unset — caller applies its own
+    # default, or omits the setting entirely" case — no warning.
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
-        resolve_compile_concurrency({"compile_concurrency": None})
+        assert resolve_concurrency({"concurrency": None}) is None
     assert caplog.text == ""
-
-
-def test_compile_concurrency_defaults_match_compiler_default():
-    """DEFAULT_CONFIG and the compiler's own DEFAULT_COMPILE_CONCURRENCY are two
-    independent literals; catch drift immediately if only one is ever updated."""
-    from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY
-
-    assert DEFAULT_CONFIG["compile_concurrency"] == DEFAULT_COMPILE_CONCURRENCY
 
 
 def test_load_missing_file_returns_defaults(tmp_path):

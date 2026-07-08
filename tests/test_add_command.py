@@ -97,14 +97,14 @@ class TestAddCommand:
         assert not (kb_dir / "wiki" / "sources" / "notes.md").exists()
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
 
-    def test_add_forwards_compile_concurrency_from_config(self, tmp_path):
+    def test_add_forwards_concurrency_from_config(self, tmp_path):
         from unittest.mock import AsyncMock
 
         from openkb.cli import add_single_file
 
         kb_dir = self._setup_kb(tmp_path)
         (kb_dir / ".openkb" / "config.yaml").write_text(
-            "model: gpt-4o-mini\ncompile_concurrency: 3\n", encoding="utf-8"
+            "model: gpt-4o-mini\nconcurrency: 3\n", encoding="utf-8"
         )
         doc = tmp_path / "notes.md"
         doc.write_text("# Notes\n\nBody", encoding="utf-8")
