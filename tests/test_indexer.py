@@ -5,8 +5,34 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pageindex import IndexConfig
 
-from openkb.indexer import IndexResult, _normalize_page_content, index_long_document
+from openkb.indexer import (
+    IndexResult,
+    _build_index_config,
+    _normalize_page_content,
+    index_long_document,
+)
+
+
+class TestBuildIndexConfig:
+    def test_sets_base_flags(self):
+        cfg = _build_index_config({})
+        assert cfg.if_add_node_text is True
+        assert cfg.if_add_node_summary is True
+        assert cfg.if_add_doc_description is True
+
+    def test_forwards_max_concurrency_when_supported(self):
+        cfg = _build_index_config({"pageindex_max_concurrency": 8})
+        if "max_concurrency" in IndexConfig.model_fields:
+            assert cfg.max_concurrency == 8
+        else:
+            # A PageIndex predating the field: forwarded as a no-op, never raised.
+            assert not hasattr(cfg, "max_concurrency")
+
+    def test_none_value_is_left_to_pageindex_default(self):
+        cfg = _build_index_config({"pageindex_max_concurrency": None})
+        assert getattr(cfg, "max_concurrency", None) is None
 
 
 class TestNormalizePageContent:

@@ -17,6 +17,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
+    # Cap on concurrent indexing LLM calls PageIndex makes for a single long
+    # document. None = let PageIndex apply its own default. Raise it to index
+    # faster, lower it if you hit provider rate limits or "too many open files".
+    "pageindex_max_concurrency": None,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional

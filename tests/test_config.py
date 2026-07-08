@@ -26,6 +26,16 @@ def test_default_config_values():
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
 
 
+def test_pageindex_max_concurrency_defaults_to_none():
+    assert DEFAULT_CONFIG["pageindex_max_concurrency"] is None
+
+
+def test_load_pageindex_max_concurrency_override(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("pageindex_max_concurrency: 12\n", encoding="utf-8")
+    assert load_config(config_path)["pageindex_max_concurrency"] == 12
+
+
 def test_load_missing_file_returns_defaults(tmp_path):
     missing = tmp_path / "nonexistent" / "config.yaml"
     config = load_config(missing)

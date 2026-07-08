@@ -153,6 +153,27 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
+def _build_index_config(config: dict[str, Any]) -> IndexConfig:
+    """Build the PageIndex ``IndexConfig`` for local indexing.
+
+    Forwards the optional ``pageindex_max_concurrency`` KB setting to PageIndex,
+    which caps how many indexing LLM calls run at once (guarding against the
+    "too many open files" fd exhaustion on large documents). The value is only
+    passed when set *and* the installed PageIndex's ``IndexConfig`` declares the
+    field, so OpenKB keeps working against a pinned PageIndex that predates it
+    (``IndexConfig`` forbids unknown kwargs).
+    """
+    kwargs: dict[str, Any] = {
+        "if_add_node_text": True,
+        "if_add_node_summary": True,
+        "if_add_doc_description": True,
+    }
+    max_concurrency = config.get("pageindex_max_concurrency")
+    if max_concurrency is not None and "max_concurrency" in IndexConfig.model_fields:
+        kwargs["max_concurrency"] = max_concurrency
+    return IndexConfig(**kwargs)
+
+
 def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
     """Index a long PDF document using PageIndex and write wiki pages.
 
@@ -166,11 +187,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     model: str = config.get("model", "gpt-5.4")
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
 
-    index_config = IndexConfig(
-        if_add_node_text=True,
-        if_add_node_summary=True,
-        if_add_doc_description=True,
-    )
+    index_config = _build_index_config(config)
 
     client = PageIndexClient(
         api_key=pageindex_api_key or None,
