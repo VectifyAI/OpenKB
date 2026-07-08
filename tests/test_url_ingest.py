@@ -11,6 +11,7 @@ from openkb.url_ingest import (
     _sanitize_filename,
     _sniff_content_type,
     _unique_path,
+    fetch_url_to_dir,
     fetch_url_to_raw,
     looks_like_url,
 )
@@ -207,6 +208,22 @@ def test_fetch_pdf_writes_chunked_to_raw_dir(tmp_path):
     assert result.name == "2509.11420.pdf"
     assert result.exists()
     assert result.read_bytes() == body
+
+
+def test_fetch_url_to_dir_writes_to_requested_directory(tmp_path):
+    body = b"%PDF-1.4\n" + b"x" * 1000
+    resp = _fake_response(
+        body=body,
+        headers={"Content-Type": "application/pdf"},
+    )
+    staged_raw = tmp_path / ".openkb" / "staging" / "bundle-1" / "raw"
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = fetch_url_to_dir("https://example.com/paper.pdf", staged_raw)
+
+    assert result == staged_raw / "paper.pdf"
+    assert result.read_bytes() == body
+    assert not (tmp_path / "raw" / "paper.pdf").exists()
 
 
 def test_fetch_pdf_with_lying_octet_stream_header(tmp_path):

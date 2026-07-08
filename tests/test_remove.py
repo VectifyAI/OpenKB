@@ -971,6 +971,26 @@ def test_cli_remove_dry_run_does_not_touch_images(kb_dir):
     assert (images_dir / "p1_img1.png").exists()
 
 
+def test_cli_remove_deletes_bundle_sidecar(kb_dir):
+    _seed_two_doc_kb(kb_dir)
+    registry_path = kb_dir / ".openkb" / "hashes.json"
+    entries = json.loads(registry_path.read_text(encoding="utf-8"))
+    entries["h_a"]["bundle_path"] = ".openkb/bundles/attention-h_a.json"
+    registry_path.write_text(json.dumps(entries), encoding="utf-8")
+    bundle_path = kb_dir / ".openkb" / "bundles" / "attention-h_a.json"
+    bundle_path.parent.mkdir(parents=True)
+    bundle_path.write_text('{"schema_version": 1}', encoding="utf-8")
+
+    dry_run = _invoke(kb_dir, ["remove", "attention.pdf", "--dry-run"])
+    assert dry_run.exit_code == 0, dry_run.output
+    assert ".openkb/bundles/attention-h_a.json" in dry_run.output
+    assert bundle_path.exists()
+
+    result = _invoke(kb_dir, ["remove", "attention.pdf", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert not bundle_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # Functional-completeness fix: `doc_id` is persisted for long PDFs so a
 # later `openkb remove` can call PageIndex's delete_document API.
