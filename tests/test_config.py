@@ -36,6 +36,16 @@ def test_load_pageindex_max_concurrency_override(tmp_path):
     assert load_config(config_path)["pageindex_max_concurrency"] == 12
 
 
+def test_compile_concurrency_defaults_to_5():
+    assert DEFAULT_CONFIG["compile_concurrency"] == 5
+
+
+def test_load_compile_concurrency_override(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("compile_concurrency: 3\n", encoding="utf-8")
+    assert load_config(config_path)["compile_concurrency"] == 3
+
+
 def test_load_missing_file_returns_defaults(tmp_path):
     missing = tmp_path / "nonexistent" / "config.yaml"
     config = load_config(missing)

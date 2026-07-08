@@ -97,6 +97,39 @@ class TestAddCommand:
         assert not (kb_dir / "wiki" / "sources" / "notes.md").exists()
         assert HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries() == {}
 
+    def test_compile_concurrency_resolution(self):
+        from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY
+        from openkb.cli import _compile_concurrency
+
+        assert _compile_concurrency({}) == DEFAULT_COMPILE_CONCURRENCY
+        assert _compile_concurrency({"compile_concurrency": 3}) == 3
+        # None / non-positive / non-int fall back to the compiler default.
+        assert _compile_concurrency({"compile_concurrency": None}) == DEFAULT_COMPILE_CONCURRENCY
+        assert _compile_concurrency({"compile_concurrency": 0}) == DEFAULT_COMPILE_CONCURRENCY
+
+    def test_add_forwards_compile_concurrency_from_config(self, tmp_path):
+        from unittest.mock import AsyncMock
+
+        from openkb.cli import add_single_file
+
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / ".openkb" / "config.yaml").write_text(
+            "model: gpt-4o-mini\ncompile_concurrency: 3\n", encoding="utf-8"
+        )
+        doc = tmp_path / "notes.md"
+        doc.write_text("# Notes\n\nBody", encoding="utf-8")
+
+        with (
+            patch(
+                "openkb.agent.compiler.compile_short_doc", new_callable=AsyncMock
+            ) as mock_compile,
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            outcome = add_single_file(doc, kb_dir)
+
+        assert outcome == "added"
+        assert mock_compile.call_args.kwargs["max_concurrency"] == 3
+
     def _long_doc_conv(self, kb_dir, name, file_hash):
         from openkb.converter import ConvertResult
 

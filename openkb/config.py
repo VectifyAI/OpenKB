@@ -21,6 +21,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # document. None = let PageIndex apply its own default. Raise it to index
     # faster, lower it if you hit provider rate limits or "too many open files".
     "pageindex_max_concurrency": None,
+    # Cap on concurrent compile LLM calls OpenKB makes when generating concept
+    # and entity pages. Lower it if your LLM provider rate-limits.
+    "compile_concurrency": 5,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional

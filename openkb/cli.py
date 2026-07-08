@@ -47,7 +47,7 @@ import litellm
 litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
-from openkb.agent.compiler import compile_long_doc
+from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG,
     load_config,
@@ -439,6 +439,19 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
                 raise
 
 
+def _compile_concurrency(config: dict) -> int:
+    """Concurrency cap for the compile step (concept/entity generation).
+
+    Configurable per KB via ``compile_concurrency`` in config.yaml; a missing,
+    null, or non-positive value falls back to the compiler's built-in default.
+    Lower it when the LLM provider rate-limits.
+    """
+    value = config.get("compile_concurrency")
+    if isinstance(value, int) and value > 0:
+        return value
+    return DEFAULT_COMPILE_CONCURRENCY
+
+
 def add_single_file(
     file_path: Path, kb_dir: Path, *, stage: bool = True
 ) -> Literal["added", "skipped", "failed"]:
@@ -564,6 +577,7 @@ def _add_single_file_locked(
                     kb_dir,
                     model,
                     doc_description=index_result.description,
+                    max_concurrency=_compile_concurrency(config),
                 ),
                 label=f"Compiling long doc (doc_id={index_result.doc_id})",
             )
@@ -572,7 +586,13 @@ def _add_single_file_locked(
                 raise RuntimeError(f"Converted document has no source artifact: {file_path.name}")
             source_path = result.source_path
             _run_compile_with_retry(
-                lambda: compile_short_doc(doc_name, source_path, kb_dir, model),
+                lambda: compile_short_doc(
+                    doc_name,
+                    source_path,
+                    kb_dir,
+                    model,
+                    max_concurrency=_compile_concurrency(config),
+                ),
                 label="Compiling short doc",
             )
 
@@ -699,6 +719,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
                 kb_dir,
                 model,
                 doc_description=cloud.description,
+                max_concurrency=_compile_concurrency(config),
             ),
             label=f"Compiling imported doc (doc_id={doc_id})",
         )
@@ -1679,7 +1700,16 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling long doc {name}...")
             start = time.time()
             try:
-                asyncio.run(compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model))
+                asyncio.run(
+                    compiler.compile_long_doc(
+                        name,
+                        summary_path,
+                        doc_id,
+                        kb_dir,
+                        model,
+                        max_concurrency=_compile_concurrency(config),
+                    )
+                )
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
@@ -1699,7 +1729,15 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling short doc {name}...")
             start = time.time()
             try:
-                asyncio.run(compiler.compile_short_doc(name, source_path, kb_dir, model))
+                asyncio.run(
+                    compiler.compile_short_doc(
+                        name,
+                        source_path,
+                        kb_dir,
+                        model,
+                        max_concurrency=_compile_concurrency(config),
+                    )
+                )
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
