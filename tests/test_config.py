@@ -17,12 +17,14 @@ from openkb.config import (
 )
 
 
-def test_parallel_tool_calls_defaults_to_none():
-    assert DEFAULT_CONFIG["parallel_tool_calls"] is None
+def test_parallel_tool_calls_defaults_to_false():
+    # Default preserves the historical behavior: force sequential tool calls.
+    assert DEFAULT_CONFIG["parallel_tool_calls"] is False
 
 
-def test_resolve_parallel_tool_calls_absent_is_none():
-    assert resolve_parallel_tool_calls({}) is None
+def test_resolve_parallel_tool_calls_absent_is_false():
+    # Key omitted → the default (force sequential), same as before this knob existed.
+    assert resolve_parallel_tool_calls({}) is False
 
 
 def test_resolve_parallel_tool_calls_explicit_bools():
@@ -30,16 +32,18 @@ def test_resolve_parallel_tool_calls_explicit_bools():
     assert resolve_parallel_tool_calls({"parallel_tool_calls": False}) is False
 
 
-def test_resolve_parallel_tool_calls_none_is_silent(caplog):
+def test_resolve_parallel_tool_calls_null_means_omit(caplog):
+    # Explicit null = "don't send the param" (provider default). This is the
+    # escape hatch for Amazon Bedrock, and is silent (not an invalid value).
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
         assert resolve_parallel_tool_calls({"parallel_tool_calls": None}) is None
     assert caplog.text == ""
 
 
 def test_resolve_parallel_tool_calls_rejects_non_bool(caplog):
-    # A non-bool (e.g. a string or int) is invalid → treat as unset, with a warning.
+    # A non-bool, non-null value is invalid → fall back to the default, with a warning.
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
-        assert resolve_parallel_tool_calls({"parallel_tool_calls": "true"}) is None
+        assert resolve_parallel_tool_calls({"parallel_tool_calls": "true"}) is False
     assert "parallel_tool_calls" in caplog.text
 
 

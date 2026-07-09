@@ -176,7 +176,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     provider: str | None = None
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
-    parallel_tool_calls: bool | None = None
+    parallel_tool_calls: bool | None = DEFAULT_CONFIG["parallel_tool_calls"]
     litellm_settings: dict = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"

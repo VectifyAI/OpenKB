@@ -161,25 +161,34 @@ class TestQueryAgentExtraHeaders:
 
 
 class TestQueryAgentParallelToolCalls:
-    """Config-driven parallel_tool_calls reaches the agents-SDK model settings.
+    """The resolved parallel_tool_calls value (stash) reaches the model settings.
 
-    Default is None (omit the param → provider default), which is what keeps
-    Bedrock's Claude models working: passing parallel_tool_calls at all makes
-    LiteLLM emit a tool_choice object missing the required `type` field (see
-    issue #175). Users can still force sequential tool calls with
-    `parallel_tool_calls: false`.
+    Default is False (force sequential — unchanged historical behavior). A
+    config value of null resolves to None, which the agents-SDK omits from the
+    request — the escape hatch for Amazon Bedrock, whose Claude models reject
+    the request when parallel_tool_calls is sent at all (issue #175).
     """
 
-    def test_omitted_by_default(self, tmp_path):
+    def test_null_stash_is_omitted(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(None)
         agent = build_query_agent(str(tmp_path), "bedrock/eu.anthropic.claude-sonnet-4-6")
         assert agent.model_settings.parallel_tool_calls is None
 
-    def test_applied_from_stash(self, tmp_path):
+    def test_false_stash_forces_sequential(self, tmp_path):
         from openkb.config import set_parallel_tool_calls
 
         set_parallel_tool_calls(False)
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.parallel_tool_calls is False
+
+    def test_true_stash_allows_parallel(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(True)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.parallel_tool_calls is True
 
 
 class TestQueryAgentTimeout:

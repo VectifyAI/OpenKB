@@ -17,12 +17,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
-    # Whether query/chat agents may call tools in parallel. None (default) omits
-    # the setting so the provider decides — required for Amazon Bedrock's Claude
-    # models, where sending parallel_tool_calls makes LiteLLM emit a malformed
-    # tool_choice (missing `type`) and every query/chat fails (issue #175). Set
-    # false to force sequential tool calls (fine on OpenAI/Anthropic-direct).
-    "parallel_tool_calls": None,
+    # Whether query/chat agents may call tools in parallel. Default false =
+    # force sequential tool calls (historical behavior). true = allow parallel.
+    # null = don't send the setting at all (use the provider default) — the
+    # escape hatch for Amazon Bedrock Claude, where sending parallel_tool_calls
+    # (any value) makes LiteLLM emit a malformed tool_choice missing `type`, so
+    # every query/chat fails (issue #175).
+    "parallel_tool_calls": False,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional
@@ -153,20 +154,32 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
 def resolve_parallel_tool_calls(config: dict) -> bool | None:
     """Resolve the optional ``parallel_tool_calls:`` key.
 
-    Returns ``None`` (omit the setting — provider default) when absent or
-    explicitly null; ``True``/``False`` when set to a bool. A non-bool value is
-    invalid and treated as unset, with a warning. ``None`` is the normal
-    "unset" case and warns silently, matching ``resolve_timeout``.
+    Tri-state:
+      * key absent → the default (``False`` — force sequential tool calls).
+      * ``true`` / ``false`` → that bool.
+      * explicit ``null`` → ``None``, meaning "don't send the setting" so the
+        provider's own default applies. This is the escape hatch for Amazon
+        Bedrock Claude, which rejects the request when the param is sent at all.
+
+    A non-bool, non-null value is invalid → falls back to the default with a
+    warning. An explicit ``null`` is a valid choice and warns silently.
+
+    Note this relies on the config being merged with ``DEFAULT_CONFIG`` (as
+    ``load_config`` does), so an omitted key reads back as ``False`` while an
+    explicit ``null`` reads back as ``None`` — the two are distinguishable.
     """
-    value = config.get("parallel_tool_calls")
+    default = DEFAULT_CONFIG["parallel_tool_calls"]
+    value = config.get("parallel_tool_calls", default)
     if value is None:
         return None
     if not isinstance(value, bool):
         logger.warning(
-            "config: 'parallel_tool_calls' must be true or false, got %r — ignoring it.",
+            "config: 'parallel_tool_calls' must be true, false, or null, got %r "
+            "— using default (%r).",
             value,
+            default,
         )
-        return None
+        return default
     return value
 
 

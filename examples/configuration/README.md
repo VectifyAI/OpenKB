@@ -70,11 +70,13 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
-# Optional: whether query/chat agents may call tools in parallel. Omit (the
-# default) to let the provider decide. Leave it unset for Amazon Bedrock Claude
-# models — sending it makes LiteLLM emit a malformed tool_choice and every
-# query/chat fails. Set false to force sequential tool calls on other providers.
-# parallel_tool_calls: false
+# Optional: whether query/chat agents may call tools in parallel.
+#   false (default) force sequential tool calls
+#   true            allow parallel tool calls
+#   null            don't send the setting (use the provider default) — set this
+#                   for Amazon Bedrock Claude, which rejects the request when
+#                   parallel_tool_calls is sent at all (any value). See #175.
+# parallel_tool_calls: null
 
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
@@ -101,7 +103,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
-| `parallel_tool_calls` | *(unset)* | Whether query/chat agents may call tools in parallel. Unset = provider default. **Leave unset for Amazon Bedrock** (see below). Set `false` to force sequential tool calls elsewhere. |
+| `parallel_tool_calls` | `false` | Whether query/chat agents may call tools in parallel. `false` (default) forces sequential; `true` allows parallel; `null` omits the setting (provider default). **Amazon Bedrock needs `null`** (see below). |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |
 
@@ -198,9 +200,10 @@ LLM_API_KEY=your-key-here
   ```yaml
   # <kb>/.openkb/config.yaml
   model: bedrock/eu.anthropic.claude-sonnet-4-6
-  # Do NOT set parallel_tool_calls for Bedrock Claude — leaving it unset (the
-  # default) is what keeps query/chat working; setting it makes LiteLLM send a
-  # malformed tool_choice that Bedrock rejects (issue #175).
+  parallel_tool_calls: null   # REQUIRED for Bedrock Claude: the default (false)
+                              # — and any explicit value — makes LiteLLM send a
+                              # malformed tool_choice that Bedrock rejects (#175).
+                              # null tells OpenKB not to send the setting at all.
   ```
 
 **Where keys are read from** (first match wins, existing env always respected):
