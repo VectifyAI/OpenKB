@@ -12,7 +12,7 @@ def _reset_extra_headers():
     yield
     set_extra_headers({})
     set_timeout(None)
-    set_parallel_tool_calls(None)
+    set_parallel_tool_calls(None, False)
 
 
 @pytest.fixture

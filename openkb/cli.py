@@ -176,7 +176,8 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     provider: str | None = None
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
-    parallel_tool_calls: bool | None = DEFAULT_CONFIG["parallel_tool_calls"]
+    parallel_tool_calls: bool | None = None
+    parallel_tool_calls_explicit = False
     litellm_settings: dict = {}
     if kb_dir is not None:
         config_path = kb_dir / ".openkb" / "config.yaml"
@@ -186,7 +187,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             provider = _extract_provider(str(model))
             extra_headers = resolve_extra_headers(config)
             timeout = resolve_timeout(config)
-            parallel_tool_calls = resolve_parallel_tool_calls(config)
+            parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
             litellm_settings = resolve_litellm_settings(config)
             # `timeout` / `extra_headers` in the block route to the per-call
             # stashes (replacing the legacy top-level keys); the rest are globals.
@@ -198,7 +199,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
                 timeout = resolve_timeout({"timeout": litellm_settings.pop("timeout")})
     set_extra_headers(extra_headers)
     set_timeout(timeout)
-    set_parallel_tool_calls(parallel_tool_calls)
+    set_parallel_tool_calls(parallel_tool_calls, parallel_tool_calls_explicit)
     _apply_litellm_settings(litellm_settings)
 
     if not api_key:

@@ -17,13 +17,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
-    # Whether query/chat agents may call tools in parallel. Default false =
-    # force sequential tool calls (historical behavior). true = allow parallel.
-    # null = don't send the setting at all (use the provider default) — the
-    # escape hatch for Amazon Bedrock Claude, where sending parallel_tool_calls
-    # (any value) makes LiteLLM emit a malformed tool_choice missing `type`, so
-    # every query/chat fails (issue #175).
-    "parallel_tool_calls": False,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional
@@ -151,36 +144,28 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
     return headers
 
 
-def resolve_parallel_tool_calls(config: dict) -> bool | None:
-    """Resolve the optional ``parallel_tool_calls:`` key.
+def resolve_parallel_tool_calls(config: dict) -> tuple[bool | None, bool]:
+    """Resolve the optional ``parallel_tool_calls:`` key to ``(value, was_explicit)``.
 
-    Tri-state:
-      * key absent → the default (``False`` — force sequential tool calls).
-      * ``true`` / ``false`` → that bool.
-      * explicit ``null`` → ``None``, meaning "don't send the setting" so the
-        provider's own default applies. This is the escape hatch for Amazon
-        Bedrock Claude, which rejects the request when the param is sent at all.
-
-    A non-bool, non-null value is invalid → falls back to the default with a
-    warning. An explicit ``null`` is a valid choice and warns silently.
-
-    Note this relies on the config being merged with ``DEFAULT_CONFIG`` (as
-    ``load_config`` does), so an omitted key reads back as ``False`` while an
-    explicit ``null`` reads back as ``None`` — the two are distinguishable.
+    Absent → ``(None, False)`` so each agent applies its own default (see
+    ``resolve_model_settings``). ``true``/``false`` → that bool; explicit
+    ``null`` → ``None`` (omit — the Amazon Bedrock #175 escape hatch); both with
+    ``was_explicit=True`` so they override every agent uniformly. An invalid
+    value degrades to omit (never breaks a provider), with a warning.
     """
-    default = DEFAULT_CONFIG["parallel_tool_calls"]
-    value = config.get("parallel_tool_calls", default)
+    if "parallel_tool_calls" not in config:
+        return None, False
+    value = config["parallel_tool_calls"]
     if value is None:
-        return None
-    if not isinstance(value, bool):
-        logger.warning(
-            "config: 'parallel_tool_calls' must be true, false, or null, got %r "
-            "— using default (%r).",
-            value,
-            default,
-        )
-        return default
-    return value
+        return None, True
+    if isinstance(value, bool):
+        return value, True
+    logger.warning(
+        "config: 'parallel_tool_calls' must be true, false, or null, got %r "
+        "— omitting the setting.",
+        value,
+    )
+    return None, True
 
 
 def resolve_timeout(config: dict) -> float | None:
@@ -282,38 +267,39 @@ def get_timeout_extra_args() -> dict[str, float] | None:
     return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
 
 
-# Process-wide agent ``parallel_tool_calls`` setting, resolved from config by
-# the CLI (cli._setup_llm_key) and read when building query/chat agents. None =
-# omit the setting (provider default) — see the DEFAULT_CONFIG note on why
-# Bedrock needs this.
-_runtime_parallel_tool_calls: bool | None = None
+# Process-wide agent ``parallel_tool_calls`` as ``(value, was_explicit)``, set
+# from config by the CLI and read when building agents. ``(None, False)`` = not
+# configured, so each agent falls back to its own default (resolve_model_settings).
+_runtime_parallel_tool_calls: tuple[bool | None, bool] = (None, False)
 
 
-def set_parallel_tool_calls(value: bool | None) -> None:
-    """Set the process-wide agent ``parallel_tool_calls`` setting."""
+def set_parallel_tool_calls(value: bool | None, was_explicit: bool) -> None:
+    """Set the process-wide ``parallel_tool_calls`` — see :func:`resolve_parallel_tool_calls`."""
     global _runtime_parallel_tool_calls
-    _runtime_parallel_tool_calls = value
+    _runtime_parallel_tool_calls = (value, was_explicit)
 
 
-def get_parallel_tool_calls() -> bool | None:
-    """Return the process-wide agent ``parallel_tool_calls`` setting (or None)."""
+def get_parallel_tool_calls() -> tuple[bool | None, bool]:
+    """Return the process-wide ``parallel_tool_calls`` as ``(value, was_explicit)``."""
     return _runtime_parallel_tool_calls
 
 
-def resolve_model_settings() -> dict[str, Any]:
+def resolve_model_settings(*, default_parallel_tool_calls: bool | None = False) -> dict[str, Any]:
     """Assemble the agents-SDK ``ModelSettings`` kwargs from the process-wide LLM
-    runtime settings (populated by ``cli._setup_llm_key``).
+    runtime settings — the single place tool-using agent builders wire them in.
 
-    This is the single place that maps runtime LLM config onto agent model
-    settings: every agent builder does ``ModelSettings(**resolve_model_settings())``
-    rather than enumerating the individual getters, so a new agent-facing knob
-    is wired in here once and can't be silently forgotten by one builder.
-    ``None`` values are what the agents SDK treats as "unset / provider default".
+    ``default_parallel_tool_calls`` (the caller's own historical default) is used
+    only when config didn't set ``parallel_tool_calls``; an explicit value always
+    wins. Tool-less agents (skill-eval graders) skip this and omit the setting —
+    the SDK forwards an explicit ``False`` even without tools, which strict
+    OpenAI-compatible endpoints reject.
     """
+    value, was_explicit = get_parallel_tool_calls()
+    parallel_tool_calls = value if was_explicit else default_parallel_tool_calls
     return {
         "extra_headers": get_extra_headers() or None,
         "extra_args": get_timeout_extra_args(),
-        "parallel_tool_calls": get_parallel_tool_calls(),
+        "parallel_tool_calls": parallel_tool_calls,
     }
 
 

@@ -70,12 +70,14 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
-# Optional: whether query/chat agents may call tools in parallel.
-#   false (default) force sequential tool calls
-#   true            allow parallel tool calls
-#   null            don't send the setting (use the provider default) — set this
-#                   for Amazon Bedrock Claude, which rejects the request when
-#                   parallel_tool_calls is sent at all (any value). See #175.
+# Optional: whether the LLM agents (query, chat, lint, skill) may call tools
+# in parallel. Leave it UNSET (commented out) to keep OpenKB's per-agent
+# defaults. Setting it applies the SAME value to every agent:
+#   true    allow parallel tool calls
+#   false   force sequential tool calls
+#   null    don't send the setting at all (use the provider default) — REQUIRED
+#           for Amazon Bedrock Claude, which rejects the request when
+#           parallel_tool_calls is sent at all (any value). See #175.
 # parallel_tool_calls: null
 
 # Optional: override the entity-type vocabulary used for entity pages.
@@ -103,7 +105,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
-| `parallel_tool_calls` | `false` | Whether query/chat agents may call tools in parallel. `false` (default) forces sequential; `true` allows parallel; `null` omits the setting (provider default). **Amazon Bedrock needs `null`** (see below). |
+| `parallel_tool_calls` | unset | Whether the LLM agents (query, chat, lint, skill) may call tools in parallel. Unset keeps OpenKB's per-agent defaults; `true`/`false` force allow/sequential for every agent; `null` omits the setting (provider default). **Amazon Bedrock needs `null`** (see below). |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |
 
@@ -200,10 +202,11 @@ LLM_API_KEY=your-key-here
   ```yaml
   # <kb>/.openkb/config.yaml
   model: bedrock/eu.anthropic.claude-sonnet-4-6
-  parallel_tool_calls: null   # REQUIRED for Bedrock Claude: the default (false)
-                              # — and any explicit value — makes LiteLLM send a
-                              # malformed tool_choice that Bedrock rejects (#175).
-                              # null tells OpenKB not to send the setting at all.
+  parallel_tool_calls: null   # REQUIRED for Bedrock Claude: sending
+                              # parallel_tool_calls at all (any value) makes
+                              # LiteLLM send a malformed tool_choice that Bedrock
+                              # rejects (#175). null tells OpenKB to omit it.
+                              # Write it as bare `null` — not `None` or "null".
   ```
 
 **Where keys are read from** (first match wins, existing env always respected):

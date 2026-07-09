@@ -82,7 +82,7 @@ def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
         instructions=instructions,
         tools=[list_files, read_file],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(**resolve_model_settings()),
+        model_settings=ModelSettings(**resolve_model_settings(default_parallel_tool_calls=None)),
     )
 
 

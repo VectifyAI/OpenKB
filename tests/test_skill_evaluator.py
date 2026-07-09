@@ -412,3 +412,59 @@ async def test_generate_eval_set_translates_malformed_json_to_runtime_error(tmp_
     with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
         with pytest.raises(RuntimeError, match="non-JSON output"):
             await generate_eval_set(skill_dir, model="gpt-4o-mini")
+
+
+# -------- parallel_tool_calls on the (tool-less) eval agents ------------------
+#
+# The eval agents have NO tools, so they must OMIT parallel_tool_calls in every
+# config state — the SDK forwards an explicit `False` even without tools, which
+# strict OpenAI endpoints reject. Regression guards against a future "finish the
+# migration" that wires them through resolve_model_settings().
+
+
+async def _capture_eval_agent(coro_factory):
+    """Run an eval coroutine with Runner.run mocked, returning the Agent it built."""
+    captured = {}
+
+    async def fake_runner(agent, *args, **kwargs):
+        captured["agent"] = agent
+        # Return output shaped enough for each caller's parser not to raise.
+        return SimpleNamespace(final_output="NO-TRIGGER")
+
+    with patch("openkb.skill.evaluator.Runner.run", new=AsyncMock(side_effect=fake_runner)):
+        try:
+            await coro_factory()
+        except Exception:
+            # We only care about the agent that was built, not the parse result.
+            pass
+    return captured["agent"]
+
+
+async def _all_three_eval_agents(skill_dir):
+    return [
+        await _capture_eval_agent(
+            lambda: generate_eval_set(skill_dir, model="gpt-4o-mini", count=2)
+        ),
+        await _capture_eval_agent(lambda: grade_one("desc", "q?", model="gpt-4o-mini")),
+        await _capture_eval_agent(lambda: grade_coverage("body", "q?", model="gpt-4o-mini")),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stash",
+    [
+        (None, False),  # not configured
+        (None, True),  # explicit null (Bedrock escape hatch)
+        (False, True),  # explicit false — must NOT reach a tool-less agent as False
+        (True, True),  # explicit true — meaningless without tools
+    ],
+)
+async def test_eval_agents_always_omit_parallel_tool_calls(tmp_path, stash):
+    from openkb.config import set_parallel_tool_calls
+
+    skill_dir = _make_skill(tmp_path)
+    set_parallel_tool_calls(*stash)
+
+    for agent in await _all_three_eval_agents(skill_dir):
+        assert agent.model_settings.parallel_tool_calls is None

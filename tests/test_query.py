@@ -169,24 +169,34 @@ class TestQueryAgentParallelToolCalls:
     the request when parallel_tool_calls is sent at all (issue #175).
     """
 
+    def test_unset_stash_still_defaults_to_false(self, tmp_path):
+        # No _setup_llm_key has run in this test (stash at its own raw
+        # "not configured" default) — build_query_agent must still land on
+        # the historical default, not on some other arbitrary value.
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(None, False)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.parallel_tool_calls is False
+
     def test_null_stash_is_omitted(self, tmp_path):
         from openkb.config import set_parallel_tool_calls
 
-        set_parallel_tool_calls(None)
+        set_parallel_tool_calls(None, True)
         agent = build_query_agent(str(tmp_path), "bedrock/eu.anthropic.claude-sonnet-4-6")
         assert agent.model_settings.parallel_tool_calls is None
 
     def test_false_stash_forces_sequential(self, tmp_path):
         from openkb.config import set_parallel_tool_calls
 
-        set_parallel_tool_calls(False)
+        set_parallel_tool_calls(False, True)
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.parallel_tool_calls is False
 
     def test_true_stash_allows_parallel(self, tmp_path):
         from openkb.config import set_parallel_tool_calls
 
-        set_parallel_tool_calls(True)
+        set_parallel_tool_calls(True, True)
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.parallel_tool_calls is True
 
