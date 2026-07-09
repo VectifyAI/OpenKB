@@ -17,6 +17,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
+    # Whether query/chat agents may call tools in parallel. None (default) omits
+    # the setting so the provider decides — required for Amazon Bedrock's Claude
+    # models, where sending parallel_tool_calls makes LiteLLM emit a malformed
+    # tool_choice (missing `type`) and every query/chat fails (issue #175). Set
+    # false to force sequential tool calls (fine on OpenAI/Anthropic-direct).
+    "parallel_tool_calls": None,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional
@@ -144,6 +150,26 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
     return headers
 
 
+def resolve_parallel_tool_calls(config: dict) -> bool | None:
+    """Resolve the optional ``parallel_tool_calls:`` key.
+
+    Returns ``None`` (omit the setting — provider default) when absent or
+    explicitly null; ``True``/``False`` when set to a bool. A non-bool value is
+    invalid and treated as unset, with a warning. ``None`` is the normal
+    "unset" case and warns silently, matching ``resolve_timeout``.
+    """
+    value = config.get("parallel_tool_calls")
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        logger.warning(
+            "config: 'parallel_tool_calls' must be true or false, got %r — ignoring it.",
+            value,
+        )
+        return None
+    return value
+
+
 def resolve_timeout(config: dict) -> float | None:
     """Resolve the optional ``timeout:`` key to a finite positive number of seconds.
 
@@ -241,6 +267,24 @@ def get_timeout_extra_args() -> dict[str, float] | None:
     field), or ``None``. The LiteLLM provider forwards it to the completion call.
     """
     return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
+
+
+# Process-wide agent ``parallel_tool_calls`` setting, resolved from config by
+# the CLI (cli._setup_llm_key) and read when building query/chat agents. None =
+# omit the setting (provider default) — see the DEFAULT_CONFIG note on why
+# Bedrock needs this.
+_runtime_parallel_tool_calls: bool | None = None
+
+
+def set_parallel_tool_calls(value: bool | None) -> None:
+    """Set the process-wide agent ``parallel_tool_calls`` setting."""
+    global _runtime_parallel_tool_calls
+    _runtime_parallel_tool_calls = value
+
+
+def get_parallel_tool_calls() -> bool | None:
+    """Return the process-wide agent ``parallel_tool_calls`` setting (or None)."""
+    return _runtime_parallel_tool_calls
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

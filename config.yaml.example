@@ -2,6 +2,12 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
+# Optional: whether query/chat agents may call tools in parallel. Omit (the
+# default) to let the provider decide. Leave it unset for Amazon Bedrock Claude
+# models — sending it makes LiteLLM emit a malformed tool_choice and every
+# query/chat fails. Set false to force sequential tool calls on other providers.
+# parallel_tool_calls: false
+
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).

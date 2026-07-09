@@ -3,15 +3,53 @@ import logging
 from openkb.config import (
     DEFAULT_CONFIG,
     get_extra_headers,
+    get_parallel_tool_calls,
     get_timeout,
     load_config,
     resolve_extra_headers,
     resolve_litellm_settings,
+    resolve_parallel_tool_calls,
     resolve_timeout,
     save_config,
     set_extra_headers,
+    set_parallel_tool_calls,
     set_timeout,
 )
+
+
+def test_parallel_tool_calls_defaults_to_none():
+    assert DEFAULT_CONFIG["parallel_tool_calls"] is None
+
+
+def test_resolve_parallel_tool_calls_absent_is_none():
+    assert resolve_parallel_tool_calls({}) is None
+
+
+def test_resolve_parallel_tool_calls_explicit_bools():
+    assert resolve_parallel_tool_calls({"parallel_tool_calls": True}) is True
+    assert resolve_parallel_tool_calls({"parallel_tool_calls": False}) is False
+
+
+def test_resolve_parallel_tool_calls_none_is_silent(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_parallel_tool_calls({"parallel_tool_calls": None}) is None
+    assert caplog.text == ""
+
+
+def test_resolve_parallel_tool_calls_rejects_non_bool(caplog):
+    # A non-bool (e.g. a string or int) is invalid → treat as unset, with a warning.
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_parallel_tool_calls({"parallel_tool_calls": "true"}) is None
+    assert "parallel_tool_calls" in caplog.text
+
+
+def test_parallel_tool_calls_stash_roundtrip():
+    set_parallel_tool_calls(False)
+    assert get_parallel_tool_calls() is False
+    set_parallel_tool_calls(True)
+    assert get_parallel_tool_calls() is True
+    set_parallel_tool_calls(None)
+    assert get_parallel_tool_calls() is None
 
 
 def test_default_config_keys():

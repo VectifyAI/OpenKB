@@ -70,6 +70,12 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
+# Optional: whether query/chat agents may call tools in parallel. Omit (the
+# default) to let the provider decide. Leave it unset for Amazon Bedrock Claude
+# models — sending it makes LiteLLM emit a malformed tool_choice and every
+# query/chat fails. Set false to force sequential tool calls on other providers.
+# parallel_tool_calls: false
+
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).
@@ -95,6 +101,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
+| `parallel_tool_calls` | *(unset)* | Whether query/chat agents may call tools in parallel. Unset = provider default. **Leave unset for Amazon Bedrock** (see below). Set `false` to force sequential tool calls elsewhere. |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |
 
@@ -177,6 +184,24 @@ LLM_API_KEY=your-key-here
   won't warn about a missing one.
 - **PageIndex Cloud** uses a separate `PAGEINDEX_API_KEY` (see
   [`pageindex-cloud/`](../pageindex-cloud/)).
+- **Amazon Bedrock** (`model: bedrock/...`) authenticates with AWS credentials,
+  not `LLM_API_KEY`. Put them in `<kb>/.env` (LiteLLM/boto3 read them from the
+  environment); `LLM_API_KEY` isn't needed:
+
+  ```bash
+  # <kb>/.env
+  AWS_ACCESS_KEY_ID=...
+  AWS_SECRET_ACCESS_KEY=...
+  AWS_REGION_NAME=eu-central-1
+  ```
+
+  ```yaml
+  # <kb>/.openkb/config.yaml
+  model: bedrock/eu.anthropic.claude-sonnet-4-6
+  # Do NOT set parallel_tool_calls for Bedrock Claude — leaving it unset (the
+  # default) is what keeps query/chat working; setting it makes LiteLLM send a
+  # malformed tool_choice that Bedrock rejects (issue #175).
+  ```
 
 **Where keys are read from** (first match wins, existing env always respected):
 
