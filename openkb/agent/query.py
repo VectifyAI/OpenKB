@@ -12,7 +12,7 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
-from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.config import resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -95,11 +95,7 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(
-            parallel_tool_calls=False,
-            extra_headers=get_extra_headers() or None,
-            extra_args=get_timeout_extra_args(),
-        ),
+        model_settings=ModelSettings(**resolve_model_settings()),
     )
 
 

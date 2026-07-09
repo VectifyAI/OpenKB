@@ -3,15 +3,124 @@ import logging
 from openkb.config import (
     DEFAULT_CONFIG,
     get_extra_headers,
+    get_parallel_tool_calls,
     get_timeout,
     load_config,
     resolve_extra_headers,
     resolve_litellm_settings,
+    resolve_model_settings,
+    resolve_parallel_tool_calls,
     resolve_timeout,
     save_config,
     set_extra_headers,
+    set_parallel_tool_calls,
     set_timeout,
 )
+
+# --- parallel_tool_calls ------------------------------------------------------
+#
+# (value, was_explicit) distinguishes "not configured" (each agent uses its own
+# default) from an explicit true/false/null (overrides every agent uniformly).
+
+
+def test_parallel_tool_calls_not_in_default_config():
+    # No single default fits every agent (see module docstring above), so this
+    # key is intentionally absent from DEFAULT_CONFIG — load_config's merge
+    # must not mask "the user's config.yaml doesn't mention this key".
+    assert "parallel_tool_calls" not in DEFAULT_CONFIG
+
+
+def test_resolve_parallel_tool_calls_absent_is_unset():
+    assert resolve_parallel_tool_calls({}) == (None, False)
+
+
+def test_resolve_parallel_tool_calls_explicit_bools():
+    assert resolve_parallel_tool_calls({"parallel_tool_calls": True}) == (True, True)
+    assert resolve_parallel_tool_calls({"parallel_tool_calls": False}) == (False, True)
+
+
+def test_resolve_parallel_tool_calls_null_means_omit(caplog):
+    # Explicit null = "don't send the param" (provider default). This is the
+    # escape hatch for Amazon Bedrock, and is silent (not an invalid value) —
+    # explicit and distinct from "absent" even though both currently carry a
+    # value of None; was_explicit is what tells them apart.
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_parallel_tool_calls({"parallel_tool_calls": None}) == (None, True)
+    assert caplog.text == ""
+
+
+def test_resolve_parallel_tool_calls_rejects_non_bool(caplog):
+    # An invalid value (not true/false/null) degrades to the one value known
+    # to never break any provider — omit the setting — rather than to a fixed
+    # bool that could reproduce the exact failure (e.g. Amazon Bedrock) the
+    # user may have been trying to escape via this exact key.
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_parallel_tool_calls({"parallel_tool_calls": "true"}) == (None, True)
+    assert "parallel_tool_calls" in caplog.text
+
+
+def test_parallel_tool_calls_stash_roundtrip():
+    set_parallel_tool_calls(False, True)
+    assert get_parallel_tool_calls() == (False, True)
+    set_parallel_tool_calls(True, True)
+    assert get_parallel_tool_calls() == (True, True)
+    set_parallel_tool_calls(None, True)
+    assert get_parallel_tool_calls() == (None, True)
+    set_parallel_tool_calls(None, False)
+    assert get_parallel_tool_calls() == (None, False)
+
+
+def test_parallel_tool_calls_stash_default_is_unset():
+    # The raw stash default must mean "not configured", matching an absent key,
+    # so an agent built before _setup_llm_key runs defers to its own default.
+    set_parallel_tool_calls(None, False)
+    assert get_parallel_tool_calls() == resolve_parallel_tool_calls({})
+
+
+# --- resolve_model_settings ---------------------------------------------------
+
+
+def test_resolve_model_settings_uses_own_default_when_unset():
+    set_extra_headers({})
+    set_timeout(None)
+    set_parallel_tool_calls(None, False)
+    assert resolve_model_settings() == {
+        "extra_headers": None,
+        "extra_args": None,
+        "parallel_tool_calls": False,  # the function's own default
+    }
+    assert resolve_model_settings(default_parallel_tool_calls=None) == {
+        "extra_headers": None,
+        "extra_args": None,
+        "parallel_tool_calls": None,
+    }
+    assert resolve_model_settings(default_parallel_tool_calls=True) == {
+        "extra_headers": None,
+        "extra_args": None,
+        "parallel_tool_calls": True,
+    }
+
+
+def test_resolve_model_settings_explicit_value_overrides_every_default():
+    # An explicit config choice always wins over whatever default a specific
+    # caller would otherwise apply — the whole point of the escape hatch is
+    # that it works uniformly, regardless of which agent is asking.
+    set_extra_headers({"X-A": "1"})
+    set_timeout(1200.0)
+    set_parallel_tool_calls(None, True)  # explicit null: omit, for everyone
+    for default in (False, True, None):
+        assert resolve_model_settings(default_parallel_tool_calls=default) == {
+            "extra_headers": {"X-A": "1"},
+            "extra_args": {"timeout": 1200.0},
+            "parallel_tool_calls": None,
+        }
+
+    set_parallel_tool_calls(True, True)  # explicit true: allow parallel, for everyone
+    for default in (False, True, None):
+        assert (
+            resolve_model_settings(default_parallel_tool_calls=default)["parallel_tool_calls"]
+            is True
+        )
 
 
 def test_default_config_keys():

@@ -20,7 +20,7 @@ from pathlib import Path
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from agents.model_settings import ModelSettings
 
-from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.config import resolve_model_settings
 from openkb.prompts import load_prompt
 from openkb.schema import get_agents_md
 from openkb.skill import skill_dir
@@ -154,18 +154,14 @@ def build_skill_create_agent(
             done,
         ],
         model=f"litellm/{model}",
-        # Allow the model to issue multiple read tool calls in one turn —
-        # the compile's early phase is a fan-out (list dir -> read N
-        # summaries -> read N source page-ranges), and serialising each
-        # read into its own turn costs roughly 5-10 extra round-trips per
-        # compile. Writes serialise naturally because each
-        # `write_skill_file` depends on accumulated reads; the model has
-        # no reason to issue parallel writes to the same path.
-        model_settings=ModelSettings(
-            parallel_tool_calls=True,
-            extra_headers=get_extra_headers() or None,
-            extra_args=get_timeout_extra_args(),
-        ),
+        # Default to allowing parallel read tool calls — the compile's early
+        # phase is a fan-out (list dir -> read N summaries -> read N source
+        # page-ranges), and serialising each read into its own turn costs
+        # roughly 5-10 extra round-trips per compile. Writes serialise
+        # naturally because each `write_skill_file` depends on accumulated
+        # reads; the model has no reason to issue parallel writes to the
+        # same path. An explicit config value (e.g. `null` for Bedrock) wins.
+        model_settings=ModelSettings(**resolve_model_settings(default_parallel_tool_calls=True)),
     )
 
 

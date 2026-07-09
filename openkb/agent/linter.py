@@ -8,7 +8,7 @@ from agents import Agent, Runner, function_tool
 from agents.model_settings import ModelSettings
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.config import resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -82,10 +82,7 @@ def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
         instructions=instructions,
         tools=[list_files, read_file],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(
-            extra_headers=get_extra_headers() or None,
-            extra_args=get_timeout_extra_args(),
-        ),
+        model_settings=ModelSettings(**resolve_model_settings(default_parallel_tool_calls=None)),
     )
 
 

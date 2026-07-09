@@ -144,6 +144,30 @@ def resolve_extra_headers(config: dict) -> dict[str, str]:
     return headers
 
 
+def resolve_parallel_tool_calls(config: dict) -> tuple[bool | None, bool]:
+    """Resolve the optional ``parallel_tool_calls:`` key to ``(value, was_explicit)``.
+
+    Absent → ``(None, False)`` so each agent applies its own default (see
+    ``resolve_model_settings``). ``true``/``false`` → that bool; explicit
+    ``null`` → ``None`` (omit — the Amazon Bedrock #175 escape hatch); both with
+    ``was_explicit=True`` so they override every agent uniformly. An invalid
+    value degrades to omit (never breaks a provider), with a warning.
+    """
+    if "parallel_tool_calls" not in config:
+        return None, False
+    value = config["parallel_tool_calls"]
+    if value is None:
+        return None, True
+    if isinstance(value, bool):
+        return value, True
+    logger.warning(
+        "config: 'parallel_tool_calls' must be true, false, or null, got %r "
+        "— omitting the setting.",
+        value,
+    )
+    return None, True
+
+
 def resolve_timeout(config: dict) -> float | None:
     """Resolve the optional ``timeout:`` key to a finite positive number of seconds.
 
@@ -241,6 +265,42 @@ def get_timeout_extra_args() -> dict[str, float] | None:
     field), or ``None``. The LiteLLM provider forwards it to the completion call.
     """
     return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
+
+
+# Process-wide agent ``parallel_tool_calls`` as ``(value, was_explicit)``, set
+# from config by the CLI and read when building agents. ``(None, False)`` = not
+# configured, so each agent falls back to its own default (resolve_model_settings).
+_runtime_parallel_tool_calls: tuple[bool | None, bool] = (None, False)
+
+
+def set_parallel_tool_calls(value: bool | None, was_explicit: bool) -> None:
+    """Set the process-wide ``parallel_tool_calls`` — see :func:`resolve_parallel_tool_calls`."""
+    global _runtime_parallel_tool_calls
+    _runtime_parallel_tool_calls = (value, was_explicit)
+
+
+def get_parallel_tool_calls() -> tuple[bool | None, bool]:
+    """Return the process-wide ``parallel_tool_calls`` as ``(value, was_explicit)``."""
+    return _runtime_parallel_tool_calls
+
+
+def resolve_model_settings(*, default_parallel_tool_calls: bool | None = False) -> dict[str, Any]:
+    """Assemble the agents-SDK ``ModelSettings`` kwargs from the process-wide LLM
+    runtime settings — the single place tool-using agent builders wire them in.
+
+    ``default_parallel_tool_calls`` (the caller's own historical default) is used
+    only when config didn't set ``parallel_tool_calls``; an explicit value always
+    wins. Tool-less agents (skill-eval graders) skip this and omit the setting —
+    the SDK forwards an explicit ``False`` even without tools, which strict
+    OpenAI-compatible endpoints reject.
+    """
+    value, was_explicit = get_parallel_tool_calls()
+    parallel_tool_calls = value if was_explicit else default_parallel_tool_calls
+    return {
+        "extra_headers": get_extra_headers() or None,
+        "extra_args": get_timeout_extra_args(),
+        "parallel_tool_calls": parallel_tool_calls,
+    }
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
