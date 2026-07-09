@@ -8,6 +8,7 @@ from openkb.config import (
     load_config,
     resolve_extra_headers,
     resolve_litellm_settings,
+    resolve_model_settings,
     resolve_parallel_tool_calls,
     resolve_timeout,
     save_config,
@@ -15,6 +16,30 @@ from openkb.config import (
     set_parallel_tool_calls,
     set_timeout,
 )
+
+
+def test_resolve_model_settings_assembles_from_runtime_stashes():
+    # One place that assembles every agents-SDK ModelSettings kwarg from the
+    # process-wide runtime stashes, so agent builders don't each enumerate them.
+    set_extra_headers({"X-A": "1"})
+    set_timeout(1200.0)
+    set_parallel_tool_calls(False)
+    assert resolve_model_settings() == {
+        "extra_headers": {"X-A": "1"},
+        "extra_args": {"timeout": 1200.0},
+        "parallel_tool_calls": False,
+    }
+
+
+def test_resolve_model_settings_empty_is_all_omitted():
+    set_extra_headers({})
+    set_timeout(None)
+    set_parallel_tool_calls(None)
+    assert resolve_model_settings() == {
+        "extra_headers": None,
+        "extra_args": None,
+        "parallel_tool_calls": None,
+    }
 
 
 def test_parallel_tool_calls_defaults_to_false():

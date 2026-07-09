@@ -300,6 +300,23 @@ def get_parallel_tool_calls() -> bool | None:
     return _runtime_parallel_tool_calls
 
 
+def resolve_model_settings() -> dict[str, Any]:
+    """Assemble the agents-SDK ``ModelSettings`` kwargs from the process-wide LLM
+    runtime settings (populated by ``cli._setup_llm_key``).
+
+    This is the single place that maps runtime LLM config onto agent model
+    settings: every agent builder does ``ModelSettings(**resolve_model_settings())``
+    rather than enumerating the individual getters, so a new agent-facing knob
+    is wired in here once and can't be silently forgotten by one builder.
+    ``None`` values are what the agents SDK treats as "unset / provider default".
+    """
+    return {
+        "extra_headers": get_extra_headers() or None,
+        "extra_args": get_timeout_extra_args(),
+        "parallel_tool_calls": get_parallel_tool_calls(),
+    }
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     """Load YAML config from config_path, merged with DEFAULT_CONFIG.
 
