@@ -1975,7 +1975,7 @@ requires-dist = [
     { name = "markitdown", extras = ["docx", "pptx", "xls", "xlsx"], specifier = "==0.1.5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.15.0" },
     { name = "openai-agents", specifier = "==0.17.3" },
-    { name = "pageindex", specifier = "==0.3.0.dev2" },
+    { name = "pageindex", specifier = "==0.3.0.dev3" },
     { name = "portalocker", specifier = "==3.2.0" },
     { name = "prompt-toolkit", specifier = "==3.0.52" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
@@ -2013,7 +2013,7 @@ wheels = [
 
 [[package]]
 name = "pageindex"
-version = "0.3.0.dev2"
+version = "0.3.0.dev3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx", extra = ["socks"] },
@@ -2028,9 +2028,9 @@ dependencies = [
     { name = "requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/87/9bf0e64e04509a453b110b09638eee297d8e046e8f709d13dc88d25a269b/pageindex-0.3.0.dev2.tar.gz", hash = "sha256:8d36899e5755710d82729f18bdb70f85de71cc2fcde0491749188ae6c8f3065f", size = 66284, upload-time = "2026-07-08T10:04:30.528Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/58/92b159e86e73af3a61aedea05e9390181d83e4a6c717e37845a7cf1eedd5/pageindex-0.3.0.dev3.tar.gz", hash = "sha256:93174bbfcd261c5e7d6c7d47f1be371ae21c1fe977ce706cf3c021f4932693bd", size = 76083, upload-time = "2026-07-10T07:00:30.522Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/99/7b24f5b7f36b6827f9c94d540248e79444103b5e2cb06ffe5ab0e8e8fe7f/pageindex-0.3.0.dev2-py3-none-any.whl", hash = "sha256:b0cb1f6e83e1a81d81f00b5b7bf229e1850fe54591fbb06d209fec0b0e63cf3b", size = 71889, upload-time = "2026-07-08T10:04:29.092Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/29/34a2a1eaed83be5aeb879bf85bff7be9f6faa76fe70718479d6426ce21aa/pageindex-0.3.0.dev3-py3-none-any.whl", hash = "sha256:5056969108785f5c9c31e03ce60f5fa1043be96ecffb5a06353375212027b258", size = 81956, upload-time = "2026-07-10T07:00:29.163Z" },
 ]
 
 [[package]]

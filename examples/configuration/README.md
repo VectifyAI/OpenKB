@@ -12,7 +12,7 @@ pip install openkb
 ```
 
 OpenKB pins a **pre-release** of its PageIndex dependency
-(`pageindex==0.3.0.dev1`), which some installers skip by default. If an install
+(`pageindex==0.3.0.dev3`), which some installers skip by default. If an install
 can't resolve `pageindex`, allow pre-releases:
 
 ```bash
