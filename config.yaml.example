@@ -8,6 +8,16 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 # large PDFs. Omit to let each stage apply its own default.
 # concurrency: 5
 
+# Optional: whether the LLM agents (query, chat, lint, skill) may call tools
+# in parallel. Leave it UNSET (commented out) to keep OpenKB's per-agent
+# defaults. Setting it applies the SAME value to every agent:
+#   true    allow parallel tool calls
+#   false   force sequential tool calls
+#   null    don't send the setting at all (use the provider default) — REQUIRED
+#           for Amazon Bedrock Claude, which rejects the request when
+#           parallel_tool_calls is sent at all (any value). See #175.
+# parallel_tool_calls: null
+
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).

@@ -182,6 +182,29 @@ def test_legacy_toplevel_timeout_still_works(tmp_path, monkeypatch):
     assert get_timeout() == 900.0
 
 
+def test_toplevel_parallel_tool_calls_sets_stash(tmp_path, monkeypatch):
+    """End-to-end: a top-level `parallel_tool_calls:` in config.yaml lands in the
+    process-wide stash (with the explicit flag) the next time _setup_llm_key runs.
+    """
+    from openkb.config import get_parallel_tool_calls
+
+    _isolate_env(monkeypatch)
+    _write_kb_config(tmp_path, "model: gpt-4o-mini\nparallel_tool_calls: true\n")
+    _setup_llm_key(tmp_path)
+    assert get_parallel_tool_calls() == (True, True)
+
+
+def test_toplevel_parallel_tool_calls_absent_is_unset(tmp_path, monkeypatch):
+    """No `parallel_tool_calls:` key → the stash reports "not configured"
+    ((None, False)), so each agent builder applies its own default."""
+    from openkb.config import get_parallel_tool_calls
+
+    _isolate_env(monkeypatch)
+    _write_kb_config(tmp_path, "model: gpt-4o-mini\n")
+    _setup_llm_key(tmp_path)
+    assert get_parallel_tool_calls() == (None, False)
+
+
 def test_litellm_block_extra_headers_win_over_legacy_toplevel(tmp_path, monkeypatch):
     """Symmetric with the timeout precedence test: a litellm: block extra_headers
     replaces the legacy top-level extra_headers.

@@ -42,6 +42,34 @@ class TestBuildLintAgent:
         assert "Gaps" in agent.instructions or "gaps" in agent.instructions
 
 
+class TestLintAgentParallelToolCalls:
+    """Lint never sent parallel_tool_calls before, so its default stays "omit"
+    (sending any value, incl. False, breaks Bedrock #175). Explicit config wins.
+    """
+
+    def test_unset_omits_the_setting(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(None, False)  # not configured
+        agent = build_lint_agent(str(tmp_path), "bedrock/eu.anthropic.claude-sonnet-4-6")
+        assert agent.model_settings.parallel_tool_calls is None
+
+    def test_explicit_null_omits(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(None, True)  # explicit null
+        agent = build_lint_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.parallel_tool_calls is None
+
+    def test_explicit_bools_flow_through(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(True, True)
+        assert build_lint_agent(str(tmp_path), "m").model_settings.parallel_tool_calls is True
+        set_parallel_tool_calls(False, True)
+        assert build_lint_agent(str(tmp_path), "m").model_settings.parallel_tool_calls is False
+
+
 class TestRunKnowledgeLint:
     @pytest.mark.asyncio
     async def test_returns_final_output(self, tmp_path):
