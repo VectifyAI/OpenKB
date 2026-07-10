@@ -32,7 +32,7 @@ keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "age
 # returning empty Responses output (BerriAI/litellm#25429) and
 # auto-injects GitHub Copilot IDE-auth headers.
 dependencies = [
-    "pageindex==0.3.0.dev1",
+    "pageindex==0.3.0.dev3",
     "markitdown[docx,pptx,xlsx,xls]==0.1.5",
     "trafilatura==2.0.0",
     "click==8.4.0",

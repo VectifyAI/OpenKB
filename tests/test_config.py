@@ -6,6 +6,7 @@ from openkb.config import (
     get_parallel_tool_calls,
     get_timeout,
     load_config,
+    resolve_concurrency,
     resolve_extra_headers,
     resolve_litellm_settings,
     resolve_model_settings,
@@ -133,6 +134,57 @@ def test_default_config_values():
     assert DEFAULT_CONFIG["model"] == "gpt-5.4"
     assert DEFAULT_CONFIG["language"] == "en"
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
+
+
+def test_concurrency_not_in_default_config():
+    # Like the other optional tuning knobs (timeout, extra_headers,
+    # parallel_tool_calls), concurrency stays out of DEFAULT_CONFIG —
+    # resolve_concurrency reads it via .get(), so an absent key resolves to
+    # None without relying on load_config's merge.
+    assert "concurrency" not in DEFAULT_CONFIG
+
+
+def test_load_concurrency_override(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("concurrency: 12\n", encoding="utf-8")
+    assert load_config(config_path)["concurrency"] == 12
+
+
+def test_resolve_concurrency_absent_is_none():
+    assert resolve_concurrency({}) is None
+
+
+def test_resolve_concurrency_valid_value():
+    assert resolve_concurrency({"concurrency": 3}) == 3
+
+
+def test_resolve_concurrency_rejects_bool(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = resolve_concurrency({"concurrency": True})
+    assert result is None
+    assert "concurrency" in caplog.text
+
+
+def test_resolve_concurrency_rejects_non_positive(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_concurrency({"concurrency": 0}) is None
+    assert "concurrency" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_concurrency({"concurrency": -1}) is None
+    assert "concurrency" in caplog.text
+
+
+def test_resolve_concurrency_rejects_non_int():
+    assert resolve_concurrency({"concurrency": "3"}) is None
+
+
+def test_resolve_concurrency_none_is_silent(caplog):
+    # Explicit null / absent is the normal "unset — caller applies its own
+    # default, or omits the setting entirely" case — no warning.
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        assert resolve_concurrency({"concurrency": None}) is None
+    assert caplog.text == ""
 
 
 def test_load_missing_file_returns_defaults(tmp_path):

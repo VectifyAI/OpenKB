@@ -47,13 +47,14 @@ import litellm
 litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
-from openkb.agent.compiler import compile_long_doc
+from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG,
     load_config,
     save_config,
     load_global_config,
     register_kb,
+    resolve_concurrency,
     resolve_extra_headers,
     set_extra_headers,
     resolve_parallel_tool_calls,
@@ -561,6 +562,7 @@ def _add_single_file_locked(
                     kb_dir,
                     model,
                     doc_description=index_result.description,
+                    max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
                 ),
                 label=f"Compiling long doc (doc_id={index_result.doc_id})",
             )
@@ -569,7 +571,13 @@ def _add_single_file_locked(
                 raise RuntimeError(f"Converted document has no source artifact: {file_path.name}")
             source_path = result.source_path
             _run_compile_with_retry(
-                lambda: compile_short_doc(doc_name, source_path, kb_dir, model),
+                lambda: compile_short_doc(
+                    doc_name,
+                    source_path,
+                    kb_dir,
+                    model,
+                    max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
+                ),
                 label="Compiling short doc",
             )
 
@@ -690,6 +698,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
                         kb_dir,
                         model,
                         doc_description=cloud.description,
+                        max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
                     ),
                     label=f"Compiling imported doc (doc_id={doc_id})",
                 )
@@ -748,6 +757,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
 
 
 @click.group()
+@click.version_option(package_name="openkb", prog_name="openkb", message="%(prog)s %(version)s")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Enable verbose logging.")
 @click.option(
     "--kb-dir",
@@ -1642,6 +1652,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
     _setup_llm_key(kb_dir)
     config = load_config(openkb_dir / "config.yaml")
     model: str = config.get("model", DEFAULT_CONFIG["model"])
+    max_concurrency = resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY
 
     # Import lazily and reference via the module so tests can patch
     # ``openkb.agent.compiler.compile_*`` and see the call.
@@ -1677,7 +1688,16 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling long doc {name}...")
             start = time.time()
             try:
-                asyncio.run(compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model))
+                asyncio.run(
+                    compiler.compile_long_doc(
+                        name,
+                        summary_path,
+                        doc_id,
+                        kb_dir,
+                        model,
+                        max_concurrency=max_concurrency,
+                    )
+                )
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
@@ -1697,7 +1717,15 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling short doc {name}...")
             start = time.time()
             try:
-                asyncio.run(compiler.compile_short_doc(name, source_path, kb_dir, model))
+                asyncio.run(
+                    compiler.compile_short_doc(
+                        name,
+                        source_path,
+                        kb_dir,
+                        model,
+                        max_concurrency=max_concurrency,
+                    )
+                )
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)

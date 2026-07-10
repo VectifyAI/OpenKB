@@ -200,6 +200,30 @@ def resolve_timeout(config: dict) -> float | None:
     return value
 
 
+def resolve_concurrency(config: dict) -> int | None:
+    """Resolve the optional ``concurrency:`` key — the cap on concurrent LLM
+    calls OpenKB makes during ingest (PageIndex indexing and concept/entity
+    compilation alike; they never run at the same time for one document, so
+    one setting covers both).
+
+    Returns ``None`` when absent, explicitly ``null``, or invalid (rejecting
+    bools and non-positive values with a warning when present but unusable —
+    an explicit ``null``/absent key is the normal "unset" case and stays
+    silent, matching ``resolve_timeout``). Callers apply their own default (or
+    omit the setting entirely) when this returns ``None``.
+    """
+    value = config.get("concurrency")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        logger.warning(
+            "config: 'concurrency' must be a positive integer, got %r — ignoring it.",
+            value,
+        )
+        return None
+    return value
+
+
 def resolve_litellm_settings(config: dict) -> dict[str, Any]:
     """Resolve the optional ``litellm:`` mapping of LiteLLM module settings.
 

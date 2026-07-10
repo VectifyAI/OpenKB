@@ -2,6 +2,12 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
+# Optional: cap concurrent LLM calls during ingest (PageIndex indexing and
+# concept/entity compilation — they never overlap, so one setting covers
+# both). Lower it if you hit provider rate limits or "too many open files" on
+# large PDFs. Omit to let each stage apply its own default.
+# concurrency: 5
+
 # Optional: whether the LLM agents (query, chat, lint, skill) may call tools
 # in parallel. Leave it UNSET (commented out) to keep OpenKB's per-agent
 # defaults. Setting it applies the SAME value to every agent:

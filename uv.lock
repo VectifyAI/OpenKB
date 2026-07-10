@@ -1975,7 +1975,7 @@ requires-dist = [
     { name = "markitdown", extras = ["docx", "pptx", "xls", "xlsx"], specifier = "==0.1.5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.15.0" },
     { name = "openai-agents", specifier = "==0.17.3" },
-    { name = "pageindex", specifier = "==0.3.0.dev1" },
+    { name = "pageindex", specifier = "==0.3.0.dev3" },
     { name = "portalocker", specifier = "==3.2.0" },
     { name = "prompt-toolkit", specifier = "==3.0.52" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
@@ -2013,21 +2013,24 @@ wheels = [
 
 [[package]]
 name = "pageindex"
-version = "0.3.0.dev1"
+version = "0.3.0.dev3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx", extra = ["socks"] },
     { name = "litellm" },
+    { name = "openai" },
     { name = "openai-agents" },
+    { name = "pydantic" },
     { name = "pymupdf" },
     { name = "pypdf2" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/27/318e73fe1ed2194b19abeb53f57f30b022c9ea4a3ebfe8c2b293f239d537/pageindex-0.3.0.dev1.tar.gz", hash = "sha256:77f02a85622a180918a11d4c4e4e97c10dc0ba142c6418ab1c501d6c1301a409", size = 61010, upload-time = "2026-04-10T17:20:58.524Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/58/92b159e86e73af3a61aedea05e9390181d83e4a6c717e37845a7cf1eedd5/pageindex-0.3.0.dev3.tar.gz", hash = "sha256:93174bbfcd261c5e7d6c7d47f1be371ae21c1fe977ce706cf3c021f4932693bd", size = 76083, upload-time = "2026-07-10T07:00:30.522Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/7b/a2d37a28475605b715f9fe28320989aec753c023b272fbf9c4bf9f693a55/pageindex-0.3.0.dev1-py3-none-any.whl", hash = "sha256:570c7fd7e54d62782030154dfe02b2f6b9e88407a293f96ea824203716ef28d3", size = 66954, upload-time = "2026-04-10T17:20:56.738Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/29/34a2a1eaed83be5aeb879bf85bff7be9f6faa76fe70718479d6426ce21aa/pageindex-0.3.0.dev3-py3-none-any.whl", hash = "sha256:5056969108785f5c9c31e03ce60f5fa1043be96ecffb5a06353375212027b258", size = 81956, upload-time = "2026-07-10T07:00:29.163Z" },
 ]
 
 [[package]]
