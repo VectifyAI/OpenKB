@@ -17,13 +17,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
-    # Cap on concurrent LLM calls OpenKB makes during ingest — both PageIndex's
-    # indexing of a long document and OpenKB's own concept/entity compilation.
-    # These never run concurrently with each other for the same document, so
-    # one knob covers both. None = each stage applies its own built-in default.
-    # Lower it if you hit provider rate limits or "too many open files"; raise
-    # it to go faster.
-    "concurrency": None,
 }
 
 # Default entity-type vocabulary. Overridable per-KB via the optional

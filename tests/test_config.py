@@ -136,8 +136,12 @@ def test_default_config_values():
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
 
 
-def test_concurrency_defaults_to_none():
-    assert DEFAULT_CONFIG["concurrency"] is None
+def test_concurrency_not_in_default_config():
+    # Like the other optional tuning knobs (timeout, extra_headers,
+    # parallel_tool_calls), concurrency stays out of DEFAULT_CONFIG —
+    # resolve_concurrency reads it via .get(), so an absent key resolves to
+    # None without relying on load_config's merge.
+    assert "concurrency" not in DEFAULT_CONFIG
 
 
 def test_load_concurrency_override(tmp_path):
