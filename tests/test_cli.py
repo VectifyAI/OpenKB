@@ -9,6 +9,17 @@ from openkb.cli import cli
 from openkb.schema import AGENTS_MD
 
 
+def test_version_flag_reports_installed_version():
+    import importlib.metadata
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    # Reports the package's installed version (via importlib.metadata), so it
+    # tracks the hatch-vcs-derived version without a hardcoded string.
+    assert importlib.metadata.version("openkb") in result.output
+
+
 def test_init_creates_structure(tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path), patch("openkb.cli.register_kb"):

@@ -757,6 +757,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
 
 
 @click.group()
+@click.version_option(package_name="openkb", prog_name="openkb", message="%(prog)s %(version)s")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Enable verbose logging.")
 @click.option(
     "--kb-dir",
