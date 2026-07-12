@@ -20,8 +20,33 @@ from openkb import frontmatter
 from openkb.locks import atomic_write_text
 from openkb.schema import PAGE_CONTENT_DIRS
 
-# Matches [[wikilink]] or [[subdir/link]]
-_WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
+# Matches [[target]], [[target|alias]], [[target#Heading]], [[target#^block]],
+# same-page fragment links [[#Heading]], and embeds ![[file]]. Named groups
+# keep the pieces separable so Obsidian fragment/embed syntax survives
+# validation and rewriting instead of being demoted to plain text.
+_WIKILINK_RE = re.compile(
+    r"(?P<embed>!)?\[\[(?P<target>[^\]|#]*)(?P<frag>#[^\]|]*)?(?:\|(?P<alias>[^\]]+))?\]\]"
+)
+
+# Extension-like suffix on a wikilink target: 1-8 alphanumeric chars with at
+# least one letter (".txt", ".flac", ".drawio", ".md" — but not the ".11420"
+# of a dotted page name like "2509.11420"). Obsidian accepts arbitrary
+# attachment formats, so no closed extension list can be complete; targets
+# that look like files are simply never demoted. Keeping a genuinely dead
+# link is visible and harmless — demoting a valid attachment embed to plain
+# text is silent data loss.
+_EXTENSION_RE = re.compile(r"\.(?=[A-Za-z0-9]{0,7}[A-Za-z])[A-Za-z0-9]{1,8}$")
+
+
+def _is_attachment(target: str) -> bool:
+    """True when a wikilink target looks like a file attachment, not a page.
+
+    Checked only *after* page-target validation fails, so a real page whose
+    name happens to carry an extension-like suffix (``concepts/node.js``)
+    still validates and rewrites normally.
+    """
+    return bool(_EXTENSION_RE.search(target.rsplit("/", 1)[-1]))
+
 
 # Files to exclude from lint scanning (schema, logs, etc.)
 _EXCLUDED_FILES = {"AGENTS.md", "SCHEMA.md", "log.md"}
@@ -68,14 +93,27 @@ def strip_ghost_wikilinks(
 ) -> tuple[str, list[str]]:
     """Strip [[wikilinks]] whose targets do not exist in ``known_targets``.
 
-    For each ``[[X]]`` or ``[[X|alias]]`` in ``content``:
+    For each ``[[X]]``, ``[[X|alias]]``, ``[[X#frag]]``, or
+    ``[[X#frag|alias]]`` in ``content``:
 
     - If ``X`` is in ``known_targets`` exactly, the link is kept as-is.
     - Otherwise, ``X`` is normalized (see :func:`_normalize_target`) and
       matched against the normalized form of each known target. On a hit,
-      the link is rewritten to the canonical target form.
+      the link is rewritten to the canonical target form, preserving any
+      ``#Heading`` / ``#^block`` fragment and alias.
     - Otherwise, the brackets are removed and the link becomes plain text
       (the alias if provided, otherwise the slug rendered as words).
+
+    Obsidian syntax that never targets a wiki page is passed through
+    untouched: same-page fragment links (``[[#Heading]]``) and attachment
+    embeds/links — any unknown target with an extension-like suffix
+    (``![[file.png]]``, ``[[report.pdf]]``, ``![[audio.flac]]``,
+    ``![[diagram.drawio]]``). Obsidian accepts arbitrary attachment
+    formats, so classification is by shape, not by a closed extension
+    list; page validation runs first, so a real page named like a file
+    (``concepts/node.js``) still validates and rewrites normally. Note
+    embeds (``![[concepts/attention]]``) target pages like any other
+    link and go through the same validation, keeping the ``!`` on rewrite.
 
     Args:
         content: Markdown text containing zero or more ``[[wikilinks]]``.
@@ -96,25 +134,33 @@ def strip_ghost_wikilinks(
     ghosts: list[str] = []
 
     def _repl(m: re.Match) -> str:
-        raw = m.group(1)
-        if "|" in raw:
-            target, alias = raw.split("|", 1)
-            target = target.strip()
-            alias = alias.strip()
-        else:
-            target = raw.strip()
-            alias = None
+        embed = m.group("embed") or ""
+        target = (m.group("target") or "").strip()
+        frag = m.group("frag") or ""
+        alias = (m.group("alias") or "").strip() or None
 
-        # Direct hit
+        # [[#Heading]] links within the same page carry no target to check.
+        if not target:
+            return m.group(0)
+
+        # Direct hit — page targets validate first, so a page whose name
+        # carries an extension-like suffix still resolves normally.
         if target in known_targets:
             return m.group(0)
 
-        # Fuzzy normalized hit → rewrite to canonical
+        # Fuzzy normalized hit → rewrite to canonical, keeping the
+        # fragment and the embed marker
         canonical = norm_index.get(_normalize_target(target))
         if canonical is not None:
             if alias:
-                return f"[[{canonical}|{alias}]]"
-            return f"[[{canonical}]]"
+                return f"{embed}[[{canonical}{frag}|{alias}]]"
+            return f"{embed}[[{canonical}{frag}]]"
+
+        # Unknown target that looks like a file (![[audio.flac]],
+        # [[report.pdf]], ![[diagram.drawio]]): an attachment, not a page —
+        # keep verbatim rather than risk demoting a valid embed.
+        if _is_attachment(target):
+            return m.group(0)
 
         # Ghost — strip brackets, leave readable display
         ghosts.append(target)
@@ -152,12 +198,23 @@ def _all_wiki_pages(wiki: Path) -> dict[str, Path]:
 
 
 def _extract_wikilinks(text: str) -> list[str]:
-    """Return all wikilink targets found in *text*.
+    """Return all page-link targets found in *text*.
 
-    Handles ``[[target|display text]]`` alias syntax — only the target is returned.
+    Aliases and ``#Heading`` / ``#^block`` fragments are dropped — only the
+    page part is returned. Note embeds (``![[concepts/x]]``) count as page
+    links; attachment embeds/links (any extension-like target —
+    ``![[fig.png]]``, ``[[report.pdf]]``, ``![[audio.flac]]``) and
+    same-page fragment links (``[[#Heading]]``) are skipped — they never
+    target a wiki page, so reporting them as broken would be a false
+    positive.
     """
-    raw = _WIKILINK_RE.findall(text)
-    return [link.split("|")[0].strip() for link in raw]
+    targets: list[str] = []
+    for m in _WIKILINK_RE.finditer(text):
+        target = (m.group("target") or "").strip()
+        if not target or _is_attachment(target):
+            continue
+        targets.append(target)
+    return targets
 
 
 def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
