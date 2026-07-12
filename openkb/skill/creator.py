@@ -105,8 +105,10 @@ def build_skill_create_agent(
         need to see in order to distil it correctly into the skill.
 
         Args:
-            image_path: Path relative to wiki/
-                (e.g. ``"sources/images/doc/p1_img1.png"``).
+            image_path: Image path as it appears in the content — either
+                wiki-root-relative (``"sources/images/doc/p1_img1.png"``)
+                or note-relative as used in sources/ .md pages
+                (``"images/doc/p1_img1.png"``).
         """
         result = _read_image_impl(image_path, wiki_root)
         if result["type"] == "image":

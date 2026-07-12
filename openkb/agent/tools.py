@@ -147,7 +147,10 @@ def read_wiki_image(path: str, wiki_root: str) -> dict:
     """Read an image file from the wiki and return as base64 data URL.
 
     Args:
-        path: Image path relative to *wiki_root* (e.g. ``"sources/images/doc/p1_img1.png"``).
+        path: Image path relative to *wiki_root*
+            (e.g. ``"sources/images/doc/p1_img1.png"``), or note-relative
+            as embedded in sources/ .md pages
+            (``"images/doc/p1_img1.png"`` — retried under ``sources/``).
         wiki_root: Absolute path to the wiki root directory.
 
     Returns:
@@ -161,7 +164,13 @@ def read_wiki_image(path: str, wiki_root: str) -> dict:
     if not full_path.is_relative_to(root):
         return {"type": "text", "text": "Access denied: path escapes wiki root."}
     if not full_path.exists():
-        return {"type": "text", "text": f"Image not found: {path}"}
+        # Source .md pages embed images note-relative ("images/<doc>/<file>",
+        # resolved from wiki/sources/). Callers pass those verbatim — retry
+        # under sources/ before failing.
+        alt_path = (root / "sources" / path).resolve()
+        if not (alt_path.is_relative_to(root) and alt_path.exists()):
+            return {"type": "text", "text": f"Image not found: {path}"}
+        full_path = alt_path
 
     mime = _MIME_TYPES.get(full_path.suffix.lower(), "image/png")
     b64 = base64.b64encode(full_path.read_bytes()).decode()

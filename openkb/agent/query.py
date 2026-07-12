@@ -37,8 +37,11 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-6. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
-   Use the get_image tool to view them when needed.
+6. Source content may reference images. Short-doc .md pages link them
+   note-relative (e.g. ![image](images/doc/file.png), resolved from
+   wiki/sources/); long-doc JSON page metadata lists them wiki-root-relative
+   (e.g. sources/images/doc/file.png). Pass either form as seen to the
+   get_image tool — it accepts both.
 7. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
@@ -81,7 +84,10 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         you'd need to see to answer accurately.
 
         Args:
-            image_path: Image path relative to wiki root (e.g. 'sources/images/doc/p1_img1.png').
+            image_path: Image path as it appears in the content — either
+                wiki-root-relative ('sources/images/doc/p1_img1.png') or
+                note-relative as used in sources/ .md pages
+                ('images/doc/p1_img1.png').
         """
         result = read_wiki_image(image_path, wiki_root)
         if result["type"] == "image":
