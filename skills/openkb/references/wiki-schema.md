@@ -99,8 +99,11 @@ thing, read the matching entity page first.
 
 ## `wiki/sources/<doc>.md` (short docs)
 
-The markitdown-converted full text. Image refs appear as
-`![](sources/images/<doc>/p1_img1.png)`.
+The markitdown-converted full text. Image refs are note-relative —
+`![](images/<doc>/p1_img1.png)` — and resolve from `wiki/sources/`
+(the files live in `wiki/sources/images/<doc>/`). The per-page JSON of
+long docs instead lists images wiki-root-relative
+(`sources/images/<doc>/...`).
 
 ## `wiki/sources/<doc>.json` (long PDFs)
 

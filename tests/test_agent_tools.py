@@ -7,8 +7,58 @@ from openkb.agent.tools import (
     list_wiki_files,
     parse_pages,
     read_wiki_file,
+    read_wiki_image,
     write_wiki_file,
 )
+
+FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+
+
+# ---------------------------------------------------------------------------
+# read_wiki_image
+# ---------------------------------------------------------------------------
+
+
+class TestReadWikiImage:
+    def _make_image(self, tmp_path):
+        images_dir = tmp_path / "sources" / "images" / "doc"
+        images_dir.mkdir(parents=True)
+        (images_dir / "p1_img1.png").write_bytes(FAKE_PNG)
+
+    def test_reads_wiki_root_relative_path(self, tmp_path):
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("sources/images/doc/p1_img1.png", str(tmp_path))
+
+        assert result["type"] == "image"
+        assert result["image_url"].startswith("data:image/png;base64,")
+
+    def test_reads_note_relative_path_from_sources(self, tmp_path):
+        # Source .md pages embed images as "images/<doc>/<file>" (relative to
+        # wiki/sources/); the tool must resolve those verbatim too.
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("images/doc/p1_img1.png", str(tmp_path))
+
+        assert result["type"] == "image"
+        assert result["image_url"].startswith("data:image/png;base64,")
+
+    def test_missing_image_reports_not_found(self, tmp_path):
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("images/doc/nope.png", str(tmp_path))
+
+        assert result["type"] == "text"
+        assert "not found" in result["text"].lower()
+
+    def test_path_escape_denied(self, tmp_path):
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("../outside.png", str(tmp_path))
+
+        assert result["type"] == "text"
+        assert "Access denied" in result["text"]
+
 
 # ---------------------------------------------------------------------------
 # list_wiki_files

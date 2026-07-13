@@ -23,6 +23,19 @@ _RELATIVE_RE = re.compile(r"!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)")
 _MIN_IMAGE_DIM = 32
 
 
+def md_image_ref(alt: str, doc_name: str, filename: str) -> str:
+    """Markdown image reference as written into ``wiki/sources/<doc>.md``.
+
+    Note-relative (``images/{doc}/{file}``): source pages live directly in
+    ``wiki/sources/``, so this resolves in every renderer that resolves links
+    relative to the containing file (Obsidian, GitHub, VS Code). Internal
+    metadata (the per-page JSON of long docs) keeps wiki-root-relative
+    ``sources/images/...`` paths instead — those are consumed by tools that
+    resolve against the wiki root, not rendered from a note.
+    """
+    return f"![{alt}](images/{doc_name}/{filename})"
+
+
 def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[int, list[str]]:
     """Extract images from a PDF using pymupdf's dict-mode block iteration.
 
@@ -31,7 +44,9 @@ def extract_pdf_images(pdf_path: Path, doc_name: str, images_dir: Path) -> dict[
     as PNG. This captures both embedded bitmaps *and* vector-rendered figures
     that ``get_images()`` would miss.
 
-    Returns a mapping of page_number (1-based) → list of relative image paths.
+    Returns a mapping of page_number (1-based) → list of image paths. Paths
+    are wiki-root-relative (``sources/images/...``) — internal metadata for
+    tools that resolve against the wiki root, not note-rendered markdown.
     """
     images_dir.mkdir(parents=True, exist_ok=True)
     page_images: dict[int, list[str]] = {}
@@ -77,7 +92,10 @@ def convert_pdf_to_pages(pdf_path: Path, doc_name: str, images_dir: Path) -> lis
     """Convert a PDF to per-page dicts with text content and images.
 
     Each dict has ``{"page": int, "content": str, "images": [{"path": str}]}``.
-    Images are saved to *images_dir* and referenced with wiki-root-relative paths.
+    Images are saved to *images_dir* and referenced with wiki-root-relative
+    ``sources/images/...`` paths — these pages land in ``sources/<doc>.json``
+    (never rendered from a note), and both ``get_wiki_page_content`` and
+    ``read_wiki_image`` resolve them against the wiki root.
     """
     images_dir.mkdir(parents=True, exist_ok=True)
     pages: list[dict] = []
@@ -134,8 +152,9 @@ def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> 
     """Convert a PDF to markdown with inline images using pymupdf dict-mode.
 
     Iterates blocks in reading order per page. Text blocks become text,
-    image blocks are saved to disk and replaced with ``![image](path)``
-    inline — preserving the original position in the document.
+    image blocks are saved to disk and replaced with a note-relative
+    ``![image](images/{doc_name}/...)`` link inline — preserving the
+    original position in the document.
 
     Returns the full markdown string.
     """
@@ -173,7 +192,7 @@ def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> 
                         filename = f"p{page_num}_img{img_counter}.png"
                         (images_dir / filename).write_bytes(pix.tobytes("png"))
                         pix = None
-                        parts.append(f"\n![image](sources/images/{doc_name}/{filename})\n")
+                        parts.append(f"\n{md_image_ref('image', doc_name, filename)}\n")
                     except Exception:
                         logger.warning("Failed to save image block on page %d", page_num)
     return "\n".join(parts)
@@ -184,7 +203,7 @@ def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str
 
     For each ``![alt](data:image/ext;base64,DATA)`` match:
     - Decode base64 bytes → save to ``images_dir/img_NNN.ext``
-    - Replace the link with ``![alt](sources/images/{doc_name}/img_NNN.ext)``
+    - Replace the link with ``![alt](images/{doc_name}/img_NNN.ext)``
     - On decode failure: log a warning and leave the original text unchanged.
     """
     counter = 0
@@ -208,7 +227,7 @@ def extract_base64_images(markdown: str, doc_name: str, images_dir: Path) -> str
         images_dir.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(image_bytes)
 
-        new_ref = f"![{alt}](sources/images/{doc_name}/{filename})"
+        new_ref = md_image_ref(alt, doc_name, filename)
         result = result.replace(match.group(0), new_ref, 1)
 
     return result
@@ -220,7 +239,7 @@ def copy_relative_images(markdown: str, source_dir: Path, doc_name: str, images_
     For each ``![alt](relative/path)`` match (skipping http/https and data URIs):
     - Resolve path relative to ``source_dir``
     - Copy to ``images_dir/{filename}``
-    - Replace link with ``![alt](sources/images/{doc_name}/{filename})``
+    - Replace link with ``![alt](images/{doc_name}/{filename})``
     - Missing source file: log a warning and leave the original text unchanged.
     """
     result = markdown
@@ -254,7 +273,7 @@ def copy_relative_images(markdown: str, source_dir: Path, doc_name: str, images_
             images_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, images_dir / filename)
 
-        new_ref = f"![{alt}](sources/images/{doc_name}/{filename})"
+        new_ref = md_image_ref(alt, doc_name, filename)
         result = result.replace(match.group(0), new_ref, 1)
 
     return result
