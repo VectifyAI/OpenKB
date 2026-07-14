@@ -2504,6 +2504,9 @@ def migrate_images(ctx, dry_run):
     else:
         with kb_ingest_lock(kb_dir / ".openkb"):
             changed = migrate_source_image_links(wiki)
+            if changed:
+                total = sum(count for _, count in changed)
+                append_log(wiki, "migrate-images", f"{total} link(s) across {len(changed)} file(s)")
     if not changed:
         click.echo("Nothing to migrate — sources image links are already note-relative.")
         return
@@ -2512,8 +2515,6 @@ def migrate_images(ctx, dry_run):
     total = sum(count for _, count in changed)
     verb = "Would rewrite" if dry_run else "Rewrote"
     click.echo(f"{verb} {total} image link(s) across {len(changed)} file(s).")
-    if not dry_run:
-        append_log(wiki, "migrate-images", f"{total} link(s) across {len(changed)} file(s)")
 
 
 @cli.command()
