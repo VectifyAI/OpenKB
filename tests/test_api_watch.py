@@ -32,7 +32,7 @@ def _use_named_kb(monkeypatch, kb_dir, name: str = "test-kb") -> str:
         assert kb == name
         return kb_dir
 
-    monkeypatch.setattr("openkb.api.resolve_kb_alias", resolve)
+    monkeypatch.setattr("openkb.api_helpers.resolve_kb_alias", resolve)
     return name
 
 
@@ -179,7 +179,7 @@ def test_watch_events_disconnect_terminates(monkeypatch, kb_dir):
     """The SSE stream must terminate when the client disconnects."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
-    from openkb.api import _stream_watch_events
+    from openkb.api_helpers import _stream_watch_events
     from openkb.watch_service import WatchRegistry
 
     reg = WatchRegistry()
@@ -210,10 +210,10 @@ def test_watch_events_default_timeout_terminates(monkeypatch, kb_dir):
     default _WATCH_SSE_TIMEOUT cap instead of running indefinitely."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
-    from openkb.api import _stream_watch_events
+    from openkb.api_helpers import _stream_watch_events
     from openkb.watch_service import WatchRegistry
 
-    monkeypatch.setattr("openkb.api._WATCH_SSE_TIMEOUT", 0.05)
+    monkeypatch.setattr("openkb.api_helpers._WATCH_SSE_TIMEOUT", 0.05)
 
     reg = WatchRegistry()
     reg.start("t", kb_dir, debounce=0.1)

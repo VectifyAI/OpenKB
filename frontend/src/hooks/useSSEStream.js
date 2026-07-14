@@ -57,8 +57,12 @@ export function useSSEStream() {
         onEvent("error", { message: err?.message || t("requestFailed") });
       }
     } finally {
-      ctrlRef.current = null;
-      setBusy(false);
+      // A replaced stream may finish after its successor has started. Only
+      // clear state when this controller still owns the active stream.
+      if (ctrlRef.current === ctrl) {
+        ctrlRef.current = null;
+        setBusy(false);
+      }
     }
   }, [t]);
 

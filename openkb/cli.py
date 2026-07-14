@@ -18,7 +18,7 @@ import time
 import uuid
 from functools import wraps
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import os
 
@@ -55,13 +55,10 @@ from openkb.config import (
     load_global_config,
     register_kb,
     resolve_concurrency,
-    resolve_extra_headers,
     set_extra_headers,
     resolve_parallel_tool_calls,
     set_parallel_tool_calls,
-    resolve_timeout,
     set_timeout,
-    resolve_litellm_settings,
     resolve_per_request_overrides,
 )
 from openkb.add_coordinator import _cleanup_staging_dirs
@@ -3402,8 +3399,6 @@ def initialize_kb(
     optionally writes LLM credentials to a KB-local ``.env``. Raises
     ``FileExistsError`` if the KB is already initialized.
     """
-    from openkb.config import kb_root_dir
-
     kb_dir = kb_dir.expanduser().resolve()
     openkb_dir = kb_dir / ".openkb"
     if openkb_dir.exists():

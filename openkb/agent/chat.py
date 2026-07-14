@@ -30,6 +30,7 @@ from openkb.agent.query import (
     build_query_agent,
     iter_agent_response_events,
 )
+from openkb.config import LlmCredentialBundle
 from openkb.log import append_log
 
 _STYLE_DICT: dict[str, str] = {

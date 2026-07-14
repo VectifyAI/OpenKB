@@ -36,11 +36,13 @@ export default function Chat({ kb }) {
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [msgs]);
 
   function newSession() {
+    stop();
     setSessionId(null);
     setMsgs([]);
   }
 
   async function loadHistory(sid) {
+    stop();
     setSessionId(sid);
     setMsgs([]);
     try {

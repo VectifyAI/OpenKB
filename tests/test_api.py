@@ -26,7 +26,7 @@ def _use_named_kb(monkeypatch, kb_dir, name: str = "test-kb") -> str:
         assert kb == name
         return kb_dir
 
-    monkeypatch.setattr("openkb.api.resolve_kb_alias", resolve)
+    monkeypatch.setattr("openkb.api_helpers.resolve_kb_alias", resolve)
     return name
 
 
@@ -106,8 +106,8 @@ def test_query_stream_returns_sse_events(monkeypatch, kb_dir):
         yield {"event": "final", "data": {"answer": "A knowledge base.", "history": []}}
 
     monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
-    monkeypatch.setattr("openkb.api.build_query_agent", lambda *args, **kwargs: object())
-    monkeypatch.setattr("openkb.api.iter_agent_response_events", fake_events)
+    monkeypatch.setattr("openkb.api_helpers.build_query_agent", lambda *args, **kwargs: object())
+    monkeypatch.setattr("openkb.api_helpers.iter_agent_response_events", fake_events)
 
     response = client.post(
         "/api/v1/query",
@@ -137,7 +137,7 @@ def test_chat_non_stream_creates_and_persists_session(monkeypatch, kb_dir):
         }
 
     monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
-    monkeypatch.setattr("openkb.api.build_chat_session_agent", lambda *args, **kwargs: object())
+    monkeypatch.setattr("openkb.api_helpers.build_chat_session_agent", lambda *args, **kwargs: object())
     monkeypatch.setattr("openkb.agent.chat.iter_agent_response_events", fake_agent_events)
 
     response = client.post(
@@ -177,8 +177,8 @@ def test_chat_stream_resumes_session(monkeypatch, kb_dir):
         }
 
     monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
-    monkeypatch.setattr("openkb.api.build_chat_session_agent", lambda *args, **kwargs: object())
-    monkeypatch.setattr("openkb.api.iter_chat_turn_events", fake_chat_events)
+    monkeypatch.setattr("openkb.api_helpers.build_chat_session_agent", lambda *args, **kwargs: object())
+    monkeypatch.setattr("openkb.api_helpers.iter_chat_turn_events", fake_chat_events)
 
     response = client.post(
         "/api/v1/chat",
@@ -398,8 +398,8 @@ def test_add_endpoint_rejects_unsupported_extension(monkeypatch, kb_dir):
 def test_add_endpoint_rejects_oversized_file(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
-    monkeypatch.setattr("openkb.api.MAX_UPLOAD_FILE_BYTES", 4)
-    monkeypatch.setattr("openkb.api.MAX_UPLOAD_REQUEST_BYTES", 100)
+    monkeypatch.setattr("openkb.api_helpers.MAX_UPLOAD_FILE_BYTES", 4)
+    monkeypatch.setattr("openkb.api_helpers.MAX_UPLOAD_REQUEST_BYTES", 100)
 
     response = client.post(
         "/api/v1/add",
@@ -416,8 +416,8 @@ def test_add_endpoint_rejects_oversized_file(monkeypatch, kb_dir):
 def test_add_endpoint_rejects_oversized_aggregate_request(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
-    monkeypatch.setattr("openkb.api.MAX_UPLOAD_FILE_BYTES", 10)
-    monkeypatch.setattr("openkb.api.MAX_UPLOAD_REQUEST_BYTES", 8)
+    monkeypatch.setattr("openkb.api_helpers.MAX_UPLOAD_FILE_BYTES", 10)
+    monkeypatch.setattr("openkb.api_helpers.MAX_UPLOAD_REQUEST_BYTES", 8)
 
     response = client.post(
         "/api/v1/add",
@@ -447,7 +447,7 @@ def test_add_endpoint_uploads_and_adds_single_file(monkeypatch, kb_dir):
         calls.append((path, target_kb))
         return AddFileResult(path.name, str(path), "added", f"{path.name} added to knowledge base.")
 
-    monkeypatch.setattr("openkb.api._add_for_api", fake_add)
+    monkeypatch.setattr("openkb.api_helpers._add_for_api", fake_add)
 
     response = client.post(
         "/api/v1/add",
@@ -530,7 +530,7 @@ def test_add_endpoint_uploads_and_adds_multiple_files(monkeypatch, kb_dir):
             f"{path.name} added to knowledge base.",
         )
 
-    monkeypatch.setattr("openkb.api._add_for_api", fake_add)
+    monkeypatch.setattr("openkb.api_helpers._add_for_api", fake_add)
 
     response = client.post(
         "/api/v1/add",
@@ -580,7 +580,7 @@ def test_add_endpoint_uses_unique_raw_filename(monkeypatch, kb_dir):
     def fake_add(path, target_kb, **kwargs):
         return AddFileResult(path.name, str(path), "added", f"{path.name} added to knowledge base.")
 
-    monkeypatch.setattr("openkb.api._add_for_api", fake_add)
+    monkeypatch.setattr("openkb.api_helpers._add_for_api", fake_add)
 
     response = client.post(
         "/api/v1/add",
@@ -609,7 +609,7 @@ def test_add_endpoint_removes_skipped_upload(monkeypatch, kb_dir):
         skipped_path = path
         return AddFileResult(path.name, None, "skipped", "Already in knowledge base: paper.md")
 
-    monkeypatch.setattr("openkb.api._add_for_api", fake_add)
+    monkeypatch.setattr("openkb.api_helpers._add_for_api", fake_add)
 
     response = client.post(
         "/api/v1/add",
@@ -639,7 +639,7 @@ def test_add_endpoint_streams_events(monkeypatch, kb_dir):
     def fake_add(path, target_kb, **kwargs):
         return AddFileResult(path.name, str(path), "added", f"{path.name} added to knowledge base.")
 
-    monkeypatch.setattr("openkb.api._add_for_api", fake_add)
+    monkeypatch.setattr("openkb.api_helpers._add_for_api", fake_add)
 
     response = client.post(
         "/api/v1/add",
@@ -665,7 +665,7 @@ def test_add_endpoint_streams_events(monkeypatch, kb_dir):
 
 def test_unknown_kb_returns_400(monkeypatch, tmp_path):
     client = _client(monkeypatch)
-    monkeypatch.setattr("openkb.api.resolve_kb_alias", lambda kb: tmp_path)
+    monkeypatch.setattr("openkb.api_helpers.resolve_kb_alias", lambda kb: tmp_path)
 
     response = client.post(
         "/api/v1/query",
@@ -679,7 +679,7 @@ def test_unknown_kb_returns_400(monkeypatch, tmp_path):
 
 def test_kb_endpoints_reject_unknown_kb(monkeypatch, tmp_path):
     client = _client(monkeypatch)
-    monkeypatch.setattr("openkb.api.resolve_kb_alias", lambda kb: tmp_path)
+    monkeypatch.setattr("openkb.api_helpers.resolve_kb_alias", lambda kb: tmp_path)
 
     for path in ("/api/v1/list", "/api/v1/status", "/api/v1/lint"):
         response = client.post(
@@ -1076,7 +1076,7 @@ def test_remove_stream_returns_sse(monkeypatch, kb_dir):
     kb = _use_named_kb(monkeypatch, kb_dir)
 
     monkeypatch.setattr(
-        "openkb.api.run_remove_for_api",
+        "openkb.api_helpers.run_remove_for_api",
         lambda kb_dir, identifier, **kw: {
             "status": "removed", "name": "paper.pdf", "doc_name": "paper",
             "actions": [{"tag": "DELETE", "target": "wiki/summaries/paper.md"}],
@@ -1104,7 +1104,7 @@ def test_remove_stream_not_found(monkeypatch, kb_dir):
     kb = _use_named_kb(monkeypatch, kb_dir)
 
     monkeypatch.setattr(
-        "openkb.api.run_remove_for_api",
+        "openkb.api_helpers.run_remove_for_api",
         lambda kb_dir, identifier, **kw: {"status": "not_found"},
     )
     response = client.post(
@@ -1651,7 +1651,7 @@ def test_concurrent_different_kbs_do_not_block(monkeypatch, kb_dir, tmp_path_fac
     def resolve(kb):
         return kb_dir_a if kb == "kb-a" else kb_dir_b
 
-    monkeypatch.setattr("openkb.api.resolve_kb_alias", resolve)
+    monkeypatch.setattr("openkb.api_helpers.resolve_kb_alias", resolve)
 
     active = 0
     max_seen = 0
