@@ -7,15 +7,13 @@ from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
-from openkb.config import LlmCredentialBundle, get_extra_headers, get_timeout_extra_args
-
 from openkb.agent.tools import (
     get_wiki_page_content,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
 )
-from openkb.config import resolve_model_settings
+from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -104,21 +102,23 @@ def build_query_agent(
 
     from agents.model_settings import ModelSettings
 
-    _extra_headers = bundle.extra_headers if bundle else get_extra_headers()
-    _timeout_args = {"timeout": bundle.timeout} if bundle and bundle.timeout is not None else get_timeout_extra_args()
+    if bundle is not None:
+        model_settings = {
+            "parallel_tool_calls": (
+                bundle.parallel_tool_calls if bundle.parallel_tool_calls_explicit else False
+            ),
+            "extra_headers": bundle.extra_headers or None,
+            "extra_args": {"timeout": bundle.timeout} if bundle.timeout is not None else None,
+        }
+    else:
+        model_settings = resolve_model_settings()
 
     return Agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(
-            **({
-                **resolve_model_settings(),
-                "extra_headers": (bundle.extra_headers if bundle else get_extra_headers()) or None,
-                "extra_args": ({"timeout": bundle.timeout} if bundle and bundle.timeout is not None else get_timeout_extra_args()),
-            })
-        ),
+        model_settings=ModelSettings(**model_settings),
     )
 
 
@@ -141,7 +141,11 @@ async def iter_agent_response_events(
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    result = Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config) if run_config else Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    result = (
+        Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config)
+        if run_config
+        else Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    )
     collected: list[str] = []
 
     async for event in result.stream_events():
@@ -354,7 +358,11 @@ async def run_query(
     agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     if not stream:
-        result = await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config) if run_config else await Runner.run(agent, question, max_turns=MAX_TURNS)
+        result = (
+            await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+            if run_config
+            else await Runner.run(agent, question, max_turns=MAX_TURNS)
+        )
         return result.final_output or ""
 
     import os
@@ -388,7 +396,11 @@ async def run_query(
     live: Live | None = None
     last_was_text = False
     need_blank_before_text = False
-    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config) if run_config else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    result = (
+        Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+        if run_config
+        else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    )
     collected: list[str] = []
     segment: list[str] = []
     try:

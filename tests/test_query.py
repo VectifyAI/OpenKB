@@ -200,6 +200,15 @@ class TestQueryAgentParallelToolCalls:
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.parallel_tool_calls is True
 
+    def test_bundle_does_not_read_process_global_settings(self, tmp_path):
+        """REST requests use the bundle instead of another KB's global settings."""
+        from openkb.config import LlmCredentialBundle, set_parallel_tool_calls
+
+        set_parallel_tool_calls(True, True)
+        bundle = LlmCredentialBundle(parallel_tool_calls=False, parallel_tool_calls_explicit=True)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini", bundle=bundle)
+        assert agent.model_settings.parallel_tool_calls is False
+
 
 class TestQueryAgentTimeout:
     """Config-driven timeout reaches the agents-SDK model settings via extra_args.
@@ -218,7 +227,6 @@ class TestQueryAgentTimeout:
     def test_no_timeout_by_default(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.extra_args is None
-
 
 
 class TestBuildRunConfigFromBundle:

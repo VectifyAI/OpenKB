@@ -3,8 +3,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
-import re
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -262,6 +262,7 @@ def resolve_litellm_settings(config: dict) -> dict[str, Any]:
 # every compile/agent call chain — mirroring how the API key is applied
 # globally via litellm.api_key / provider env vars.
 
+
 # Shared by cli._setup_llm_key and resolve_credential_bundle so the CLI and
 # REST paths apply identical litellm.* override semantics.
 def resolve_per_request_overrides(
@@ -357,6 +358,8 @@ def resolve_model_settings(*, default_parallel_tool_calls: bool | None = False) 
         "extra_args": get_timeout_extra_args(),
         "parallel_tool_calls": parallel_tool_calls,
     }
+
+
 @dataclass(frozen=True)
 class LlmCredentialBundle:
     """Immutable per-request LLM credential + config bundle.
@@ -372,6 +375,8 @@ class LlmCredentialBundle:
     base_url: str | None = None
     extra_headers: dict[str, str] = field(default_factory=dict)
     timeout: float | None = None
+    parallel_tool_calls: bool | None = None
+    parallel_tool_calls_explicit: bool = False
 
 
 def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
@@ -395,6 +400,8 @@ def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
 
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
+    parallel_tool_calls: bool | None = None
+    parallel_tool_calls_explicit = False
     config_path = kb_dir / ".openkb" / "config.yaml"
     if config_path.exists():
         config = load_config(config_path)
@@ -403,12 +410,15 @@ def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
         # process globals and intentionally not carried per-request: the REST
         # server runs multiple KBs in one process, so they cannot be isolated.
         extra_headers, timeout, _ = resolve_per_request_overrides(config)
+        parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
 
     return LlmCredentialBundle(
         api_key=api_key,
         base_url=base_url,
         extra_headers=extra_headers,
         timeout=timeout,
+        parallel_tool_calls=parallel_tool_calls,
+        parallel_tool_calls_explicit=parallel_tool_calls_explicit,
     )
 
 
@@ -470,9 +480,7 @@ def validate_kb_name(name: str) -> str:
     """Validate and return a portable KB name."""
     normalized = name.strip()
     if not normalized or not KB_NAME_RE.fullmatch(normalized):
-        raise ValueError(
-            "KB name must contain only letters, numbers, underscores, and hyphens"
-        )
+        raise ValueError("KB name must contain only letters, numbers, underscores, and hyphens")
     return normalized
 
 

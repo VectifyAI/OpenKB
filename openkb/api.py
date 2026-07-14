@@ -78,7 +78,6 @@ from openkb.api_models import (
     WatchStatusResponse,
 )
 from openkb.cli import (
-    _setup_llm_key,
     get_kb_list,
     get_kb_status,
     iter_recompile,
@@ -207,7 +206,6 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
-        _setup_llm_key(kb_dir)
         bundle = resolve_credential_bundle(kb_dir)
         config = load_config(kb_dir / ".openkb" / "config.yaml")
         model = config.get("model", DEFAULT_CONFIG["model"])
@@ -248,7 +246,6 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
-        _setup_llm_key(kb_dir)
         bundle = resolve_credential_bundle(kb_dir)
         session = _load_or_create_session(kb_dir, request.session_id)
         run_config = build_run_config_from_bundle(session.model, bundle)

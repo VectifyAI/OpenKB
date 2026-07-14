@@ -82,7 +82,6 @@ def test_query_non_stream_returns_json(monkeypatch, kb_dir):
         assert stream is False
         return "A knowledge base."
 
-    monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
     monkeypatch.setattr("openkb.api.run_query", fake_run_query)
 
     response = client.post(
@@ -105,7 +104,6 @@ def test_query_stream_returns_sse_events(monkeypatch, kb_dir):
         yield {"event": "delta", "data": {"text": " base."}}
         yield {"event": "final", "data": {"answer": "A knowledge base.", "history": []}}
 
-    monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
     monkeypatch.setattr("openkb.api_helpers.build_query_agent", lambda *args, **kwargs: object())
     monkeypatch.setattr("openkb.api_helpers.iter_agent_response_events", fake_events)
 
@@ -136,7 +134,6 @@ def test_chat_non_stream_creates_and_persists_session(monkeypatch, kb_dir):
             },
         }
 
-    monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
     monkeypatch.setattr("openkb.api_helpers.build_chat_session_agent", lambda *args, **kwargs: object())
     monkeypatch.setattr("openkb.agent.chat.iter_agent_response_events", fake_agent_events)
 
@@ -176,7 +173,6 @@ def test_chat_stream_resumes_session(monkeypatch, kb_dir):
             },
         }
 
-    monkeypatch.setattr("openkb.api._setup_llm_key", lambda kb: None)
     monkeypatch.setattr("openkb.api_helpers.build_chat_session_agent", lambda *args, **kwargs: object())
     monkeypatch.setattr("openkb.api_helpers.iter_chat_turn_events", fake_chat_events)
 

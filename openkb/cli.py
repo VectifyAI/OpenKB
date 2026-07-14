@@ -1170,36 +1170,40 @@ def save_exploration(kb_dir: Path, question: str, answer: str) -> Path | None:
 
     if not answer:
         return None
-    explore_dir = kb_dir / "wiki" / "explorations"
-    explore_dir.mkdir(parents=True, exist_ok=True)
+    # Path allocation and the write share the KB mutation lock: otherwise two
+    # concurrent REST saves can both select the same unused suffix and one
+    # answer silently overwrites the other.
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        explore_dir = kb_dir / "wiki" / "explorations"
+        explore_dir.mkdir(parents=True, exist_ok=True)
 
-    # Strip ghost wikilinks the agent may have emitted to non-existent
-    # concept/summary pages -- the schema_md in the agent's instructions
-    # encourages [[wikilinks]] but the agent's view of "which pages
-    # exist" can drift from disk reality.
-    known = list_existing_wiki_targets(kb_dir / "wiki")
-    cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
+        # Strip ghost wikilinks the agent may have emitted to non-existent
+        # concept/summary pages -- the schema_md in the agent's instructions
+        # encourages [[wikilinks]] but the agent's view of "which pages
+        # exist" can drift from disk reality.
+        known = list_existing_wiki_targets(kb_dir / "wiki")
+        cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
 
-    slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
-    if not slug:
-        # CJK / punctuation-only questions collapse to an empty slug.
-        # Fall back to a short hash so each question gets its own file.
-        slug = hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
-    explore_path = explore_dir / f"{slug}.md"
-    # Uniquify to avoid clobbering an existing exploration with a colliding slug.
-    counter = 1
-    while explore_path.exists():
-        explore_path = explore_dir / f"{slug}-{counter}.md"
-        counter += 1
+        slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
+        if not slug:
+            # CJK / punctuation-only questions collapse to an empty slug.
+            # Fall back to a short hash so each question gets its own file.
+            slug = hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
+        explore_path = explore_dir / f"{slug}.md"
+        # Uniquify to avoid clobbering an existing exploration with a colliding slug.
+        counter = 1
+        while explore_path.exists():
+            explore_path = explore_dir / f"{slug}-{counter}.md"
+            counter += 1
 
-    # Escape the question for YAML frontmatter: wrap in double quotes and
-    # escape backslashes and double quotes so questions containing `"` don't
-    # produce invalid YAML.
-    escaped = question.replace("\\", "\\\\").replace('"', '\\"')
-    explore_path.write_text(
-        f'---\nquery: "{escaped}"\n---\n\n{cleaned_answer}\n',
-        encoding="utf-8",
-    )
+        # Escape the question for YAML frontmatter: wrap in double quotes and
+        # escape backslashes and double quotes so questions containing `"` don't
+        # produce invalid YAML.
+        escaped = question.replace("\\", "\\\\").replace('"', '\\"')
+        atomic_write_text(
+            explore_path,
+            f'---\nquery: "{escaped}"\n---\n\n{cleaned_answer}\n',
+        )
     return explore_path
 
 
@@ -2074,7 +2078,8 @@ async def iter_recompile(
         if refresh_schema:
             _refresh_schema(wiki_dir)
 
-        _setup_llm_key(kb_dir)
+        if bundle is None:
+            _setup_llm_key(kb_dir)
         config = load_config(openkb_dir / "config.yaml")
         model: str = config.get("model", DEFAULT_CONFIG["model"])
 
@@ -3616,7 +3621,8 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
         }
 
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(kb_dir)
+    if bundle is None:
+        _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     run_config = build_run_config_from_bundle(model, bundle)
 
