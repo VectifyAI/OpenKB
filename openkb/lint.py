@@ -24,8 +24,10 @@ from openkb.schema import PAGE_CONTENT_DIRS
 # same-page fragment links [[#Heading]], and embeds ![[file]]. Named groups
 # keep the pieces separable so Obsidian fragment/embed syntax survives
 # validation and rewriting instead of being demoted to plain text.
+# `[` is excluded from the target class: Obsidian forbids it in note names,
+# and allowing it makes scans quadratic on long runs of unmatched `[`.
 _WIKILINK_RE = re.compile(
-    r"(?P<embed>!)?\[\[(?P<target>[^\]|#]*)(?P<frag>#[^\]|]*)?(?:\|(?P<alias>[^\]]+))?\]\]"
+    r"(?P<embed>!)?\[\[(?P<target>[^\[\]|#]*)(?P<frag>#[^\]|]*)?(?:\|(?P<alias>[^\]]+))?\]\]"
 )
 
 # Extension-like suffix on a wikilink target: 1-8 alphanumeric chars with at

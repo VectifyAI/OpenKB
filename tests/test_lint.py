@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from openkb.lint import (
@@ -675,6 +676,29 @@ class TestObsidianSyntax:
         text = "Jump to [[#Conclusiones]]."
         out, ghosts = strip_ghost_wikilinks(text, set())
         assert out == text
+        assert ghosts == []
+
+    def test_extra_brackets_not_swallowed_into_target(self):
+        # [[[a]]] contains a valid [[a]] wrapped in literal brackets; the
+        # target is "a", not "[a" (which never validated and got demoted).
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[[concepts/attention]]].",
+            {"concepts/attention"},
+        )
+        assert out == "See [[[concepts/attention]]]."
+        assert ghosts == []
+
+    def test_unmatched_bracket_run_scans_in_linear_time(self):
+        # Regression: allowing "[" in the target class made the scan
+        # quadratic — 20k unmatched brackets (ASCII art, base64, stray
+        # LLM output) took ~10s per pass. Generous bound; the quadratic
+        # regex exceeds it by an order of magnitude.
+        payload = "[" * 20_000
+        start = time.perf_counter()
+        out, ghosts = strip_ghost_wikilinks(payload, set())
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert out == payload
         assert ghosts == []
 
     # --- find_broken_links ------------------------------------------------
