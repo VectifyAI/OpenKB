@@ -1,0 +1,84 @@
+import { createContext, useContext, useState, useCallback, useRef } from "react";
+import { getApiBase, getToken, setConnection, hasConnection } from "../api/client.js";
+
+const AppContext = createContext(null);
+
+export function AppProvider({ children }) {
+  const [apiBase, setApiBaseState] = useState(getApiBase());
+  const [token, setTokenState] = useState(getToken());
+  const [kbs, setKbs] = useState([]);
+  const [kb, setKb] = useState(null);
+  const [view, setView] = useState("overview");
+  const [settingsOpen, setSettingsOpen] = useState(!hasConnection());
+  // Right-pane reasoning timeline.
+  const [inspItems, setInspItems] = useState([]);
+  const [inspBusy, setInspBusy] = useState(false);
+  const [toast, setToastState] = useState(null);
+  const toastTimer = useRef(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const saveConnection = useCallback((base, tok) => {
+    const cleaned = (base || "").trim().replace(/\/$/, "");
+    setConnection(cleaned, (tok || "").trim());
+    setApiBaseState(cleaned);
+    setTokenState((tok || "").trim());
+  }, []);
+
+  const setViewSafe = useCallback((v) => {
+    setView(v);
+    setSidebarOpen(false);
+  }, []);
+
+  const toastMsg = useCallback((message, kind = "") => {
+    setToastState({ message, kind });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastState(null), 3200);
+  }, []);
+
+  // Inspector timeline helpers.
+  const inspReset = useCallback((busy) => {
+    setInspItems(busy ? [{ kind: "start", tag: "开始", body: "启动推理检索…" }] : []);
+    setInspBusy(!!busy);
+  }, []);
+
+  const inspAdd = useCallback((kind, tag, body) => {
+    // delta is too granular for the timeline; render in the answer pane instead.
+    if (kind === "delta") return;
+    setInspItems((prev) => [...prev, { kind, tag, body }]);
+  }, []);
+
+  const inspDone = useCallback(() => {
+    setInspBusy(false);
+  }, []);
+
+ const value = {
+    apiBase,
+    token,
+    kbs,
+    setKbs,
+    kb,
+    setKb,
+    view,
+    setView: setViewSafe,
+    settingsOpen,
+    setSettingsOpen,
+    sidebarOpen,
+    setSidebarOpen,
+    saveConnection,
+    toast,
+    toastMsg,
+    inspItems,
+    inspBusy,
+    inspReset,
+    inspAdd,
+    inspDone,
+  };
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+}
+
+export function useApp() {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error("useApp must be used within AppProvider");
+  return ctx;
+}

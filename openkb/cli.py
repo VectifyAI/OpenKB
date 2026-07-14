@@ -1,5 +1,4 @@
 """OpenKB CLI — command-line interface for the knowledge base workflow."""
-
 from __future__ import annotations
 
 # Silence import-time warnings (e.g. pydub's missing-ffmpeg warning emitted
@@ -12,6 +11,7 @@ warnings.filterwarnings("ignore")
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 import shutil
 import sys
 import time
@@ -634,7 +634,77 @@ def _add_single_file_locked(
     return "added"
 
 
-def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
+@dataclass
+class AddFileResult:
+    """Structured add outcome for the REST API.
+
+    Wraps the plain ``Literal`` returned by the locked ``add_single_file`` with
+    the original filename and a human-readable message, which the API's
+    ``/add`` endpoint surfaces per file in its JSON/SSE response.
+    """
+    original_name: str
+    saved_path: str | None
+    status: str
+    message: str
+
+
+def _add_for_api(file_path: Path, kb_dir: Path) -> AddFileResult:
+    """Run the locked add pipeline and return a structured result for the API.
+
+    Reuses the upstream ``add_single_file`` (which already holds the ingest
+    lock and handles cloud import / registry dedup) so the API and CLI share a
+    single ingest code path. Maps the ``Literal`` status to a message-bearing
+    ``AddFileResult``; on ``skipped`` the caller (api._add_saved_file) deletes
+    the freshly uploaded raw copy to avoid orphaning it.
+    """
+    status_str = add_single_file(file_path, kb_dir)
+    if status_str == "skipped":
+        message = f"Already in knowledge base: {file_path.name}"
+    elif status_str == "failed":
+        message = f"Failed to add: {file_path.name} (see server logs)"
+    else:
+        message = f"Added: {file_path.name}"
+    return AddFileResult(
+        original_name=file_path.name,
+        saved_path=str(file_path) if status_str == "added" else None,
+        status=status_str,
+        message=message,
+    )
+
+
+def _cleanup_failed_cloud_import(kb_dir: Path, doc_name: str) -> None:
+    """Best-effort wiki cleanup after a cloud import whose compilation failed.
+
+    import_cloud_document writes the summary + per-page JSON source before
+    compile, and compile_long_doc writes concept/entity pages incrementally — so
+    a compile failure (which happens before the registry entry is added) would
+    otherwise strand wiki artifacts that ``openkb remove`` cannot reach. Mirror
+    remove's wiki cleanup (by doc_name, idempotent) but touch neither the
+    registry (no entry was added) nor PageIndex (the cloud doc is the user's).
+    """
+    from openkb.agent.compiler import (
+        remove_doc_from_concept_pages,
+        remove_doc_from_entity_pages,
+        remove_doc_from_index,
+    )
+
+    wiki_dir = kb_dir / "wiki"
+    (wiki_dir / "summaries" / f"{doc_name}.md").unlink(missing_ok=True)
+    (wiki_dir / "sources" / f"{doc_name}.json").unlink(missing_ok=True)
+    images_dir = wiki_dir / "sources" / "images" / doc_name
+    if images_dir.is_dir():
+        shutil.rmtree(images_dir, ignore_errors=True)
+    concept_result = remove_doc_from_concept_pages(wiki_dir, doc_name, keep_empty=False)
+    entity_result = remove_doc_from_entity_pages(wiki_dir, doc_name, keep_empty=False)
+    remove_doc_from_index(
+        wiki_dir, doc_name, concept_result["deleted"],
+        entity_slugs_deleted=entity_result["deleted"],
+    )
+
+
+def import_from_pageindex_cloud(
+    doc_id: str, kb_dir: Path
+) -> Literal["added", "skipped", "failed"]:
     """Import an existing PageIndex Cloud document into the KB by ``doc_id``.
 
     Fetches structure + page content from the cloud (no local PDF), compiles
@@ -1225,6 +1295,324 @@ def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]
     return fuzzy
 
 
+@dataclass
+class RemoveAction:
+    """One planned step surfaced in the remove preview/summary."""
+    tag: str
+    target: str
+
+
+@dataclass
+class RemovePlan:
+    """Structured preview of what ``remove`` will do (no side effects yet).
+
+    Built by ``_build_remove_plan``; consumed by the CLI (for printing the
+    preview) and by ``_execute_remove_plan`` (for actually doing it).
+    """
+    name: str
+    doc_name: str
+    doc_type: str
+    file_hash: str
+    actions: list[RemoveAction]
+    concept_deletes: list[str]
+    entity_deletes: list[str]
+    raw_path: Path | None
+    cleanup_pageindex: bool
+    pageindex_doc_id: str | None
+    summary_path: Path
+    source_md: Path
+    source_json: Path
+    images_dir: Path
+
+
+@dataclass
+class RemoveResult:
+    """Outcome of executing a :class:`RemovePlan`.
+
+    ``status="partial"`` means PageIndex cleanup raised and the registry
+    entry was deliberately kept so the user can retry — mirroring the CLI.
+    """
+    status: Literal["removed", "partial"]
+    name: str
+    doc_name: str
+    actions: list[RemoveAction]
+    concepts_deleted: list[str]
+    entities_deleted: list[str]
+    lint_files_changed: int
+    lint_ghosts_removed: int
+    pageindex_message: str | None
+    pageindex_error: str | None
+    message: str
+
+
+def _build_remove_plan(
+    kb_dir: Path,
+    file_hash: str,
+    meta: dict,
+    *,
+    keep_raw: bool,
+    keep_empty: bool,
+) -> RemovePlan:
+    """Scan the KB and predict every file remove will touch (no writes).
+
+    Only frontmatter ``sources:`` membership drives the delete/edit
+    classification so the plan reflects what the executor will actually do.
+    """
+    from openkb.agent.compiler import scan_affected_pages
+
+    name = meta.get("name", "?")
+    doc_name = meta.get("doc_name") or Path(name).stem
+    doc_type = meta.get("type", "")
+    wiki_dir = kb_dir / "wiki"
+    openkb_dir = kb_dir / ".openkb"
+
+    actions: list[RemoveAction] = []
+
+    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
+    if summary_path.exists():
+        actions.append(RemoveAction("DELETE", str(summary_path.relative_to(kb_dir))))
+
+    source_md = wiki_dir / "sources" / f"{doc_name}.md"
+    source_json = wiki_dir / "sources" / f"{doc_name}.json"
+    if source_md.exists():
+        actions.append(RemoveAction("DELETE", str(source_md.relative_to(kb_dir))))
+    if source_json.exists():
+        actions.append(RemoveAction("DELETE", str(source_json.relative_to(kb_dir))))
+
+    # Per-doc extracted-images directory (PDF page images + base64 images
+    # from docx/pptx + copied relative refs from .md inputs). Created by
+    # openkb.images during ingest, keyed by doc_name.
+    images_dir = wiki_dir / "sources" / "images" / doc_name
+    if images_dir.is_dir():
+        actions.append(
+            RemoveAction("DELETE", f"{images_dir.relative_to(kb_dir)}/  (images directory)")
+        )
+
+    source_file_marker = f"summaries/{doc_name}.md"
+    affected_concepts = scan_affected_pages(wiki_dir / "concepts", source_file_marker)
+    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty]
+    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty]
+    for slug in concept_deletes:
+        actions.append(RemoveAction("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
+    for slug in concept_edits:
+        actions.append(RemoveAction("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
+
+    affected_entities = scan_affected_pages(wiki_dir / "entities", source_file_marker)
+    entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty]
+    entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty]
+    for slug in entity_deletes:
+        actions.append(RemoveAction("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
+    for slug in entity_edits:
+        actions.append(RemoveAction("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)"))
+
+    if (wiki_dir / "index.md").exists():
+        actions.append(RemoveAction("MODIFY", "wiki/index.md  (remove Documents entry)"))
+
+    actions.append(RemoveAction("REGISTRY", f"remove hash entry  ({file_hash[:12]}…)"))
+
+    # Long PDFs leave state in PageIndex's local store (`.openkb/pageindex.db`
+    # row + `.openkb/files/<collection>/<doc_id>.pdf` + extracted images).
+    # Only flag this when both the registry says long_pdf and PageIndex
+    # state exists on disk — short-doc-only KBs never created any.
+    pageindex_doc_id = meta.get("doc_id")
+    cleanup_pageindex = doc_type == "long_pdf" and (openkb_dir / "pageindex.db").exists()
+    if cleanup_pageindex:
+        if pageindex_doc_id:
+            actions.append(RemoveAction("PAGEINDEX", f"delete document ({pageindex_doc_id[:12]}…)"))
+        else:
+            actions.append(RemoveAction("PAGEINDEX", "delete document (lookup by doc_name; legacy entry)"))
+
+    # Raw copies are named by doc_name since the collision fix: use the
+    # recorded raw_path when present. Only pre-upgrade entries (no
+    # raw_path field) fall back to the original filename — a recorded
+    # path that no longer exists must NOT fall through, or it could
+    # delete a same-named raw file belonging to another document.
+    raw_path = None
+    if not keep_raw:
+        raw_dir = kb_dir / "raw"
+        if meta.get("raw_path"):
+            candidate = kb_dir / meta["raw_path"]
+        else:
+            candidate = raw_dir / name
+        if candidate.exists():
+            raw_path = candidate
+            actions.append(RemoveAction("DELETE", str(candidate.relative_to(kb_dir))))
+
+    return RemovePlan(
+        name=name,
+        doc_name=doc_name,
+        doc_type=doc_type,
+        file_hash=file_hash,
+        actions=actions,
+        concept_deletes=concept_deletes,
+        entity_deletes=entity_deletes,
+        raw_path=raw_path,
+        cleanup_pageindex=cleanup_pageindex,
+        pageindex_doc_id=pageindex_doc_id,
+        summary_path=summary_path,
+        source_md=source_md,
+        source_json=source_json,
+        images_dir=images_dir,
+    )
+
+
+def _execute_remove_plan(
+    kb_dir: Path,
+    plan: RemovePlan,
+    registry,
+    *,
+    keep_empty: bool,
+) -> RemoveResult:
+    """Carry out a remove plan. Registry write is the commit point.
+
+    Every step before ``registry.remove_by_hash`` is idempotent, so a
+    PageIndex failure leaves the entry (with its ``doc_id``) intact for a
+    retry. The ``lint --fix`` scope is limited to the pages this remove
+    actually touched (modified concept + entity pages ∪ index.md) so the
+    sweep doesn't strip pre-existing dangling links in unrelated pages
+    (issue #58).
+    """
+    from openkb.agent.compiler import (
+        remove_doc_from_concept_pages,
+        remove_doc_from_entity_pages,
+        remove_doc_from_index,
+    )
+    from openkb.lint import fix_broken_links
+
+    wiki_dir = kb_dir / "wiki"
+    openkb_dir = kb_dir / ".openkb"
+    doc_name = plan.doc_name
+    name = plan.name
+
+    plan.summary_path.unlink(missing_ok=True)
+    plan.source_md.unlink(missing_ok=True)
+    plan.source_json.unlink(missing_ok=True)
+    if plan.images_dir.is_dir():
+        shutil.rmtree(plan.images_dir, ignore_errors=True)
+
+    concept_result = remove_doc_from_concept_pages(wiki_dir, doc_name, keep_empty=keep_empty)
+    entity_result = remove_doc_from_entity_pages(wiki_dir, doc_name, keep_empty=keep_empty)
+    remove_doc_from_index(
+        wiki_dir, doc_name, concept_result["deleted"],
+        entity_slugs_deleted=entity_result["deleted"],
+    )
+
+    lint_scope: list[Path] = [wiki_dir / "concepts" / f"{s}.md" for s in concept_result["modified"]]
+    lint_scope += [wiki_dir / "entities" / f"{s}.md" for s in entity_result["modified"]]
+    index_md = wiki_dir / "index.md"
+    if index_md.exists():
+        lint_scope.append(index_md)
+    files_changed, ghosts = fix_broken_links(wiki_dir, restrict_to=lint_scope)
+
+    pageindex_message: str | None = None
+    if plan.cleanup_pageindex:
+        try:
+            _, pageindex_message = _cleanup_pageindex(
+                openkb_dir, kb_dir, doc_name, plan.pageindex_doc_id,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).debug("PageIndex cleanup traceback:", exc_info=True)
+            return RemoveResult(
+                status="partial",
+                name=name,
+                doc_name=doc_name,
+                actions=plan.actions,
+                concepts_deleted=concept_result["deleted"],
+                entities_deleted=entity_result["deleted"],
+                lint_files_changed=files_changed,
+                lint_ghosts_removed=ghosts,
+                pageindex_message=None,
+                pageindex_error=str(exc),
+                message=(
+                    f"PageIndex cleanup failed: {exc}; registry entry kept, "
+                    f"re-run `openkb remove {name}` to retry"
+                ),
+            )
+
+    registry.remove_by_hash(plan.file_hash)
+    if plan.raw_path is not None:
+        plan.raw_path.unlink(missing_ok=True)
+    append_log(wiki_dir, "remove", name)
+    return RemoveResult(
+        status="removed",
+        name=name,
+        doc_name=doc_name,
+        actions=plan.actions,
+        concepts_deleted=concept_result["deleted"],
+        entities_deleted=entity_result["deleted"],
+        lint_files_changed=files_changed,
+        lint_ghosts_removed=ghosts,
+        pageindex_message=pageindex_message,
+        pageindex_error=None,
+        message=f"{name} removed from knowledge base.",
+    )
+
+
+def run_remove_for_api(
+    kb_dir: Path,
+    identifier: str,
+    *,
+    keep_raw: bool = False,
+    keep_empty: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Resolve ``identifier`` and run remove under the KB ingest lock.
+
+    Shared entry point for the REST ``/api/v1/remove`` endpoint. Resolve +
+    plan + execute all run inside ``kb_ingest_lock`` so concurrent
+    add/remove can't interleave (matching the CLI's ``@_with_kb_lock``).
+
+    Returns a dict whose ``status`` is one of ``not_found``, ``multiple``,
+    ``dry_run``, ``removed``, ``partial``.
+    """
+    from openkb.state import HashRegistry
+
+    openkb_dir = kb_dir / ".openkb"
+    registry = HashRegistry(openkb_dir / "hashes.json")
+    with kb_ingest_lock(openkb_dir):
+        matches = _resolve_doc_identifier(registry, identifier)
+        if not matches:
+            return {"status": "not_found", "identifier": identifier}
+        if len(matches) > 1:
+            return {
+                "status": "multiple",
+                "identifier": identifier,
+                "candidates": [
+                    {"name": m.get("name", "?"), "doc_name": m.get("doc_name", "?")}
+                    for _, m in matches
+                ],
+            }
+
+        file_hash, meta = matches[0]
+        plan = _build_remove_plan(
+            kb_dir, file_hash, meta, keep_raw=keep_raw, keep_empty=keep_empty,
+        )
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "name": plan.name,
+                "doc_name": plan.doc_name,
+                "actions": [a.__dict__ for a in plan.actions],
+                "concepts_deleted": plan.concept_deletes,
+                "entities_deleted": plan.entity_deletes,
+            }
+
+        result = _execute_remove_plan(kb_dir, plan, registry, keep_empty=keep_empty)
+        return {
+            "status": result.status,
+            "name": result.name,
+            "doc_name": result.doc_name,
+            "actions": [a.__dict__ for a in result.actions],
+            "concepts_deleted": result.concepts_deleted,
+            "entities_deleted": result.entities_deleted,
+            "lint_files_changed": result.lint_files_changed,
+            "lint_ghosts_removed": result.lint_ghosts_removed,
+            "pageindex_message": result.pageindex_message,
+            "pageindex_error": result.pageindex_error,
+            "message": result.message,
+        }
+
+
 @cli.command()
 @click.argument("identifier")
 @click.option(
@@ -1264,13 +1652,6 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     Concept and entity pages whose only source was this doc are deleted by
     default; use --keep-empty to retain them.
     """
-    from openkb.agent.compiler import (
-        remove_doc_from_concept_pages,
-        remove_doc_from_entity_pages,
-        remove_doc_from_index,
-        scan_affected_pages,
-    )
-    from openkb.lint import fix_broken_links
     from openkb.state import HashRegistry
 
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
@@ -1294,124 +1675,25 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
         return
 
     file_hash, meta = matches[0]
-    name = meta.get("name", "?")
-    doc_name = meta.get("doc_name") or Path(name).stem
-    doc_type = meta.get("type", "")
-    wiki_dir = kb_dir / "wiki"
-
-    # ----- Build the plan (no side effects) -----
-    actions: list[tuple[str, str]] = []
-
-    summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
-    if summary_path.exists():
-        actions.append(("DELETE", str(summary_path.relative_to(kb_dir))))
-
-    source_md = wiki_dir / "sources" / f"{doc_name}.md"
-    source_json = wiki_dir / "sources" / f"{doc_name}.json"
-    if source_md.exists():
-        actions.append(("DELETE", str(source_md.relative_to(kb_dir))))
-    if source_json.exists():
-        actions.append(("DELETE", str(source_json.relative_to(kb_dir))))
-
-    # Per-doc extracted-images directory (PDF page images + base64 images
-    # from docx/pptx + copied relative refs from .md inputs). Created by
-    # openkb.images during ingest, keyed by doc_name.
-    images_dir = wiki_dir / "sources" / "images" / doc_name
-    if images_dir.is_dir():
-        actions.append(
-            (
-                "DELETE",
-                f"{images_dir.relative_to(kb_dir)}/  (images directory)",
-            )
-        )
-
-    # Scan concept pages to predict which will be edited vs. deleted.
-    # Only frontmatter ``sources:`` membership drives the plan — body-only
-    # references (e.g. a stray ``See also:`` line a user added by hand
-    # without updating sources) are cleaned by the executor but don't
-    # affect the delete/edit classification, so the plan reflects what
-    # the executor will actually do.
-    source_file_marker = f"summaries/{doc_name}.md"
-    affected_concepts = scan_affected_pages(wiki_dir / "concepts", source_file_marker)
-
-    concept_deletes = [s for s, r in affected_concepts if r == 0 and not keep_empty]
-    concept_edits = [s for s, r in affected_concepts if r > 0 or keep_empty]
-    for slug in concept_deletes:
-        actions.append(("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
-    for slug in concept_edits:
-        actions.append(("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
-
-    # Scan entity pages with the same frontmatter logic as concepts. The
-    # executor calls ``remove_doc_from_entity_pages``; this only makes the
-    # preview/summary truthful about what it will delete vs. edit.
-    affected_entities = scan_affected_pages(wiki_dir / "entities", source_file_marker)
-
-    entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty]
-    entity_edits = [s for s, r in affected_entities if r > 0 or keep_empty]
-    for slug in entity_deletes:
-        actions.append(("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
-    for slug in entity_edits:
-        actions.append(("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)"))
-
-    if (wiki_dir / "index.md").exists():
-        actions.append(("MODIFY", "wiki/index.md  (remove Documents entry)"))
-
-    actions.append(("REGISTRY", f"remove hash entry  ({file_hash[:12]}…)"))
-
-    # Long PDFs leave state in PageIndex's local store (`.openkb/pageindex.db`
-    # row + `.openkb/files/<collection>/<doc_id>.pdf` + extracted images).
-    # Only flag this when both the registry says long_pdf and PageIndex
-    # state exists on disk — short-doc-only KBs never created any.
-    pageindex_doc_id = meta.get("doc_id")
-    pageindex_state_exists = (openkb_dir / "pageindex.db").exists()
-    cleanup_pageindex = doc_type == "long_pdf" and pageindex_state_exists
-    if cleanup_pageindex:
-        if pageindex_doc_id:
-            actions.append(
-                (
-                    "PAGEINDEX",
-                    f"delete document ({pageindex_doc_id[:12]}…)",
-                )
-            )
-        else:
-            actions.append(
-                (
-                    "PAGEINDEX",
-                    "delete document (lookup by doc_name; legacy entry)",
-                )
-            )
-
-    raw_path = None
-    if not keep_raw:
-        raw_dir = kb_dir / "raw"
-        # Raw copies are named by doc_name since the collision fix: use the
-        # recorded raw_path when present. Only pre-upgrade entries (no
-        # raw_path field) fall back to the original filename — a recorded
-        # path that no longer exists must NOT fall through, or it could
-        # delete a same-named raw file belonging to another document.
-        if meta.get("raw_path"):
-            candidate = kb_dir / meta["raw_path"]
-        else:
-            candidate = raw_dir / name
-        if candidate.exists():
-            raw_path = candidate
-            actions.append(("DELETE", str(candidate.relative_to(kb_dir))))
+    plan = _build_remove_plan(
+        kb_dir, file_hash, meta, keep_raw=keep_raw, keep_empty=keep_empty,
+    )
 
     # ----- Print the plan -----
-    click.echo(f"Removing '{name}' (doc_name: {doc_name}, type: {doc_type or '?'}).")
+    click.echo(f"Removing '{plan.name}' (doc_name: {plan.doc_name}, type: {plan.doc_type or '?'}).")
     click.echo("")
-    for tag, target in actions:
-        click.echo(f"  {tag:<8} {target}")
-    if concept_deletes:
+    for action in plan.actions:
+        click.echo(f"  {action.tag:<8} {action.target}")
+    if plan.concept_deletes:
         click.echo("")
         click.echo(
-            f"  {len(concept_deletes)} concept(s) will be DELETED because this is their only source."
+            f"  {len(plan.concept_deletes)} concept(s) will be DELETED because this is their only source."
         )
         click.echo("  Pass --keep-empty to retain them instead.")
-    if entity_deletes:
+    if plan.entity_deletes:
         click.echo("")
         click.echo(
-            f"  {len(entity_deletes)} entity(s) will be DELETED because this is their only source."
+            f"  {len(plan.entity_deletes)} entity(s) will be DELETED because this is their only source."
         )
         click.echo("  Pass --keep-empty to retain them instead.")
     click.echo("")
@@ -1425,96 +1707,20 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
             click.echo("Aborted.")
             return
 
-    # ----- Execute -----
-    # Ordering rationale: every step before the registry write is
-    # idempotent (``unlink(missing_ok=True)``, ``shutil.rmtree(
-    # ignore_errors=True)``, concept/index helpers that no-op on
-    # already-clean state, and PageIndex's own delete-by-doc_id which
-    # uses ``missing_ok`` + ``if dir.exists()`` internally). The
-    # registry write is therefore the *commit point*: if anything
-    # before it raises (including PageIndex), the entry plus its
-    # ``doc_id`` survive and the user can simply re-run ``openkb
-    # remove`` to retry from a clean slate.
-    summary_path.unlink(missing_ok=True)
-    source_md.unlink(missing_ok=True)
-    source_json.unlink(missing_ok=True)
-    if images_dir.is_dir():
-        shutil.rmtree(images_dir, ignore_errors=True)
+    result = _execute_remove_plan(kb_dir, plan, registry, keep_empty=keep_empty)
 
-    concept_result = remove_doc_from_concept_pages(
-        wiki_dir,
-        doc_name,
-        keep_empty=keep_empty,
-    )
+    if result.lint_files_changed:
+        click.echo(f"  lint --fix cleaned {result.lint_ghosts_removed} dangling wikilink(s) in {result.lint_files_changed} file(s)")
+    if result.pageindex_message is not None:
+        click.echo(f"  PageIndex: {result.pageindex_message}")
+    if result.pageindex_error is not None:
+        click.echo(
+            f"  [WARN] PageIndex cleanup failed: {result.pageindex_error} "
+            f"— registry entry kept; re-run `openkb remove {result.name}` to retry"
+        )
+        return
 
-    entity_result = remove_doc_from_entity_pages(
-        wiki_dir,
-        doc_name,
-        keep_empty=keep_empty,
-    )
-
-    remove_doc_from_index(
-        wiki_dir, doc_name, concept_result["deleted"], entity_slugs_deleted=entity_result["deleted"]
-    )
-
-    # Strip dangling wikilinks now so a retry (after a PageIndex
-    # failure below) finds a clean wiki — no point in re-running this
-    # on every attempt.
-    #
-    # Scope: only the pages this remove actually touched (modified
-    # concept + entity pages ∪ index.md). Previously this swept the whole
-    # wiki via ``fix_broken_links(wiki_dir)``, which silently stripped
-    # pre-existing dangling links in unrelated pages — see issue #58
-    # (Bug 2). Users who want a wiki-wide sweep can still run
-    # ``openkb lint --fix`` explicitly.
-    lint_scope: list[Path] = [
-        wiki_dir / "concepts" / f"{slug}.md" for slug in concept_result["modified"]
-    ]
-    lint_scope += [wiki_dir / "entities" / f"{slug}.md" for slug in entity_result["modified"]]
-    index_md = wiki_dir / "index.md"
-    if index_md.exists():
-        lint_scope.append(index_md)
-    files_changed, ghosts = fix_broken_links(wiki_dir, restrict_to=lint_scope)
-    if files_changed:
-        click.echo(f"  lint --fix cleaned {ghosts} dangling wikilink(s) in {files_changed} file(s)")
-
-    # Free PageIndex's local managed state for long PDFs *before* the
-    # registry write so the user can retry on failure — leaving the
-    # entry intact preserves the ``doc_id`` we need for the second
-    # attempt. PageIndex's local dedup is SHA-256 based, so a stale row
-    # left behind here would silently re-bind on the next ``openkb
-    # add`` and the user would get the old parse back without warning.
-    if cleanup_pageindex:
-        try:
-            cleaned, msg = _cleanup_pageindex(
-                openkb_dir,
-                kb_dir,
-                doc_name,
-                pageindex_doc_id,
-            )
-            click.echo(f"  PageIndex: {msg}")
-        except Exception as exc:
-            click.echo(
-                f"  [WARN] PageIndex cleanup failed: {exc} "
-                f"— registry entry kept; re-run `openkb remove {name}` to retry"
-            )
-            logging.getLogger(__name__).debug(
-                "PageIndex cleanup traceback:",
-                exc_info=True,
-            )
-            return
-
-    # ----- Commit point -----
-    # Prune by hash, not by ``doc_name``: legacy registry entries
-    # (ingested before commit c504e26) carry only ``{name, type}`` and
-    # would silently no-op under ``remove_by_doc_name``. See issue #58.
-    registry.remove_by_hash(file_hash)
-
-    if raw_path is not None:
-        raw_path.unlink(missing_ok=True)
-
-    append_log(wiki_dir, "remove", name)
-    click.echo(f"  [OK] {name} removed from knowledge base.")
+    click.echo(f"  [OK] {result.name} removed from knowledge base.")
 
 
 def _refresh_schema(wiki_dir: Path) -> bool:
@@ -1736,6 +1942,172 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
 
     click.echo(f"\nDone: recompiled {recompiled}, skipped {skipped}.")
     append_log(wiki_dir, "recompile", f"recompiled {recompiled}, skipped {skipped}")
+
+
+async def iter_recompile(
+    kb_dir: Path,
+    doc_name: str | None = None,
+    *,
+    all_docs: bool = False,
+    dry_run: bool = False,
+    refresh_schema: bool = False,
+):
+    """Async generator view of ``recompile`` for the REST ``/api/v1/recompile``.
+
+    Shared entry point for both the non-streaming JSON path and the SSE
+    streaming path. Yields ``{"event": ..., ...}`` dicts (see the endpoint):
+    ``start`` -> optional ``plan`` -> one ``doc`` per document -> ``final``.
+    Terminal errors yield an ``error`` event carrying an HTTP-mapped ``code``:
+    400 (bad args), 404 (not found / empty registry), 409 (multiple).
+
+    The whole resolve + compile span runs under ``kb_ingest_lock`` (matching
+    the CLI's ``@_with_kb_lock(exclusive=True)``). Compile calls are awaited on
+    the caller's event loop instead of ``asyncio.run``, so this is safe inside
+    an async FastAPI endpoint. Reference ``compiler`` via the module so tests
+    can patch ``openkb.agent.compiler.compile_*`` and see the call.
+    """
+    from openkb.state import HashRegistry
+
+    openkb_dir = kb_dir / ".openkb"
+    wiki_dir = kb_dir / "wiki"
+    registry = HashRegistry(openkb_dir / "hashes.json")
+
+    def _classify(meta: dict) -> str:
+        return "long" if _is_long_doc(meta) else "short"
+
+    with kb_ingest_lock(openkb_dir):
+        # --- validate args ---
+        if all_docs and doc_name:
+            yield {"event": "error", "code": 400,
+                   "message": "Specify either a doc_name or all_docs, not both."}
+            return
+        if not all_docs and not doc_name:
+            yield {"event": "error", "code": 400,
+                   "message": "Specify a document name or set all_docs to recompile every doc."}
+            return
+
+        # --- resolve targets ---
+        if all_docs:
+            entries = list(registry.all_entries().values())
+            if not entries:
+                yield {"event": "error", "code": 404,
+                       "message": "No documents indexed yet."}
+                return
+            targets = entries
+        else:
+            matches = _resolve_doc_identifier(registry, doc_name)
+            if not matches:
+                yield {"event": "error", "code": 404,
+                       "message": f"No document matching '{doc_name}' found in the KB."}
+                return
+            if len(matches) > 1:
+                yield {
+                    "event": "error", "code": 409,
+                    "message": "doc_name matches multiple documents.",
+                    "candidates": [
+                        {"name": m.get("name", "?"), "doc_name": m.get("doc_name", "?")}
+                        for _, m in matches
+                    ],
+                }
+                return
+            targets = [matches[0][1]]
+
+        total = len(targets)
+        yield {"event": "start", "total": total, "all_docs": all_docs}
+
+        # --- dry-run: enumerate only, no LLM calls, no writes ---
+        if dry_run:
+            yield {
+                "event": "plan",
+                "targets": [
+                    {
+                        "name": meta.get("doc_name") or meta.get("name", "?"),
+                        "doc_name": meta.get("doc_name") or meta.get("name", "?"),
+                        "type": _classify(meta),
+                    }
+                    for meta in targets
+                ],
+                "total": total,
+            }
+            yield {"event": "final", "status": "dry_run", "total": total,
+                   "recompiled": 0, "skipped": 0, "docs": []}
+            return
+
+        if refresh_schema:
+            _refresh_schema(wiki_dir)
+
+        _setup_llm_key(kb_dir)
+        config = load_config(openkb_dir / "config.yaml")
+        model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+        from openkb.agent import compiler
+
+        recompiled = 0
+        skipped = 0
+        docs: list[dict] = []
+        for meta in targets:
+            name = meta.get("doc_name") or Path(meta.get("name", "")).stem
+            doc_type = _classify(meta)
+            ok = False
+
+            if not name:
+                doc = {"name": None, "doc_name": None, "type": doc_type,
+                       "status": "skipped", "elapsed": None,
+                       "message": "registry entry has no doc_name."}
+            elif _is_long_doc(meta):
+                summary_path = wiki_dir / "summaries" / f"{name}.md"
+                doc_id = meta.get("doc_id")
+                if not doc_id:
+                    doc = {"name": name, "doc_name": name, "type": "long",
+                           "status": "skipped", "elapsed": None,
+                           "message": "legacy long-doc entry without a doc_id; re-add to refresh."}
+                elif not summary_path.exists():
+                    doc = {"name": name, "doc_name": name, "type": "long",
+                           "status": "skipped", "elapsed": None,
+                           "message": f"missing summary at wiki/summaries/{name}.md."}
+                else:
+                    start = time.time()
+                    try:
+                        await compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model)
+                    except Exception as exc:
+                        doc = {"name": name, "doc_name": name, "type": "long",
+                               "status": "error", "elapsed": round(time.time() - start, 1),
+                               "message": f"Compilation failed: {exc}"}
+                    else:
+                        doc = {"name": name, "doc_name": name, "type": "long",
+                               "status": "ok", "elapsed": round(time.time() - start, 1),
+                               "message": None}
+                        ok = True
+            else:
+                source_path = wiki_dir / "sources" / f"{name}.md"
+                if not source_path.exists():
+                    doc = {"name": name, "doc_name": name, "type": "short",
+                           "status": "skipped", "elapsed": None,
+                           "message": f"missing source at wiki/sources/{name}.md."}
+                else:
+                    start = time.time()
+                    try:
+                        await compiler.compile_short_doc(name, source_path, kb_dir, model)
+                    except Exception as exc:
+                        doc = {"name": name, "doc_name": name, "type": "short",
+                               "status": "error", "elapsed": round(time.time() - start, 1),
+                               "message": f"Compilation failed: {exc}"}
+                    else:
+                        doc = {"name": name, "doc_name": name, "type": "short",
+                               "status": "ok", "elapsed": round(time.time() - start, 1),
+                               "message": None}
+                        ok = True
+
+            docs.append(doc)
+            yield {"event": "doc", **doc}
+            if ok:
+                recompiled += 1
+            else:
+                skipped += 1
+
+        append_log(wiki_dir, "recompile", f"recompiled {recompiled}, skipped {skipped}")
+        yield {"event": "final", "status": "done", "total": total,
+               "recompiled": recompiled, "skipped": skipped, "docs": docs}
 
 
 @cli.command()
@@ -2951,3 +3323,308 @@ def _save_deck_iteration(kb_dir: Path, deck_name: str) -> Path | None:
     dest = ws / f"iteration-{next_n}"
     shutil.copytree(src, dest)
     return dest
+
+
+# ---------------------------------------------------------------------------
+# REST API helpers (structured init/list/status/lint + add wrapper)
+#
+# These return plain dicts (or AddFileResult) so openkb.api can serialize them
+# directly as JSON. They deliberately reuse the locked CLI code paths so the
+# API and CLI never diverge in behavior.
+# ---------------------------------------------------------------------------
+
+
+def _newest_mtime_iso(paths: list[Path]) -> str | None:
+    """Newest mtime among paths as an ISO-8601 string, or None when empty."""
+    if not paths:
+        return None
+    import datetime
+    newest = max(paths, key=lambda p: p.stat().st_mtime)
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    return datetime.datetime.fromtimestamp(
+        newest.stat().st_mtime,
+        tz=local_tz,
+    ).isoformat()
+
+
+def initialize_kb(
+    kb_dir: Path,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    openai_api_base: str | None = None,
+) -> dict[str, Any]:
+    """Initialize a knowledge base at an explicit directory (REST ``/init``).
+
+    Non-interactive counterpart to the ``init`` Click command: creates the
+    raw/wiki/.openkb layout, seed files, config, and empty hash registry, then
+    optionally writes LLM credentials to a KB-local ``.env``. Raises
+    ``FileExistsError`` if the KB is already initialized.
+    """
+    from openkb.config import kb_root_dir
+
+    kb_dir = kb_dir.expanduser().resolve()
+    openkb_dir = kb_dir / ".openkb"
+    if openkb_dir.exists():
+        raise FileExistsError(f"Knowledge base already initialized: {kb_dir}")
+
+    kb_dir.mkdir(parents=True, exist_ok=True)
+    (kb_dir / "raw").mkdir(exist_ok=True)
+    (kb_dir / "wiki" / "sources" / "images").mkdir(parents=True, exist_ok=True)
+    (kb_dir / "wiki" / "summaries").mkdir(parents=True, exist_ok=True)
+    (kb_dir / "wiki" / "concepts").mkdir(parents=True, exist_ok=True)
+    (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
+
+    atomic_write_text(kb_dir / "wiki" / "AGENTS.md", AGENTS_MD)
+    atomic_write_text(kb_dir / "wiki" / "index.md", INDEX_SEED)
+    atomic_write_text(kb_dir / "wiki" / "log.md", "# Operations Log\n\n")
+
+    openkb_dir.mkdir()
+    # Seed config.yaml: an explicit model wins; otherwise inherit the
+    # operator's project-root config.yaml (model/language/optional blocks)
+    # so a KB created via the REST UI matches the deployed setup instead of
+    # the hardcoded DEFAULT_CONFIG (gpt-5.4 / en). Defaults are the last resort.
+    template_config = Path.cwd() / "config.yaml"
+    if model is not None:
+        config = {
+            "model": model,
+            "language": DEFAULT_CONFIG["language"],
+            "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
+        }
+        save_config(openkb_dir / "config.yaml", config)
+    elif template_config.exists():
+        shutil.copy2(template_config, openkb_dir / "config.yaml")
+    else:
+        config = {
+            "model": DEFAULT_CONFIG["model"],
+            "language": DEFAULT_CONFIG["language"],
+            "pageindex_threshold": DEFAULT_CONFIG["pageindex_threshold"],
+        }
+        save_config(openkb_dir / "config.yaml", config)
+    atomic_write_json(openkb_dir / "hashes.json", {})
+
+    # Seed KB-local .env: inherit LLM credentials from the project-root .env so
+    # a new KB can run queries/compiles out of the box. REST-server variables
+    # (OPENKB_API_TOKEN, OPENKB_KB_ROOT, ...) are filtered out — they scope to
+    # the server, not a single KB. Explicit api_key/openai_api_base params
+    # override anything inherited. Precedence: default -> template -> explicit.
+    env_path = kb_dir / ".env"
+    can_write_env = not env_path.exists()
+    env_pairs: dict[str, str] = {}
+    if can_write_env:
+        env_pairs["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
+        template_env = Path.cwd() / ".env"
+        if template_env.exists():
+            for raw in template_env.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                # Skip REST-server variables; keep LLM/provider config.
+                if key.startswith("OPENKB_"):
+                    continue
+                env_pairs[key] = val.strip()
+        if api_key:
+            env_pairs["LLM_API_KEY"] = api_key
+        if openai_api_base:
+            env_pairs["OPENAI_API_BASE"] = openai_api_base
+        if env_pairs:
+            env_path.write_text(
+                "".join(f"{k}={v}\n" for k, v in env_pairs.items()),
+                encoding="utf-8",
+            )
+        os.chmod(env_path, 0o600)
+
+    register_kb(kb_dir)
+    return {
+        "kb_dir": str(kb_dir),
+        "created": True,
+        "env_written": {
+            "api_key": "LLM_API_KEY" in env_pairs,
+            "openai_api_base": "OPENAI_API_BASE" in env_pairs,
+        },
+        "message": "Knowledge base initialized.",
+    }
+
+
+def get_kb_list(kb_dir: Path) -> dict[str, Any]:
+    """Return a structured inventory of the knowledge base (REST ``/list``)."""
+    openkb_dir = kb_dir / ".openkb"
+    hashes_file = openkb_dir / "hashes.json"
+    hashes = (
+        json.loads(hashes_file.read_text(encoding="utf-8"))
+        if hashes_file.exists() else {}
+    )
+
+    documents = []
+    for file_hash, meta in hashes.items():
+        raw_type = meta.get("type", "unknown")
+        pages = meta.get("pages")
+        documents.append({
+            "hash": file_hash,
+            "name": meta.get("name", "unknown"),
+            "type": raw_type,
+            "display_type": _display_type(raw_type),
+            "pages": pages if pages not in ("", 0) else None,
+        })
+
+    summaries_dir = kb_dir / "wiki" / "summaries"
+    concepts_dir = kb_dir / "wiki" / "concepts"
+    reports_dir = kb_dir / "wiki" / "reports"
+    return {
+        "documents": documents,
+        "document_count": len(documents),
+        "summaries": sorted(p.stem for p in summaries_dir.glob("*.md"))
+        if summaries_dir.exists() else [],
+        "concepts": sorted(p.stem for p in concepts_dir.glob("*.md"))
+        if concepts_dir.exists() else [],
+        "reports": sorted(p.name for p in reports_dir.glob("*.md"))
+        if reports_dir.exists() else [],
+    }
+
+
+def get_kb_status(kb_dir: Path) -> dict[str, Any]:
+    """Return structured status for the knowledge base (REST ``/status``)."""
+    wiki_dir = kb_dir / "wiki"
+    subdirs = ["sources", "summaries", "concepts", "reports"]
+    directories = {}
+    for subdir in subdirs:
+        path = wiki_dir / subdir
+        directories[subdir] = len(list(path.glob("*.md"))) if path.exists() else 0
+
+    raw_dir = kb_dir / "raw"
+    raw_count = (
+        len([f for f in raw_dir.iterdir() if f.is_file()]) if raw_dir.exists() else 0
+    )
+
+    hashes_file = kb_dir / ".openkb" / "hashes.json"
+    hashes = (
+        json.loads(hashes_file.read_text(encoding="utf-8"))
+        if hashes_file.exists() else {}
+    )
+
+    summaries = (
+        list((wiki_dir / "summaries").glob("*.md"))
+        if (wiki_dir / "summaries").exists() else []
+    )
+    reports = (
+        list((wiki_dir / "reports").glob("*.md"))
+        if (wiki_dir / "reports").exists() else []
+    )
+    return {
+        "directories": directories,
+        "raw_count": raw_count,
+        "total_indexed": len(hashes),
+        "last_compile": _newest_mtime_iso(summaries),
+        "last_lint": _newest_mtime_iso(reports),
+    }
+
+
+def _fix_summary(files_changed: int | None, ghosts: int | None) -> str:
+    """One-line summary of a ``lint --fix`` pass (mirrors the CLI wording)."""
+    if files_changed:
+        return f"Fixed {ghosts} wikilink(s) across {files_changed} file(s)."
+    return "Nothing to fix — all wikilinks resolve."
+
+
+async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False) -> dict[str, Any]:
+    """Run lint and return structured report metadata (REST ``/lint``).
+
+    Mirrors ``run_lint`` (structural + knowledge lint, writes a combined
+    report) but returns a JSON-serializable dict instead of printing and
+    returning only a path. Skips with a structured payload when there is
+    nothing to lint.
+
+    When ``fix`` is True, ``fix_broken_links`` runs first under the KB ingest
+    lock (mirroring ``openkb lint --fix``), so the report reflects the
+    post-fix state and the fix counts are returned as
+    ``lint_files_changed`` / ``lint_ghosts_removed``.
+    """
+    from openkb.lint import fix_broken_links, run_structural_lint
+    from openkb.agent.linter import run_knowledge_lint
+
+    # Optional fix pass runs first (matching `openkb lint --fix`), before any
+    # skip/report logic, so the report and message reflect the post-fix state.
+    lint_files_changed: int | None = None
+    lint_ghosts_removed: int | None = None
+    if fix:
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            files_changed, ghosts = fix_broken_links(kb_dir / "wiki")
+        lint_files_changed = files_changed
+        lint_ghosts_removed = ghosts
+
+    openkb_dir = kb_dir / ".openkb"
+    hashes_file = openkb_dir / "hashes.json"
+    hashes = (
+        json.loads(hashes_file.read_text(encoding="utf-8"))
+        if hashes_file.exists() else {}
+    )
+
+    if not hashes:
+        message = "Nothing to lint - no documents indexed yet. Run `openkb add` first."
+        if fix:
+            message = f"{_fix_summary(lint_files_changed, lint_ghosts_removed)} {message}"
+        if echo:
+            click.echo(message)
+        return {
+            "skipped": True,
+            "reason": "no_documents_indexed",
+            "message": message,
+            "structural_report": None,
+            "knowledge_report": None,
+            "report_path": None,
+            "lint_files_changed": lint_files_changed,
+            "lint_ghosts_removed": lint_ghosts_removed,
+        }
+
+    config = load_config(openkb_dir / "config.yaml")
+    _setup_llm_key(kb_dir)
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+
+    if echo:
+        click.echo("Running structural lint...")
+    structural_report = run_structural_lint(kb_dir)
+    if echo:
+        click.echo(structural_report)
+        click.echo("Running knowledge lint...")
+
+    try:
+        knowledge_report = await run_knowledge_lint(kb_dir, model)
+    except Exception as exc:
+        knowledge_report = f"Knowledge lint failed: {exc}"
+    if echo:
+        click.echo(knowledge_report)
+
+    reports_dir = kb_dir / "wiki" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = reports_dir / f"lint_{timestamp}.md"
+    counter = 1
+    while report_path.exists():
+        report_path = reports_dir / f"lint_{timestamp}_{counter}.md"
+        counter += 1
+    report_content = (
+        f"# Lint Report — {timestamp}\n\n"
+        f"## Structural\n\n{structural_report}\n\n"
+        f"## Semantic\n\n{knowledge_report}\n"
+    )
+    report_path.write_text(report_content, encoding="utf-8")
+    append_log(kb_dir / "wiki", "lint", f"report → {report_path.name}")
+    if echo:
+        click.echo(f"\nReport written to {report_path}")
+
+    message = "Lint report written."
+    if fix:
+        message = f"{_fix_summary(lint_files_changed, lint_ghosts_removed)} {message}"
+    return {
+        "skipped": False,
+        "reason": None,
+        "message": message,
+        "structural_report": structural_report,
+        "knowledge_report": knowledge_report,
+        "report_path": str(report_path),
+        "lint_files_changed": lint_files_changed,
+        "lint_ghosts_removed": lint_ghosts_removed,
+    }

@@ -54,6 +54,7 @@ Issues = "https://github.com/VectifyAI/OpenKB/issues"
 
 [project.scripts]
 openkb = "openkb.cli:cli"
+openkb-api = "openkb.api:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -62,10 +63,12 @@ testpaths = ["tests"]
 dev = [
     "pytest==9.0.3",
     "pytest-asyncio==1.3.0",
+    "httpx",
     "ruff==0.9.7",
     "mypy==1.15.0",
     "types-PyYAML==6.0.12.20260518",
 ]
+api = ["fastapi", "uvicorn", "python-multipart"]
 
 [tool.hatch.version]
 source = "vcs"

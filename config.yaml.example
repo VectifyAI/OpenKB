@@ -1,5 +1,5 @@
-model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
-language: en                     # Wiki output language
+model: openai/deepseek-v4-flash                   # LLM model (any LiteLLM-supported provider)
+language: zh                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
 # Optional: cap concurrent LLM calls during ingest (PageIndex indexing and

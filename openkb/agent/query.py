@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
@@ -103,6 +104,58 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         model=f"litellm/{model}",
         model_settings=ModelSettings(**resolve_model_settings()),
     )
+
+
+async def iter_agent_response_events(
+    agent: Agent,
+    input_data: str | list[dict[str, Any]],
+    *,
+    max_turns: int = MAX_TURNS,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield non-TTY events for a streamed agent response.
+
+    The CLI renders these events to stdout; the REST API serializes the same
+    events as SSE. Events: ``{"event": "delta", "data": {"text": ...}}`` for
+    each response-text delta, ``{"event": "tool_call", "data": {...}}`` for
+    tool invocations, and a final ``{"event": "final", "data": {"answer": ...,
+    "history": [...]}}`` carrying the complete answer and reusable Agents SDK
+    history.
+    """
+    from agents import RawResponsesStreamEvent, RunItemStreamEvent
+    from openai.types.responses import ResponseTextDeltaEvent
+
+    result = Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    collected: list[str] = []
+
+    async for event in result.stream_events():
+        if isinstance(event, RawResponsesStreamEvent):
+            if isinstance(event.data, ResponseTextDeltaEvent):
+                text = event.data.delta
+                if text:
+                    collected.append(text)
+                    yield {"event": "delta", "data": {"text": text}}
+        elif isinstance(event, RunItemStreamEvent):
+            item = event.item
+            if item.type == "tool_call_item":
+                raw_item = item.raw_item
+                yield {
+                    "event": "tool_call",
+                    "data": {
+                        "name": getattr(raw_item, "name", "?"),
+                        "arguments": getattr(raw_item, "arguments", "") or "",
+                    },
+                }
+
+    answer = "".join(collected).strip()
+    if not answer:
+        answer = (result.final_output or "").strip()
+    yield {
+        "event": "final",
+        "data": {
+            "answer": answer,
+            "history": result.to_input_list(),
+        },
+    }
 
 
 def build_chat_agent(

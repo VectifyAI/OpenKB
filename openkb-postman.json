@@ -1,0 +1,845 @@
+{
+    "info": {
+        "_postman_id": "209b7e72-4e08-44f5-a30a-332b4faf79d1",
+        "name": "openkb",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "list",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/list",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "list"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\"\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "status",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/status",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "status"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\"\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "lint",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/lint",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "lint"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\",\n  \"fix\": false\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "query-stream",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/query",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "query"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "text/event-stream"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb_dir\": \"D:\\\\project\\\\OpenKB\\\\postman-kb\",\n  \"question\": \"这个知识库里有什么？\",\n  \"stream\": true,\n  \"save\": false\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "chat-stream",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/chat",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "chat"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "text/event-stream"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\",\n  \"message\": \"详细说说brainstorming\",\n  \"session_id\": \"20260627-124751-igb\",\n  \"stream\": true\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "query",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/query",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "query"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\",\n  \"question\": \"这个知识库里有什么？\",\n  \"stream\": false,\n  \"save\": false\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "chat",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/chat",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "chat"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\",\n  \"message\": \"详细说说superpowers\",\n  \"session_id\": \"20260627-124523-p45\",\n  \"stream\": false\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "init",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/init",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "init"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n   \"kb\": \"postman-kb\",\n  \"model\": \"openai/deepseek-v4-flash\",\n  \"api_key\": \"your-llm-api-key\",\n  \"openai_api_base\": \"https://api.deepseek.com\"\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "add",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/add",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "add"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "multipart/form-data"
+                    }
+                ],
+                "body": {
+                    "mode": "formdata",
+                    "formdata": [
+                        {
+                            "key": "kb",
+                            "value": "postman-kb",
+                            "type": "text"
+                        },
+                        {
+                            "key": "stream",
+                            "value": "false",
+                            "type": "text"
+                        },
+                        {
+                            "key": "files",
+                            "src": "D:\\project\\ReadAgent（无需分块和向量化的RAG）\\OpenKB-Repo\\OpenKB\\md\\andrej-karpathy-skills-使用指南.md",
+                            "type": "file"
+                        },
+                        {
+                            "key": "files",
+                            "src": "D:\\project\\ReadAgent（无需分块和向量化的RAG）\\OpenKB-Repo\\OpenKB\\md\\codex-plugin-cc-使用指南.md",
+                            "type": "file"
+                        },
+                        {
+                            "key": "files",
+                            "src": "D:\\project\\ReadAgent（无需分块和向量化的RAG）\\OpenKB-Repo\\OpenKB\\md\\README_CN.md",
+                            "type": "file"
+                        },
+                        {
+                            "key": "files",
+                            "src": "D:\\project\\ReadAgent（无需分块和向量化的RAG）\\OpenKB-Repo\\OpenKB\\md\\SUPERPOWERS-完整使用指南.md",
+                            "type": "file"
+                        }
+                    ]
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "remove",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/remove",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "remove"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\",\n  \"identifier\": \"README_CN.md\",\n  \"keep_raw\": false,\n  \"keep_empty\": false,\n  \"dry_run\": false, //true：先预览，false：直接删除\n  \"stream\": false\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "recompile",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/recompile",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "recompile"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{ \"kb\": \"postman-kb\", \"all_docs\": true }"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "watch/start",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/watch/start",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "watch",
+                        "start"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{ \"kb\": \"postman-kb\", \"debounce\": 2.0 }"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "watch/status",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/watch/status",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "watch",
+                        "status"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{ \"kb\": \"postman-kb\" }"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "watch/stop",
+            "request": {
+                "method": "POST",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/watch/stop",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "watch",
+                        "stop"
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "*/*"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"kb\": \"postman-kb\"\n}"
+                },
+                "auth": {
+                }
+            }
+        },
+        {
+            "name": "watch/events",
+            "request": {
+                "method": "GET",
+                "url": {
+                    "raw": "http://127.0.0.1:8000/api/v1/watch/events?kb=postman-kb",
+                    "protocol": "http",
+                    "host": [
+                        "127",
+                        "0",
+                        "0",
+                        "1"
+                    ],
+                    "path": [
+                        "api",
+                        "v1",
+                        "watch",
+                        "events"
+                    ],
+                    "query": [
+                        {
+                            "key": "kb",
+                            "value": "postman-kb"
+                        },
+                        {
+                            "key": "kb",
+                            "value": "postman-kb"
+                        }
+                    ]
+                },
+                "header": [
+                    {
+                        "key": "User-Agent",
+                        "value": "EasyPostman/v5.5.9"
+                    },
+                    {
+                        "key": "Accept",
+                        "value": "text/event-stream"
+                    },
+                    {
+                        "key": "Accept-Encoding",
+                        "value": "gzip, deflate, br"
+                    },
+                    {
+                        "key": "Connection",
+                        "value": "keep-alive"
+                    },
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    },
+                    {
+                        "key": "Authorization",
+                        "value": "Bearer test-token"
+                    }
+                ],
+                "auth": {
+                }
+            }
+        }
+    ]
+}

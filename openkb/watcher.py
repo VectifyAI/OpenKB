@@ -84,18 +84,45 @@ def watch_directory(
 ) -> None:
     """Start watching *raw_dir* and block until Ctrl+C.
 
+    Thin blocking wrapper around :func:`start_watch`; kept so the CLI
+    ``openkb watch`` command is unchanged. The REST layer uses
+    :func:`start_watch` directly so it can own the Observer's lifecycle.
+
     Args:
         raw_dir: Directory to watch for file changes.
         callback: Called with sorted list of new/modified file paths.
         debounce: Debounce delay in seconds. Defaults to 2.0.
     """
-    handler = DebouncedHandler(callback, debounce_seconds=debounce)
-    observer = Observer()
-    observer.schedule(handler, str(raw_dir), recursive=True)
-    observer.start()
+    observer = start_watch(raw_dir, callback, debounce)
     try:
         while observer.is_alive():
             observer.join(timeout=1.0)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
+
+
+def start_watch(
+    raw_dir: Path,
+    callback: Callable[[list[str]], None],
+    debounce: float = 2.0,
+) -> Observer:
+    """Start a non-blocking watcher on *raw_dir* and return its Observer.
+
+    The caller owns the Observer's lifecycle: call ``observer.stop()`` then
+    ``observer.join()`` to tear it down. Debounce/filter behavior is identical
+    to :func:`watch_directory`.
+
+    Args:
+        raw_dir: Directory to watch for file changes.
+        callback: Called with sorted list of new/modified file paths.
+        debounce: Debounce delay in seconds. Defaults to 2.0.
+
+    Returns:
+        The started watchdog Observer.
+    """
+    handler = DebouncedHandler(callback, debounce_seconds=debounce)
+    observer = Observer()
+    observer.schedule(handler, str(raw_dir), recursive=True)
+    observer.start()
+    return observer

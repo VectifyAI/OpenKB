@@ -4,6 +4,7 @@ import contextlib
 import logging
 import math
 import re
+import os
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -34,6 +35,11 @@ DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
 GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
+
+# Portable KB names for the REST API: letters, numbers, underscores, hyphens.
+# Lets clients address a knowledge base by a filesystem-safe short name
+# (``kb``) instead of an absolute path, resolved via kb_aliases/OPENKB_KB_ROOT.
+KB_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @contextlib.contextmanager
@@ -367,3 +373,62 @@ def register_kb(kb_path: Path) -> None:
             gc["known_kbs"] = known
         gc["default_kb"] = resolved
         _atomic_yaml_dump(GLOBAL_CONFIG_PATH, gc)
+
+
+def kb_root_dir() -> Path:
+    """Return the root directory for API-addressable KB names.
+
+    Controlled by ``OPENKB_KB_ROOT``; defaults to ``<config>/kbs`` so REST
+    ``/init`` creates knowledge bases under a predictable location.
+    """
+    configured_root = os.environ.get("OPENKB_KB_ROOT")
+    if configured_root:
+        return Path(configured_root).expanduser().resolve()
+    return (GLOBAL_CONFIG_DIR / "kbs").resolve()
+
+
+def validate_kb_name(name: str) -> str:
+    """Validate and return a portable KB name."""
+    normalized = name.strip()
+    if not normalized or not KB_NAME_RE.fullmatch(normalized):
+        raise ValueError(
+            "KB name must contain only letters, numbers, underscores, and hyphens"
+        )
+    return normalized
+
+
+def register_kb_alias(name: str, kb_path: Path) -> None:
+    """Register a portable KB name alias for a KB path.
+
+    Held under the global-config lock so concurrent API writes (uvicorn
+    threadpool) can't lose an alias to a read-modify-write race.
+    """
+    alias = validate_kb_name(name)
+    resolved = str(kb_path.resolve())
+    with _with_global_config_lock():
+        gc = _load_global_config_unlocked()
+        known = gc.get("known_kbs", [])
+        if resolved not in known:
+            known.append(resolved)
+            gc["known_kbs"] = known
+        aliases = gc.get("kb_aliases", {})
+        aliases[alias] = resolved
+        gc["kb_aliases"] = aliases
+        gc["default_kb"] = resolved
+        _atomic_yaml_dump(GLOBAL_CONFIG_PATH, gc)
+
+
+def resolve_kb_alias(name: str) -> Path:
+    """Resolve a portable KB name to its registered path or root fallback.
+
+    If the name is a registered alias, return its path; otherwise fall back to
+    ``<kb_root_dir>/<name>`` so a freshly created KB is addressable without an
+    explicit alias round-trip.
+    """
+    alias = validate_kb_name(name)
+    with _with_global_config_lock():
+        gc = _load_global_config_unlocked()
+        aliases = gc.get("kb_aliases", {})
+    if alias in aliases:
+        return Path(aliases[alias]).expanduser().resolve()
+    return (kb_root_dir() / alias).resolve()

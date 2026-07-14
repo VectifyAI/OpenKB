@@ -14,6 +14,7 @@ raw/
 wiki/
 .openkb/
 output/
+kbs/
 
 # Local only
 docs/internal/
