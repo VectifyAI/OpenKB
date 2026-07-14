@@ -25,3 +25,6 @@ docs/internal/
 # does not). The PDFs already tracked on main stay tracked — this only stops
 # new drops from being swept into commits.
 examples/docs/
+
+# Built Workbench web bundle (regenerate with `cd frontend && npm install && npm run build`)
+web/

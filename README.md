@@ -140,6 +140,8 @@ pip install -e ".[api]"
 python -m openkb.api --host 127.0.0.1 --port 8000                      # serves the API + Workbench at http://127.0.0.1:8000/
 ```
 
+> **No build, no UI.** If you skip `npm run build`, the `web/` bundle is absent and `openkb-api` serves only the REST API under `/api/v1` — visiting `/` returns a 404. The Workbench web UI appears only after you build `frontend/` at least once.
+
 Open `http://127.0.0.1:8000/` in your browser. On first launch a **Connection Settings** dialog asks for the API base (leave blank for same-origin) and the bearer token. The Workbench then provides:
 
 - **Overview** — index/concept/summary/report stat cards, clickable concept chips, recent documents, and last-compile/lint activity.
