@@ -62,6 +62,7 @@ from openkb.config import (
     resolve_timeout,
     set_timeout,
     resolve_litellm_settings,
+    resolve_per_request_overrides,
 )
 from openkb.add_coordinator import _cleanup_staging_dirs
 from openkb.converter import (
@@ -186,18 +187,8 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             config = load_config(config_path)
             model = config.get("model", "")
             provider = _extract_provider(str(model))
-            extra_headers = resolve_extra_headers(config)
-            timeout = resolve_timeout(config)
+            extra_headers, timeout, litellm_settings = resolve_per_request_overrides(config)
             parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
-            litellm_settings = resolve_litellm_settings(config)
-            # `timeout` / `extra_headers` in the block route to the per-call
-            # stashes (replacing the legacy top-level keys); the rest are globals.
-            if "extra_headers" in litellm_settings:
-                extra_headers = resolve_extra_headers(
-                    {"extra_headers": litellm_settings.pop("extra_headers")}
-                )
-            if "timeout" in litellm_settings:
-                timeout = resolve_timeout({"timeout": litellm_settings.pop("timeout")})
     set_extra_headers(extra_headers)
     set_timeout(timeout)
     set_parallel_tool_calls(parallel_tool_calls, parallel_tool_calls_explicit)
@@ -452,15 +443,15 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
 
 
 def add_single_file(
-    file_path: Path, kb_dir: Path, *, stage: bool = True
+    file_path: Path, kb_dir: Path, *, stage: bool = True, bundle=None
 ) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document under the KB mutation lock."""
     with kb_ingest_lock(kb_dir / ".openkb"):
-        return _add_single_file_locked(file_path, kb_dir, stage=stage)
+        return _add_single_file_locked(file_path, kb_dir, stage=stage, bundle=bundle)
 
 
 def _add_single_file_locked(
-    file_path: Path, kb_dir: Path, *, stage: bool = True
+    file_path: Path, kb_dir: Path, *, stage: bool = True, bundle=None
 ) -> Literal["added", "skipped", "failed"]:
     """Convert, index, and compile a single document into the knowledge base.
 
@@ -563,6 +554,7 @@ def _add_single_file_locked(
                     model,
                     doc_description=index_result.description,
                     max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
+                    bundle=bundle,
                 ),
                 label=f"Compiling long doc (doc_id={index_result.doc_id})",
             )
@@ -577,6 +569,7 @@ def _add_single_file_locked(
                     kb_dir,
                     model,
                     max_concurrency=resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY,
+                    bundle=bundle,
                 ),
                 label="Compiling short doc",
             )
@@ -648,7 +641,7 @@ class AddFileResult:
     message: str
 
 
-def _add_for_api(file_path: Path, kb_dir: Path) -> AddFileResult:
+def _add_for_api(file_path: Path, kb_dir: Path, *, bundle=None) -> AddFileResult:
     """Run the locked add pipeline and return a structured result for the API.
 
     Reuses the upstream ``add_single_file`` (which already holds the ingest
@@ -657,7 +650,7 @@ def _add_for_api(file_path: Path, kb_dir: Path) -> AddFileResult:
     ``AddFileResult``; on ``skipped`` the caller (api._add_saved_file) deletes
     the freshly uploaded raw copy to avoid orphaning it.
     """
-    status_str = add_single_file(file_path, kb_dir)
+    status_str = add_single_file(file_path, kb_dir, bundle=bundle)
     if status_str == "skipped":
         message = f"Already in knowledge base: {file_path.name}"
     elif status_str == "failed":
@@ -1164,6 +1157,53 @@ def _stream_to_tty() -> bool:
     and the non-streaming branch returns just the final answer string.
     """
     return sys.stdout.isatty()
+
+
+def save_exploration(kb_dir: Path, question: str, answer: str) -> Path | None:
+    """Save a query answer to ``wiki/explorations/`` as a markdown page.
+
+    Shared by the CLI ``query --save`` path and the REST ``/query?save`` path
+    so both behave identically. Strips ghost wikilinks, generates a unique
+    slug (with a CJK-safe fallback), and escapes the question for YAML
+    frontmatter.
+    """
+    import re
+    import hashlib
+    from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
+
+    if not answer:
+        return None
+    explore_dir = kb_dir / "wiki" / "explorations"
+    explore_dir.mkdir(parents=True, exist_ok=True)
+
+    # Strip ghost wikilinks the agent may have emitted to non-existent
+    # concept/summary pages -- the schema_md in the agent's instructions
+    # encourages [[wikilinks]] but the agent's view of "which pages
+    # exist" can drift from disk reality.
+    known = list_existing_wiki_targets(kb_dir / "wiki")
+    cleaned_answer, _ = strip_ghost_wikilinks(answer, known)
+
+    slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
+    if not slug:
+        # CJK / punctuation-only questions collapse to an empty slug.
+        # Fall back to a short hash so each question gets its own file.
+        slug = hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
+    explore_path = explore_dir / f"{slug}.md"
+    # Uniquify to avoid clobbering an existing exploration with a colliding slug.
+    counter = 1
+    while explore_path.exists():
+        explore_path = explore_dir / f"{slug}-{counter}.md"
+        counter += 1
+
+    # Escape the question for YAML frontmatter: wrap in double quotes and
+    # escape backslashes and double quotes so questions containing `"` don't
+    # produce invalid YAML.
+    escaped = question.replace("\\", "\\\\").replace('"', '\\"')
+    explore_path.write_text(
+        f'---\nquery: "{escaped}"\n---\n\n{cleaned_answer}\n',
+        encoding="utf-8",
+    )
+    return explore_path
 
 
 @cli.command()
@@ -1951,6 +1991,7 @@ async def iter_recompile(
     all_docs: bool = False,
     dry_run: bool = False,
     refresh_schema: bool = False,
+    bundle=None,
 ):
     """Async generator view of ``recompile`` for the REST ``/api/v1/recompile``.
 
@@ -2068,7 +2109,7 @@ async def iter_recompile(
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model)
+                        await compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model, bundle=bundle)
                     except Exception as exc:
                         doc = {"name": name, "doc_name": name, "type": "long",
                                "status": "error", "elapsed": round(time.time() - start, 1),
@@ -2087,7 +2128,7 @@ async def iter_recompile(
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_short_doc(name, source_path, kb_dir, model)
+                        await compiler.compile_short_doc(name, source_path, kb_dir, model, bundle=bundle)
                     except Exception as exc:
                         doc = {"name": name, "doc_name": name, "type": "short",
                                "status": "error", "elapsed": round(time.time() - start, 1),
@@ -3528,7 +3569,7 @@ def _fix_summary(files_changed: int | None, ghosts: int | None) -> str:
     return "Nothing to fix — all wikilinks resolve."
 
 
-async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False) -> dict[str, Any]:
+async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False, bundle=None) -> dict[str, Any]:
     """Run lint and return structured report metadata (REST ``/lint``).
 
     Mirrors ``run_lint`` (structural + knowledge lint, writes a combined
@@ -3543,6 +3584,7 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
     """
     from openkb.lint import fix_broken_links, run_structural_lint
     from openkb.agent.linter import run_knowledge_lint
+    from openkb.agent.query import build_run_config_from_bundle
 
     # Optional fix pass runs first (matching `openkb lint --fix`), before any
     # skip/report logic, so the report and message reflect the post-fix state.
@@ -3581,6 +3623,7 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
     config = load_config(openkb_dir / "config.yaml")
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
+    run_config = build_run_config_from_bundle(model, bundle)
 
     if echo:
         click.echo("Running structural lint...")
@@ -3590,7 +3633,7 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
         click.echo("Running knowledge lint...")
 
     try:
-        knowledge_report = await run_knowledge_lint(kb_dir, model)
+        knowledge_report = await run_knowledge_lint(kb_dir, model, bundle=bundle, run_config=run_config)
     except Exception as exc:
         knowledge_report = f"Knowledge lint failed: {exc}"
     if echo:

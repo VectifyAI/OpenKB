@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useApp } from "../state/AppContext.jsx";
+import { useI18n } from "../i18n.jsx";
 
 export default function Inspector() {
   const { inspItems, inspBusy } = useApp();
+  const { t } = useI18n();
   const bodyRef = useRef(null);
 
   useEffect(() => {
@@ -12,13 +14,13 @@ export default function Inspector() {
   return (
     <aside className="inspector">
       <div className="insp-head">
-        <span className="insp-title">检索与推理</span>
-        <span className={`insp-status ${inspBusy ? "busy" : ""}`}>{inspBusy ? "推理中…" : "空闲"}</span>
+        <span className="insp-title">{t("inspectorTitle")}</span>
+        <span className={`insp-status ${inspBusy ? "busy" : ""}`}>{inspBusy ? t("inspBusy") : t("inspIdle")}</span>
       </div>
       <div className="insp-body" ref={bodyRef}>
         {inspItems.length === 0 ? (
           <div className="insp-empty">
-            发起查询或对话后，<br />无向量检索与推理过程将在此实时呈现。
+            {t("inspEmptyHint")}
           </div>
         ) : (
           inspItems.map((it, i) => (

@@ -7,6 +7,8 @@ from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
+from openkb.config import LlmCredentialBundle, get_extra_headers, get_timeout_extra_args
+
 from openkb.agent.tools import (
     get_wiki_page_content,
     read_wiki_file,
@@ -52,7 +54,12 @@ If you cannot find relevant information, say so clearly.
 """
 
 
-def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
+def build_query_agent(
+    wiki_root: str,
+    model: str,
+    language: str = "en",
+    bundle: "LlmCredentialBundle | None" = None,
+) -> Agent:
     """Build and return the Q&A agent."""
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
@@ -97,12 +104,21 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
 
     from agents.model_settings import ModelSettings
 
+    _extra_headers = bundle.extra_headers if bundle else get_extra_headers()
+    _timeout_args = {"timeout": bundle.timeout} if bundle and bundle.timeout is not None else get_timeout_extra_args()
+
     return Agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(**resolve_model_settings()),
+        model_settings=ModelSettings(
+            **({
+                **resolve_model_settings(),
+                "extra_headers": (bundle.extra_headers if bundle else get_extra_headers()) or None,
+                "extra_args": ({"timeout": bundle.timeout} if bundle and bundle.timeout is not None else get_timeout_extra_args()),
+            })
+        ),
     )
 
 
@@ -111,6 +127,7 @@ async def iter_agent_response_events(
     input_data: str | list[dict[str, Any]],
     *,
     max_turns: int = MAX_TURNS,
+    run_config: Any = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield non-TTY events for a streamed agent response.
 
@@ -124,7 +141,7 @@ async def iter_agent_response_events(
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    result = Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    result = Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config) if run_config else Runner.run_streamed(agent, input_data, max_turns=max_turns)
     collected: list[str] = []
 
     async for event in result.stream_events():
@@ -305,6 +322,8 @@ async def run_query(
     stream: bool = False,
     *,
     raw: bool = False,
+    run_config: Any = None,
+    bundle: LlmCredentialBundle | None = None,
 ) -> str:
     """Run a Q&A query against the knowledge base.
 
@@ -332,10 +351,10 @@ async def run_query(
 
     wiki_root = str(kb_dir / "wiki")
 
-    agent = build_query_agent(wiki_root, model, language=language)
+    agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     if not stream:
-        result = await Runner.run(agent, question, max_turns=MAX_TURNS)
+        result = await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config) if run_config else await Runner.run(agent, question, max_turns=MAX_TURNS)
         return result.final_output or ""
 
     import os
@@ -369,7 +388,7 @@ async def run_query(
     live: Live | None = None
     last_was_text = False
     need_blank_before_text = False
-    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config) if run_config else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
     collected: list[str] = []
     segment: list[str] = []
     try:
@@ -429,3 +448,31 @@ async def run_query(
             live.stop()
         print()
     return "".join(collected) if collected else result.final_output or ""
+
+
+def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None") -> Any:
+    """Build an Agents-SDK `RunConfig` from a credential bundle.
+
+    When *bundle* is `None` (CLI path), returns `None` so the runner falls
+    back to the default provider (process-wide `litellm.api_key` / env vars).
+    When a bundle is supplied, a dedicated `LitellmModel` instance is created
+    with the per-KB `api_key` and `base_url` so concurrent requests on the
+    shared event-loop thread never read each other's credentials.
+
+    The model is passed to `LitellmModel` *verbatim* (e.g. ``openai/gpt-4o``)
+    because `LitellmModel` feeds it straight to ``litellm.acompletion``. The
+    ``litellm/`` prefix is an Agent-layer convention to select the backend and
+    must NOT be added here -- doing so yields ``litellm/openai/...`` which
+    litellm rejects as an unknown provider.
+    """
+    if bundle is None:
+        return None
+    from agents import RunConfig
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    litellm_model = LitellmModel(
+        model=model,
+        base_url=bundle.base_url,
+        api_key=bundle.api_key,
+    )
+    return RunConfig(model=litellm_model)

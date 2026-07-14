@@ -5,6 +5,7 @@ import logging
 import math
 import re
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -260,6 +261,31 @@ def resolve_litellm_settings(config: dict) -> dict[str, Any]:
 # via get_extra_headers() so the value doesn't have to be threaded through
 # every compile/agent call chain — mirroring how the API key is applied
 # globally via litellm.api_key / provider env vars.
+
+# Shared by cli._setup_llm_key and resolve_credential_bundle so the CLI and
+# REST paths apply identical litellm.* override semantics.
+def resolve_per_request_overrides(
+    config: dict[str, Any],
+) -> tuple[dict[str, str], float | None, dict[str, Any]]:
+    """Resolve extra_headers / timeout / litellm_settings with litellm.* overrides.
+
+    ``litellm.extra_headers`` / ``litellm.timeout`` override the top-level
+    ``extra_headers`` / ``timeout`` keys (matching legacy precedence), and are
+    popped from the returned ``litellm_settings`` so they are not also applied
+    as process-wide litellm module settings.
+    """
+    extra_headers = resolve_extra_headers(config)
+    timeout = resolve_timeout(config)
+    litellm_settings = resolve_litellm_settings(config)
+    if "extra_headers" in litellm_settings:
+        extra_headers = resolve_extra_headers(
+            {"extra_headers": litellm_settings.pop("extra_headers")}
+        )
+    if "timeout" in litellm_settings:
+        timeout = resolve_timeout({"timeout": litellm_settings.pop("timeout")})
+    return extra_headers, timeout, litellm_settings
+
+
 _runtime_extra_headers: dict[str, str] = {}
 
 
@@ -331,6 +357,59 @@ def resolve_model_settings(*, default_parallel_tool_calls: bool | None = False) 
         "extra_args": get_timeout_extra_args(),
         "parallel_tool_calls": parallel_tool_calls,
     }
+@dataclass(frozen=True)
+class LlmCredentialBundle:
+    """Immutable per-request LLM credential + config bundle.
+
+    Resolved once from a KB's ``.env`` and ``config.yaml`` via
+    :func:`resolve_credential_bundle`, then threaded through to LLM call sites
+    so concurrent requests on a shared event-loop thread never see each other's
+    key/headers/timeout (unlike the process-wide globals in
+    :func:`set_extra_headers` / :func:`set_timeout`).
+    """
+
+    api_key: str | None = None
+    base_url: str | None = None
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    timeout: float | None = None
+
+
+def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
+    """Build an :class:`LlmCredentialBundle` from a KB's config, purely.
+
+    Reads the KB's ``.env`` (without polluting ``os.environ``) for
+    ``LLM_API_KEY`` / ``OPENAI_API_BASE``, and the KB's ``config.yaml`` for
+    ``extra_headers`` / ``timeout`` / ``litellm``. This is a side-effect-free
+    counterpart to ``cli._setup_llm_key``: it touches no global state, so it is
+    safe to call concurrently for different KBs.
+    """
+    api_key: str | None = None
+    base_url: str | None = None
+    kb_env = kb_dir / ".env"
+    if kb_env.exists():
+        from dotenv import dotenv_values
+
+        values = dotenv_values(str(kb_env))
+        api_key = values.get("LLM_API_KEY") or None
+        base_url = values.get("OPENAI_API_BASE") or None
+
+    extra_headers: dict[str, str] = {}
+    timeout: float | None = None
+    config_path = kb_dir / ".openkb" / "config.yaml"
+    if config_path.exists():
+        config = load_config(config_path)
+        # Shared resolver so CLI and REST apply identical litellm.* override
+        # semantics. litellm module-level settings (drop_params etc.) are
+        # process globals and intentionally not carried per-request: the REST
+        # server runs multiple KBs in one process, so they cannot be isolated.
+        extra_headers, timeout, _ = resolve_per_request_overrides(config)
+
+    return LlmCredentialBundle(
+        api_key=api_key,
+        base_url=base_url,
+        extra_headers=extra_headers,
+        timeout=timeout,
+    )
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

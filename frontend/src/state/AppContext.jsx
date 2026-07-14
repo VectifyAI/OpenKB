@@ -1,9 +1,11 @@
 import { createContext, useContext, useState, useCallback, useRef } from "react";
 import { getApiBase, getToken, setConnection, hasConnection } from "../api/client.js";
+import { useI18n } from "../i18n.jsx";
 
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
+  const { t } = useI18n();
   const [apiBase, setApiBaseState] = useState(getApiBase());
   const [token, setTokenState] = useState(getToken());
   const [kbs, setKbs] = useState([]);
@@ -37,9 +39,9 @@ export function AppProvider({ children }) {
 
   // Inspector timeline helpers.
   const inspReset = useCallback((busy) => {
-    setInspItems(busy ? [{ kind: "start", tag: "开始", body: "启动推理检索…" }] : []);
+    setInspItems(busy ? [{ kind: "start", tag: t("start"), body: t("startRetrieval") }] : []);
     setInspBusy(!!busy);
-  }, []);
+  }, [t]);
 
   const inspAdd = useCallback((kind, tag, body) => {
     // delta is too granular for the timeline; render in the answer pane instead.

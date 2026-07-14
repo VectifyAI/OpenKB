@@ -63,7 +63,7 @@ def _record_event(state: WatcherState, event: str, data: dict[str, Any]) -> None
     with state._lock:
         state._seq += 1
         seq = state._seq
-    state.events.append({"seq": seq, "ts": time.time(), "event": event, "data": data})
+        state.events.append({"seq": seq, "ts": time.time(), "event": event, "data": data})
 
 
 def _inc(state: WatcherState, key: str) -> None:
@@ -83,15 +83,20 @@ def _run_worker(state: WatcherState) -> None:
     recorded as an ``error`` event; the worker never propagates so one bad
     file can't kill the watcher.
     """
-    while True:
-        try:
-            paths = state.queue.get()
-        except Exception:
-            return
-        if paths is None:
-            return
-        for raw_path in paths:
-            _process_file(state, raw_path)
+    try:
+        while True:
+            try:
+                paths = state.queue.get()
+            except Exception:
+                return
+            if paths is None:
+                return
+            for raw_path in paths:
+                _process_file(state, raw_path)
+    finally:
+        # Ensure `running` reflects reality even on unexpected exit, so
+        # status() reports inactive and start() can spawn a fresh worker.
+        state.running.clear()
 
 
 def _process_file(state: WatcherState, raw_path: str) -> None:
@@ -140,11 +145,23 @@ class WatchRegistry:
         self._max_events = max_events
 
     def start(self, kb: str, kb_dir: Path, debounce: float = 2.0) -> WatcherState:
-        """Start a watcher for *kb*, or return the existing one (idempotent)."""
+        """Start a watcher for *kb*, or return the existing one (idempotent).
+
+        If a prior watcher state exists but its worker thread is no longer
+        alive (the daemon died), it is purged and a fresh watcher starts.
+        A still-running worker for *kb* is returned as-is.
+        """
         with self._lock:
             existing = self._watchers.get(kb)
-            if existing is not None and existing.running.is_set():
-                return existing
+            if existing is not None:
+                worker_alive = (
+                    existing.worker_thread is not None
+                    and existing.worker_thread.is_alive()
+                )
+                if existing.running.is_set() and worker_alive:
+                    return existing
+                # Stale state from a dead worker: purge before starting fresh.
+                self._watchers.pop(kb, None)
             raw_dir = kb_dir / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
             state = WatcherState(
@@ -167,7 +184,6 @@ class WatchRegistry:
             self._watchers[kb] = state
         state.worker_thread.start()
         return state
-
     def get(self, kb: str) -> WatcherState | None:
         with self._lock:
             return self._watchers.get(kb)
@@ -202,13 +218,19 @@ class WatchRegistry:
             return list(self._watchers.keys())
 
     def stop(self, kb: str) -> bool:
-        """Stop and remove *kb*'s watcher. Return False if none was active."""
+        """Stop and remove *kb*'s watcher. Return False if none was active.
+
+        Joins the worker *before* clearing ``running`` and popping the state,
+        so ``status()`` reports ``active: True`` (draining) while the old
+        worker finishes. If the worker does not exit within the join timeout,
+        the state is left in place with a ``watcher_draining`` event so
+        ``start()`` knows not to spawn a second worker.
+        """
         with self._lock:
-            state = self._watchers.pop(kb, None)
+            state = self._watchers.get(kb)
         if state is None:
             return False
-        _record_event(state, "watcher_stopped", {"kb": kb})
-        state.running.clear()
+        # Signal the worker and observer to stop, then wait for them.
         try:
             if state.observer is not None:
                 state.observer.stop()
@@ -218,8 +240,22 @@ class WatchRegistry:
         state.queue.put(None)
         if state.worker_thread is not None:
             state.worker_thread.join(timeout=5.0)
-        return True
 
+        # If the worker is still alive after the join timeout, it is likely
+        # mid-compile. Do not pop the state or clear running — leave a
+        # draining marker so start() refuses to spawn a duplicate.
+        if state.worker_thread is not None and state.worker_thread.is_alive():
+            _record_event(state, "watcher_draining", {"kb": kb})
+            return True
+
+        # Worker has exited: safe to finalize.
+        state.running.clear()
+        _record_event(state, "watcher_stopped", {"kb": kb})
+        with self._lock:
+            # Only pop if it is still the same state (not replaced by start()).
+            if self._watchers.get(kb) is state:
+                self._watchers.pop(kb, None)
+        return True
     def stop_all(self) -> None:
         for kb in self.list_active():
             self.stop(kb)

@@ -8,7 +8,7 @@ from agents import Agent, Runner, function_tool
 from agents.model_settings import ModelSettings
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
-from openkb.config import resolve_model_settings
+from openkb.config import LlmCredentialBundle, get_extra_headers, get_timeout_extra_args, resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -44,7 +44,12 @@ If no issues are found in a category, say "None found."
 """
 
 
-def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
+def build_lint_agent(
+    wiki_root: str,
+    model: str,
+    language: str = "en",
+    bundle: LlmCredentialBundle | None = None,
+) -> Agent:
     """Build the semantic knowledge-lint agent.
 
     Args:
@@ -82,11 +87,17 @@ def build_lint_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
         instructions=instructions,
         tools=[list_files, read_file],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(**resolve_model_settings(default_parallel_tool_calls=None)),
+        model_settings=ModelSettings(
+            **{
+                **resolve_model_settings(default_parallel_tool_calls=None),
+                "extra_headers": (bundle.extra_headers if bundle else get_extra_headers()) or None,
+                "extra_args": ({"timeout": bundle.timeout} if bundle and bundle.timeout is not None else get_timeout_extra_args()),
+            }
+        ),
     )
 
 
-async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
+async def run_knowledge_lint(kb_dir: Path, model: str, *, bundle: LlmCredentialBundle | None = None, run_config=None) -> str:
     """Run the semantic knowledge lint agent against the wiki.
 
     Args:
@@ -103,7 +114,7 @@ async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")
-    agent = build_lint_agent(wiki_root, model, language=language)
+    agent = build_lint_agent(wiki_root, model, language=language, bundle=bundle)
 
     prompt = (
         "Please audit this knowledge base wiki for semantic quality issues: "
@@ -112,5 +123,5 @@ async def run_knowledge_lint(kb_dir: Path, model: str) -> str:
         "entities as needed. Produce a structured Markdown report."
     )
 
-    result = await Runner.run(agent, prompt, max_turns=MAX_TURNS)
+    result = await Runner.run(agent, prompt, max_turns=MAX_TURNS, run_config=run_config) if run_config else await Runner.run(agent, prompt, max_turns=MAX_TURNS)
     return result.final_output or "Knowledge lint completed. No output produced."

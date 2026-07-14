@@ -4,21 +4,42 @@
 // stop() aborts the in-flight request via AbortController; onAbort fires
 // so the caller can flip a pending bubble to a settled state.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { streamSSE, streamUpload } from "../api/sse.js";
+import { useI18n } from "../i18n.jsx";
 
 export function useSSEStream() {
   const [busy, setBusy] = useState(false);
   const ctrlRef = useRef(null);
+  const { t } = useI18n();
+
+  // Abort any in-flight stream when the component using this hook unmounts.
+  // Without this, leaving a Chat/Query view mid-stream keeps the fetch alive
+  // and fires setMsgs/inspector callbacks after unmount, writing deltas for
+  // the old KB/session captured in the start() closure.
+  useEffect(() => {
+    return () => {
+      if (ctrlRef.current) {
+        ctrlRef.current.abort();
+        ctrlRef.current = null;
+      }
+    };
+  }, []);
 
   const stop = useCallback(() => {
     if (ctrlRef.current) {
       ctrlRef.current.abort();
+      ctrlRef.current = null;
     }
   }, []);
 
   const start = useCallback(async (cfg, onEvent, onAbort) => {
-    if (ctrlRef.current) return; // already streaming
+    // If a prior stream is somehow still in-flight, abort it before starting
+    // a new one instead of silently dropping the call.
+    if (ctrlRef.current) {
+      ctrlRef.current.abort();
+      ctrlRef.current = null;
+    }
     const ctrl = new AbortController();
     ctrlRef.current = ctrl;
     setBusy(true);
@@ -33,13 +54,13 @@ export function useSSEStream() {
         // User-initiated stop; do not surface as an error.
         if (onAbort) onAbort();
       } else {
-        onEvent("error", { message: err?.message || "请求失败" });
+        onEvent("error", { message: err?.message || t("requestFailed") });
       }
     } finally {
       ctrlRef.current = null;
       setBusy(false);
     }
-  }, []);
+  }, [t]);
 
   return { busy, start, stop };
 }

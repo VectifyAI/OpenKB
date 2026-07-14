@@ -3,6 +3,7 @@ import { MessageSquare, Send, Plus, Trash2, StopCircle } from "lucide-react";
 import { useSSEStream } from "../hooks/useSSEStream.js";
 import { api } from "../api/client.js";
 import { useApp } from "../state/AppContext.jsx";
+import { useI18n } from "../i18n.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 import Markdown from "../components/Markdown.jsx";
 
@@ -12,10 +13,12 @@ function esc(s) {
 
 export default function Chat({ kb }) {
   const { inspReset, inspAdd, inspDone, toastMsg } = useApp();
+  const { t } = useI18n();
   const { busy, start, stop } = useSSEStream();
   const [sessions, setSessions] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [msgs, setMsgs] = useState([]);
+  const msgIdRef = useRef(0);
   const [input, setInput] = useState("");
   const taRef = useRef(null);
   const scrollRef = useRef(null);
@@ -25,6 +28,10 @@ export default function Chat({ kb }) {
   }, [kb]);
 
   useEffect(loadSessions, [loadSessions]);
+
+  // Stop any in-flight stream when the KB changes so deltas for the old
+  // KB do not write into the new KB's message list.
+  useEffect(() => { return () => stop(); }, [kb]);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [msgs]);
 
@@ -52,12 +59,12 @@ export default function Chat({ kb }) {
 
   async function delSession(sid, e) {
     e.stopPropagation();
-    if (!window.confirm("删除此会话？")) return;
+    if (!window.confirm(t("deleteSession"))) return;
     try {
       await api.chatSessionDelete(kb, sid);
       if (sid === sessionId) newSession();
       loadSessions();
-      toastMsg("已删除", "ok");
+      toastMsg(t("deleted"), "ok");
     } catch (e2) {
       toastMsg(e2.message, "err");
     }
@@ -74,31 +81,31 @@ export default function Chat({ kb }) {
     setInput("");
     if (taRef.current) taRef.current.style.height = "auto";
     inspReset(true);
-    const userMsg = { role: "user", text };
-    const aiMsg = { role: "assistant", text: "", pending: true };
+    const aiId = ++msgIdRef.current;
+    const userMsg = { id: ++msgIdRef.current, role: "user", text };
+    const aiMsg = { id: aiId, role: "assistant", text: "", pending: true };
     setMsgs((m) => [...m, userMsg, aiMsg]);
-    const aiIdx = msgs.length + 1;
     let acc = "";
     const onAbort = () => {
-      setMsgs((m) => { const n = [...m]; n[aiIdx] = { role: "assistant", text: acc, pending: false, aborted: true }; return n; });
-      inspAdd("tool", "已停止", "用户中断生成");
+      setMsgs((m) => m.map((x) => x.id === aiId ? { ...x, text: acc, pending: false, aborted: true } : x));
+      inspAdd("tool", t("stopped"), t("userInterrupted"));
     };
     try {
       await start(
         { path: "/api/v1/chat", payload: { kb, message: text, session_id: sessionId, stream: true } },
         (ev, d) => {
           if (ev === "start" && d.session_id) setSessionId(d.session_id);
-          else if (ev === "tool_call") inspAdd("tool", "检索 · " + (d.name || "tool"), `<code>${esc((d.arguments || "").slice(0, 120))}</code>`);
+          else if (ev === "tool_call") inspAdd("tool", t("retrieve") + " · " + (d.name || "tool"), `<code>${esc((d.arguments || "").slice(0, 120))}</code>`);
           else if (ev === "delta") {
             acc += d.text || "";
-            setMsgs((m) => { const n = [...m]; n[aiIdx] = { role: "assistant", text: acc, pending: true }; return n; });
+            setMsgs((m) => m.map((x) => x.id === aiId ? { ...x, text: acc, pending: true } : x));
           } else if (ev === "final") {
             acc = d.answer || acc;
-            setMsgs((m) => { const n = [...m]; n[aiIdx] = { role: "assistant", text: acc, pending: false }; return n; });
-            inspAdd("done", "完成", `第 ${d.turn_count || ""} 轮`);
+            setMsgs((m) => m.map((x) => x.id === aiId ? { ...x, text: acc, pending: false } : x));
+            inspAdd("done", t("completed"), t("turnCount").replace("{n}", d.turn_count || ""));
           } else if (ev === "error") {
-            setMsgs((m) => { const n = [...m]; n[aiIdx] = { role: "assistant", text: `<span style="color:var(--red)">${esc(d.message)}</span>`, pending: false }; return n; });
-            inspAdd("error", "错误", esc(d.message));
+            setMsgs((m) => m.map((x) => x.id === aiId ? { ...x, text: `<span style="color:var(--red)">${esc(d.message)}</span>`, pending: false } : x));
+            inspAdd("error", t("error"), esc(d.message));
           }
         },
         onAbort
@@ -113,7 +120,7 @@ export default function Chat({ kb }) {
     <div className="qa-wrap">
       <div className="chat-sessions">
         <button className={`session-item ${!sessionId ? "active" : ""}`} onClick={newSession}>
-          <Plus size={13} /> 本次新会话
+          <Plus size={13} /> {t("newSession")}
         </button>
         {sessions.map((s) => (
           <button key={s.id} className={`session-item ${s.id === sessionId ? "active" : ""}`} onClick={() => loadHistory(s.id)}>
@@ -126,26 +133,26 @@ export default function Chat({ kb }) {
         {msgs.length === 0 ? (
           <EmptyState
             icon={<MessageSquare size={40} strokeWidth={1.5} />}
-            title="多轮对话"
-            desc="会话自动持久化，可跨次恢复。"
+            title={t("multiTurn")}
+            desc={t("chatPersist")}
           />
         ) : (
           msgs.map((m, i) => (
             <div className="msg" key={i}>
-              <div className={`msg-role ${m.role === "user" ? "user" : ""}`}><span className="role-dot" />{m.role === "user" ? "你" : "OpenKB"}</div>
+              <div className={`msg-role ${m.role === "user" ? "user" : ""}`}><span className="role-dot" />{m.role === "user" ? t("you") : "OpenKB"}</div>
               <div className={`msg-bubble ${m.role === "user" ? "user" : ""}`}>
-                {m.role === "user" ? m.text : (m.text ? <Markdown>{m.text}</Markdown> : (m.aborted ? <span className="cell-meta">已停止生成</span> : <span className="spinner-wrap"><span className="spinner" /></span>))}
+                {m.role === "user" ? m.text : (m.text ? <Markdown>{m.text}</Markdown> : (m.aborted ? <span className="cell-meta">{t("stopped")}</span> : <span className="spinner-wrap"><span className="spinner" /></span>))}
               </div>
             </div>
           ))
         )}
       </div>
       <div className="qa-input-bar">
-        <button className="btn btn-ghost btn-sm" onClick={newSession}><Plus size={14} /> 新会话</button>
+        <button className="btn btn-ghost btn-sm" onClick={newSession}><Plus size={14} /> {t("newSession")}</button>
         <textarea
           ref={taRef}
           className="qa-input"
-          placeholder="继续对话…"
+          placeholder={t("typeToContinue")}
           rows={1}
           value={input}
           onChange={(e) => { setInput(e.target.value); autosize(); }}
@@ -153,8 +160,8 @@ export default function Chat({ kb }) {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
         />
         {busy
-          ? <button className="btn btn-ghost" onClick={stop}><StopCircle size={15} /> 停止生成</button>
-          : <button className="btn btn-primary" onClick={send}><Send size={15} /> 发送</button>}
+          ? <button className="btn btn-ghost" onClick={stop}><StopCircle size={15} /> {t("stopGeneration")}</button>
+          : <button className="btn btn-primary" onClick={send}><Send size={15} /> {t("send")}</button>}
       </div>
     </div>
   );

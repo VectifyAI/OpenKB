@@ -76,7 +76,7 @@ def test_query_non_stream_returns_json(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
 
-    async def fake_run_query(question, kb, model, stream=False):
+    async def fake_run_query(question, kb, model, stream=False, **kwargs):
         assert question == "What is OpenKB?"
         assert kb == kb_dir
         assert stream is False
@@ -99,7 +99,7 @@ def test_query_stream_returns_sse_events(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
 
-    async def fake_events(agent, question):
+    async def fake_events(agent, question, **kwargs):
         assert question == "What is OpenKB?"
         yield {"event": "delta", "data": {"text": "A knowledge"}}
         yield {"event": "delta", "data": {"text": " base."}}
@@ -126,7 +126,7 @@ def test_chat_non_stream_creates_and_persists_session(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
 
-    async def fake_agent_events(agent, input_data, *, max_turns):
+    async def fake_agent_events(agent, input_data, *, max_turns, **kwargs):
         yield {"event": "delta", "data": {"text": "Hello"}}
         yield {
             "event": "final",
@@ -163,7 +163,7 @@ def test_chat_stream_resumes_session(monkeypatch, kb_dir):
     session = ChatSession.new(kb_dir, "gpt-4o-mini", "en")
     session.record_turn("Hi", "Hello", [{"role": "assistant", "content": "Hello"}])
 
-    async def fake_chat_events(agent, loaded_session, message):
+    async def fake_chat_events(agent, loaded_session, message, **kwargs):
         assert loaded_session.id == session.id
         assert message == "Again"
         yield {"event": "delta", "data": {"text": "Again"}}
@@ -443,7 +443,7 @@ def test_add_endpoint_uploads_and_adds_single_file(monkeypatch, kb_dir):
 
     calls = []
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, **kwargs):
         calls.append((path, target_kb))
         return AddFileResult(path.name, str(path), "added", f"{path.name} added to knowledge base.")
 
@@ -475,7 +475,7 @@ def test_add_endpoint_runs_real_add_helper_outside_event_loop(monkeypatch, kb_di
 
     from openkb.converter import ConvertResult
 
-    def fake_convert(path, target_kb):
+    def fake_convert(path, target_kb, *, staging_dir=None):
         assert target_kb == kb_dir
         return ConvertResult(
             raw_path=path,
@@ -484,7 +484,7 @@ def test_add_endpoint_runs_real_add_helper_outside_event_loop(monkeypatch, kb_di
             file_hash="abc123",
         )
 
-    async def fake_compile_short_doc(doc_name, source_path, target_kb, model):
+    async def fake_compile_short_doc(doc_name, source_path, target_kb, model, **kwargs):
         assert doc_name == "paper"
         assert target_kb == kb_dir
 
@@ -514,7 +514,7 @@ def test_add_endpoint_uploads_and_adds_multiple_files(monkeypatch, kb_dir):
 
     calls = []
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, **kwargs):
         calls.append((path, target_kb))
         if path.name == "notes.txt":
             return AddFileResult(
@@ -577,7 +577,7 @@ def test_add_endpoint_uses_unique_raw_filename(monkeypatch, kb_dir):
 
     from openkb.cli import AddFileResult
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, **kwargs):
         return AddFileResult(path.name, str(path), "added", f"{path.name} added to knowledge base.")
 
     monkeypatch.setattr("openkb.api._add_for_api", fake_add)
@@ -604,7 +604,7 @@ def test_add_endpoint_removes_skipped_upload(monkeypatch, kb_dir):
 
     skipped_path = None
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, **kwargs):
         nonlocal skipped_path
         skipped_path = path
         return AddFileResult(path.name, None, "skipped", "Already in knowledge base: paper.md")
@@ -636,7 +636,7 @@ def test_add_endpoint_streams_events(monkeypatch, kb_dir):
 
     from openkb.cli import AddFileResult
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, **kwargs):
         return AddFileResult(path.name, str(path), "added", f"{path.name} added to knowledge base.")
 
     monkeypatch.setattr("openkb.api._add_for_api", fake_add)
@@ -848,7 +848,7 @@ def test_lint_endpoint_runs_and_writes_report(monkeypatch, kb_dir):
         encoding="utf-8",
     )
 
-    async def fake_knowledge_lint(kb, model):
+    async def fake_knowledge_lint(kb, model, **kwargs):
         assert kb == kb_dir
         return "No semantic issues."
 
@@ -894,7 +894,7 @@ def test_lint_endpoint_fix_rewrites_broken_wikilinks(monkeypatch, kb_dir):
     page = kb_dir / "wiki" / "summaries" / "s.md"
     page.write_text("See [[concepts/a]] and [[Ghost Link]].", encoding="utf-8")
 
-    async def fake_knowledge_lint(kb, model):
+    async def fake_knowledge_lint(kb, model, **kwargs):
         return "No semantic issues."
 
     monkeypatch.setattr("openkb.cli._setup_llm_key", lambda kb: None)
@@ -934,7 +934,7 @@ def test_lint_endpoint_fix_noop_when_clean(monkeypatch, kb_dir):
         "See [[concepts/a]].", encoding="utf-8"
     )
 
-    async def fake_knowledge_lint(kb, model):
+    async def fake_knowledge_lint(kb, model, **kwargs):
         return "No semantic issues."
 
     monkeypatch.setattr("openkb.cli._setup_llm_key", lambda kb: None)
@@ -1399,3 +1399,285 @@ def test_recompile_stream_not_found(monkeypatch, kb_dir):
     )
     events = _events_from_sse(response.text)
     assert any(e["event"] == "error" and e["data"].get("code") == 404 for e in events)
+
+
+
+def test_cors_wildcard_disables_credentials(monkeypatch):
+    """allow_origins=[*] must force allow_credentials=False (CORS spec).
+    A wildcard with credentials lets any site send credentialed requests."""
+    monkeypatch.setenv('OPENKB_CORS_ORIGINS', '*')
+    from openkb.api import _configure_cors
+    from fastapi import FastAPI
+    app = FastAPI()
+    _configure_cors(app)
+    # Find the CORS middleware in the stack
+    cors_mw = None
+    for mw in app.user_middleware:
+        if 'CORSMiddleware' in str(mw.cls):
+            cors_mw = mw
+            break
+    assert cors_mw is not None
+    assert cors_mw.kwargs.get('allow_credentials') is False
+    assert cors_mw.kwargs.get('allow_origins') == ['*']
+
+
+def test_cors_explicit_origins_keep_credentials(monkeypatch):
+    """Explicit origins allow credentials (normal case)."""
+    monkeypatch.setenv('OPENKB_CORS_ORIGINS', 'http://localhost:3000')
+    from openkb.api import _configure_cors
+    from fastapi import FastAPI
+    app = FastAPI()
+    _configure_cors(app)
+    cors_mw = None
+    for mw in app.user_middleware:
+        if 'CORSMiddleware' in str(mw.cls):
+            cors_mw = mw
+            break
+    assert cors_mw.kwargs.get('allow_credentials') is True
+
+
+def test_token_compare_digest_accepts_correct(monkeypatch, kb_dir):
+    """compare_digest should accept the correct token and reject wrong ones."""
+    monkeypatch.setenv('OPENKB_API_TOKEN', 'secret')
+    client = TestClient(create_app())
+    # Wrong token -> 401
+    r = client.get('/api/v1/kbs', headers={'Authorization': 'Bearer wrong'})
+    assert r.status_code == 401
+    # Correct token -> 200
+    r = client.get('/api/v1/kbs', headers={'Authorization': 'Bearer secret'})
+    assert r.status_code == 200
+
+
+def test_concurrent_same_kb_lint_serialized(monkeypatch, kb_dir):
+    """Two concurrent lint requests to the same KB must not overlap.
+
+    Drives the real _kb_mutation_lock closure inside create_app() via two
+    concurrent ASGI requests. Without per-KB serialization, both would run
+    simultaneously and max_seen would be 2.
+    """
+    import asyncio
+    import httpx
+
+    monkeypatch.setenv("OPENKB_API_TOKEN", "secret")
+    _use_named_kb(monkeypatch, kb_dir)
+
+    active = 0
+    max_seen = 0
+
+    async def slow_lint(kb_dir_arg, *, fix, **kwargs):
+        nonlocal active, max_seen
+        active += 1
+        max_seen = max(max_seen, active)
+        await asyncio.sleep(0.1)
+        active -= 1
+        return {"skipped": False, "message": "ok"}
+
+    monkeypatch.setattr("openkb.api.run_lint_report", slow_lint)
+
+    app = create_app()
+
+    async def main():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            r1, r2 = await asyncio.gather(
+                client.post("/api/v1/lint", json={"kb": "test-kb", "fix": True}, headers=_auth()),
+                client.post("/api/v1/lint", json={"kb": "test-kb", "fix": True}, headers=_auth()),
+            )
+        return r1, r2
+
+    r1, r2 = asyncio.run(main())
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert max_seen == 1, f"expected max 1 concurrent lint, got {max_seen} (lock not serializing)"
+
+
+
+def test_concurrent_readonly_lint_not_serialized(monkeypatch, kb_dir):
+    """Two concurrent read-only lint (fix=False) requests to the same KB may overlap.
+
+    Only fix=True takes the per-KB mutation lock; read-only lint is a report
+    and must not be serialized, otherwise read-only lint is over-constrained.
+    """
+    import asyncio
+    import httpx
+
+    monkeypatch.setenv("OPENKB_API_TOKEN", "secret")
+    _use_named_kb(monkeypatch, kb_dir)
+
+    active = 0
+    max_seen = 0
+
+    async def slow_lint(kb_dir_arg, *, fix, **kwargs):
+        nonlocal active, max_seen
+        active += 1
+        max_seen = max(max_seen, active)
+        await asyncio.sleep(0.1)
+        active -= 1
+        return {"skipped": False, "message": "ok"}
+
+    monkeypatch.setattr("openkb.api.run_lint_report", slow_lint)
+
+    app = create_app()
+
+    async def main():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            r1, r2 = await asyncio.gather(
+                client.post("/api/v1/lint", json={"kb": "test-kb", "fix": False}, headers=_auth()),
+                client.post("/api/v1/lint", json={"kb": "test-kb", "fix": False}, headers=_auth()),
+            )
+        return r1, r2
+
+    r1, r2 = asyncio.run(main())
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert max_seen == 2, f"expected max 2 concurrent read-only lint, got {max_seen} (over-serialized)"
+
+
+def test_resolve_credential_bundle_reads_kb_key(monkeypatch, kb_dir):
+    """resolve_credential_bundle reads the KB's LLM_API_KEY without polluting os.environ."""
+    import os
+    from openkb.config import resolve_credential_bundle
+
+    monkeypatch.setenv("LLM_API_KEY", "server-key")
+    (kb_dir / ".env").write_text("LLM_API_KEY=kb-specific-key\n", encoding="utf-8")
+
+    bundle = resolve_credential_bundle(kb_dir)
+    assert bundle.api_key == "kb-specific-key"
+    # os.environ must NOT be polluted (unlike the old _scoped_llm_key).
+    assert os.environ.get("LLM_API_KEY") == "server-key"
+
+
+def test_query_endpoint_passes_kb_key_in_bundle(monkeypatch, kb_dir):
+    """The query endpoint must pass the KB's key in the bundle, not via os.environ."""
+    import os
+
+    monkeypatch.setenv("OPENKB_API_TOKEN", "secret")
+    monkeypatch.setenv("LLM_API_KEY", "server-key")
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=kb-specific-key\n", encoding="utf-8")
+
+    captured = {}
+
+    async def fake_run_query(question, kbd, model, stream=False, **kwargs):
+        bundle = kwargs.get("bundle")
+        captured["bundle_key"] = bundle.api_key if bundle else None
+        captured["env_key"] = os.environ.get("LLM_API_KEY")
+        return "answer"
+
+    monkeypatch.setattr("openkb.api.run_query", fake_run_query)
+
+    client = TestClient(create_app())
+    r = client.post(
+        "/api/v1/query",
+        json={"kb": kb, "question": "q", "stream": False},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    assert captured.get("bundle_key") == "kb-specific-key"
+    # os.environ must remain the server key (no env mutation).
+    assert captured.get("env_key") == "server-key"
+
+
+def test_resolve_credential_bundle_no_env_returns_none(monkeypatch, kb_dir):
+    """If the KB has no .env, the bundle's api_key is None."""
+    from openkb.config import resolve_credential_bundle
+
+    bundle = resolve_credential_bundle(kb_dir)
+    assert bundle.api_key is None
+
+
+
+def test_concurrent_same_kb_recompile_serialized(monkeypatch, kb_dir):
+    """Two concurrent non-streaming recompile requests to the same KB must not overlap.
+
+    Mirrors test_concurrent_same_kb_lint_serialized but for the recompile path,
+    which also relies on the per-KB asyncio.Lock. Without serialization both
+    async generators would be iterated concurrently and max_seen would be 2.
+    """
+    import asyncio
+    import httpx
+
+    monkeypatch.setenv("OPENKB_API_TOKEN", "secret")
+    _use_named_kb(monkeypatch, kb_dir)
+
+    active = 0
+    max_seen = 0
+
+    async def slow_iter_recompile(kb_dir_arg, doc_name, *, all_docs, dry_run, refresh_schema, **kwargs):
+        nonlocal active, max_seen
+        active += 1
+        max_seen = max(max_seen, active)
+        await asyncio.sleep(0.1)
+        active -= 1
+        yield {"event": "final", "recompiled": 0, "skipped": 0}
+
+    monkeypatch.setattr("openkb.api.iter_recompile", slow_iter_recompile)
+
+    app = create_app()
+
+    async def main():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            r1, r2 = await asyncio.gather(
+                client.post("/api/v1/recompile", json={"kb": "test-kb", "all_docs": True}, headers=_auth()),
+                client.post("/api/v1/recompile", json={"kb": "test-kb", "all_docs": True}, headers=_auth()),
+            )
+        return r1, r2
+
+    r1, r2 = asyncio.run(main())
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert max_seen == 1, f"expected max 1 concurrent recompile, got {max_seen} (lock not serializing)"
+
+
+def test_concurrent_different_kbs_do_not_block(monkeypatch, kb_dir, tmp_path_factory):
+    """Concurrent recompiles on different KBs must not serialize against each other.
+
+    The per-KB lock is keyed by KB name, so two distinct KBs should run
+    concurrently (max_seen == 2). This guards against an accidental single
+    global lock that would serialize cross-KB traffic.
+    """
+    import asyncio
+    import httpx
+
+    monkeypatch.setenv("OPENKB_API_TOKEN", "secret")
+    kb_dir_a = kb_dir
+    kb_dir_b = tmp_path_factory.mktemp("kb-b")
+    for d in (kb_dir_a, kb_dir_b):
+        (d / ".openkb").mkdir(parents=True, exist_ok=True)
+        (d / "wiki").mkdir(parents=True, exist_ok=True)
+
+    def resolve(kb):
+        return kb_dir_a if kb == "kb-a" else kb_dir_b
+
+    monkeypatch.setattr("openkb.api.resolve_kb_alias", resolve)
+
+    active = 0
+    max_seen = 0
+
+    async def slow_iter_recompile(kb_dir_arg, doc_name, *, all_docs, dry_run, refresh_schema, **kwargs):
+        nonlocal active, max_seen
+        active += 1
+        max_seen = max(max_seen, active)
+        await asyncio.sleep(0.1)
+        active -= 1
+        yield {"event": "final", "recompiled": 0, "skipped": 0}
+
+    monkeypatch.setattr("openkb.api.iter_recompile", slow_iter_recompile)
+
+    app = create_app()
+
+    async def main():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            r1, r2 = await asyncio.gather(
+                client.post("/api/v1/recompile", json={"kb": "kb-a", "all_docs": True}, headers=_auth()),
+                client.post("/api/v1/recompile", json={"kb": "kb-b", "all_docs": True}, headers=_auth()),
+            )
+        return r1, r2
+
+    r1, r2 = asyncio.run(main())
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert max_seen == 2, f"expected 2 concurrent cross-KB recompiles, got {max_seen} (cross-KB serialized)"

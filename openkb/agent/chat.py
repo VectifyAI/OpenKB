@@ -897,7 +897,11 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
     _fmt(style, ("class:slash.ok", f"Critique pass complete: {rel_str}\n"))
 
 
-def build_chat_session_agent(kb_dir: Path, session: ChatSession) -> Any:
+def build_chat_session_agent(
+    kb_dir: Path,
+    session: ChatSession,
+    bundle: "LlmCredentialBundle | None" = None,
+) -> Any:
     """Build the query-backed agent for one chat session (REST ``/chat``).
 
     Thin wrapper that resolves language from the session/config and delegates
@@ -910,13 +914,15 @@ def build_chat_session_agent(kb_dir: Path, session: ChatSession) -> Any:
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     language = session.language or config.get("language", "en")
     wiki_root = str(kb_dir / "wiki")
-    return build_query_agent(wiki_root, session.model, language=language)
+    return build_query_agent(wiki_root, session.model, language=language, bundle=bundle)
 
 
 async def iter_chat_turn_events(
     agent: Any,
     session: ChatSession,
     user_input: str,
+    *,
+    run_config: Any = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield non-TTY events for one chat turn and persist the final turn.
 
@@ -927,7 +933,7 @@ async def iter_chat_turn_events(
     """
     new_input = session.history + [{"role": "user", "content": user_input}]
 
-    async for event in iter_agent_response_events(agent, new_input, max_turns=MAX_TURNS):
+    async for event in iter_agent_response_events(agent, new_input, max_turns=MAX_TURNS, run_config=run_config):
         if event["event"] != "final":
             yield event
             continue

@@ -191,3 +191,104 @@ def test_end_to_end_debounce_processes_real_file(kb_dir, monkeypatch):
         assert "file_start" in names and "file_done" in names
     finally:
         reg.stop("test-kb")
+
+def test_record_event_appends_inside_lock():
+    """_record_event must append inside the lock so watcher_stopped ordering is preserved."""
+    from openkb.watch_service import WatcherState, _record_event
+    state = WatcherState(kb='t', kb_dir=None, raw_dir=None, debounce=0, started_at=0.0)
+    _record_event(state, "file_done", {"path": "a.md"})
+    _record_event(state, "watcher_stopped", {"kb": "t"})
+    events = list(state.events)
+    assert events[-1]["event"] == "watcher_stopped"
+    seqs = [e["seq"] for e in events]
+    assert seqs == sorted(seqs)
+
+
+def test_stop_then_start_does_not_double_worker(kb_dir, monkeypatch):
+    """After stop(), start() must not spawn a second worker."""
+    monkeypatch.setattr('openkb.watch_service._add_for_api', lambda path, kb_dir: AddFileResult('x', str(path), 'added', 'ok'))
+    reg = WatchRegistry()
+    reg.start("t", kb_dir, debounce=0.1)
+    reg.stop("t")
+    state2 = reg.start("t", kb_dir, debounce=0.1)
+    assert state2.worker_thread is not None
+    assert state2.worker_thread.is_alive()
+    assert len(reg.list_active()) == 1
+    reg.stop("t")
+
+
+def test_start_returns_existing_if_running(kb_dir, monkeypatch):
+    """start() is idempotent."""
+    monkeypatch.setattr('openkb.watch_service._add_for_api', lambda path, kb_dir: AddFileResult('x', str(path), 'added', 'ok'))
+    reg = WatchRegistry()
+    s1 = reg.start("t", kb_dir, debounce=0.1)
+    s2 = reg.start("t", kb_dir, debounce=0.1)
+    assert s1 is s2
+    reg.stop("t")
+
+
+def test_worker_exception_clears_running(kb_dir, monkeypatch):
+    """When the worker exits (via stop sentinel), running must be cleared."""
+
+    monkeypatch.setattr(
+        "openkb.watch_service._add_for_api",
+        lambda path, kb_dir: AddFileResult("x", str(path), "added", "ok"),
+    )
+    reg = WatchRegistry()
+    state = reg.start("t", kb_dir, debounce=0.1)
+    assert state.running.is_set()
+    # stop() joins the worker; after it returns, running should be cleared.
+    reg.stop("t")
+    assert not state.running.is_set()
+
+
+def test_record_event_seq_monotonic_under_burst():
+    """watcher_stopped terminator must have a higher seq than preceding events."""
+    from collections import deque
+    from openkb.watch_service import WatcherState, _record_event
+
+    state = WatcherState(kb="t", kb_dir=None, raw_dir=None, debounce=0, started_at=0.0, events=None)
+    state.events = deque(maxlen=3)
+    for i in range(5):
+        _record_event(state, "file_done", {"i": i})
+    _record_event(state, "watcher_stopped", {"kb": "t"})
+    events = list(state.events)
+    seqs = [e["seq"] for e in events]
+    assert seqs == sorted(seqs)
+    assert events[-1]["event"] == "watcher_stopped"
+
+
+def test_stop_draining_when_worker_stuck(kb_dir, monkeypatch):
+    """When the worker does not exit within the join timeout, stop() must leave
+    a draining marker and keep the state registered so start() refuses to
+    spawn a duplicate worker."""
+    import threading as _t
+
+    block = _t.Event()
+
+    def slow_process(state, raw_path):
+        block.wait(timeout=10)
+
+    monkeypatch.setattr("openkb.watch_service._process_file", slow_process)
+
+    reg = WatchRegistry()
+    state = reg.start("t", kb_dir, debounce=0.1)
+    # Put a batch so the worker enters _process_file and blocks.
+    state.queue.put(["fake.md"])
+    time.sleep(0.3)  # let the worker pick it up and block
+
+    # Replace join with a no-op so the test does not wait 5 s.
+    real_join = state.worker_thread.join
+    state.worker_thread.join = lambda timeout=None: None
+
+    result = reg.stop("t")
+    assert result is True
+    # State must still be registered (not popped) and running still set.
+    assert reg.get("t") is state
+    assert state.running.is_set()
+    events = list(state.events)
+    assert any(e["event"] == "watcher_draining" for e in events)
+
+    # Cleanup: release the worker so it can exit.
+    block.set()
+    real_join(timeout=5)

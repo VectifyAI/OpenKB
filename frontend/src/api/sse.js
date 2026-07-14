@@ -1,7 +1,7 @@
 // SSE streaming over fetch (EventSource cannot set Authorization headers).
 // Parses `event:` / `data:` blocks from a ReadableStream and invokes handlers.
 
-import { baseUrl, getToken, notifyUnauthorized } from "./client.js";
+import { baseUrl, getToken, notifyUnauthorized, checkBaseSafety } from "./client.js";
 
 // Parse raw text buffer into complete SSE blocks, returning [events, remainder].
 function parseBuffer(buf) {
@@ -54,6 +54,7 @@ function buildHeaders(body, extra = {}) {
 
 // Stream a JSON-POST endpoint. Returns an AbortController-like handle via opts.signal.
 export async function streamSSE(path, payload, onEvent, opts = {}) {
+  checkBaseSafety();
   const res = await fetch(baseUrl() + path, {
     method: "POST",
     headers: buildHeaders(payload),
@@ -78,6 +79,7 @@ await readStream(res, onEvent);
 
 // Stream a multipart upload (FormData) endpoint.
 export async function streamUpload(path, form, onEvent, opts = {}) {
+  checkBaseSafety();
   const res = await fetch(baseUrl() + path, {
     method: "POST",
     headers: buildHeaders(form),

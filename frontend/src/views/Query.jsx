@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Search, Send, StopCircle } from "lucide-react";
 import { useSSEStream } from "../hooks/useSSEStream.js";
 import { useApp } from "../state/AppContext.jsx";
+import { useI18n } from "../i18n.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 import Markdown from "../components/Markdown.jsx";
 
@@ -11,9 +12,11 @@ function esc(s) {
 
 export default function Query({ kb }) {
   const { inspReset, inspAdd, inspDone, toastMsg } = useApp();
+  const { t } = useI18n();
   const { busy, start, stop } = useSSEStream();
   const [q, setQ] = useState("");
   const [msgs, setMsgs] = useState([]);
+  const msgIdRef = useRef(0);
   const taRef = useRef(null);
   const scrollRef = useRef(null);
 
@@ -24,6 +27,9 @@ export default function Query({ kb }) {
   }, []);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [msgs]);
+
+  // Stop any in-flight stream when the KB changes.
+  useEffect(() => { return () => stop(); }, [kb]);
 
   function autosize() {
     const ta = taRef.current;
@@ -36,29 +42,29 @@ export default function Query({ kb }) {
     setQ("");
     if (taRef.current) taRef.current.style.height = "auto";
     inspReset(true);
-    const pair = { user: question, acc: "" };
+    const pairId = ++msgIdRef.current;
+    const pair = { id: pairId, user: question, acc: "" };
     setMsgs((m) => [...m, pair]);
-    const idx = msgs.length;
     const onAbort = () => {
-      setMsgs((m) => { const n = [...m]; n[idx] = { ...pair, aborted: true }; return n; });
-      inspAdd("tool", "已停止", "用户中断生成");
+      setMsgs((m) => m.map((x) => x.id === pairId ? { ...x, aborted: true } : x));
+      inspAdd("tool", t("stopped"), t("userInterrupted"));
     };
     try {
       await start(
         { path: "/api/v1/query", payload: { kb, question, stream: true } },
         (ev, d) => {
-          if (ev === "tool_call") inspAdd("tool", "检索 · " + (d.name || "tool"), `<code>${esc((d.arguments || "").slice(0, 120))}</code>`);
+          if (ev === "tool_call") inspAdd("tool", t("retrieve") + " · " + (d.name || "tool"), `<code>${esc((d.arguments || "").slice(0, 120))}</code>`);
           else if (ev === "delta") {
             pair.acc += d.text || "";
-            setMsgs((m) => { const n = [...m]; n[idx] = { ...pair }; return n; });
+            setMsgs((m) => m.map((x) => x.id === pairId ? { ...pair } : x));
           } else if (ev === "final") {
             pair.acc = d.answer || pair.acc;
-            setMsgs((m) => { const n = [...m]; n[idx] = { ...pair }; return n; });
-            inspAdd("done", "完成", "推理检索结束");
+            setMsgs((m) => m.map((x) => x.id === pairId ? { ...pair } : x));
+            inspAdd("done", t("completed"), t("reasoningDone"));
           } else if (ev === "error") {
             pair.acc = `<span style="color:var(--red)">${esc(d.message)}</span>`;
-            setMsgs((m) => { const n = [...m]; n[idx] = { ...pair }; return n; });
-            inspAdd("error", "错误", esc(d.message));
+            setMsgs((m) => m.map((x) => x.id === pairId ? { ...pair } : x));
+            inspAdd("error", t("error"), esc(d.message));
           }
         },
         onAbort
@@ -74,16 +80,16 @@ export default function Query({ kb }) {
         {msgs.length === 0 ? (
           <EmptyState
             icon={<Search size={40} strokeWidth={1.5} />}
-            title="向知识库提问"
-            desc="基于无向量推理检索，答案附推理过程。"
+            title={t("askKb")}
+            desc={t("askKbDesc")}
           />
         ) : (
           msgs.map((m, i) => (
             <div className="msg" key={i}>
-              <div className="msg-role user"><span className="role-dot" />你</div>
+              <div className="msg-role user"><span className="role-dot" />{t("you")}</div>
               <div className="msg-bubble user">{m.user}</div>
               <div className="msg-role"><span className="role-dot" />OpenKB</div>
-              <div className="msg-bubble">{m.acc ? <Markdown>{m.acc}</Markdown> : (m.aborted ? <span className="cell-meta">已停止生成</span> : <span className="spinner-wrap"><span className="spinner" /></span>)}</div>
+              <div className="msg-bubble">{m.acc ? <Markdown>{m.acc}</Markdown> : (m.aborted ? <span className="cell-meta">{t("stopped")}</span> : <span className="spinner-wrap"><span className="spinner" /></span>)}</div>
             </div>
           ))
         )}
@@ -92,7 +98,7 @@ export default function Query({ kb }) {
         <textarea
           ref={taRef}
           className="qa-input"
-          placeholder="例如：这篇文章的主要结论是什么？"
+          placeholder={t("typeQuestion")}
           rows={1}
           value={q}
           onChange={(e) => { setQ(e.target.value); autosize(); }}
@@ -100,8 +106,8 @@ export default function Query({ kb }) {
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); run(); } }}
         />
         {busy
-          ? <button className="btn btn-ghost" onClick={stop}><StopCircle size={15} /> 停止生成</button>
-          : <button className="btn btn-primary" onClick={run}><Send size={15} /> 提问</button>}
+          ? <button className="btn btn-ghost" onClick={stop}><StopCircle size={15} /> {t("stopGeneration")}</button>
+          : <button className="btn btn-primary" onClick={run}><Send size={15} /> {t("ask")}</button>}
       </div>
     </div>
   );

@@ -1,18 +1,20 @@
 import { useState, useRef, useEffect } from "react";
-import { LayoutGrid, FileText, Search, MessageSquare, Wrench, Settings, Plus, ChevronDown } from "lucide-react";
+import { LayoutGrid, FileText, Search, MessageSquare, Wrench, Settings, Plus, ChevronDown, Languages } from "lucide-react";
 import { useApp } from "../state/AppContext.jsx";
+import { useI18n } from "../i18n.jsx";
 import { api } from "../api/client.js";
 
 const NAV = [
-  { view: "overview", label: "概览", icon: LayoutGrid },
-  { view: "documents", label: "文档", icon: FileText },
-  { view: "query", label: "查询", icon: Search },
-  { view: "chat", label: "对话", icon: MessageSquare },
-  { view: "maintenance", label: "维护", icon: Wrench },
+  { view: "overview", icon: LayoutGrid },
+  { view: "documents", icon: FileText },
+  { view: "query", icon: Search },
+  { view: "chat", icon: MessageSquare },
+  { view: "maintenance", icon: Wrench },
 ];
 
 export default function Sidebar() {
   const { kbs, kb, setKb, view, setView, setSettingsOpen, sidebarOpen, setSidebarOpen, toastMsg } = useApp();
+  const { t, toggleLang, lang } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const menuRef = useRef(null);
@@ -26,7 +28,7 @@ export default function Sidebar() {
   }, []);
 
   async function handleCreate() {
-    const name = window.prompt("新知识库名称（字母/数字/下划线/连字符）：");
+    const name = window.prompt(t("newKbPrompt"));
     if (!name) return;
     setCreating(true);
     try {
@@ -34,7 +36,7 @@ export default function Sidebar() {
       setKb(name.trim());
       setMenuOpen(false);
       window.dispatchEvent(new CustomEvent("openkb:reload-kbs"));
-      toastMsg("已创建：" + name.trim(), "ok");
+      toastMsg(t("created") + ": " + name.trim(), "ok");
     } catch (e) {
       toastMsg(e.message, "err");
     } finally {
@@ -53,7 +55,7 @@ export default function Sidebar() {
         <div className="kb-switcher" ref={menuRef}>
           <button className="kb-current" type="button" onClick={() => setMenuOpen((o) => !o)}>
             <span className="kb-current-dot" />
-            <span className="kb-current-name">{kb || "未选择知识库"}</span>
+            <span className="kb-current-name">{kb || t("noKbSelected")}</span>
             <ChevronDown className="kb-chev" size={14} />
           </button>
           {menuOpen && (
@@ -61,7 +63,7 @@ export default function Sidebar() {
               <div className="kb-menu-list">
                 {kbs.length === 0 && (
                   <div className="kb-menu-item" style={{ color: "var(--text-3)" }}>
-                    <span className="mi-name">暂无知识库</span>
+                    <span className="mi-name">{t("noKbs")}</span>
                   </div>
                 )}
                 {kbs.map((k) => (
@@ -71,27 +73,30 @@ export default function Sidebar() {
                     onClick={() => { setKb(k.name); setMenuOpen(false); }}
                   >
                     <span className="mi-name">{k.name}</span>
-                    <span className="mi-meta">{k.document_count} 篇</span>
+                    <span className="mi-meta">{k.document_count} {t("docs")}</span>
                   </button>
                 ))}
               </div>
               <button className="kb-menu-new" onClick={handleCreate} disabled={creating}>
                 <Plus size={14} />
-                新建知识库
+                {t("newKb")}
               </button>
             </div>
           )}
         </div>
         <nav className="nav">
-          {NAV.map(({ view: v, label, icon: Icon }) => (
+          {NAV.map(({ view: v, icon: Icon }) => (
             <button key={v} className={`nav-item ${view === v ? "active" : ""}`} onClick={() => setView(v)}>
               <Icon size={16} />
-              <span>{label}</span>
+              <span>{t(v)}</span>
             </button>
           ))}
         </nav>
         <div className="sidebar-foot">
-          <button className="icon-btn" title="连接设置" onClick={() => setSettingsOpen(true)}>
+          <button className="icon-btn" title={lang === "en" ? "中文" : "English"} onClick={toggleLang}>
+            <Languages size={16} />
+          </button>
+          <button className="icon-btn" title={t("settings")} onClick={() => setSettingsOpen(true)}>
             <Settings size={16} />
           </button>
         </div>

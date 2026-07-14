@@ -27,6 +27,42 @@ export function baseUrl() {
   return getApiBase().replace(/\/$/, "");
 }
 
+// Warn when the configured base is cross-origin and not HTTPS. The bearer
+// token is attached to every request, so a typo'd or malicious base would
+// leak the token to an attacker-controlled host. This is advisory only —
+// same-origin (empty base, the production mount at /) is always safe.
+let _baseWarned = false;
+export function isBaseUrlSafe() {
+  const base = baseUrl();
+  if (!base) return true; // same-origin, always safe
+  try {
+    const url = new URL(base, window.location.origin);
+    if (url.origin === window.location.origin) return true;
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function checkBaseSafety() {
+  if (_baseWarned) return;
+  const base = baseUrl();
+  if (!base) return; // same-origin
+  try {
+    const url = new URL(base, window.location.origin);
+    if (url.origin !== window.location.origin && url.protocol !== "https:") {
+      console.warn(
+        `[OpenKB] API base "${base}" is cross-origin and non-HTTPS. ` +
+          "Your API token will be sent to this host on every request. " +
+          "Verify this URL is trusted before proceeding.",
+      );
+      _baseWarned = true;
+    }
+  } catch {
+    // invalid URL — will fail at fetch time
+  }
+}
+
 // Surface 401s to the UI so the connection modal can reopen for re-entry.
 export function notifyUnauthorized() {
   window.dispatchEvent(new CustomEvent("openkb:unauthorized"));
@@ -41,6 +77,7 @@ export async function request(path, { method = "GET", body, headers } = {}) {
   };
   const init = { method, headers: finalHeaders };
   if (body !== undefined) init.body = body instanceof FormData ? body : JSON.stringify(body);
+  checkBaseSafety();
   const res = await fetch(baseUrl() + path, init);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;

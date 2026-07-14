@@ -218,3 +218,34 @@ class TestQueryAgentTimeout:
     def test_no_timeout_by_default(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.extra_args is None
+
+
+
+class TestBuildRunConfigFromBundle:
+    """The per-KB RunConfig must pass the model string to litellm verbatim.
+
+    Regression: build_run_config_from_bundle prefixed the model with
+    litellm/ (an Agent-layer convention to select the LiteLLM backend),
+    producing litellm/openai/deepseek-v4-flash -- which litellm.acompletion
+    rejects with BadRequestError("LLM Provider NOT provided"). LitellmModel
+    feeds its model straight to litellm.acompletion, so it must be the
+    raw litellm provider/model string, with no prefix.
+    """
+
+    def test_none_bundle_returns_none(self):
+        """CLI path (bundle=None) returns None so the SDK uses the agent model."""
+        from openkb.agent.query import build_run_config_from_bundle
+
+        assert build_run_config_from_bundle("openai/gpt-4o", None) is None
+
+    def test_bundle_model_has_no_litellm_prefix(self):
+        from openkb.agent.query import build_run_config_from_bundle
+        from openkb.config import LlmCredentialBundle
+
+        bundle = LlmCredentialBundle(api_key="k", base_url=None)
+        run_config = build_run_config_from_bundle("openai/deepseek-v4-flash", bundle)
+        assert run_config is not None
+        # The model reaches litellm.acompletion as-is; the agent-layer prefix
+        # must not leak in.
+        assert run_config.model.model == "openai/deepseek-v4-flash"
+        assert not run_config.model.model.startswith("litellm/")

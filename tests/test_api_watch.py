@@ -173,3 +173,63 @@ def test_watch_events_inactive_returns_error(monkeypatch, kb_dir):
     assert events[0]["data"]["active"] is False
     assert any(e["event"] == "error" for e in events)
     assert events[-1]["event"] == "done"
+
+
+def test_watch_events_disconnect_terminates(monkeypatch, kb_dir):
+    """The SSE stream must terminate when the client disconnects."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    from openkb.api import _stream_watch_events
+    from openkb.watch_service import WatchRegistry
+
+    reg = WatchRegistry()
+    reg.start("t", kb_dir, debounce=0.1)
+    try:
+        fake_request = MagicMock()
+        fake_request.is_disconnected = AsyncMock(return_value=True)
+
+        async def collect():
+            events = []
+            async for chunk in _stream_watch_events(reg, "t", None, None, fake_request):
+                events.append(chunk)
+            return events
+
+        result = asyncio.run(collect())
+        # With is_disconnected=True, the stream yields start then immediately
+        # returns (done is NOT emitted because we return before the final yield,
+        # but the generator is exhausted so collect() finishes).
+        assert len(result) >= 1  # at least the start event
+        reg.stop("t")
+    finally:
+        reg.stop("t")
+
+
+
+def test_watch_events_default_timeout_terminates(monkeypatch, kb_dir):
+    """With max_events and timeout_seconds both None, the stream must use the
+    default _WATCH_SSE_TIMEOUT cap instead of running indefinitely."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    from openkb.api import _stream_watch_events
+    from openkb.watch_service import WatchRegistry
+
+    monkeypatch.setattr("openkb.api._WATCH_SSE_TIMEOUT", 0.05)
+
+    reg = WatchRegistry()
+    reg.start("t", kb_dir, debounce=0.1)
+    try:
+        fake_request = MagicMock()
+        fake_request.is_disconnected = AsyncMock(return_value=False)
+
+        async def collect():
+            events = []
+            async for chunk in _stream_watch_events(reg, "t", None, None, fake_request):
+                events.append(chunk)
+            return events
+
+        result = asyncio.run(collect())
+        # Stream must terminate on its own (not hang) and emit done.
+        joined = "\n".join(result)
+        assert "event: done" in joined
+    finally:
+        reg.stop("t")

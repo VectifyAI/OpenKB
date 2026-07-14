@@ -7,6 +7,7 @@ import json
 import os
 import time
 import re
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -14,7 +15,7 @@ from typing import Any, AsyncIterator
 import litellm
 from agents import set_tracing_disabled
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -24,10 +25,12 @@ from starlette.staticfiles import StaticFiles
 
 from openkb.agent.chat import build_chat_session_agent, iter_chat_turn_events
 from openkb.agent.chat_session import ChatSession, delete_session, list_sessions, load_session
-from openkb.agent.query import build_query_agent, iter_agent_response_events, run_query
+from openkb.agent.query import build_query_agent, iter_agent_response_events, run_query, build_run_config_from_bundle
+from openkb.config import resolve_credential_bundle
 from openkb.cli import (
     SUPPORTED_EXTENSIONS,
     _add_for_api,
+    _setup_llm_key,
     get_kb_list,
     get_kb_status,
     initialize_kb,
@@ -300,6 +303,21 @@ def create_app() -> FastAPI:
     # One registry per app instance so each TestClient is isolated.
     registry = WatchRegistry()
 
+    # Per-KB asyncio locks for async mutation endpoints (lint/recompile).
+    # kb_ingest_lock tracks reentrancy in threading.local, but the event loop
+    # runs all requests on one thread, so concurrent same-KB mutations are
+    # mis-counted as re-entrant and bypass mutual exclusion. An asyncio.Lock
+    # serializes same-KB mutations *before* they enter the threading lock,
+    # eliminating the hazard without touching locks.py.
+    kb_mutation_locks: dict[str, asyncio.Lock] = {}
+
+    def _kb_mutation_lock(kb: str) -> asyncio.Lock:
+        lock = kb_mutation_locks.get(kb)
+        if lock is None:
+            lock = asyncio.Lock()
+            kb_mutation_locks[kb] = lock
+        return lock
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
@@ -325,13 +343,17 @@ def create_app() -> FastAPI:
         try:
             kb_name = validate_kb_name(request.kb)
             kb_dir = (kb_root_dir() / kb_name).resolve()
-            result = initialize_kb(
+            # Run lock-holding work in a threadpool so each request gets its
+            # own threading.local (kb_ingest_lock reentrancy is per-thread)
+            # and the event loop is not blocked by file I/O / flock.
+            result = await run_in_threadpool(
+                _init_kb_for_api,
                 kb_dir,
+                kb_name,
                 model=request.model,
                 api_key=request.api_key,
                 openai_api_base=request.openai_api_base,
             )
-            register_kb_alias(kb_name, kb_dir)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -347,6 +369,7 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Init failed: {exc}",
             ) from exc
+
         return InitResponse(
             kb=kb_name,
             created=bool(result["created"]),
@@ -362,6 +385,7 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         resolved_kb_dir = _resolve_kb(kb)
+        bundle = resolve_credential_bundle(resolved_kb_dir)
         if not files:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -370,10 +394,10 @@ def create_app() -> FastAPI:
         saved_uploads = await _save_add_uploads(resolved_kb_dir, files)
         if _parse_stream_form(stream):
             return StreamingResponse(
-                _stream_add_uploads(kb, resolved_kb_dir, saved_uploads),
+                _stream_add_uploads(kb, resolved_kb_dir, saved_uploads, bundle=bundle),
                 media_type="text/event-stream",
             )
-        return await _run_add_uploads(kb, resolved_kb_dir, saved_uploads)
+        return await _run_add_uploads(kb, resolved_kb_dir, saved_uploads, bundle=bundle)
 
     @app.post("/api/v1/query", response_model=QueryResponse)
     async def query_endpoint(
@@ -382,17 +406,19 @@ def create_app() -> FastAPI:
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         _setup_llm_key(kb_dir)
+        bundle = resolve_credential_bundle(kb_dir)
         config = load_config(kb_dir / ".openkb" / "config.yaml")
         model = config.get("model", DEFAULT_CONFIG["model"])
+        run_config = build_run_config_from_bundle(model, bundle)
 
         if request.stream:
             return StreamingResponse(
-                _stream_query(request, kb_dir, model),
+                _stream_query(request, kb_dir, model, bundle=bundle),
                 media_type="text/event-stream",
             )
 
         try:
-            answer = await run_query(request.question, kb_dir, model, stream=False)
+            answer = await run_query(request.question, kb_dir, model, stream=False, run_config=run_config, bundle=bundle)
             append_log(kb_dir / "wiki", "query", request.question)
             saved_path = (
                 _save_query_answer(kb_dir, request.question, answer)
@@ -416,19 +442,21 @@ def create_app() -> FastAPI:
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         _setup_llm_key(kb_dir)
+        bundle = resolve_credential_bundle(kb_dir)
         session = _load_or_create_session(kb_dir, request.session_id)
+        run_config = build_run_config_from_bundle(session.model, bundle)
 
         if request.stream:
             return StreamingResponse(
-                _stream_chat(request, kb_dir, session),
+                _stream_chat(request, kb_dir, session, bundle=bundle),
                 media_type="text/event-stream",
             )
 
         try:
             answer = ""
             append_log(kb_dir / "wiki", "query", request.message)
-            agent = build_chat_session_agent(kb_dir, session)
-            async for event in iter_chat_turn_events(agent, session, request.message):
+            agent = build_chat_session_agent(kb_dir, session, bundle=bundle)
+            async for event in iter_chat_turn_events(agent, session, request.message, run_config=run_config):
                 if event["event"] == "final":
                     answer = event["data"]["answer"]
         except Exception as exc:
@@ -537,14 +565,19 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> LintResponse:
         kb_dir = _resolve_kb(request.kb)
+        bundle = resolve_credential_bundle(kb_dir)
         try:
-            return LintResponse(**await run_lint_report(kb_dir, fix=request.fix))
+            # Only fix=True mutations need serialization; read-only lint
+            # (fix=False) is a report and may run concurrently.
+            if request.fix:
+                async with _kb_mutation_lock(request.kb):
+                    return LintResponse(**await run_lint_report(kb_dir, fix=True, bundle=bundle))
+            return LintResponse(**await run_lint_report(kb_dir, fix=False, bundle=bundle))
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Lint failed: {exc}",
             ) from exc
-
     @app.post("/api/v1/remove", response_model=RemoveResponse)
     async def remove_endpoint(
         request: RemoveRequest,
@@ -583,9 +616,10 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
+        bundle = resolve_credential_bundle(kb_dir)
         if request.stream:
             return StreamingResponse(
-                _stream_recompile(request, kb_dir),
+                _stream_recompile(request, kb_dir, _kb_mutation_lock(request.kb), bundle=bundle),
                 media_type="text/event-stream",
             )
         # Aggregate the async generator into a single JSON response. Terminal
@@ -595,22 +629,24 @@ def create_app() -> FastAPI:
         error_code: int | None = None
         error_message: str | None = None
         result: dict = {}
-        async for event in iter_recompile(
-            kb_dir,
-            request.doc_name,
-            all_docs=request.all_docs,
-            dry_run=request.dry_run,
-            refresh_schema=request.refresh_schema,
-        ):
-            name = event.get("event")
-            if name == "plan":
-                targets = event.get("targets", [])
-            elif name == "error":
-                error_code = event.get("code", 500)
-                error_message = event.get("message", "Recompile failed.")
-                candidates = event.get("candidates")
-            elif name == "final":
-                result = event
+        async with _kb_mutation_lock(request.kb):
+            async for event in iter_recompile(
+                kb_dir,
+                request.doc_name,
+                all_docs=request.all_docs,
+                dry_run=request.dry_run,
+                refresh_schema=request.refresh_schema,
+                bundle=bundle,
+            ):
+                name = event.get("event")
+                if name == "plan":
+                    targets = event.get("targets", [])
+                elif name == "error":
+                    error_code = event.get("code", 500)
+                    error_message = event.get("message", "Recompile failed.")
+                    candidates = event.get("candidates")
+                elif name == "final":
+                    result = event
         if error_code is not None:
             if error_code == 409 and candidates is not None:
                 raise HTTPException(
@@ -627,7 +663,6 @@ def create_app() -> FastAPI:
             targets=targets,
             candidates=candidates,
         )
-
     @app.post("/api/v1/watch/start", response_model=WatchStatusResponse)
     async def watch_start_endpoint(
         request: WatchStartRequest,
@@ -666,6 +701,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/watch/events")
     async def watch_events_endpoint(
+        request: Request,
         kb: str = Query(..., min_length=1),
         max_events: int | None = Query(default=None, ge=1),
         timeout_seconds: float | None = Query(default=None, ge=0),
@@ -673,7 +709,7 @@ def create_app() -> FastAPI:
     ) -> Any:
         _resolve_kb(kb)
         return StreamingResponse(
-            _stream_watch_events(registry, kb, max_events, timeout_seconds),
+            _stream_watch_events(registry, kb, max_events, timeout_seconds, request),
             media_type="text/event-stream",
     )
 
@@ -685,7 +721,8 @@ def create_app() -> FastAPI:
 def _configure_cors(app: FastAPI) -> None:
     """Allow browser frontends to call the API (configurable via env)."""
     raw = os.environ.get("OPENKB_CORS_ORIGINS", "")
-    if raw.strip() == "*":
+    wildcard = raw.strip() == "*"
+    if wildcard:
         origins = ["*"]
     else:
         origins = [o.strip() for o in raw.split(",") if o.strip()] or [
@@ -694,10 +731,15 @@ def _configure_cors(app: FastAPI) -> None:
             "http://localhost:8000",
             "http://127.0.0.1:8000",
         ]
+    # A wildcard origin with credentials is insecure: any site can issue
+    # credentialed cross-origin requests. Reject this combination by forcing
+    # credentials off for wildcards, which still allows unauthenticated
+    # cross-origin GETs but blocks cookie/token-bearing requests.
+    allow_credentials = not wildcard
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -715,7 +757,7 @@ def _mount_web_ui(app: FastAPI) -> None:
 
 
 def _list_knowledge_bases() -> dict[str, Any]:
-    """Enumerate knowledge bases under the configured KB root.
+    """List knowledge bases under the server's ``OPENKB_KB_ROOT``.
 
     Used by the web UI's KB switcher. There is no persisted KB registry, so
     discovery is directory-based: a child of ``OPENKB_KB_ROOT`` counts as a KB
@@ -727,7 +769,7 @@ def _list_knowledge_bases() -> dict[str, Any]:
         for child in sorted(root.iterdir()):
             if not child.is_dir():
                 continue
-            if not (child / ".openkb").is_dir() or not (child / "wiki").is_dir():
+            if not _is_kb_dir(child):
                 continue
             hashes_file = child / ".openkb" / "hashes.json"
             doc_count = 0
@@ -754,7 +796,6 @@ def _list_knowledge_bases() -> dict[str, Any]:
             )
     return {"root": str(root), "knowledge_bases": items}
 
-
 def require_bearer_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> None:
@@ -769,7 +810,7 @@ def require_bearer_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Bearer token required.",
         )
-    if credentials.credentials != expected:
+    if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid bearer token.",
@@ -784,7 +825,7 @@ def _resolve_kb(value: str) -> Path:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    if not (kb_dir / ".openkb").is_dir() or not (kb_dir / "wiki").is_dir():
+    if not _is_kb_dir(kb_dir):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Not a knowledge base: {value}",
@@ -792,24 +833,37 @@ def _resolve_kb(value: str) -> Path:
     return kb_dir
 
 
-def _setup_llm_key(kb_dir: Path) -> None:
-    from openkb.cli import _setup_llm_key as setup
+def _is_kb_dir(kb_dir: Path) -> bool:
+    """A directory counts as a KB when it has both ``.openkb`` and ``wiki``."""
+    return (kb_dir / ".openkb").is_dir() and (kb_dir / "wiki").is_dir()
 
-    setup(kb_dir)
+
+def _init_kb_for_api(
+    kb_dir: Path,
+    kb_name: str,
+    *,
+    model: str | None,
+    api_key: str | None,
+    openai_api_base: str | None,
+) -> dict:
+    """Run ``initialize_kb`` + ``register_kb_alias`` off the event loop.
+
+    Both touch file locks (``register_kb_alias`` holds the global-config
+    lock); running them in a threadpool gives each request its own
+    ``threading.local`` so ``kb_ingest_lock``'s reentrancy bookkeeping is
+    correct, and avoids blocking the event loop.
+    """
+    result = initialize_kb(
+        kb_dir, model=model, api_key=api_key, openai_api_base=openai_api_base,
+    )
+    register_kb_alias(kb_name, kb_dir)
+    return result
 
 
 def _save_query_answer(kb_dir: Path, question: str, answer: str) -> Path | None:
-    if not answer:
-        return None
-    slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:60]
-    explore_dir = kb_dir / "wiki" / "explorations"
-    explore_dir.mkdir(parents=True, exist_ok=True)
-    explore_path = explore_dir / f"{slug}.md"
-    explore_path.write_text(
-        f"---\nquery: \"{question}\"\n---\n\n{answer}\n",
-        encoding="utf-8",
-    )
-    return explore_path
+    from openkb.cli import save_exploration
+
+    return save_exploration(kb_dir, question, answer)
 
 
 def _parse_stream_form(value: str | bool | None) -> bool:
@@ -911,9 +965,7 @@ def _summarize_add_results(kb: str, results: list[AddFileItem]) -> AddResponse:
 
 
 def _model_payload(model: BaseModel) -> dict[str, Any]:
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
+    return model.model_dump()
 
 
 async def _save_add_uploads(
@@ -939,10 +991,12 @@ async def _run_add_uploads(
     kb: str,
     kb_dir: Path,
     saved_uploads: list[tuple[Path, str]],
+    *,
+    bundle=None,
 ) -> AddResponse:
     results = []
     for saved_path, original_name in saved_uploads:
-        results.append(await _add_saved_file(kb_dir, saved_path, original_name))
+        results.append(await _add_saved_file(kb_dir, saved_path, original_name, bundle=bundle))
     return _summarize_add_results(kb, results)
 
 
@@ -950,6 +1004,8 @@ async def _stream_add_uploads(
     kb: str,
     kb_dir: Path,
     saved_uploads: list[tuple[Path, str]],
+    *,
+    bundle=None,
 ) -> AsyncIterator[str]:
     yield _sse(
         "start",
@@ -966,7 +1022,7 @@ async def _stream_add_uploads(
                 "file_start",
                 {"original_name": original_name, "saved_path": str(saved_path)},
             )
-            item = await _add_saved_file(kb_dir, saved_path, original_name)
+            item = await _add_saved_file(kb_dir, saved_path, original_name, bundle=bundle)
             results.append(item)
             yield _sse("file_done", _model_payload(item))
         final = _summarize_add_results(kb, results)
@@ -978,8 +1034,8 @@ async def _stream_add_uploads(
     yield _sse("done", {})
 
 
-async def _add_saved_file(kb_dir: Path, saved_path: Path, original_name: str) -> AddFileItem:
-    result = await run_in_threadpool(_add_for_api, saved_path, kb_dir)
+async def _add_saved_file(kb_dir: Path, saved_path: Path, original_name: str, *, bundle=None) -> AddFileItem:
+    result = await run_in_threadpool(_add_for_api, saved_path, kb_dir, bundle=bundle)
     item = AddFileItem(**result.__dict__)
     item.original_name = original_name
     if item.status == "skipped":
@@ -1013,14 +1069,17 @@ async def _stream_query(
     request: QueryRequest,
     kb_dir: Path,
     model: str,
+    *,
+    bundle=None,
 ) -> AsyncIterator[str]:
     yield _sse("start", {"endpoint": "query"})
+    run_config = build_run_config_from_bundle(model, bundle)
     try:
         config = load_config(kb_dir / ".openkb" / "config.yaml")
         language = config.get("language", "en")
-        agent = build_query_agent(str(kb_dir / "wiki"), model, language=language)
+        agent = build_query_agent(str(kb_dir / "wiki"), model, language=language, bundle=bundle)
         final_answer = ""
-        async for event in iter_agent_response_events(agent, request.question):
+        async for event in iter_agent_response_events(agent, request.question, run_config=run_config):
             data = event["data"]
             if event["event"] == "final":
                 final_answer = data["answer"]
@@ -1048,12 +1107,15 @@ async def _stream_chat(
     request: ChatRequest,
     kb_dir: Path,
     session: ChatSession,
+    *,
+    bundle=None,
 ) -> AsyncIterator[str]:
     yield _sse("start", {"endpoint": "chat", "session_id": session.id})
+    run_config = build_run_config_from_bundle(session.model, bundle)
     try:
         append_log(kb_dir / "wiki", "query", request.message)
-        agent = build_chat_session_agent(kb_dir, session)
-        async for event in iter_chat_turn_events(agent, session, request.message):
+        agent = build_chat_session_agent(kb_dir, session, bundle=bundle)
+        async for event in iter_chat_turn_events(agent, session, request.message, run_config=run_config):
             yield _sse(event["event"], event["data"])
     except Exception as exc:
         yield _sse("error", {"message": f"Chat failed: {exc}"})
@@ -1108,6 +1170,9 @@ async def _stream_remove(
 async def _stream_recompile(
     request: RecompileRequest,
     kb_dir: Path,
+    mutation_lock: asyncio.Lock,
+    *,
+    bundle=None,
 ) -> AsyncIterator[str]:
     """SSE view of recompile: start, per-doc progress, final, done.
 
@@ -1116,44 +1181,53 @@ async def _stream_recompile(
     they happen, without waiting on an HTTP error.
     """
     yield _sse("start", {"endpoint": "recompile"})
-    try:
-        async for event in iter_recompile(
-            kb_dir,
-            request.doc_name,
-            all_docs=request.all_docs,
-            dry_run=request.dry_run,
-            refresh_schema=request.refresh_schema,
-        ):
-            name = event.get("event")
-            if name == "error":
-                yield _sse("error", {
-                    "code": event.get("code", 500),
-                    "message": event.get("message", "Recompile failed."),
-                    **({"candidates": event["candidates"]} if "candidates" in event else {}),
-                })
-            elif name == "plan":
-                yield _sse("plan", {"targets": event.get("targets", [])})
-            elif name == "doc":
-                yield _sse("doc", {k: v for k, v in event.items() if k != "event"})
-            elif name == "final":
-                yield _sse("final", {k: v for k, v in event.items() if k != "event"})
-    except Exception as exc:
-        yield _sse("error", {"message": f"Recompile failed: {exc}"})
+    # Hold the per-KB asyncio.Lock for the entire stream so concurrent
+    # same-KB recompiles are serialized before kb_ingest_lock (which uses
+    # threading.local and miscounts reentrancy on the event-loop thread).
+    async with mutation_lock:
+        try:
+            async for event in iter_recompile(
+                kb_dir,
+                request.doc_name,
+                all_docs=request.all_docs,
+                dry_run=request.dry_run,
+                refresh_schema=request.refresh_schema,
+                bundle=bundle,
+            ):
+                name = event.get("event")
+                if name == "error":
+                    yield _sse("error", {
+                        "code": event.get("code", 500),
+                        "message": event.get("message", "Recompile failed."),
+                        **({"candidates": event["candidates"]} if "candidates" in event else {}),
+                    })
+                elif name == "plan":
+                    yield _sse("plan", {"targets": event.get("targets", [])})
+                elif name == "doc":
+                    yield _sse("doc", {k: v for k, v in event.items() if k != "event"})
+                elif name == "final":
+                    yield _sse("final", {k: v for k, v in event.items() if k != "event"})
+        except Exception as exc:
+            yield _sse("error", {"message": f"Recompile failed: {exc}"})
     yield _sse("done", {})
 
+
+# Default cap for /watch/events SSE so abandoned clients do not poll forever.
+_WATCH_SSE_TIMEOUT = float(os.environ.get("OPENKB_WATCH_SSE_TIMEOUT", "300"))
 
 async def _stream_watch_events(
     registry: WatchRegistry,
     kb: str,
     max_events: int | None,
     timeout_seconds: float | None,
+    request: Request,
 ) -> AsyncIterator[str]:
     """Tail a KB's watch event ring buffer as an SSE stream.
 
     Replays existing events then polls for new ones. Terminates when the
     watcher stops, or when ``max_events``/``timeout_seconds`` is reached (so
     bounded clients and tests can drain without hanging). With both unset the
-    stream tails indefinitely.
+    stream is capped by a default timeout when none is given.
     """
     state = registry.get(kb)
     yield _sse("start", {"endpoint": "watch", "kb": kb, "active": state is not None})
@@ -1161,11 +1235,15 @@ async def _stream_watch_events(
         yield _sse("error", {"message": f"No active watcher for KB: {kb}"})
         yield _sse("done", {})
         return
+    if timeout_seconds is None:
+        timeout_seconds = _WATCH_SSE_TIMEOUT
     next_seq = 0
     emitted = 0
     started = time.monotonic()
     try:
         while True:
+            if await request.is_disconnected():
+                return
             for ev in list(state.events):
                 if ev["seq"] < next_seq:
                     continue
