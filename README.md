@@ -107,13 +107,15 @@ openkb deck new my-deck "An intro deck on <your-topic>"              # slides â€
 
 OpenKB supports [multiple LLM providers](https://docs.litellm.ai/docs/providers) (OpenAI, Claude, Gemini, etc.) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
-Set your model during `openkb init` or in [`.openkb/config.yaml`](#configuration) using the `provider/model` LiteLLM format (e.g. `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (e.g. `gpt-5.4`).
+Set your model during `openkb init` or in [`.openkb/config.yaml`](#configuration) using the `provider/model` LiteLLM format (e.g. `anthropic/claude-sonnet-4-6`, `gemini/gemini-3.1-pro-preview`). OpenAI models can omit the prefix (e.g. `gpt-5.4`).
 
 Create a `.env` file with your LLM API key:
 
 ```bash
 LLM_API_KEY=your_llm_api_key
 ```
+
+Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
 
 # ðŸ§© How OpenKB Works
 
