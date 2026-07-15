@@ -187,6 +187,38 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) | [skills](examples/skills/) |
 | <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass) | [slides](examples/slides/) |
 
+### 💬 Query & Chat — *ask the wiki*
+
+`openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
+
+Inside `openkb chat`, type `/` for slash commands (Tab to complete):
+
+<details>
+<summary><i>Slash commands:</i></summary>
+<br>
+
+| Command | Does |
+|---|---|
+| `/help` | List available commands |
+| `/status` | Show knowledge base status |
+| `/list` | List all documents |
+| `/add <path>` | Add a document or directory without leaving the chat |
+| `/save [name]` | Export the transcript to `wiki/explorations/` |
+| `/skill new <name> "<intent>"` | Compile a skill from this chat |
+| `/deck new <name> "<intent>"` | Generate a slide deck (`--skill` picks a theme, `--critique` runs a quality pass) |
+| `/critique <path>` | Run a quality critique pass on a generated deck |
+| `/lint` | Run knowledge base lint |
+| `/clear` | Start a fresh session (the current one stays on disk) |
+| `/exit` | Exit (`/quit` or Ctrl-D also work) |
+
+</details>
+
+<a id="skill-factory"></a>
+
+### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
+
+`openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
+
 <details>
 <summary><i>More skill commands:</i></summary>
 <br>
@@ -198,12 +230,6 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills |
 
 </details>
-
-<a id="skill-factory"></a>
-
-### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
-
-The flagship generator: `openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
 
 # 🔧 Configuration
 
