@@ -189,7 +189,7 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 ### 💬 Query & Chat — *ask the wiki*
 
-The core loop: `openkb query "..."` returns a grounded, cited answer from your wiki, and `openkb chat` opens an interactive multi-turn session over it (`--resume`, `--list`, `--delete` to manage sessions). Both run on OpenKB's reasoning-based retrieval, with no vector DB. → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
+`openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
 
 Inside `openkb chat`, type `/` for slash commands (Tab to complete):
 
