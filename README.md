@@ -191,22 +191,21 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 `openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
 
-Inside `openkb chat`, type `/` for slash commands (Tab to complete):
+Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <details>
-<summary><i>Slash commands:</i></summary>
+<summary><i>More slash commands:</i></summary>
 <br>
 
-| Command | Does |
-|---|---|
-| `/help` | List available commands |
-| `/status` | Show knowledge base status |
-| `/list` | List all documents |
-| `/add <path>` | Add a document or directory without leaving the chat |
-| `/save [name]` | Export the transcript to `wiki/explorations/` |
-| `/lint` | Run knowledge base lint |
-| `/clear` | Start a fresh session (the current one stays on disk) |
-| `/exit` | Exit (`/quit` or Ctrl-D also work) |
+- `/help`: list available commands
+- `/status`: show knowledge base status
+- `/list`: list all documents
+- `/add <path>`: add a document or directory without leaving the chat
+- `/skill new <skill-name> "<intent>"`: compile a skill from this chat (see below)
+- `/save [name]`: export the transcript to `wiki/explorations/`
+- `/clear`: start a fresh session (the current one stays on disk)
+- `/lint`: run knowledge base lint
+- `/exit`: exit (Ctrl-D also works)
 
 </details>
 
