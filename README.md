@@ -187,6 +187,16 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) | [skills](examples/skills/) |
 | <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass) | [slides](examples/slides/) |
 
+### 💬 Query & Chat — *ask the wiki*
+
+The core loop: `openkb query "..."` returns a grounded, cited answer from your wiki, and `openkb chat` opens an interactive multi-turn session over it (`--resume`, `--list`, `--delete` to manage sessions). Both run on OpenKB's reasoning-based retrieval, with no vector DB. → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
+
+<a id="skill-factory"></a>
+
+### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
+
+`openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
+
 <details>
 <summary><i>More skill commands:</i></summary>
 <br>
@@ -198,12 +208,6 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills |
 
 </details>
-
-<a id="skill-factory"></a>
-
-### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
-
-The flagship generator: `openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
 
 # 🔧 Configuration
 
