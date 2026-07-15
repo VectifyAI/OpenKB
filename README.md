@@ -107,7 +107,7 @@ openkb deck new my-deck "An intro deck on <your-topic>"              # slides â€
 
 OpenKB supports [multiple LLM providers](https://docs.litellm.ai/docs/providers) (OpenAI, Claude, Gemini, etc.) via [LiteLLM](https://github.com/BerriAI/litellm) (pinned to a [safe version](https://docs.litellm.ai/blog/security-update-march-2026)).
 
-Set your model during `openkb init` or in [`.openkb/config.yaml`](#configuration) using the `provider/model` LiteLLM format (e.g. `anthropic/claude-sonnet-4-6`, `gemini/gemini-3.1-pro-preview`). OpenAI models can omit the prefix (e.g. `gpt-5.4`).
+Set your model during `openkb init` or in [`.openkb/config.yaml`](#configuration) using the `provider/model` LiteLLM format (e.g. `anthropic/claude-sonnet-4-6`). OpenAI models can omit the prefix (e.g. `gpt-5.4`).
 
 Create a `.env` file with your LLM API key:
 
@@ -204,6 +204,8 @@ Inside a chat, type `/` to access slash commands (Tab to complete).
 - `/list`: list all documents
 - `/add <path>`: add a document or directory without leaving the chat
 - `/skill new <skill-name> "<intent>"`: compile a skill from this chat (see below)
+- `/deck new <name> "<intent>"`: generate an HTML slide deck from the wiki
+- `/critique <path>`: run the HTML critic over an existing deck
 - `/save [name]`: export the transcript to `wiki/explorations/`
 - `/clear`: start a fresh session (the current one stays on disk)
 - `/lint`: run knowledge base lint
