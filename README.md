@@ -191,6 +191,28 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 The core loop: `openkb query "..."` returns a grounded, cited answer from your wiki, and `openkb chat` opens an interactive multi-turn session over it (`--resume`, `--list`, `--delete` to manage sessions). Both run on OpenKB's reasoning-based retrieval, with no vector DB. → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
 
+Inside `openkb chat`, type `/` for slash commands (Tab to complete):
+
+<details>
+<summary><i>Slash commands:</i></summary>
+<br>
+
+| Command | Does |
+|---|---|
+| `/help` | List available commands |
+| `/status` | Show knowledge base status |
+| `/list` | List all documents |
+| `/add <path>` | Add a document or directory without leaving the chat |
+| `/save [name]` | Export the transcript to `wiki/explorations/` |
+| `/skill new <name> "<intent>"` | Compile a skill from this chat |
+| `/deck new <name> "<intent>"` | Generate a slide deck (`--skill` picks a theme, `--critique` runs a quality pass) |
+| `/critique <path>` | Run a quality critique pass on a generated deck |
+| `/lint` | Run knowledge base lint |
+| `/clear` | Start a fresh session (the current one stays on disk) |
+| `/exit` | Exit (`/quit` or Ctrl-D also work) |
+
+</details>
+
 <a id="skill-factory"></a>
 
 ### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
