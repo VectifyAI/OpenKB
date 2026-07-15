@@ -204,9 +204,6 @@ Inside `openkb chat`, type `/` for slash commands (Tab to complete):
 | `/list` | List all documents |
 | `/add <path>` | Add a document or directory without leaving the chat |
 | `/save [name]` | Export the transcript to `wiki/explorations/` |
-| `/skill new <name> "<intent>"` | Compile a skill from this chat |
-| `/deck new <name> "<intent>"` | Generate a slide deck (`--skill` picks a theme, `--critique` runs a quality pass) |
-| `/critique <path>` | Run a quality critique pass on a generated deck |
 | `/lint` | Run knowledge base lint |
 | `/clear` | Start a fresh session (the current one stays on disk) |
 | `/exit` | Exit (`/quit` or Ctrl-D also work) |
