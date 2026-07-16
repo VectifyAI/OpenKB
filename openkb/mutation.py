@@ -448,7 +448,7 @@ def publish_staged_tree(staging_dir: Path | None, kb_dir: Path) -> None:
     """Move staged raw/source artifacts into their final KB locations."""
     if staging_dir is None or not staging_dir.exists():
         return
-    for rel in ("raw", "wiki/sources"):
+    for rel in ("raw", "wiki/sources", ".openkb/bundles"):
         src_root = staging_dir / rel
         if not src_root.exists():
             continue

@@ -1,0 +1,11 @@
+[project]
+name = "openkb-example-ingest-plugin"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["openkb"]
+
+[project.entry-points."openkb.ingest.importers"]
+example_text = "openkb_example_ingest:ExampleTextImporter"
+
+[project.entry-points."openkb.ingest.normalizers"]
+example_text = "openkb_example_ingest:ExampleTextNormalizer"

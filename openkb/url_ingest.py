@@ -213,8 +213,8 @@ def _extract_html(url: str, raw_dir: Path) -> Path | None:
     return target
 
 
-def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
-    """Fetch ``url`` into ``<kb>/raw/`` and return the local path.
+def fetch_url_to_dir(url: str, raw_dir: Path) -> Path | None:
+    """Fetch ``url`` into ``raw_dir`` and return the local path.
 
     Routing is decided by HTTP ``Content-Type`` validated against magic
     bytes (in case the server lies):
@@ -223,11 +223,9 @@ def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
     - HTML → trafilatura main-content extract → ``raw/<title-slug>.md``
     - anything else → error, returns None
 
-    The caller then hands the saved path to ``add_single_file``, so the
-    existing PageIndex / markitdown routing by file extension and page
-    count takes over from there.
+    The caller decides whether this raw directory is the live KB
+    ``raw/`` path or a mutation staging directory.
     """
-    raw_dir = kb_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     click.echo(f"Downloading: {url}")
@@ -280,3 +278,13 @@ def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
         err=True,
     )
     return None
+
+
+def fetch_url_to_raw(url: str, kb_dir: Path) -> Path | None:
+    """Fetch ``url`` into ``<kb>/raw/`` and return the local path.
+
+    The caller then hands the saved path to ``add_single_file``, so the
+    existing PageIndex / markitdown routing by file extension and page
+    count takes over from there.
+    """
+    return fetch_url_to_dir(url, kb_dir / "raw")

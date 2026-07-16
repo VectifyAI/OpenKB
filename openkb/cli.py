@@ -247,6 +247,17 @@ SUPPORTED_EXTENSIONS = {
     ".csv",
 }
 
+BUNDLE_ONLY_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+}
+
+BUNDLE_SUPPORTED_EXTENSIONS = SUPPORTED_EXTENSIONS | BUNDLE_ONLY_EXTENSIONS
+
 # Map raw doc types to display types
 _TYPE_DISPLAY_MAP = {
     "long_pdf": "pageindex",
@@ -1003,9 +1014,16 @@ def init(model, language):
     help="Import an already-indexed PageIndex Cloud document by its doc-id "
     "(no local file). Mutually exclusive with PATH.",
 )
+@click.option(
+    "--ingest-pipeline",
+    "ingest_pipeline",
+    type=click.Choice(["legacy", "bundle"]),
+    default=None,
+    help="Select the add ingest pipeline. Defaults to .openkb/config.yaml ingest.pipeline, then legacy.",
+)
 @click.pass_context
 @_with_kb_lock(exclusive=True)
-def add(ctx, path, from_pageindex_cloud):
+def add(ctx, path, from_pageindex_cloud, ingest_pipeline):
     """Add a document or directory of documents at PATH to the knowledge base.
 
     PATH may be a local file, a local directory (which is walked
@@ -1037,13 +1055,23 @@ def add(ctx, path, from_pageindex_cloud):
         click.echo("Provide a PATH or use --from-pageindex-cloud <DOC_ID>.")
         return
 
-    # URL ingest: download into raw/ first, then call add_single_file explicitly.
-    # Keep staged conversion enabled so converted source artifacts do not touch
-    # the live KB before the mutation snapshot exists. The tri-state outcome
-    # still lets us clean up the just-downloaded raw file on dedup.
+    from openkb.ingest.add import add_bundle_target, resolve_ingest_pipeline
+
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    pipeline = resolve_ingest_pipeline(config, ingest_pipeline)
+    supported_extensions = (
+        BUNDLE_SUPPORTED_EXTENSIONS if pipeline == "bundle" else SUPPORTED_EXTENSIONS
+    )
+
+    # Legacy URL ingest downloads into raw/ first, then calls add_single_file.
+    # Bundle URL ingest keeps downloads inside the bundle staging directory and
+    # commits through the same mutation boundary as local bundle files.
     from openkb.url_ingest import looks_like_url, fetch_url_to_raw
 
     if looks_like_url(path):
+        if pipeline == "bundle":
+            add_bundle_target(path, kb_dir, legacy_fallback=add_single_file)
+            return
         fetched = fetch_url_to_raw(path, kb_dir)
         if fetched is None:
             return
@@ -1065,7 +1093,7 @@ def add(ctx, path, from_pageindex_cloud):
         files = [
             f
             for f in sorted(target.rglob("*"))
-            if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+            if f.is_file() and f.suffix.lower() in supported_extensions
         ]
         if not files:
             click.echo(f"No supported files found in {path}.")
@@ -1074,15 +1102,21 @@ def add(ctx, path, from_pageindex_cloud):
         click.echo(f"Found {total} supported file(s) in {path}.")
         for i, f in enumerate(files, 1):
             click.echo(f"\n[{i}/{total}] ", nl=False)
-            add_single_file(f, kb_dir)
+            if pipeline == "bundle":
+                add_bundle_target(f, kb_dir, legacy_fallback=add_single_file)
+            else:
+                add_single_file(f, kb_dir)
     else:
-        if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        if target.suffix.lower() not in supported_extensions:
             click.echo(
                 f"Unsupported file type: {target.suffix}. "
-                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+                f"Supported: {', '.join(sorted(supported_extensions))}"
             )
             return
-        add_single_file(target, kb_dir)
+        if pipeline == "bundle":
+            add_bundle_target(target, kb_dir, legacy_fallback=add_single_file)
+        else:
+            add_single_file(target, kb_dir)
 
 
 def _stream_to_tty() -> bool:
@@ -1325,6 +1359,13 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
             )
         )
 
+    bundle_path = None
+    if meta.get("bundle_path"):
+        candidate = kb_dir / meta["bundle_path"]
+        if candidate.exists():
+            bundle_path = candidate
+            actions.append(("DELETE", str(candidate.relative_to(kb_dir))))
+
     # Scan concept pages to predict which will be edited vs. deleted.
     # Only frontmatter ``sources:`` membership drives the plan — body-only
     # references (e.g. a stray ``See also:`` line a user added by hand
@@ -1440,6 +1481,8 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     source_json.unlink(missing_ok=True)
     if images_dir.is_dir():
         shutil.rmtree(images_dir, ignore_errors=True)
+    if bundle_path is not None:
+        bundle_path.unlink(missing_ok=True)
 
     concept_result = remove_doc_from_concept_pages(
         wiki_dir,
