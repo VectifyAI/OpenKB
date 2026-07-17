@@ -73,6 +73,13 @@ api = ["fastapi", "uvicorn", "python-multipart"]
 [tool.hatch.version]
 source = "vcs"
 
+# The Workbench web bundle (openkb/web) is git-ignored but must ship in the
+# published package. `artifacts` force-includes it into both the sdist and the
+# wheel when present (built by `npm run build`, e.g. in release CI). When it is
+# absent the build still succeeds — the API server just serves no UI.
+[tool.hatch.build]
+artifacts = ["openkb/web/**"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["openkb"]
 

@@ -7,7 +7,11 @@ export default defineConfig({
   plugins: [react()],
   base: "/",
   build: {
-    outDir: "../web",
+    // Build into the Python package so the bundle ships inside the wheel
+    // (as openkb/web) instead of a top-level dir that would pollute
+    // site-packages. Kept out of git via .gitignore; hatchling picks it up
+    // through `artifacts` at build time.
+    outDir: "../openkb/web",
     emptyOutDir: true,
   },
   server: {

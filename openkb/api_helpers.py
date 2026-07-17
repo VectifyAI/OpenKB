@@ -86,12 +86,15 @@ def _configure_cors(app: FastAPI) -> None:
 
 
 def _mount_web_ui(app: FastAPI) -> None:
-    """Serve the bundled web UI at ``/`` when the ``web/`` directory exists.
+    """Serve the bundled web UI at ``/`` when the ``web/`` bundle exists.
 
-    Mounting under the API origin avoids cross-origin fetch from ``file://``
-    so the browser SPA can call the REST endpoints directly.
+    The Vite build outputs to ``openkb/web`` (shipped inside the wheel via
+    hatchling ``artifacts``), so the bundle sits next to this module for both
+    installed packages and source checkouts. Absent (API-only install / UI not
+    built) the mount is simply skipped. Mounting under the API origin avoids
+    cross-origin fetch from ``file://`` so the SPA can call the REST endpoints.
     """
-    web_dir = Path(__file__).resolve().parent.parent / "web"
+    web_dir = Path(__file__).resolve().parent / "web"
     if web_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web-ui")
 

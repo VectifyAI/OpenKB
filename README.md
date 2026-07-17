@@ -49,7 +49,7 @@ OpenKB has two layers: a **wiki foundation** that compiles and maintains your kn
 - **Skill Factory:** Distills redistributable agent skills from your wiki.
 - **OKF-ready:** Wiki pages follow the [Google OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) specification for knowledge sharing.
 - **Obsidian-compatible:** The wiki is plain `.md` files with cross-links. Opens in Obsidian for graph view.
-- **Knowledge Workbench (Web UI):** A bundled React SPA served at `/` turns the REST API into a full dark-themed three-pane workbench — browse stats, upload & compile documents, stream queries/chats with a live reasoning timeline, and run maintenance, all in the browser. No separate frontend server needed.
+- **Knowledge Workbench (Web UI):** A bundled web UI served at `/` to browse the KB, upload and compile documents, and stream queries and chats — all in the browser.
 
 # 🚀 Getting Started
 
@@ -120,14 +120,16 @@ Subscription-based providers that authenticate via OAuth device flow (e.g. `chat
 
 ### Knowledge Workbench (Web UI)
 
-OpenKB ships a bundled React SPA served by the REST API at `/`. Build it with `cd frontend && npm install && npm run build`, then start the server:
+OpenKB ships a bundled web UI, served by the REST API at `/`. Install the API extra and start the server:
 
 ```bash
-pip install -e ".[api]"
-OPENKB_API_TOKEN=test-token python -m openkb.api --host 127.0.0.1 --port 8000
+pip install "openkb[api]"
+OPENKB_API_TOKEN=test-token openkb-api --host 127.0.0.1 --port 8000
 ```
 
 Open `http://127.0.0.1:8000/` for the Workbench, or see the [full Web UI guide](examples/rest-api/README.md#knowledge-workbench-web-ui).
+
+> Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-api`), or `npm run build` to regenerate the bundled `openkb/web/`.
 
 # 🧩 How OpenKB Works
 
