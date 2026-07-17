@@ -116,6 +116,8 @@ Create a `.env` file with your LLM API key:
 LLM_API_KEY=your_llm_api_key
 ```
 
+Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
+
 ### Knowledge Workbench (Web UI)
 
 OpenKB ships a bundled React SPA served by the REST API at `/`. Build it with `cd frontend && npm install && npm run build`, then start the server:
@@ -199,6 +201,36 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 | <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below)               | [skills](examples/skills/)         |
 | <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code>        | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass)             | [slides](examples/slides/)         |
 
+### (i) 💬 Query & Chat — *ask the wiki*
+
+`openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
+
+Inside a chat, type `/` to access slash commands (Tab to complete).
+
+<details>
+<summary><i>More slash commands:</i></summary>
+<br>
+
+- `/help`: list available commands
+- `/status`: show knowledge base status
+- `/list`: list all documents
+- `/add <path>`: add a document or directory without leaving the chat
+- `/skill new <skill-name> "<intent>"`: compile a skill from this chat (see below)
+- `/deck new <name> "<intent>"`: generate an HTML slide deck from the wiki
+- `/critique <path>`: run the HTML critic over an existing deck
+- `/save [name]`: export the transcript to `wiki/explorations/`
+- `/clear`: start a fresh session (the current one stays on disk)
+- `/lint`: run knowledge base lint
+- `/exit`: exit (Ctrl-D also works)
+
+</details>
+
+<a id="skill-factory"></a>
+
+### (ii) 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
+
+`openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
+
 <details>
 <summary><i>More skill commands:</i></summary>
 <br>
@@ -211,17 +243,11 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 </details>
 
-<a id="skill-factory"></a>
-
-### 🛠 Skill Factory — *drop in a book; out comes a digital expert.*
-
-The flagship generator: `openkb skill new` distills a portable [agent skill](https://docs.claude.com/en/docs/build-with-claude/skills) from your wiki that Claude Code, Codex, and Gemini can install and load natively. Drop in a book's worth of papers; out comes a specialist other agents can call on. → A real generated skill, plus install / share / `eval` / rollback, is walked through in **[`examples/skills/`](examples/skills/)**.
-
 # 🔧 Configuration
 
 ### Settings
 
-`openkb init` writes `.openkb/config.yaml`:
+OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.yaml`:
 
 ```yaml
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
