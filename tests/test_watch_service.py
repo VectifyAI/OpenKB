@@ -14,11 +14,15 @@ from pathlib import Path
 
 from openkb.cli import AddFileResult
 from openkb.watch_service import (
-    WatchRegistry,
     WatcherState,
+    WatchRegistry,
     _public_event,
     _record_event,
 )
+
+
+def _fake_add_ok(path: Path, kb_dir: Path, bundle=None) -> AddFileResult:
+    return AddFileResult("x", str(path), "added", "ok")
 
 
 def _drain_worker(state: WatcherState, timeout: float = 2.0) -> None:
@@ -102,7 +106,7 @@ def test_worker_added_records_file_start_done_and_counter(kb_dir, monkeypatch):
     state.queue.put([str(kb_dir / "raw" / "paper.md")])
     monkeypatch.setattr(
         "openkb.watch_service._add_for_api",
-        lambda path, kb: AddFileResult(path.name, str(path), "added", "Added."),
+        lambda path, kb, bundle=None: AddFileResult(path.name, str(path), "added", "Added."),
     )
     _drain_worker(state)
     assert _events_of(state, "file_start")[0]["original_name"] == "paper.md"
@@ -116,7 +120,7 @@ def test_worker_skipped_and_failed_branches(kb_dir, monkeypatch):
     state = _make_state(kb_dir)
     state.queue.put([str(kb_dir / "raw" / "dup.md"), str(kb_dir / "raw" / "boom.md")])
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, bundle=None):
         if path.name == "dup.md":
             return AddFileResult(path.name, None, "skipped", "Already in KB.")
         raise RuntimeError("explode")
@@ -138,7 +142,7 @@ def test_worker_unsupported_suffix_is_skipped_without_ingest(kb_dir, monkeypatch
     called = []
     monkeypatch.setattr(
         "openkb.watch_service._add_for_api",
-        lambda path, kb: called.append(path) or AddFileResult("x", None, "added", "x"),
+        lambda path, kb, bundle=None: called.append(path) or AddFileResult("x", None, "added", "x"),
     )
     _drain_worker(state)
     assert called == []
@@ -152,7 +156,7 @@ def test_worker_does_not_die_on_exception(kb_dir, monkeypatch):
     state = _make_state(kb_dir)
     state.queue.put([str(kb_dir / "raw" / "bad.md"), str(kb_dir / "raw" / "good.md")])
 
-    def fake_add(path, target_kb):
+    def fake_add(path, target_kb, bundle=None):
         if path.name == "bad.md":
             raise RuntimeError("nope")
         return AddFileResult(path.name, str(path), "added", "ok")
@@ -175,7 +179,7 @@ def test_end_to_end_debounce_processes_real_file(kb_dir, monkeypatch):
     seen = []
     monkeypatch.setattr(
         "openkb.watch_service._add_for_api",
-        lambda path, kb: seen.append(path.name)
+        lambda path, kb, bundle=None: seen.append(path.name)
         or AddFileResult(path.name, str(path), "added", "ok"),
     )
     reg = WatchRegistry()
@@ -206,7 +210,7 @@ def test_record_event_appends_inside_lock():
 
 def test_stop_then_start_does_not_double_worker(kb_dir, monkeypatch):
     """After stop(), start() must not spawn a second worker."""
-    monkeypatch.setattr('openkb.watch_service._add_for_api', lambda path, kb_dir: AddFileResult('x', str(path), 'added', 'ok'))
+    monkeypatch.setattr("openkb.watch_service._add_for_api", _fake_add_ok)
     reg = WatchRegistry()
     reg.start("t", kb_dir, debounce=0.1)
     reg.stop("t")
@@ -219,7 +223,7 @@ def test_stop_then_start_does_not_double_worker(kb_dir, monkeypatch):
 
 def test_start_returns_existing_if_running(kb_dir, monkeypatch):
     """start() is idempotent."""
-    monkeypatch.setattr('openkb.watch_service._add_for_api', lambda path, kb_dir: AddFileResult('x', str(path), 'added', 'ok'))
+    monkeypatch.setattr("openkb.watch_service._add_for_api", _fake_add_ok)
     reg = WatchRegistry()
     s1 = reg.start("t", kb_dir, debounce=0.1)
     s2 = reg.start("t", kb_dir, debounce=0.1)
@@ -232,7 +236,7 @@ def test_worker_exception_clears_running(kb_dir, monkeypatch):
 
     monkeypatch.setattr(
         "openkb.watch_service._add_for_api",
-        lambda path, kb_dir: AddFileResult("x", str(path), "added", "ok"),
+        lambda path, kb_dir, bundle=None: AddFileResult("x", str(path), "added", "ok"),
     )
     reg = WatchRegistry()
     state = reg.start("t", kb_dir, debounce=0.1)
@@ -245,6 +249,7 @@ def test_worker_exception_clears_running(kb_dir, monkeypatch):
 def test_record_event_seq_monotonic_under_burst():
     """watcher_stopped terminator must have a higher seq than preceding events."""
     from collections import deque
+
     from openkb.watch_service import WatcherState, _record_event
 
     state = WatcherState(kb="t", kb_dir=None, raw_dir=None, debounce=0, started_at=0.0, events=None)

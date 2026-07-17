@@ -471,7 +471,10 @@ def _add_single_file_locked(
 
     openkb_dir = kb_dir / ".openkb"
     config = load_config(openkb_dir / "config.yaml")
-    _setup_llm_key(kb_dir)
+    # The REST API passes a per-KB credential bundle so it never pollutes
+    # process-wide state; only the CLI path needs the legacy global setup.
+    if bundle is None:
+        _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
     staging_dir = _staging_dir_for(kb_dir, file_path) if stage else None

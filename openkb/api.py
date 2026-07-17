@@ -38,9 +38,9 @@ from openkb.api_helpers import (
     _load_or_create_session,
     _mount_web_ui,
     _parse_stream_form,
+    _reserve_add_uploads,
     _resolve_kb,
     _run_add_uploads,
-    _save_add_uploads,
     _save_query_answer,
     _stream_add_uploads,
     _stream_chat,
@@ -48,6 +48,7 @@ from openkb.api_helpers import (
     _stream_recompile,
     _stream_remove,
     _stream_watch_events,
+    _write_add_uploads,
     require_bearer_token,
 )
 from openkb.api_models import (
@@ -94,14 +95,16 @@ from openkb.config import (
 from openkb.log import append_log
 from openkb.watch_service import WatchRegistry
 
-set_tracing_disabled(True)
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
-litellm.suppress_debug_info = True
-load_dotenv()
-
 
 def create_app() -> FastAPI:
     # One registry per app instance so each TestClient is isolated.
+    # Keep process-wide setup inside create_app() so importing the module
+    # does not mutate global state for tests or library consumers.
+    set_tracing_disabled(True)
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+    litellm.suppress_debug_info = True
+    load_dotenv()
+
     registry = WatchRegistry()
 
     # Per-KB asyncio locks for async mutation endpoints (lint/recompile).
@@ -192,7 +195,13 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No files uploaded.",
             )
-        saved_uploads = await _save_add_uploads(resolved_kb_dir, files)
+        # Reserve unique raw paths under the lock so concurrent same-name
+        # uploads cannot race on _unique_raw_path and overwrite each other,
+        # then stream the bodies outside it so a large or slow upload does not
+        # block other same-KB mutations (lint/recompile/other adds).
+        async with _kb_mutation_lock(kb):
+            reserved = _reserve_add_uploads(resolved_kb_dir, files)
+        saved_uploads = await _write_add_uploads(reserved, files)
         if _parse_stream_form(stream):
             return StreamingResponse(
                 _stream_add_uploads(kb, resolved_kb_dir, saved_uploads, bundle=bundle),
@@ -203,6 +212,7 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/query", response_model=QueryResponse)
     async def query_endpoint(
         request: QueryRequest,
+        fastapi_request: Request,
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
@@ -213,7 +223,7 @@ def create_app() -> FastAPI:
 
         if request.stream:
             return StreamingResponse(
-                _stream_query(request, kb_dir, model, bundle=bundle),
+                _stream_query(request, kb_dir, model, fastapi_request, bundle=bundle),
                 media_type="text/event-stream",
             )
 
@@ -243,6 +253,7 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/chat", response_model=ChatResponse)
     async def chat_endpoint(
         request: ChatRequest,
+        fastapi_request: Request,
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
@@ -252,7 +263,7 @@ def create_app() -> FastAPI:
 
         if request.stream:
             return StreamingResponse(
-                _stream_chat(request, kb_dir, session, bundle=bundle),
+                _stream_chat(request, kb_dir, session, fastapi_request, bundle=bundle),
                 media_type="text/event-stream",
             )
 
@@ -499,7 +510,10 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"No active watcher for KB: {request.kb}",
             )
-        return WatchStatusResponse(kb=request.kb, active=False)
+        # Return the real post-stop status. If the worker was mid-compile and
+        # entered draining mode, status() reports active=True; otherwise it
+        # reports active=False after the watcher has been removed.
+        return WatchStatusResponse(**registry.status(request.kb))
 
     @app.post("/api/v1/watch/status", response_model=WatchStatusResponse)
     async def watch_status_endpoint(
@@ -523,12 +537,22 @@ def create_app() -> FastAPI:
             media_type="text/event-stream",
         )
 
+    # Catch-all for unknown API paths so they return JSON 404 instead of being
+    # swallowed by the StaticFiles mount below (which serves index.html for SPA
+    # routing and would turn API 404s into HTML 200s).
+    @app.api_route(
+        "/api/{path:path}",
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+    )
+    async def api_not_found(path: str) -> Any:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+
     _mount_web_ui(app)
 
     return app
-
-
-app = create_app()
 
 
 def main() -> None:
@@ -540,7 +564,15 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run("openkb.api:app", host=args.host, port=args.port, reload=args.reload)
+    # Use the factory so uvicorn can reload a fresh app instance and so the
+    # module can be imported without triggering global side effects.
+    uvicorn.run(
+        "openkb.api:create_app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        factory=True,
+    )
 
 
 if __name__ == "__main__":

@@ -239,13 +239,16 @@ def _unique_raw_path(raw_dir: Path, filename: str) -> Path:
         counter += 1
 
 
-async def _save_upload(
-    kb_dir: Path,
-    upload: UploadFile,
-    request_bytes_so_far: int,
-) -> tuple[Path, int]:
-    filename = _safe_upload_name(upload.filename)
-    suffix = Path(filename).suffix.lower()
+def _reserve_upload_path(raw_dir: Path, upload: UploadFile) -> tuple[Path, str]:
+    """Validate an upload's name/type and reserve a unique raw path for it.
+
+    Synchronous and fast: allocates via :func:`_unique_raw_path` and creates an
+    empty placeholder so a concurrent reservation sees the name as taken. The
+    caller holds the per-KB mutation lock for this step alone — never for the
+    (potentially slow) body transfer in :func:`_write_upload`.
+    """
+    original_name = _safe_upload_name(upload.filename)
+    suffix = Path(original_name).suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -254,10 +257,22 @@ async def _save_upload(
                 f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             ),
         )
+    saved_path = _unique_raw_path(raw_dir, original_name)
+    saved_path.touch()
+    return saved_path, original_name
 
-    raw_dir = kb_dir / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    saved_path = _unique_raw_path(raw_dir, filename)
+
+async def _write_upload(
+    saved_path: Path,
+    upload: UploadFile,
+    request_bytes_so_far: int,
+) -> int:
+    """Stream an upload's body into its already-reserved path.
+
+    Runs outside the per-KB mutation lock so a large or slow upload does not
+    block other same-KB mutations (lint/recompile/other adds). Returns the
+    bytes written; unlinks the (placeholder) file on failure.
+    """
     try:
         file_bytes = 0
         with saved_path.open("wb") as handle:
@@ -267,15 +282,13 @@ async def _save_upload(
                 if file_bytes > MAX_UPLOAD_FILE_BYTES:
                     raise HTTPException(
                         status_code=413,
-                        detail=(
-                            f"Uploaded file exceeds limit of " f"{MAX_UPLOAD_FILE_BYTES} bytes."
-                        ),
+                        detail=(f"Uploaded file exceeds limit of {MAX_UPLOAD_FILE_BYTES} bytes."),
                     )
                 if request_bytes > MAX_UPLOAD_REQUEST_BYTES:
                     raise HTTPException(
                         status_code=413,
                         detail=(
-                            f"Upload request exceeds limit of " f"{MAX_UPLOAD_REQUEST_BYTES} bytes."
+                            f"Upload request exceeds limit of {MAX_UPLOAD_REQUEST_BYTES} bytes."
                         ),
                     )
                 handle.write(chunk)
@@ -289,7 +302,7 @@ async def _save_upload(
         ) from exc
     finally:
         await upload.close()
-    return saved_path, file_bytes
+    return file_bytes
 
 
 def _summarize_add_results(kb: str, results: list[AddFileItem]) -> AddResponse:
@@ -306,23 +319,49 @@ def _model_payload(model: BaseModel) -> dict[str, Any]:
     return model.model_dump()
 
 
-async def _save_add_uploads(
+def _reserve_add_uploads(
     kb_dir: Path,
     files: list[UploadFile],
 ) -> list[tuple[Path, str]]:
-    saved_uploads: list[tuple[Path, str]] = []
-    request_bytes = 0
+    """Reserve a unique raw path (with a placeholder) for each upload.
+
+    Fast and synchronous so the caller can hold the per-KB mutation lock for
+    this step alone: that makes :func:`_unique_raw_path`'s ``exists()`` check
+    race-free against concurrent same-name uploads without serializing the
+    body transfers that follow in :func:`_write_add_uploads`.
+    """
+    raw_dir = kb_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    reserved: list[tuple[Path, str]] = []
     try:
         for upload in files:
-            original_name = _safe_upload_name(upload.filename)
-            saved_path, file_bytes = await _save_upload(kb_dir, upload, request_bytes)
-            request_bytes += file_bytes
-            saved_uploads.append((saved_path, original_name))
+            reserved.append(_reserve_upload_path(raw_dir, upload))
     except Exception:
-        for saved_path, _ in saved_uploads:
+        for saved_path, _ in reserved:
             saved_path.unlink(missing_ok=True)
         raise
-    return saved_uploads
+    return reserved
+
+
+async def _write_add_uploads(
+    reserved: list[tuple[Path, str]],
+    files: list[UploadFile],
+) -> list[tuple[Path, str]]:
+    """Stream each upload's body into its reserved path, outside the lock.
+
+    ``reserved`` and ``files`` are parallel and in the same order (both come
+    from the same request). Returns ``reserved`` unchanged so callers keep the
+    ``(path, original_name)`` pairs; cleans up every reserved path on failure.
+    """
+    request_bytes = 0
+    try:
+        for (saved_path, _original), upload in zip(reserved, files):
+            request_bytes += await _write_upload(saved_path, upload, request_bytes)
+    except Exception:
+        for saved_path, _ in reserved:
+            saved_path.unlink(missing_ok=True)
+        raise
+    return reserved
 
 
 async def _run_add_uploads(
@@ -409,6 +448,7 @@ async def _stream_query(
     request: QueryRequest,
     kb_dir: Path,
     model: str,
+    fastapi_request: Request,
     *,
     bundle=None,
 ) -> AsyncIterator[str]:
@@ -424,6 +464,10 @@ async def _stream_query(
         ):
             data = event["data"]
             if event["event"] == "final":
+                # Persist the fully-computed answer *before* checking for a
+                # disconnect: the caller asked to save it, so a client that
+                # drops at the last moment must not lose the write. Only the
+                # client-facing SSE frame is skipped when disconnected.
                 final_answer = data["answer"]
                 saved_path = (
                     _save_query_answer(kb_dir, request.question, final_answer)
@@ -431,6 +475,8 @@ async def _stream_query(
                     else None
                 )
                 append_log(kb_dir / "wiki", "query", request.question)
+                if await fastapi_request.is_disconnected():
+                    break
                 yield _sse(
                     "final",
                     {
@@ -439,6 +485,8 @@ async def _stream_query(
                     },
                 )
             else:
+                if await fastapi_request.is_disconnected():
+                    break
                 yield _sse(event["event"], data)
     except Exception as exc:
         yield _sse("error", {"message": f"Query failed: {exc}"})
@@ -449,6 +497,7 @@ async def _stream_chat(
     request: ChatRequest,
     kb_dir: Path,
     session: ChatSession,
+    fastapi_request: Request,
     *,
     bundle=None,
 ) -> AsyncIterator[str]:
@@ -460,6 +509,8 @@ async def _stream_chat(
         async for event in iter_chat_turn_events(
             agent, session, request.message, run_config=run_config
         ):
+            if await fastapi_request.is_disconnected():
+                break
             yield _sse(event["event"], event["data"])
     except Exception as exc:
         yield _sse("error", {"message": f"Chat failed: {exc}"})

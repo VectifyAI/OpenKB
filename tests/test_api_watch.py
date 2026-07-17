@@ -51,7 +51,7 @@ def _events_from_sse(text: str) -> list[dict[str, Any]]:
 def _mock_add(monkeypatch, status: str = "added"):
     monkeypatch.setattr(
         "openkb.watch_service._add_for_api",
-        lambda path, kb: AddFileResult(path.name, str(path), status, "msg"),
+        lambda path, kb, bundle=None: AddFileResult(path.name, str(path), status, "msg"),
     )
 
 
@@ -179,6 +179,7 @@ def test_watch_events_disconnect_terminates(monkeypatch, kb_dir):
     """The SSE stream must terminate when the client disconnects."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
+
     from openkb.api_helpers import _stream_watch_events
     from openkb.watch_service import WatchRegistry
 
@@ -210,6 +211,7 @@ def test_watch_events_default_timeout_terminates(monkeypatch, kb_dir):
     default _WATCH_SSE_TIMEOUT cap instead of running indefinitely."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
+
     from openkb.api_helpers import _stream_watch_events
     from openkb.watch_service import WatchRegistry
 

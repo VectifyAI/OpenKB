@@ -382,21 +382,36 @@ class LlmCredentialBundle:
 def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
     """Build an :class:`LlmCredentialBundle` from a KB's config, purely.
 
-    Reads the KB's ``.env`` (without polluting ``os.environ``) for
-    ``LLM_API_KEY`` / ``OPENAI_API_BASE``, and the KB's ``config.yaml`` for
-    ``extra_headers`` / ``timeout`` / ``litellm``. This is a side-effect-free
-    counterpart to ``cli._setup_llm_key``: it touches no global state, so it is
-    safe to call concurrently for different KBs.
+    Resolves ``LLM_API_KEY`` / ``OPENAI_API_BASE`` with per-KB precedence — the
+    KB's own ``.env`` first, then the process environment, then the global
+    ``~/.config/openkb/.env`` — and reads the KB's ``config.yaml`` for
+    ``extra_headers`` / ``timeout`` / ``litellm``. This honors the same sources
+    as ``cli._setup_llm_key`` (so a server configured via a process env var or
+    the global ``.env`` keeps working) but is side-effect-free: ``os.environ``
+    is never written, so concurrent requests for different KBs cannot see each
+    other's key.
     """
-    api_key: str | None = None
-    base_url: str | None = None
+    kb_values: dict[str, str | None] = {}
     kb_env = kb_dir / ".env"
     if kb_env.exists():
         from dotenv import dotenv_values
 
-        values = dotenv_values(str(kb_env))
-        api_key = values.get("LLM_API_KEY") or None
-        base_url = values.get("OPENAI_API_BASE") or None
+        kb_values = dict(dotenv_values(str(kb_env)))
+
+    global_values: dict[str, str | None] = {}
+    global_env = GLOBAL_CONFIG_DIR / ".env"
+    if global_env.exists():
+        from dotenv import dotenv_values
+
+        global_values = dict(dotenv_values(str(global_env)))
+
+    def _resolve_env(key: str) -> str | None:
+        # KB-local .env wins, then the process environment, then the global
+        # .env; empty values are treated as unset so they fall through.
+        return kb_values.get(key) or os.environ.get(key) or global_values.get(key) or None
+
+    api_key = _resolve_env("LLM_API_KEY")
+    base_url = _resolve_env("OPENAI_API_BASE")
 
     extra_headers: dict[str, str] = {}
     timeout: float | None = None
