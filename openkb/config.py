@@ -46,7 +46,13 @@ KB_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 @contextlib.contextmanager
 def _with_global_config_lock() -> Iterator[None]:
     GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with GLOBAL_CONFIG_LOCK_PATH.open("a+", encoding="utf-8") as fh:
+    # Derive the lock path from GLOBAL_CONFIG_DIR (rather than the import-time
+    # GLOBAL_CONFIG_LOCK_PATH constant) so it always co-locates with the dir we
+    # just created — including when tests monkeypatch GLOBAL_CONFIG_DIR to a
+    # throwaway path. Otherwise the lock would open the real ~/.config/openkb,
+    # which fails on a fresh machine where that dir doesn't exist.
+    lock_path = GLOBAL_CONFIG_DIR / "global.lock"
+    with lock_path.open("a+", encoding="utf-8") as fh:
         flock(fh, exclusive=True)
         try:
             yield
