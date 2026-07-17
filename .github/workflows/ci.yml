@@ -51,3 +51,23 @@ jobs:
 
       - name: Pytest
         run: uv run --no-sync pytest
+
+  # Build the Workbench SPA so a broken frontend (vite/config error, stale
+  # package-lock, JS error) is caught here at PR time rather than only in
+  # publish.yml after a release tag is pushed. Mirrors the release build step.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # v4.1.7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: "20"
+
+      - name: Build Workbench web bundle
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
