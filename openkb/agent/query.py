@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
@@ -12,7 +13,7 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
-from openkb.config import resolve_model_settings
+from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -51,7 +52,12 @@ If you cannot find relevant information, say so clearly.
 """
 
 
-def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
+def build_query_agent(
+    wiki_root: str,
+    model: str,
+    language: str = "en",
+    bundle: "LlmCredentialBundle | None" = None,
+) -> Agent:
     """Build and return the Q&A agent."""
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
@@ -96,13 +102,81 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
 
     from agents.model_settings import ModelSettings
 
+    if bundle is not None:
+        model_settings = {
+            "parallel_tool_calls": (
+                bundle.parallel_tool_calls if bundle.parallel_tool_calls_explicit else False
+            ),
+            "extra_headers": bundle.extra_headers or None,
+            "extra_args": {"timeout": bundle.timeout} if bundle.timeout is not None else None,
+        }
+    else:
+        model_settings = resolve_model_settings()
+
     return Agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(**resolve_model_settings()),
+        model_settings=ModelSettings(**model_settings),
     )
+
+
+async def iter_agent_response_events(
+    agent: Agent,
+    input_data: str | list[dict[str, Any]],
+    *,
+    max_turns: int = MAX_TURNS,
+    run_config: Any = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield non-TTY events for a streamed agent response.
+
+    The CLI renders these events to stdout; the REST API serializes the same
+    events as SSE. Events: ``{"event": "delta", "data": {"text": ...}}`` for
+    each response-text delta, ``{"event": "tool_call", "data": {...}}`` for
+    tool invocations, and a final ``{"event": "final", "data": {"answer": ...,
+    "history": [...]}}`` carrying the complete answer and reusable Agents SDK
+    history.
+    """
+    from agents import RawResponsesStreamEvent, RunItemStreamEvent
+    from openai.types.responses import ResponseTextDeltaEvent
+
+    result = (
+        Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config)
+        if run_config
+        else Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    )
+    collected: list[str] = []
+
+    async for event in result.stream_events():
+        if isinstance(event, RawResponsesStreamEvent):
+            if isinstance(event.data, ResponseTextDeltaEvent):
+                text = event.data.delta
+                if text:
+                    collected.append(text)
+                    yield {"event": "delta", "data": {"text": text}}
+        elif isinstance(event, RunItemStreamEvent):
+            item = event.item
+            if item.type == "tool_call_item":
+                raw_item = item.raw_item
+                yield {
+                    "event": "tool_call",
+                    "data": {
+                        "name": getattr(raw_item, "name", "?"),
+                        "arguments": getattr(raw_item, "arguments", "") or "",
+                    },
+                }
+
+    answer = "".join(collected).strip()
+    if not answer:
+        answer = (result.final_output or "").strip()
+    yield {
+        "event": "final",
+        "data": {
+            "answer": answer,
+            "history": result.to_input_list(),
+        },
+    }
 
 
 def build_chat_agent(
@@ -252,6 +326,8 @@ async def run_query(
     stream: bool = False,
     *,
     raw: bool = False,
+    run_config: Any = None,
+    bundle: LlmCredentialBundle | None = None,
 ) -> str:
     """Run a Q&A query against the knowledge base.
 
@@ -279,10 +355,14 @@ async def run_query(
 
     wiki_root = str(kb_dir / "wiki")
 
-    agent = build_query_agent(wiki_root, model, language=language)
+    agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     if not stream:
-        result = await Runner.run(agent, question, max_turns=MAX_TURNS)
+        result = (
+            await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+            if run_config
+            else await Runner.run(agent, question, max_turns=MAX_TURNS)
+        )
         return result.final_output or ""
 
     import os
@@ -316,7 +396,11 @@ async def run_query(
     live: Live | None = None
     last_was_text = False
     need_blank_before_text = False
-    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    result = (
+        Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+        if run_config
+        else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    )
     collected: list[str] = []
     segment: list[str] = []
     try:
@@ -376,3 +460,31 @@ async def run_query(
             live.stop()
         print()
     return "".join(collected) if collected else result.final_output or ""
+
+
+def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None") -> Any:
+    """Build an Agents-SDK `RunConfig` from a credential bundle.
+
+    When *bundle* is `None` (CLI path), returns `None` so the runner falls
+    back to the default provider (process-wide `litellm.api_key` / env vars).
+    When a bundle is supplied, a dedicated `LitellmModel` instance is created
+    with the per-KB `api_key` and `base_url` so concurrent requests on the
+    shared event-loop thread never read each other's credentials.
+
+    The model is passed to `LitellmModel` *verbatim* (e.g. ``openai/gpt-4o``)
+    because `LitellmModel` feeds it straight to ``litellm.acompletion``. The
+    ``litellm/`` prefix is an Agent-layer convention to select the backend and
+    must NOT be added here -- doing so yields ``litellm/openai/...`` which
+    litellm rejects as an unknown provider.
+    """
+    if bundle is None:
+        return None
+    from agents import RunConfig
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    litellm_model = LitellmModel(
+        model=model,
+        base_url=bundle.base_url,
+        api_key=bundle.api_key,
+    )
+    return RunConfig(model=litellm_model)

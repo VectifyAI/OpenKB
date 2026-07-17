@@ -54,6 +54,7 @@ Issues = "https://github.com/VectifyAI/OpenKB/issues"
 
 [project.scripts]
 openkb = "openkb.cli:cli"
+openkb-api = "openkb.api:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -62,13 +63,22 @@ testpaths = ["tests"]
 dev = [
     "pytest==9.0.3",
     "pytest-asyncio==1.3.0",
+    "httpx",
     "ruff==0.9.7",
     "mypy==1.15.0",
     "types-PyYAML==6.0.12.20260518",
 ]
+api = ["fastapi", "uvicorn", "python-multipart"]
 
 [tool.hatch.version]
 source = "vcs"
+
+# The Workbench web bundle (openkb/web) is git-ignored but must ship in the
+# published package. `artifacts` force-includes it into both the sdist and the
+# wheel when present (built by `npm run build`, e.g. in release CI). When it is
+# absent the build still succeeds — the API server just serves no UI.
+[tool.hatch.build]
+artifacts = ["openkb/web/**"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["openkb"]

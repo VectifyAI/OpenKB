@@ -13,7 +13,7 @@
 
 # OpenKB: Open LLM Knowledge Base
 
-<p align="center"><i>Scale to long documents&nbsp; • &nbsp;Reasoning-based retrieval&nbsp; • &nbsp;Native multi-modality&nbsp; • &nbsp;No Vector DB</i></p>
+<p align="center"><i>Scale to long documents  •  Reasoning-based retrieval  •  Native multi-modality  •  No Vector DB</i></p>
 
 </div>
 
@@ -49,6 +49,7 @@ OpenKB has two layers: a **wiki foundation** that compiles and maintains your kn
 - **Skill Factory:** Distills redistributable agent skills from your wiki.
 - **OKF-ready:** Wiki pages follow the [Google OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) specification for knowledge sharing.
 - **Obsidian-compatible:** The wiki is plain `.md` files with cross-links. Opens in Obsidian for graph view.
+- **Knowledge Workbench (Web UI):** A bundled web UI served at `/` to browse the KB, upload and compile documents, and stream queries and chats — all in the browser.
 
 # 🚀 Getting Started
 
@@ -117,6 +118,19 @@ LLM_API_KEY=your_llm_api_key
 
 Subscription-based providers that authenticate via OAuth device flow (e.g. `chatgpt/*`, `github_copilot/*`) need no API key; OpenKB skips the missing-key warning for them.
 
+### Knowledge Workbench (Web UI)
+
+OpenKB ships a bundled web UI, served by the REST API at `/`. Install the API extra and start the server — no configuration needed:
+
+```bash
+pip install "openkb[api]"
+openkb-api                       # serves the API + Workbench at http://127.0.0.1:8000/
+```
+
+Open `http://127.0.0.1:8000/` for the Workbench. Auth is off by default (local-first); set `OPENKB_API_TOKEN` to require a bearer token before exposing the server. See the [full Web UI guide](examples/rest-api/README.md#knowledge-workbench-web-ui).
+
+> Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-api`), or `npm run build` to regenerate the bundled `openkb/web/`.
+
 # 🧩 How OpenKB Works
 
 ### Architecture
@@ -127,12 +141,12 @@ Subscription-based providers that authenticate via OAuth device flow (e.g. `chat
 
 ### Short vs Long Document Handling
 
-| | Short documents | Long documents (PDF ≥ 20 pages) |
-|---|---|---|
-| **Convert** | markitdown → Markdown | PageIndex → tree index + summaries |
-| **Images** | Extracted inline (pymupdf) | Extracted by PageIndex |
-| **LLM reads** | Full text | Document trees |
-| **Result** | summary + concepts | summary + concepts |
+|               | Short documents            | Long documents (PDF ≥ 20 pages)    |
+| ------------- | -------------------------- | ---------------------------------- |
+| **Convert**   | markitdown → Markdown      | PageIndex → tree index + summaries |
+| **Images**    | Extracted inline (pymupdf) | Extracted by PageIndex             |
+| **LLM reads** | Full text                  | Document trees                     |
+| **Result**    | summary + concepts         | summary + concepts                 |
 
 Short documents are read in full by the LLM. Long PDFs are processed by [PageIndex](https://github.com/VectifyAI/PageIndex) into a hierarchical tree index. The LLM reads the tree instead of the full text, enabling accurate and scalable retrieval for long documents.
 
@@ -154,24 +168,24 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 
 ## Layer 1: 🧱 Wiki Foundation — compile and maintain
 
-| Command | Description |
-|---|---|
-| `openkb init` | Initialize a new knowledge base (interactive) |
+| Command                                                      | Description                                                                             |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `openkb init`                                                | Initialize a new knowledge base (interactive)                                           |
 | <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add files, directories, or URLs and compile to wiki (URL content type is auto-detected) |
-| `openkb list` | List indexed documents and concepts |
-| `openkb status` | Show knowledge base stats |
-| `openkb watch` | Watch `raw/` and auto-compile new files |
-| `openkb lint` | Run structural and knowledge health checks |
+| `openkb list`                                                | List indexed documents and concepts                                                     |
+| `openkb status`                                              | Show knowledge base stats                                                               |
+| `openkb watch`                                               | Watch `raw/` and auto-compile new files                                                 |
+| `openkb lint`                                                | Run structural and knowledge health checks                                              |
 
 <details>
 <summary><i>More wiki commands:</i></summary>
 <br>
 
-| Command | Description |
-|---|---|
-| <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (`--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts) |
+| Command                                                            | Description                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code>                   | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (`--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts)                                                                     |
 | <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the compile pipeline on already-indexed docs without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten (`--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md`) |
-| <code>openkb&nbsp;feedback&nbsp;["msg"]</code> | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it) |
+| <code>openkb&nbsp;feedback&nbsp;["msg"]</code>                     | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it)                                                                                                                                          |
 
 </details>
 
@@ -181,13 +195,13 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 
 A "generator" reads from the compiled wiki and produces something usable: an answer, a conversation, a skill folder. The wiki is the substrate; generators are the surfaces.
 
-| Command | Output | Example |
-|---|---|---|
-| <code>openkb&nbsp;query&nbsp;"question"</code> | A grounded answer with citations (`--save` to persist to `wiki/explorations/`) | [query & save](examples/commands/) |
-| <code>openkb&nbsp;chat</code> | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions) | [chat](examples/chat/) |
-| <code>openkb&nbsp;visualize</code> | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views | [visualize](examples/visualize/) |
-| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below) | [skills](examples/skills/) |
-| <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code> | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass) | [slides](examples/slides/) |
+| Command                                                                               | Output                                                                                                         | Example                            |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| <code>openkb&nbsp;query&nbsp;"question"</code>                                        | A grounded answer with citations (`--save` to persist to `wiki/explorations/`)                                 | [query & save](examples/commands/) |
+| <code>openkb&nbsp;chat</code>                                                         | Interactive multi-turn session over the wiki (`--resume`, `--list`, `--delete` to manage sessions)             | [chat](examples/chat/)             |
+| <code>openkb&nbsp;visualize</code>                                                    | A self-contained interactive knowledge graph at `output/visualize/graph.html` — 3D, mind-map, and radial views | [visualize](examples/visualize/)   |
+| <code>openkb&nbsp;skill&nbsp;new&nbsp;&lt;skill-name&gt;&nbsp;"&lt;intent&gt;"</code> | Distill a redistributable agent skill from your wiki (see [Skill Factory](#skill-factory) below)               | [skills](examples/skills/)         |
+| <code>openkb&nbsp;deck&nbsp;new&nbsp;&lt;name&gt;&nbsp;"&lt;intent&gt;"</code>        | Generate a single-file HTML slide deck (`--skill` picks a theme, `--critique` runs a quality pass)             | [slides](examples/slides/)         |
 
 ### (i) 💬 Query & Chat — *ask the wiki*
 
@@ -223,11 +237,11 @@ Inside a chat, type `/` to access slash commands (Tab to complete).
 <summary><i>More skill commands:</i></summary>
 <br>
 
-| Command | Output |
-|---|---|
-| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code> | Validate compiled skills (auto-runs after `skill new`) |
-| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code> | Check the skill triggers on the right prompts |
-| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills |
+| Command                                                                                                                        | Output                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| <code>openkb&nbsp;skill&nbsp;validate&nbsp;[name]</code>                                                                       | Validate compiled skills (auto-runs after `skill new`) |
+| <code>openkb&nbsp;skill&nbsp;eval&nbsp;&lt;name&gt;</code>                                                                     | Check the skill triggers on the right prompts          |
+| <code>openkb&nbsp;skill&nbsp;history&nbsp;&lt;name&gt;</code> / <code>openkb&nbsp;skill&nbsp;rollback&nbsp;&lt;name&gt;</code> | Version history + rollback for skills                  |
 
 </details>
 
@@ -325,19 +339,25 @@ gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/open
 
 The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
 
+# REST API
+
+OpenKB ships a FastAPI service for HTTP clients. Install with `pip install -e ".[api]"`, then start with `python -m openkb.api`. The interactive API reference is at [`/docs`](http://127.0.0.1:8000/docs) (importable into Postman).
+
+See the [full REST API reference](examples/rest-api/README.md#rest-api) for endpoints, auth, and SSE streaming.
+
 # 🧭 Learn More
 
 ### Compared to Karpathy's Approach
 
-| | Karpathy's workflow | OpenKB |
-|---|---|---|
-| Short documents | LLM reads directly | markitdown → LLM reads |
-| Long documents | Context limits, context rot | PageIndex tree index |
-| Input sources | Web clipper → .md | PDF, Word, PPT, Excel, HTML, text, CSV, .md, URLs |
-| Wiki compilation | LLM agent | LLM agent (same) |
-| Entity extraction | Manual | Automatic (people, orgs, places, products) |
-| Q&A | Query over wiki | Wiki + PageIndex retrieval |
-| Output | Wiki only | Wiki + Skill Factory + agent CLI integration |
+|                   | Karpathy's workflow         | OpenKB                                            |
+| ----------------- | --------------------------- | ------------------------------------------------- |
+| Short documents   | LLM reads directly          | markitdown → LLM reads                            |
+| Long documents    | Context limits, context rot | PageIndex tree index                              |
+| Input sources     | Web clipper → .md           | PDF, Word, PPT, Excel, HTML, text, CSV, .md, URLs |
+| Wiki compilation  | LLM agent                   | LLM agent (same)                                  |
+| Entity extraction | Manual                      | Automatic (people, orgs, places, products)        |
+| Q&A               | Query over wiki             | Wiki + PageIndex retrieval                        |
+| Output            | Wiki only                   | Wiki + Skill Factory + agent CLI integration      |
 
 ### The Stack
 
@@ -354,7 +374,7 @@ The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` wit
 - [ ] Scale to large document collections with nested folder support
 - [ ] Hierarchical concept (topic) indexing for massive knowledge bases
 - [ ] Database-backed storage engine
-- [ ] Web UI for browsing and managing wikis
+- [x] Web UI for browsing and managing wikis (Knowledge Workbench, served at `/`)
 
 ### Contributing
 

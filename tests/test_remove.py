@@ -1336,3 +1336,99 @@ def test_remove_cloud_doc_never_touches_pageindex(tmp_path):
     assert not (tmp_path / "wiki" / "summaries" / "cloud-doc.md").exists()
     assert not (tmp_path / "wiki" / "sources" / "cloud-doc.json").exists()
     assert HashRegistry(openkb_dir / "hashes.json").get("synthhash") is None
+
+
+# ---------------------------------------------------------------------------
+# run_remove_for_api (REST entry point, shares _build/_execute with the CLI)
+# ---------------------------------------------------------------------------
+
+
+def _seed_one_doc_kb(kb_dir: Path) -> None:
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_a": {
+                    "name": "paper.pdf",
+                    "doc_name": "paper",
+                    "type": "short",
+                    "path": "raw/paper.pdf",
+                },
+            }
+        )
+    )
+    (kb_dir / "raw" / "paper.pdf").write_bytes(b"%PDF-paper")
+    (kb_dir / "wiki" / "summaries" / "paper.md").write_text(
+        "---\nsources: [raw/paper.pdf]\nbrief: x\n---\n# Paper\n",
+        encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "index.md").write_text(
+        "# Knowledge Base Index\n\n## Documents\n"
+        "- [[summaries/paper]] (short) - x\n\n## Concepts\n\n## Explorations\n",
+        encoding="utf-8",
+    )
+    (kb_dir / "wiki" / "log.md").write_text("# Log\n", encoding="utf-8")
+
+
+def test_run_remove_for_api_dry_run_has_no_side_effects(kb_dir):
+    _seed_one_doc_kb(kb_dir)
+    from openkb.cli import run_remove_for_api
+
+    result = run_remove_for_api(kb_dir, "paper.pdf", dry_run=True)
+
+    assert result["status"] == "dry_run"
+    assert result["name"] == "paper.pdf"
+    assert any(a["tag"] == "DELETE" for a in result["actions"])
+    # Nothing modified.
+    assert (kb_dir / "wiki" / "summaries" / "paper.md").exists()
+    assert "h_a" in json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+
+
+def test_run_remove_for_api_removes_doc(kb_dir):
+    _seed_one_doc_kb(kb_dir)
+    from openkb.cli import run_remove_for_api
+
+    result = run_remove_for_api(kb_dir, "paper.pdf", dry_run=False)
+
+    assert result["status"] == "removed"
+    assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()
+    assert not (kb_dir / "raw" / "paper.pdf").exists()
+    assert json.loads((kb_dir / ".openkb" / "hashes.json").read_text()) == {}
+
+
+def test_run_remove_for_api_not_found(kb_dir):
+    _seed_one_doc_kb(kb_dir)
+    from openkb.cli import run_remove_for_api
+
+    assert run_remove_for_api(kb_dir, "missing")["status"] == "not_found"
+
+
+def test_run_remove_for_api_keep_raw_preserves_file(kb_dir):
+    _seed_one_doc_kb(kb_dir)
+    from openkb.cli import run_remove_for_api
+
+    run_remove_for_api(kb_dir, "paper.pdf", keep_raw=True)
+    assert (kb_dir / "raw" / "paper.pdf").exists()
+    assert json.loads((kb_dir / ".openkb" / "hashes.json").read_text()) == {}
+
+
+def test_run_remove_for_api_pageindex_failure_is_partial(kb_dir):
+    """PageIndex cleanup raising must leave the registry entry intact for
+    retry (status=partial), mirroring the CLI behavior."""
+    _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
+
+    failing_client = MagicMock()
+    failing_client.collection.side_effect = RuntimeError("LLM key missing")
+
+    with (
+        patch("pageindex.PageIndexClient", return_value=failing_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
+        from openkb.cli import run_remove_for_api
+
+        result = run_remove_for_api(kb_dir, "paper.pdf", keep_raw=True)
+
+    assert result["status"] == "partial"
+    # Registry entry (with doc_id) survives for retry.
+    hashes = json.loads((kb_dir / ".openkb" / "hashes.json").read_text())
+    assert "h_paper" in hashes
+    assert hashes["h_paper"]["doc_id"] == "pi-doc-xyz"

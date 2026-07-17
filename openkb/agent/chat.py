@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
@@ -24,7 +24,13 @@ from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
-from openkb.agent.query import MAX_TURNS, build_chat_agent
+from openkb.agent.query import (
+    MAX_TURNS,
+    build_chat_agent,
+    build_query_agent,
+    iter_agent_response_events,
+)
+from openkb.config import LlmCredentialBundle
 from openkb.log import append_log
 
 _STYLE_DICT: dict[str, str] = {
@@ -890,6 +896,62 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     _fmt(style, ("class:slash.ok", f"Critique pass complete: {rel_str}\n"))
+
+
+def build_chat_session_agent(
+    kb_dir: Path,
+    session: ChatSession,
+    bundle: "LlmCredentialBundle | None" = None,
+) -> Any:
+    """Build the query-backed agent for one chat session (REST ``/chat``).
+
+    Thin wrapper that resolves language from the session/config and delegates
+    to ``build_query_agent`` with the session's model. Kept in chat.py (not
+    query.py) so the query module's ``build_chat_agent`` signature stays
+    unchanged for the CLI; the API uses this session-aware variant instead.
+    """
+    from openkb.config import load_config
+
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    language = session.language or config.get("language", "en")
+    wiki_root = str(kb_dir / "wiki")
+    return build_query_agent(wiki_root, session.model, language=language, bundle=bundle)
+
+
+async def iter_chat_turn_events(
+    agent: Any,
+    session: ChatSession,
+    user_input: str,
+    *,
+    run_config: Any = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield non-TTY events for one chat turn and persist the final turn.
+
+    Used by the REST ``/chat`` SSE stream: forwards delta/tool_call events from
+    ``iter_agent_response_events`` unchanged, and on the final event records
+    the turn into the session (history + counts) before re-emitting it with
+    ``session_id``/``turn_count``.
+    """
+    new_input = session.history + [{"role": "user", "content": user_input}]
+
+    async for event in iter_agent_response_events(
+        agent, new_input, max_turns=MAX_TURNS, run_config=run_config
+    ):
+        if event["event"] != "final":
+            yield event
+            continue
+
+        data = event["data"]
+        answer = data["answer"]
+        session.record_turn(user_input, answer, data["history"])
+        yield {
+            "event": "final",
+            "data": {
+                "answer": answer,
+                "session_id": session.id,
+                "turn_count": session.turn_count,
+            },
+        }
 
 
 async def run_chat(

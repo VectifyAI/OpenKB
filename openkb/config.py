@@ -3,7 +3,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
+import os
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -35,11 +37,22 @@ GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
 GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
 
+# Portable KB names for the REST API: letters, numbers, underscores, hyphens.
+# Lets clients address a knowledge base by a filesystem-safe short name
+# (``kb``) instead of an absolute path, resolved via kb_aliases/OPENKB_KB_ROOT.
+KB_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+
 
 @contextlib.contextmanager
 def _with_global_config_lock() -> Iterator[None]:
     GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with GLOBAL_CONFIG_LOCK_PATH.open("a+", encoding="utf-8") as fh:
+    # Derive the lock path from GLOBAL_CONFIG_DIR (rather than the import-time
+    # GLOBAL_CONFIG_LOCK_PATH constant) so it always co-locates with the dir we
+    # just created — including when tests monkeypatch GLOBAL_CONFIG_DIR to a
+    # throwaway path. Otherwise the lock would open the real ~/.config/openkb,
+    # which fails on a fresh machine where that dir doesn't exist.
+    lock_path = GLOBAL_CONFIG_DIR / "global.lock"
+    with lock_path.open("a+", encoding="utf-8") as fh:
         flock(fh, exclusive=True)
         try:
             yield
@@ -254,6 +267,32 @@ def resolve_litellm_settings(config: dict) -> dict[str, Any]:
 # via get_extra_headers() so the value doesn't have to be threaded through
 # every compile/agent call chain — mirroring how the API key is applied
 # globally via litellm.api_key / provider env vars.
+
+
+# Shared by cli._setup_llm_key and resolve_credential_bundle so the CLI and
+# REST paths apply identical litellm.* override semantics.
+def resolve_per_request_overrides(
+    config: dict[str, Any],
+) -> tuple[dict[str, str], float | None, dict[str, Any]]:
+    """Resolve extra_headers / timeout / litellm_settings with litellm.* overrides.
+
+    ``litellm.extra_headers`` / ``litellm.timeout`` override the top-level
+    ``extra_headers`` / ``timeout`` keys (matching legacy precedence), and are
+    popped from the returned ``litellm_settings`` so they are not also applied
+    as process-wide litellm module settings.
+    """
+    extra_headers = resolve_extra_headers(config)
+    timeout = resolve_timeout(config)
+    litellm_settings = resolve_litellm_settings(config)
+    if "extra_headers" in litellm_settings:
+        extra_headers = resolve_extra_headers(
+            {"extra_headers": litellm_settings.pop("extra_headers")}
+        )
+    if "timeout" in litellm_settings:
+        timeout = resolve_timeout({"timeout": litellm_settings.pop("timeout")})
+    return extra_headers, timeout, litellm_settings
+
+
 _runtime_extra_headers: dict[str, str] = {}
 
 
@@ -327,6 +366,83 @@ def resolve_model_settings(*, default_parallel_tool_calls: bool | None = False) 
     }
 
 
+@dataclass(frozen=True)
+class LlmCredentialBundle:
+    """Immutable per-request LLM credential + config bundle.
+
+    Resolved once from a KB's ``.env`` and ``config.yaml`` via
+    :func:`resolve_credential_bundle`, then threaded through to LLM call sites
+    so concurrent requests on a shared event-loop thread never see each other's
+    key/headers/timeout (unlike the process-wide globals in
+    :func:`set_extra_headers` / :func:`set_timeout`).
+    """
+
+    api_key: str | None = None
+    base_url: str | None = None
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    timeout: float | None = None
+    parallel_tool_calls: bool | None = None
+    parallel_tool_calls_explicit: bool = False
+
+
+def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
+    """Build an :class:`LlmCredentialBundle` from a KB's config, purely.
+
+    Resolves ``LLM_API_KEY`` / ``OPENAI_API_BASE`` with per-KB precedence — the
+    KB's own ``.env`` first, then the process environment, then the global
+    ``~/.config/openkb/.env`` — and reads the KB's ``config.yaml`` for
+    ``extra_headers`` / ``timeout`` / ``litellm``. This honors the same sources
+    as ``cli._setup_llm_key`` (so a server configured via a process env var or
+    the global ``.env`` keeps working) but is side-effect-free: ``os.environ``
+    is never written, so concurrent requests for different KBs cannot see each
+    other's key.
+    """
+    kb_values: dict[str, str | None] = {}
+    kb_env = kb_dir / ".env"
+    if kb_env.exists():
+        from dotenv import dotenv_values
+
+        kb_values = dict(dotenv_values(str(kb_env)))
+
+    global_values: dict[str, str | None] = {}
+    global_env = GLOBAL_CONFIG_DIR / ".env"
+    if global_env.exists():
+        from dotenv import dotenv_values
+
+        global_values = dict(dotenv_values(str(global_env)))
+
+    def _resolve_env(key: str) -> str | None:
+        # KB-local .env wins, then the process environment, then the global
+        # .env; empty values are treated as unset so they fall through.
+        return kb_values.get(key) or os.environ.get(key) or global_values.get(key) or None
+
+    api_key = _resolve_env("LLM_API_KEY")
+    base_url = _resolve_env("OPENAI_API_BASE")
+
+    extra_headers: dict[str, str] = {}
+    timeout: float | None = None
+    parallel_tool_calls: bool | None = None
+    parallel_tool_calls_explicit = False
+    config_path = kb_dir / ".openkb" / "config.yaml"
+    if config_path.exists():
+        config = load_config(config_path)
+        # Shared resolver so CLI and REST apply identical litellm.* override
+        # semantics. litellm module-level settings (drop_params etc.) are
+        # process globals and intentionally not carried per-request: the REST
+        # server runs multiple KBs in one process, so they cannot be isolated.
+        extra_headers, timeout, _ = resolve_per_request_overrides(config)
+        parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
+
+    return LlmCredentialBundle(
+        api_key=api_key,
+        base_url=base_url,
+        extra_headers=extra_headers,
+        timeout=timeout,
+        parallel_tool_calls=parallel_tool_calls,
+        parallel_tool_calls_explicit=parallel_tool_calls_explicit,
+    )
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     """Load YAML config from config_path, merged with DEFAULT_CONFIG.
 
@@ -367,3 +483,60 @@ def register_kb(kb_path: Path) -> None:
             gc["known_kbs"] = known
         gc["default_kb"] = resolved
         _atomic_yaml_dump(GLOBAL_CONFIG_PATH, gc)
+
+
+def kb_root_dir() -> Path:
+    """Return the root directory for API-addressable KB names.
+
+    Controlled by ``OPENKB_KB_ROOT``; defaults to ``<config>/kbs`` so REST
+    ``/init`` creates knowledge bases under a predictable location.
+    """
+    configured_root = os.environ.get("OPENKB_KB_ROOT")
+    if configured_root:
+        return Path(configured_root).expanduser().resolve()
+    return (GLOBAL_CONFIG_DIR / "kbs").resolve()
+
+
+def validate_kb_name(name: str) -> str:
+    """Validate and return a portable KB name."""
+    normalized = name.strip()
+    if not normalized or not KB_NAME_RE.fullmatch(normalized):
+        raise ValueError("KB name must contain only letters, numbers, underscores, and hyphens")
+    return normalized
+
+
+def register_kb_alias(name: str, kb_path: Path) -> None:
+    """Register a portable KB name alias for a KB path.
+
+    Held under the global-config lock so concurrent API writes (uvicorn
+    threadpool) can't lose an alias to a read-modify-write race.
+    """
+    alias = validate_kb_name(name)
+    resolved = str(kb_path.resolve())
+    with _with_global_config_lock():
+        gc = _load_global_config_unlocked()
+        known = gc.get("known_kbs", [])
+        if resolved not in known:
+            known.append(resolved)
+            gc["known_kbs"] = known
+        aliases = gc.get("kb_aliases", {})
+        aliases[alias] = resolved
+        gc["kb_aliases"] = aliases
+        gc["default_kb"] = resolved
+        _atomic_yaml_dump(GLOBAL_CONFIG_PATH, gc)
+
+
+def resolve_kb_alias(name: str) -> Path:
+    """Resolve a portable KB name to its registered path or root fallback.
+
+    If the name is a registered alias, return its path; otherwise fall back to
+    ``<kb_root_dir>/<name>`` so a freshly created KB is addressable without an
+    explicit alias round-trip.
+    """
+    alias = validate_kb_name(name)
+    with _with_global_config_lock():
+        gc = _load_global_config_unlocked()
+        aliases = gc.get("kb_aliases", {})
+    if alias in aliases:
+        return Path(aliases[alias]).expanduser().resolve()
+    return (kb_root_dir() / alias).resolve()
