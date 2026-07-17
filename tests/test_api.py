@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import yaml
 from fastapi.testclient import TestClient
@@ -1143,10 +1145,6 @@ def test_remove_stream_not_found(monkeypatch, kb_dir):
 #
 # Seed helpers mirror tests/test_recompile.py (_seed_short/_seed_long) but are
 # kept local to avoid coupling the two test modules.
-
-
-from pathlib import Path
-from unittest.mock import AsyncMock
 
 
 def _seed_short(kb_dir: Path, *, slug: str = "notes", name: str = "notes.md") -> None:

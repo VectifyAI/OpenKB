@@ -5,6 +5,7 @@ Worker behavior is driven by putting batches directly on the queue to avoid
 OS-watcher timing flakiness; one end-to-end test exercises the real debounce
 pipeline with a small debounce.
 """
+
 from __future__ import annotations
 
 import threading
@@ -196,10 +197,12 @@ def test_end_to_end_debounce_processes_real_file(kb_dir, monkeypatch):
     finally:
         reg.stop("test-kb")
 
+
 def test_record_event_appends_inside_lock():
     """_record_event must append inside the lock so watcher_stopped ordering is preserved."""
     from openkb.watch_service import WatcherState, _record_event
-    state = WatcherState(kb='t', kb_dir=None, raw_dir=None, debounce=0, started_at=0.0)
+
+    state = WatcherState(kb="t", kb_dir=None, raw_dir=None, debounce=0, started_at=0.0)
     _record_event(state, "file_done", {"path": "a.md"})
     _record_event(state, "watcher_stopped", {"kb": "t"})
     events = list(state.events)

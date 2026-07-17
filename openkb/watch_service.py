@@ -16,6 +16,7 @@ Design notes:
 * ``_add_for_api`` and ``SUPPORTED_EXTENSIONS`` are imported into this module's
   namespace so tests can monkeypatch ``openkb.watch_service._add_for_api``.
 """
+
 from __future__ import annotations
 
 import os
@@ -108,35 +109,51 @@ def _process_file(state: WatcherState, raw_path: str) -> None:
     suffix = path.suffix.lower()
     if not suffix or suffix not in SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-        _record_event(state, "file_done", {
-            "path": str(path),
-            "original_name": path.name,
-            "status": "skipped",
-            "message": f"Skipping unsupported file type: {suffix}. Supported: {supported}",
-        })
+        _record_event(
+            state,
+            "file_done",
+            {
+                "path": str(path),
+                "original_name": path.name,
+                "status": "skipped",
+                "message": f"Skipping unsupported file type: {suffix}. Supported: {supported}",
+            },
+        )
         _inc(state, "skipped")
         return
-    _record_event(state, "file_start", {
-        "path": str(path),
-        "original_name": path.name,
-    })
+    _record_event(
+        state,
+        "file_start",
+        {
+            "path": str(path),
+            "original_name": path.name,
+        },
+    )
     try:
         result = _add_for_api(path, state.kb_dir, bundle=state.bundle)
     except Exception as exc:  # worker must never die
-        _record_event(state, "error", {
-            "path": str(path),
-            "original_name": path.name,
-            "message": f"Failed to add: {path.name}: {exc}",
-        })
+        _record_event(
+            state,
+            "error",
+            {
+                "path": str(path),
+                "original_name": path.name,
+                "message": f"Failed to add: {path.name}: {exc}",
+            },
+        )
         _inc(state, "failed")
         return
     status = result.status if result.status in ("added", "skipped", "failed") else "failed"
-    _record_event(state, "file_done", {
-        "path": str(path),
-        "original_name": path.name,
-        "status": status,
-        "message": result.message,
-    })
+    _record_event(
+        state,
+        "file_done",
+        {
+            "path": str(path),
+            "original_name": path.name,
+            "status": status,
+            "message": result.message,
+        },
+    )
     _inc(state, status)
 
 
@@ -159,8 +176,7 @@ class WatchRegistry:
             existing = self._watchers.get(kb)
             if existing is not None:
                 worker_alive = (
-                    existing.worker_thread is not None
-                    and existing.worker_thread.is_alive()
+                    existing.worker_thread is not None and existing.worker_thread.is_alive()
                 )
                 if existing.running.is_set() and worker_alive:
                     return existing
@@ -187,12 +203,15 @@ class WatchRegistry:
 
             state.observer = start_watch(raw_dir, on_new_files, debounce=debounce)
             state.worker_thread = threading.Thread(
-                target=_run_worker, args=(state,), daemon=True,
+                target=_run_worker,
+                args=(state,),
+                daemon=True,
                 name=f"openkb-watch-{kb}",
             )
             self._watchers[kb] = state
         state.worker_thread.start()
         return state
+
     def get(self, kb: str) -> WatcherState | None:
         with self._lock:
             return self._watchers.get(kb)
@@ -265,6 +284,7 @@ class WatchRegistry:
             if self._watchers.get(kb) is state:
                 self._watchers.pop(kb, None)
         return True
+
     def stop_all(self) -> None:
         for kb in self.list_active():
             self.stop(kb)

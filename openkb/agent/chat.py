@@ -934,7 +934,9 @@ async def iter_chat_turn_events(
     """
     new_input = session.history + [{"role": "user", "content": user_input}]
 
-    async for event in iter_agent_response_events(agent, new_input, max_turns=MAX_TURNS, run_config=run_config):
+    async for event in iter_agent_response_events(
+        agent, new_input, max_turns=MAX_TURNS, run_config=run_config
+    ):
         if event["event"] != "final":
             yield event
             continue
@@ -950,6 +952,7 @@ async def iter_chat_turn_events(
                 "turn_count": session.turn_count,
             },
         }
+
 
 async def run_chat(
     kb_dir: Path,

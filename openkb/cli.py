@@ -1,4 +1,5 @@
 """OpenKB CLI — command-line interface for the knowledge base workflow."""
+
 from __future__ import annotations
 
 # Silence import-time warnings (e.g. pydub's missing-ffmpeg warning emitted
@@ -635,6 +636,7 @@ class AddFileResult:
     the original filename and a human-readable message, which the API's
     ``/add`` endpoint surfaces per file in its JSON/SSE response.
     """
+
     original_name: str
     saved_path: str | None
     status: str
@@ -690,14 +692,14 @@ def _cleanup_failed_cloud_import(kb_dir: Path, doc_name: str) -> None:
     concept_result = remove_doc_from_concept_pages(wiki_dir, doc_name, keep_empty=False)
     entity_result = remove_doc_from_entity_pages(wiki_dir, doc_name, keep_empty=False)
     remove_doc_from_index(
-        wiki_dir, doc_name, concept_result["deleted"],
+        wiki_dir,
+        doc_name,
+        concept_result["deleted"],
         entity_slugs_deleted=entity_result["deleted"],
     )
 
 
-def import_from_pageindex_cloud(
-    doc_id: str, kb_dir: Path
-) -> Literal["added", "skipped", "failed"]:
+def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "skipped", "failed"]:
     """Import an existing PageIndex Cloud document into the KB by ``doc_id``.
 
     Fetches structure + page content from the cloud (no local PDF), compiles
@@ -1342,6 +1344,7 @@ def _resolve_doc_identifier(registry, identifier: str) -> list[tuple[str, dict]]
 @dataclass
 class RemoveAction:
     """One planned step surfaced in the remove preview/summary."""
+
     tag: str
     target: str
 
@@ -1353,6 +1356,7 @@ class RemovePlan:
     Built by ``_build_remove_plan``; consumed by the CLI (for printing the
     preview) and by ``_execute_remove_plan`` (for actually doing it).
     """
+
     name: str
     doc_name: str
     doc_type: str
@@ -1376,6 +1380,7 @@ class RemoveResult:
     ``status="partial"`` means PageIndex cleanup raised and the registry
     entry was deliberately kept so the user can retry — mirroring the CLI.
     """
+
     status: Literal["removed", "partial"]
     name: str
     doc_name: str
@@ -1439,7 +1444,9 @@ def _build_remove_plan(
     for slug in concept_deletes:
         actions.append(RemoveAction("DELETE", f"wiki/concepts/{slug}.md  (only source: this doc)"))
     for slug in concept_edits:
-        actions.append(RemoveAction("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)"))
+        actions.append(
+            RemoveAction("MODIFY", f"wiki/concepts/{slug}.md  (drop this doc from sources)")
+        )
 
     affected_entities = scan_affected_pages(wiki_dir / "entities", source_file_marker)
     entity_deletes = [s for s, r in affected_entities if r == 0 and not keep_empty]
@@ -1447,7 +1454,9 @@ def _build_remove_plan(
     for slug in entity_deletes:
         actions.append(RemoveAction("DELETE", f"wiki/entities/{slug}.md  (only source: this doc)"))
     for slug in entity_edits:
-        actions.append(RemoveAction("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)"))
+        actions.append(
+            RemoveAction("MODIFY", f"wiki/entities/{slug}.md  (drop this doc from sources)")
+        )
 
     if (wiki_dir / "index.md").exists():
         actions.append(RemoveAction("MODIFY", "wiki/index.md  (remove Documents entry)"))
@@ -1464,7 +1473,9 @@ def _build_remove_plan(
         if pageindex_doc_id:
             actions.append(RemoveAction("PAGEINDEX", f"delete document ({pageindex_doc_id[:12]}…)"))
         else:
-            actions.append(RemoveAction("PAGEINDEX", "delete document (lookup by doc_name; legacy entry)"))
+            actions.append(
+                RemoveAction("PAGEINDEX", "delete document (lookup by doc_name; legacy entry)")
+            )
 
     # Raw copies are named by doc_name since the collision fix: use the
     # recorded raw_path when present. Only pre-upgrade entries (no
@@ -1537,7 +1548,9 @@ def _execute_remove_plan(
     concept_result = remove_doc_from_concept_pages(wiki_dir, doc_name, keep_empty=keep_empty)
     entity_result = remove_doc_from_entity_pages(wiki_dir, doc_name, keep_empty=keep_empty)
     remove_doc_from_index(
-        wiki_dir, doc_name, concept_result["deleted"],
+        wiki_dir,
+        doc_name,
+        concept_result["deleted"],
         entity_slugs_deleted=entity_result["deleted"],
     )
 
@@ -1552,7 +1565,10 @@ def _execute_remove_plan(
     if plan.cleanup_pageindex:
         try:
             _, pageindex_message = _cleanup_pageindex(
-                openkb_dir, kb_dir, doc_name, plan.pageindex_doc_id,
+                openkb_dir,
+                kb_dir,
+                doc_name,
+                plan.pageindex_doc_id,
             )
         except Exception as exc:
             logging.getLogger(__name__).debug("PageIndex cleanup traceback:", exc_info=True)
@@ -1629,7 +1645,11 @@ def run_remove_for_api(
 
         file_hash, meta = matches[0]
         plan = _build_remove_plan(
-            kb_dir, file_hash, meta, keep_raw=keep_raw, keep_empty=keep_empty,
+            kb_dir,
+            file_hash,
+            meta,
+            keep_raw=keep_raw,
+            keep_empty=keep_empty,
         )
         if dry_run:
             return {
@@ -1720,7 +1740,11 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
 
     file_hash, meta = matches[0]
     plan = _build_remove_plan(
-        kb_dir, file_hash, meta, keep_raw=keep_raw, keep_empty=keep_empty,
+        kb_dir,
+        file_hash,
+        meta,
+        keep_raw=keep_raw,
+        keep_empty=keep_empty,
     )
 
     # ----- Print the plan -----
@@ -1754,7 +1778,9 @@ def remove(ctx, identifier, keep_raw, keep_empty, dry_run, yes):
     result = _execute_remove_plan(kb_dir, plan, registry, keep_empty=keep_empty)
 
     if result.lint_files_changed:
-        click.echo(f"  lint --fix cleaned {result.lint_ghosts_removed} dangling wikilink(s) in {result.lint_files_changed} file(s)")
+        click.echo(
+            f"  lint --fix cleaned {result.lint_ghosts_removed} dangling wikilink(s) in {result.lint_files_changed} file(s)"
+        )
     if result.pageindex_message is not None:
         click.echo(f"  PageIndex: {result.pageindex_message}")
     if result.pageindex_error is not None:
@@ -2023,31 +2049,42 @@ async def iter_recompile(
     with kb_ingest_lock(openkb_dir):
         # --- validate args ---
         if all_docs and doc_name:
-            yield {"event": "error", "code": 400,
-                   "message": "Specify either a doc_name or all_docs, not both."}
+            yield {
+                "event": "error",
+                "code": 400,
+                "message": "Specify either a doc_name or all_docs, not both.",
+            }
             return
         if not all_docs and not doc_name:
-            yield {"event": "error", "code": 400,
-                   "message": "Specify a document name or set all_docs to recompile every doc."}
+            yield {
+                "event": "error",
+                "code": 400,
+                "message": "Specify a document name or set all_docs to recompile every doc.",
+            }
             return
 
         # --- resolve targets ---
         if all_docs:
             entries = list(registry.all_entries().values())
             if not entries:
-                yield {"event": "error", "code": 404,
-                       "message": "No documents indexed yet."}
+                yield {"event": "error", "code": 404, "message": "No documents indexed yet."}
                 return
             targets = entries
         else:
+            # Guarded above: not all_docs implies a non-empty doc_name.
+            assert doc_name is not None
             matches = _resolve_doc_identifier(registry, doc_name)
             if not matches:
-                yield {"event": "error", "code": 404,
-                       "message": f"No document matching '{doc_name}' found in the KB."}
+                yield {
+                    "event": "error",
+                    "code": 404,
+                    "message": f"No document matching '{doc_name}' found in the KB.",
+                }
                 return
             if len(matches) > 1:
                 yield {
-                    "event": "error", "code": 409,
+                    "event": "error",
+                    "code": 409,
                     "message": "doc_name matches multiple documents.",
                     "candidates": [
                         {"name": m.get("name", "?"), "doc_name": m.get("doc_name", "?")}
@@ -2074,8 +2111,14 @@ async def iter_recompile(
                 ],
                 "total": total,
             }
-            yield {"event": "final", "status": "dry_run", "total": total,
-                   "recompiled": 0, "skipped": 0, "docs": []}
+            yield {
+                "event": "final",
+                "status": "dry_run",
+                "total": total,
+                "recompiled": 0,
+                "skipped": 0,
+                "docs": [],
+            }
             return
 
         if refresh_schema:
@@ -2097,51 +2140,95 @@ async def iter_recompile(
             ok = False
 
             if not name:
-                doc = {"name": None, "doc_name": None, "type": doc_type,
-                       "status": "skipped", "elapsed": None,
-                       "message": "registry entry has no doc_name."}
+                doc: dict[str, Any] = {
+                    "name": None,
+                    "doc_name": None,
+                    "type": doc_type,
+                    "status": "skipped",
+                    "elapsed": None,
+                    "message": "registry entry has no doc_name.",
+                }
             elif _is_long_doc(meta):
                 summary_path = wiki_dir / "summaries" / f"{name}.md"
                 doc_id = meta.get("doc_id")
                 if not doc_id:
-                    doc = {"name": name, "doc_name": name, "type": "long",
-                           "status": "skipped", "elapsed": None,
-                           "message": "legacy long-doc entry without a doc_id; re-add to refresh."}
+                    doc = {
+                        "name": name,
+                        "doc_name": name,
+                        "type": "long",
+                        "status": "skipped",
+                        "elapsed": None,
+                        "message": "legacy long-doc entry without a doc_id; re-add to refresh.",
+                    }
                 elif not summary_path.exists():
-                    doc = {"name": name, "doc_name": name, "type": "long",
-                           "status": "skipped", "elapsed": None,
-                           "message": f"missing summary at wiki/summaries/{name}.md."}
+                    doc = {
+                        "name": name,
+                        "doc_name": name,
+                        "type": "long",
+                        "status": "skipped",
+                        "elapsed": None,
+                        "message": f"missing summary at wiki/summaries/{name}.md.",
+                    }
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_long_doc(name, summary_path, doc_id, kb_dir, model, bundle=bundle)
+                        await compiler.compile_long_doc(
+                            name, summary_path, doc_id, kb_dir, model, bundle=bundle
+                        )
                     except Exception as exc:
-                        doc = {"name": name, "doc_name": name, "type": "long",
-                               "status": "error", "elapsed": round(time.time() - start, 1),
-                               "message": f"Compilation failed: {exc}"}
+                        doc = {
+                            "name": name,
+                            "doc_name": name,
+                            "type": "long",
+                            "status": "error",
+                            "elapsed": round(time.time() - start, 1),
+                            "message": f"Compilation failed: {exc}",
+                        }
                     else:
-                        doc = {"name": name, "doc_name": name, "type": "long",
-                               "status": "ok", "elapsed": round(time.time() - start, 1),
-                               "message": None}
+                        doc = {
+                            "name": name,
+                            "doc_name": name,
+                            "type": "long",
+                            "status": "ok",
+                            "elapsed": round(time.time() - start, 1),
+                            "message": None,
+                        }
                         ok = True
             else:
                 source_path = wiki_dir / "sources" / f"{name}.md"
                 if not source_path.exists():
-                    doc = {"name": name, "doc_name": name, "type": "short",
-                           "status": "skipped", "elapsed": None,
-                           "message": f"missing source at wiki/sources/{name}.md."}
+                    doc = {
+                        "name": name,
+                        "doc_name": name,
+                        "type": "short",
+                        "status": "skipped",
+                        "elapsed": None,
+                        "message": f"missing source at wiki/sources/{name}.md.",
+                    }
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_short_doc(name, source_path, kb_dir, model, bundle=bundle)
+                        await compiler.compile_short_doc(
+                            name, source_path, kb_dir, model, bundle=bundle
+                        )
                     except Exception as exc:
-                        doc = {"name": name, "doc_name": name, "type": "short",
-                               "status": "error", "elapsed": round(time.time() - start, 1),
-                               "message": f"Compilation failed: {exc}"}
+                        doc = {
+                            "name": name,
+                            "doc_name": name,
+                            "type": "short",
+                            "status": "error",
+                            "elapsed": round(time.time() - start, 1),
+                            "message": f"Compilation failed: {exc}",
+                        }
                     else:
-                        doc = {"name": name, "doc_name": name, "type": "short",
-                               "status": "ok", "elapsed": round(time.time() - start, 1),
-                               "message": None}
+                        doc = {
+                            "name": name,
+                            "doc_name": name,
+                            "type": "short",
+                            "status": "ok",
+                            "elapsed": round(time.time() - start, 1),
+                            "message": None,
+                        }
                         ok = True
 
             docs.append(doc)
@@ -2152,8 +2239,14 @@ async def iter_recompile(
                 skipped += 1
 
         append_log(wiki_dir, "recompile", f"recompiled {recompiled}, skipped {skipped}")
-        yield {"event": "final", "status": "done", "total": total,
-               "recompiled": recompiled, "skipped": skipped, "docs": docs}
+        yield {
+            "event": "final",
+            "status": "done",
+            "total": total,
+            "recompiled": recompiled,
+            "skipped": skipped,
+            "docs": docs,
+        }
 
 
 @cli.command()
@@ -3385,6 +3478,7 @@ def _newest_mtime_iso(paths: list[Path]) -> str | None:
     if not paths:
         return None
     import datetime
+
     newest = max(paths, key=lambda p: p.stat().st_mtime)
     local_tz = datetime.datetime.now().astimezone().tzinfo
     return datetime.datetime.fromtimestamp(
@@ -3496,22 +3590,21 @@ def get_kb_list(kb_dir: Path) -> dict[str, Any]:
     """Return a structured inventory of the knowledge base (REST ``/list``)."""
     openkb_dir = kb_dir / ".openkb"
     hashes_file = openkb_dir / "hashes.json"
-    hashes = (
-        json.loads(hashes_file.read_text(encoding="utf-8"))
-        if hashes_file.exists() else {}
-    )
+    hashes = json.loads(hashes_file.read_text(encoding="utf-8")) if hashes_file.exists() else {}
 
     documents = []
     for file_hash, meta in hashes.items():
         raw_type = meta.get("type", "unknown")
         pages = meta.get("pages")
-        documents.append({
-            "hash": file_hash,
-            "name": meta.get("name", "unknown"),
-            "type": raw_type,
-            "display_type": _display_type(raw_type),
-            "pages": pages if pages not in ("", 0) else None,
-        })
+        documents.append(
+            {
+                "hash": file_hash,
+                "name": meta.get("name", "unknown"),
+                "type": raw_type,
+                "display_type": _display_type(raw_type),
+                "pages": pages if pages not in ("", 0) else None,
+            }
+        )
 
     summaries_dir = kb_dir / "wiki" / "summaries"
     concepts_dir = kb_dir / "wiki" / "concepts"
@@ -3520,11 +3613,12 @@ def get_kb_list(kb_dir: Path) -> dict[str, Any]:
         "documents": documents,
         "document_count": len(documents),
         "summaries": sorted(p.stem for p in summaries_dir.glob("*.md"))
-        if summaries_dir.exists() else [],
+        if summaries_dir.exists()
+        else [],
         "concepts": sorted(p.stem for p in concepts_dir.glob("*.md"))
-        if concepts_dir.exists() else [],
-        "reports": sorted(p.name for p in reports_dir.glob("*.md"))
-        if reports_dir.exists() else [],
+        if concepts_dir.exists()
+        else [],
+        "reports": sorted(p.name for p in reports_dir.glob("*.md")) if reports_dir.exists() else [],
     }
 
 
@@ -3538,24 +3632,15 @@ def get_kb_status(kb_dir: Path) -> dict[str, Any]:
         directories[subdir] = len(list(path.glob("*.md"))) if path.exists() else 0
 
     raw_dir = kb_dir / "raw"
-    raw_count = (
-        len([f for f in raw_dir.iterdir() if f.is_file()]) if raw_dir.exists() else 0
-    )
+    raw_count = len([f for f in raw_dir.iterdir() if f.is_file()]) if raw_dir.exists() else 0
 
     hashes_file = kb_dir / ".openkb" / "hashes.json"
-    hashes = (
-        json.loads(hashes_file.read_text(encoding="utf-8"))
-        if hashes_file.exists() else {}
-    )
+    hashes = json.loads(hashes_file.read_text(encoding="utf-8")) if hashes_file.exists() else {}
 
     summaries = (
-        list((wiki_dir / "summaries").glob("*.md"))
-        if (wiki_dir / "summaries").exists() else []
+        list((wiki_dir / "summaries").glob("*.md")) if (wiki_dir / "summaries").exists() else []
     )
-    reports = (
-        list((wiki_dir / "reports").glob("*.md"))
-        if (wiki_dir / "reports").exists() else []
-    )
+    reports = list((wiki_dir / "reports").glob("*.md")) if (wiki_dir / "reports").exists() else []
     return {
         "directories": directories,
         "raw_count": raw_count,
@@ -3572,7 +3657,9 @@ def _fix_summary(files_changed: int | None, ghosts: int | None) -> str:
     return "Nothing to fix — all wikilinks resolve."
 
 
-async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False, bundle=None) -> dict[str, Any]:
+async def run_lint_report(
+    kb_dir: Path, *, fix: bool = False, echo: bool = False, bundle=None
+) -> dict[str, Any]:
     """Run lint and return structured report metadata (REST ``/lint``).
 
     Mirrors ``run_lint`` (structural + knowledge lint, writes a combined
@@ -3601,10 +3688,7 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
 
     openkb_dir = kb_dir / ".openkb"
     hashes_file = openkb_dir / "hashes.json"
-    hashes = (
-        json.loads(hashes_file.read_text(encoding="utf-8"))
-        if hashes_file.exists() else {}
-    )
+    hashes = json.loads(hashes_file.read_text(encoding="utf-8")) if hashes_file.exists() else {}
 
     if not hashes:
         message = "Nothing to lint - no documents indexed yet. Run `openkb add` first."
@@ -3637,7 +3721,9 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
         click.echo("Running knowledge lint...")
 
     try:
-        knowledge_report = await run_knowledge_lint(kb_dir, model, bundle=bundle, run_config=run_config)
+        knowledge_report = await run_knowledge_lint(
+            kb_dir, model, bundle=bundle, run_config=run_config
+        )
     except Exception as exc:
         knowledge_report = f"Knowledge lint failed: {exc}"
     if echo:
@@ -3646,6 +3732,7 @@ async def run_lint_report(kb_dir: Path, *, fix: bool = False, echo: bool = False
     reports_dir = kb_dir / "wiki" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     import datetime
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     report_path = reports_dir / f"lint_{timestamp}.md"
     counter = 1

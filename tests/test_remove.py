@@ -1337,19 +1337,29 @@ def test_remove_cloud_doc_never_touches_pageindex(tmp_path):
     assert not (tmp_path / "wiki" / "sources" / "cloud-doc.json").exists()
     assert HashRegistry(openkb_dir / "hashes.json").get("synthhash") is None
 
+
 # ---------------------------------------------------------------------------
 # run_remove_for_api (REST entry point, shares _build/_execute with the CLI)
 # ---------------------------------------------------------------------------
 
 
 def _seed_one_doc_kb(kb_dir: Path) -> None:
-    (kb_dir / ".openkb" / "hashes.json").write_text(json.dumps({
-        "h_a": {"name": "paper.pdf", "doc_name": "paper", "type": "short",
-                "path": "raw/paper.pdf"},
-    }))
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps(
+            {
+                "h_a": {
+                    "name": "paper.pdf",
+                    "doc_name": "paper",
+                    "type": "short",
+                    "path": "raw/paper.pdf",
+                },
+            }
+        )
+    )
     (kb_dir / "raw" / "paper.pdf").write_bytes(b"%PDF-paper")
     (kb_dir / "wiki" / "summaries" / "paper.md").write_text(
-        "---\nsources: [raw/paper.pdf]\nbrief: x\n---\n# Paper\n", encoding="utf-8",
+        "---\nsources: [raw/paper.pdf]\nbrief: x\n---\n# Paper\n",
+        encoding="utf-8",
     )
     (kb_dir / "wiki" / "index.md").write_text(
         "# Knowledge Base Index\n\n## Documents\n"
@@ -1409,9 +1419,12 @@ def test_run_remove_for_api_pageindex_failure_is_partial(kb_dir):
     failing_client = MagicMock()
     failing_client.collection.side_effect = RuntimeError("LLM key missing")
 
-    with patch("pageindex.PageIndexClient", return_value=failing_client), \
-         patch("openkb.cli._setup_llm_key"):
+    with (
+        patch("pageindex.PageIndexClient", return_value=failing_client),
+        patch("openkb.cli._setup_llm_key"),
+    ):
         from openkb.cli import run_remove_for_api
+
         result = run_remove_for_api(kb_dir, "paper.pdf", keep_raw=True)
 
     assert result["status"] == "partial"

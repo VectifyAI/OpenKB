@@ -398,7 +398,13 @@ class TruncatedResponseError(Exception):
 
 
 def _llm_call(
-    model: str, messages: list[dict], step_name: str, raise_on_truncation: bool = False, *, bundle=None, **kwargs
+    model: str,
+    messages: list[dict],
+    step_name: str,
+    raise_on_truncation: bool = False,
+    *,
+    bundle=None,
+    **kwargs,
 ) -> str:
     """Single LLM call with animated progress and debug logging."""
     messages = _prepare_messages(model, messages)
@@ -435,7 +441,13 @@ def _llm_call(
 
 
 async def _llm_call_async(
-    model: str, messages: list[dict], step_name: str, raise_on_truncation: bool = False, *, bundle=None, **kwargs
+    model: str,
+    messages: list[dict],
+    step_name: str,
+    raise_on_truncation: bool = False,
+    *,
+    bundle=None,
+    **kwargs,
 ) -> str:
     """Async LLM call with timing output and debug logging."""
     messages = _prepare_messages(model, messages)
@@ -471,7 +483,9 @@ async def _llm_call_async(
     return content.strip()
 
 
-async def _llm_call_page_async(model: str, messages: list[dict], step_name: str, *, bundle=None, **kwargs) -> str:
+async def _llm_call_page_async(
+    model: str, messages: list[dict], step_name: str, *, bundle=None, **kwargs
+) -> str:
     """``_llm_call_async`` for a step that writes a wiki page from the response.
 
     Hard-codes ``raise_on_truncation=True`` so a truncated response skips the
@@ -479,7 +493,9 @@ async def _llm_call_page_async(model: str, messages: list[dict], step_name: str,
     every page-generating call so the guarantee can't be forgotten at a new
     call site.
     """
-    return await _llm_call_async(model, messages, step_name, raise_on_truncation=True, bundle=bundle, **kwargs)
+    return await _llm_call_async(
+        model, messages, step_name, raise_on_truncation=True, bundle=bundle, **kwargs
+    )
 
 
 async def _close_async_llm_clients() -> None:
@@ -2236,7 +2252,11 @@ async def compile_short_doc(
     # v2 (with a whitelist of known wikilink targets) inside
     # _compile_concepts before being written to disk.
     summary_raw = _llm_call(
-        model, [system_msg, doc_msg], "summary", response_format=_JSON_RESPONSE_FORMAT, bundle=bundle
+        model,
+        [system_msg, doc_msg],
+        "summary",
+        response_format=_JSON_RESPONSE_FORMAT,
+        bundle=bundle,
     )
     try:
         summary_parsed = _parse_json(summary_raw)
