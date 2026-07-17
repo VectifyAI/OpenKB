@@ -24,10 +24,13 @@ from openkb.schema import PAGE_CONTENT_DIRS
 # same-page fragment links [[#Heading]], and embeds ![[file]]. Named groups
 # keep the pieces separable so Obsidian fragment/embed syntax survives
 # validation and rewriting instead of being demoted to plain text.
-# `[` is excluded from the target class: Obsidian forbids it in note names,
-# and allowing it makes scans quadratic on long runs of unmatched `[`.
+# `[` is excluded from every inner class (target, frag, and alias): Obsidian
+# forbids it in note names, and allowing it in any class lets that class run
+# past a following `[[` that starts a new unclosed link, so a long `]`-free
+# region seeded with `[[a#`… or `[[a|`… backtracks quadratically — not just a
+# bare run of `[`. Bounding all three keeps the scan linear.
 _WIKILINK_RE = re.compile(
-    r"(?P<embed>!)?\[\[(?P<target>[^\[\]|#]*)(?P<frag>#[^\]|]*)?(?:\|(?P<alias>[^\]]+))?\]\]"
+    r"(?P<embed>!)?\[\[(?P<target>[^\[\]|#]*)(?P<frag>#[^\[\]|]*)?(?:\|(?P<alias>[^\[\]]+))?\]\]"
 )
 
 # Extension-like suffix on a wikilink target: 1-8 alphanumeric chars with at

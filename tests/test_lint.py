@@ -701,6 +701,30 @@ class TestObsidianSyntax:
         assert out == payload
         assert ghosts == []
 
+    def test_unmatched_fragment_run_scans_in_linear_time(self):
+        # Regression: excluding "[" from the *target* class alone was not
+        # enough — the frag class `#[^\]|]*` still swallowed following `[[`s,
+        # so a long `]`-free run of `[[a#`… stayed quadratic (~15s at 10k).
+        # Excluding "[" from the frag class too keeps it linear.
+        payload = "[[a#" * 20_000
+        start = time.perf_counter()
+        out, ghosts = strip_ghost_wikilinks(payload, set())
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert out == payload
+        assert ghosts == []
+
+    def test_unmatched_alias_run_scans_in_linear_time(self):
+        # Same quadratic class via the alias group `[^\]]+` on a `[[a|`… run;
+        # excluding "[" from the alias class bounds it.
+        payload = "[[a|" * 20_000
+        start = time.perf_counter()
+        out, ghosts = strip_ghost_wikilinks(payload, set())
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert out == payload
+        assert ghosts == []
+
     # --- find_broken_links ------------------------------------------------
 
     def test_heading_link_to_existing_page_not_broken(self, tmp_path):
