@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -96,6 +96,8 @@ from openkb.config import (
 from openkb.log import append_log
 from openkb.watch_service import WatchRegistry
 
+logger = logging.getLogger(__name__)
+
 
 def create_app() -> FastAPI:
     # One registry per app instance so each TestClient is isolated.
@@ -125,6 +127,17 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Auth is opt-in (see require_bearer_token). Warn once at server startup
+        # when no token is configured, so an exposed deployment is never
+        # silently world-open. Fires for every launch path (uvicorn/gunicorn/
+        # the openkb-api CLI); harmless on loopback. (create_app() can't see the
+        # bind host under a factory launch, so this is host-agnostic.)
+        if not os.environ.get("OPENKB_API_TOKEN"):
+            logger.warning(
+                "OPENKB_API_TOKEN is not set — the REST API is unauthenticated. "
+                "This is fine for local use; set OPENKB_API_TOKEN to require a "
+                "bearer token before exposing the server on a reachable interface."
+            )
         try:
             yield
         finally:
@@ -562,20 +575,6 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
-
-    # Auth is opt-in (see require_bearer_token). That's fine on loopback, but
-    # warn loudly if the server is bound to a reachable interface without a
-    # token — otherwise the API (and any KB it can touch) is world-open.
-    if not os.environ.get("OPENKB_API_TOKEN") and args.host not in {
-        "127.0.0.1",
-        "localhost",
-        "::1",
-    }:
-        print(
-            f"WARNING: OPENKB_API_TOKEN is not set — the REST API is UNAUTHENTICATED "
-            f"and reachable on {args.host}. Set OPENKB_API_TOKEN to require a bearer token.",
-            file=sys.stderr,
-        )
 
     import uvicorn
 
