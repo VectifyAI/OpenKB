@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -561,6 +562,20 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
+
+    # Auth is opt-in (see require_bearer_token). That's fine on loopback, but
+    # warn loudly if the server is bound to a reachable interface without a
+    # token — otherwise the API (and any KB it can touch) is world-open.
+    if not os.environ.get("OPENKB_API_TOKEN") and args.host not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        print(
+            f"WARNING: OPENKB_API_TOKEN is not set — the REST API is UNAUTHENTICATED "
+            f"and reachable on {args.host}. Set OPENKB_API_TOKEN to require a bearer token.",
+            file=sys.stderr,
+        )
 
     import uvicorn
 

@@ -143,10 +143,12 @@ def require_bearer_token(
 ) -> None:
     expected = os.environ.get("OPENKB_API_TOKEN")
     if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OPENKB_API_TOKEN is not configured.",
-        )
+        # Auth is opt-in. With no OPENKB_API_TOKEN configured the API is open —
+        # the local-first default so `openkb-api` + open the browser just works
+        # with no config. A deployer who exposes the server sets
+        # OPENKB_API_TOKEN to require a bearer token (main() warns when bound to
+        # a non-loopback host without one).
+        return
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

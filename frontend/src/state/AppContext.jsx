@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef } from "react";
-import { getApiBase, getToken, setConnection, hasConnection } from "../api/client.js";
+import { getApiBase, getToken, setConnection } from "../api/client.js";
 import { useI18n } from "../i18n.jsx";
 
 const AppContext = createContext(null);
@@ -11,7 +11,10 @@ export function AppProvider({ children }) {
   const [kbs, setKbs] = useState([]);
   const [kb, setKb] = useState(null);
   const [view, setView] = useState("overview");
-  const [settingsOpen, setSettingsOpen] = useState(!hasConnection());
+  // Auth is opt-in server-side, so don't prompt on load — just talk to the
+  // same-origin API. The dialog opens reactively only if a request 401s
+  // (i.e. the server has a token configured), via the openkb:unauthorized event.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Right-pane reasoning timeline.
   const [inspItems, setInspItems] = useState([]);
   const [inspBusy, setInspBusy] = useState(false);

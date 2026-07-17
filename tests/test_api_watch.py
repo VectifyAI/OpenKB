@@ -3,6 +3,7 @@
 Mirrors the helpers/patterns in tests/test_api.py. Ingest is mocked so no real
 LLM/compilation runs.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,17 +57,19 @@ def _mock_add(monkeypatch, status: str = "added"):
 
 
 def test_watch_endpoints_require_token(monkeypatch, kb_dir):
-    client = _client(monkeypatch, token=None)
+    """Auth is opt-in, but once OPENKB_API_TOKEN is set the watch endpoints
+    reject unauthenticated requests (401 at the dependency, before any watcher
+    side effects)."""
+    client = _client(monkeypatch, token="secret")
     kb = _use_named_kb(monkeypatch, kb_dir)
     for method, path in (
         ("post", "/api/v1/watch/start"),
         ("post", "/api/v1/watch/status"),
     ):
-        resp = getattr(client, method)(path, json={"kb": kb})
-        assert resp.status_code == 500
-        assert "OPENKB_API_TOKEN" in resp.json()["detail"]
-    resp = client.get("/api/v1/watch/events", params={"kb": kb})
-    assert resp.status_code == 500
+        resp = getattr(client, method)(path, json={"kb": kb})  # no auth header
+        assert resp.status_code == 401
+    resp = client.get("/api/v1/watch/events", params={"kb": kb})  # no auth header
+    assert resp.status_code == 401
 
 
 def test_watch_start_status_stop_lifecycle(monkeypatch, kb_dir):
@@ -203,7 +206,6 @@ def test_watch_events_disconnect_terminates(monkeypatch, kb_dir):
         reg.stop("t")
     finally:
         reg.stop("t")
-
 
 
 def test_watch_events_default_timeout_terminates(monkeypatch, kb_dir):

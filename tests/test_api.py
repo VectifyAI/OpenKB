@@ -40,18 +40,26 @@ def _events_from_sse(text: str) -> list[dict[str, Any]]:
     return events
 
 
-def test_api_requires_configured_token(monkeypatch, kb_dir):
+def test_no_token_configured_disables_auth(monkeypatch, tmp_path):
+    """Local-first default: with no OPENKB_API_TOKEN set, auth is off and an
+    unauthenticated request is allowed (not 500/401)."""
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(tmp_path))
     client = _client(monkeypatch, token=None)
-    kb = _use_named_kb(monkeypatch, kb_dir)
 
-    response = client.post(
-        "/api/v1/query",
-        json={"kb": kb, "question": "What?"},
-        headers=_auth(),
-    )
+    response = client.get("/api/v1/kbs")  # no Authorization header
 
-    assert response.status_code == 500
-    assert "OPENKB_API_TOKEN" in response.json()["detail"]
+    assert response.status_code == 200
+
+
+def test_configured_token_is_enforced(monkeypatch, tmp_path):
+    """Setting OPENKB_API_TOKEN opts into bearer auth: an unauthenticated
+    request is then rejected."""
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(tmp_path))
+    client = _client(monkeypatch, token="secret")
+
+    response = client.get("/api/v1/kbs")  # no Authorization header
+
+    assert response.status_code == 401
 
 
 def test_api_rejects_missing_or_invalid_token(monkeypatch, kb_dir):

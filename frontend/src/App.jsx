@@ -2,7 +2,7 @@ import { useEffect, useCallback } from "react";
 import { Menu } from "lucide-react";
 import { AppProvider, useApp } from "./state/AppContext.jsx";
 import { I18nProvider, useI18n } from "./i18n.jsx";
-import { api, hasConnection } from "./api/client.js";
+import { api } from "./api/client.js";
 import Sidebar from "./components/Sidebar.jsx";
 import Inspector from "./components/Inspector.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
@@ -18,7 +18,9 @@ function Shell() {
   const { t, lang } = useI18n();
 
   const loadKbs = useCallback(async () => {
-    if (!hasConnection()) return;
+    // No connection gate: auth is opt-in server-side, so try the same-origin
+    // API directly. If the server requires a token, listKbs 401s and
+    // request() fires openkb:unauthorized, which opens the settings dialog.
     try {
       const data = await api.listKbs();
       setKbs(data.knowledge_bases || []);
