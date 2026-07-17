@@ -145,7 +145,7 @@ class TestConvertDocumentMarkItDown:
         mock_result.text_content = "![](data:image/png;base64,abc123)"
 
         with (
-            patch("openkb.converter.MarkItDown") as mock_markitdown,
+            patch("markitdown.MarkItDown") as mock_markitdown,
             patch(
                 "openkb.converter.extract_base64_images",
                 return_value="converted markdown",
