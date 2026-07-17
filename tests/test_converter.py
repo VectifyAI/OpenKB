@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 from openkb.converter import convert_document, get_pdf_page_count
@@ -162,6 +164,36 @@ class TestConvertDocumentMarkItDown:
         assert result.is_long_doc is False
         assert result.source_path is not None
         assert result.source_path.read_text(encoding="utf-8") == "converted markdown"
+
+
+# ---------------------------------------------------------------------------
+# Lazy markitdown import (guards the deferred-import optimization)
+# ---------------------------------------------------------------------------
+
+
+class TestLazyMarkItDownImport:
+    def test_importing_converter_does_not_load_markitdown(self):
+        """`import openkb.converter` must not pull in markitdown/magika/onnxruntime.
+
+        markitdown is imported lazily inside convert_document's Office-format
+        branch so `import openkb` stays cheap and a packaged build can drop
+        magika/onnxruntime. This runs in a fresh interpreter (a clean
+        sys.modules) so the assertion is deterministic regardless of what other
+        tests in this process already imported.
+        """
+        heavy = ("markitdown", "magika", "onnxruntime")
+        code = (
+            "import sys, openkb.converter; "
+            f"print(','.join(m for m in {heavy!r} if m in sys.modules))"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        loaded = proc.stdout.strip()
+        assert loaded == "", f"import openkb.converter eagerly loaded: {loaded}"
 
 
 # ---------------------------------------------------------------------------
