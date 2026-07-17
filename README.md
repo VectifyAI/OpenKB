@@ -120,14 +120,14 @@ Subscription-based providers that authenticate via OAuth device flow (e.g. `chat
 
 ### Knowledge Workbench (Web UI)
 
-OpenKB ships a bundled web UI, served by the REST API at `/`. Install the API extra and start the server:
+OpenKB ships a bundled web UI, served by the REST API at `/`. Install the API extra and start the server — no configuration needed:
 
 ```bash
 pip install "openkb[api]"
-OPENKB_API_TOKEN=test-token openkb-api --host 127.0.0.1 --port 8000
+openkb-api                       # serves the API + Workbench at http://127.0.0.1:8000/
 ```
 
-Open `http://127.0.0.1:8000/` for the Workbench, or see the [full Web UI guide](examples/rest-api/README.md#knowledge-workbench-web-ui).
+Open `http://127.0.0.1:8000/` for the Workbench. Auth is off by default (local-first); set `OPENKB_API_TOKEN` to require a bearer token before exposing the server. See the [full Web UI guide](examples/rest-api/README.md#knowledge-workbench-web-ui).
 
 > Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-api`), or `npm run build` to regenerate the bundled `openkb/web/`.
 
