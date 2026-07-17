@@ -35,8 +35,12 @@ jobs:
       # would ignore the lockfile and let transitive versions float, defeating
       # the repo's exact-pin supply-chain policy. Run `uv lock` and commit the
       # lockfile whenever pyproject dependencies change.
+      #
+      # `--extra api` is required: the REST tests (tests/test_api*.py) import
+      # fastapi/uvicorn, which live in the `api` extra — without it pytest fails
+      # at collection with ModuleNotFoundError: fastapi.
       - name: Install (locked)
-        run: uv sync --locked --extra dev --python 3.12
+        run: uv sync --locked --extra dev --extra api --python 3.12
 
       # --no-sync: don't let `uv run` re-sync without the dev extra and
       # uninstall the tools it is about to run.
