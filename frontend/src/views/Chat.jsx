@@ -33,6 +33,12 @@ export default function Chat({ kb }) {
   // KB do not write into the new KB's message list.
   useEffect(() => { return () => stop(); }, [kb]);
 
+  // Reset session and messages when switching KBs.
+  useEffect(() => {
+    setSessionId(null);
+    setMsgs([]);
+  }, [kb]);
+
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [msgs]);
 
   function newSession() {

@@ -31,6 +31,9 @@ export default function Query({ kb }) {
   // Stop any in-flight stream when the KB changes.
   useEffect(() => { return () => stop(); }, [kb]);
 
+  // Clear the message list when switching KBs so old answers don't linger.
+  useEffect(() => { setMsgs([]); }, [kb]);
+
   function autosize() {
     const ta = taRef.current;
     if (ta) { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; }

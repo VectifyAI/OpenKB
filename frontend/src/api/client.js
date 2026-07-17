@@ -18,6 +18,9 @@ export function setConnection(apiBase, token) {
 }
 
 export function hasConnection() {
+  // A configured token means "connected". A cross-origin non-HTTPS base is
+  // only advisory (checkBaseSafety warns before each request) — it must not
+  // block LAN/dev http:// endpoints from connecting.
   return !!getToken();
 }
 
