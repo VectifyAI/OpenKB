@@ -26,6 +26,7 @@ from openkb.config import (
     resolve_credential_bundle,
     save_config,
 )
+from openkb.locks import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,16 @@ def apply_kb_config_patch(kb_dir: Path, request: KbConfigPatchRequest) -> None:
                 env_lines.pop("OPENAI_API_BASE", None)
             else:
                 env_lines["OPENAI_API_BASE"] = request.openai_api_base
-        env_path.write_text("".join(f"{k}={v}\n" for k, v in env_lines.items()), encoding="utf-8")
+        # .env holds the sensitive LLM_API_KEY, so the write must be atomic
+        # (crash-safe, matching config.yaml) AND the key must never be
+        # world-readable on disk — not even briefly. atomic_write_text copies
+        # the target's *current* mode onto its private temp file before the
+        # rename (see locks._target_mode), so tighten the target to 0o600 first,
+        # creating it restricted when absent: the temp file then inherits 0o600
+        # and os.replace lands a 0o600 .env with no widen-then-chmod gap.
+        env_path.touch(mode=0o600, exist_ok=True)
         env_path.chmod(0o600)
+        atomic_write_text(env_path, "".join(f"{k}={v}\n" for k, v in env_lines.items()))
         logger.info(
             "kb/config credential rotation: kb=%s fields=%s",
             request.kb,

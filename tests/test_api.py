@@ -1822,6 +1822,28 @@ def test_page_endpoint_rejects_path_traversal(monkeypatch, kb_dir):
     assert response.status_code == 400
 
 
+def test_page_endpoint_rejects_absolute_path(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post("/api/v1/page", json={"kb": kb, "path": "/etc/passwd"}, headers=_auth())
+
+    assert response.status_code == 400
+
+
+def test_page_endpoint_rejects_mid_path_escape(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/page",
+        json={"kb": kb, "path": "concepts/../../../secret"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+
+
 def test_deck_endpoint_non_stream_generates_artifact(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
