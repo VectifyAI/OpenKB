@@ -1,6 +1,8 @@
 import { Routes, Route, useParams } from "react-router"
 import AppSidebar from "@/components/AppSidebar"
+import { Toaster } from "@/components/ui/sonner"
 import Home from "@/pages/Home"
+import ChatSession from "@/pages/ChatSession"
 import KbList from "@/pages/KbList"
 import KbDetail from "@/pages/KbDetail"
 
@@ -17,10 +19,12 @@ export default function App() {
       <main className="relative flex-1 min-w-0 bg-[#f7f7f4] overflow-hidden">
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/chat/:id" element={<ChatSession />} />
           <Route path="/kb" element={<KbList />} />
           <Route path="/kb/:id" element={<KbDetailRoute />} />
         </Routes>
       </main>
+      <Toaster />
     </div>
   )
 }
