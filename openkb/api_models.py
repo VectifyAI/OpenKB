@@ -209,6 +209,40 @@ class RecompileResponse(BaseModel):
     message: str | None = None
 
 
+class DeckRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    intent: str = Field(..., min_length=1)
+    stream: bool = True
+
+
+class DeckResponse(BaseModel):
+    name: str
+    status: str
+    path: str
+
+
+class DeckListResponse(BaseModel):
+    decks: list[dict]
+
+
+class SkillRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    intent: str = Field(..., min_length=1)
+    stream: bool = True
+
+
+class SkillResponse(BaseModel):
+    name: str
+    status: str
+    path: str
+
+
+class SkillListResponse(BaseModel):
+    skills: list[dict]
+
+
 class GraphRequest(BaseModel):
     kb: str = Field(..., min_length=1)
 

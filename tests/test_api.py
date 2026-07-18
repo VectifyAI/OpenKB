@@ -1820,3 +1820,108 @@ def test_page_endpoint_rejects_path_traversal(monkeypatch, kb_dir):
     )
 
     assert response.status_code == 400
+
+
+def test_deck_endpoint_non_stream_generates_artifact(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text("# A\n\nContent.", encoding="utf-8")
+
+    async def fake_run(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "index.html").write_text("<html>deck</html>", encoding="utf-8")
+        self.validation = None
+        return self.output_dir
+
+    monkeypatch.setattr("openkb.skill.generator.Generator.run", fake_run)
+
+    response = client.post(
+        "/api/v1/deck",
+        json={"kb": kb, "name": "my-deck", "intent": "explain X", "stream": False},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "my-deck"
+    assert (kb_dir / "output" / "decks" / "my-deck" / "index.html").exists()
+
+
+def test_deck_list_endpoint(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    deck_dir = kb_dir / "output" / "decks" / "existing-deck"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    response = client.get("/api/v1/deck", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert [d["name"] for d in response.json()["decks"]] == ["existing-deck"]
+
+
+def test_deck_download_endpoint_serves_html(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    deck_dir = kb_dir / "output" / "decks" / "my-deck"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "index.html").write_text("<html>hi</html>", encoding="utf-8")
+
+    response = client.get("/api/v1/deck/my-deck", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.text == "<html>hi</html>"
+
+
+def test_deck_download_endpoint_404_unknown_name(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.get("/api/v1/deck/nope", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 404
+
+
+def test_deck_download_rejects_path_traversal_name(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.get("/api/v1/deck/..%2F..%2Fetc", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code in (400, 404)
+
+
+def test_skill_endpoint_non_stream_generates_artifact(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text("# A\n\nContent.", encoding="utf-8")
+
+    async def fake_run(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "SKILL.md").write_text("---\nname: x\n---\nbody", encoding="utf-8")
+        self.validation = None
+        return self.output_dir
+
+    monkeypatch.setattr("openkb.skill.generator.Generator.run", fake_run)
+
+    response = client.post(
+        "/api/v1/skill",
+        json={"kb": kb, "name": "my-skill", "intent": "be an expert", "stream": False},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    assert (kb_dir / "output" / "skills" / "my-skill" / "SKILL.md").exists()
+
+
+def test_skill_archive_endpoint_returns_zip(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    skill_dir = kb_dir / "output" / "skills" / "my-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: my-skill\n---\nbody", encoding="utf-8")
+
+    response = client.get("/api/v1/skill/my-skill/archive", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"

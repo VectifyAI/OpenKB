@@ -28,9 +28,11 @@ from openkb.api_models import (
     AddFileItem,
     AddResponse,
     ChatRequest,
+    DeckRequest,
     QueryRequest,
     RecompileRequest,
     RemoveRequest,
+    SkillRequest,
 )
 from openkb.cli import (
     SUPPORTED_EXTENSIONS,
@@ -620,6 +622,126 @@ async def _stream_recompile(
                     yield _sse("final", {k: v for k, v in event.items() if k != "event"})
         except Exception as exc:
             yield _sse("error", {"message": f"Recompile failed: {exc}"})
+    yield _sse("done", {})
+
+
+async def _iter_deck(
+    request: DeckRequest,
+    kb_dir: Path,
+    *,
+    bundle=None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Raw event generator for deck generation.
+
+    Yields plain dicts (``start`` / ``error`` / ``final``); both
+    ``_stream_deck`` (SSE) and ``deck_endpoint``'s non-stream branch consume
+    this directly. Mirrors ``iter_recompile``'s split so the SSE formatting
+    lives only in the thin ``_stream_deck`` wrapper, never here.
+    """
+    from openkb.cli import _preflight_skill_new
+    from openkb.skill.generator import Generator
+
+    yield {"event": "start", "endpoint": "deck"}
+    err = _preflight_skill_new(kb_dir, request.name)
+    if err:
+        yield {"event": "error", "code": 400, "message": err}
+        return
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+    gen = Generator(
+        target_type="deck",
+        name=request.name,
+        intent=request.intent,
+        kb_dir=kb_dir,
+        model=model,
+        bundle=bundle,
+    )
+    try:
+        await gen.run()
+    except Exception as exc:
+        yield {"event": "error", "code": 500, "message": f"Deck generation failed: {exc}"}
+        return
+    yield {
+        "event": "final",
+        "name": request.name,
+        "status": "done",
+        "path": str(gen.output_dir),
+    }
+
+
+async def _stream_deck(
+    request: DeckRequest,
+    kb_dir: Path,
+    mutation_lock: asyncio.Lock,
+    *,
+    bundle=None,
+) -> AsyncIterator[str]:
+    """SSE-formatted view of ``_iter_deck``, for the ``stream=true`` branch."""
+    # Hold the per-KB asyncio.Lock for the entire stream so concurrent
+    # same-KB deck generations are serialized (mirrors ``_stream_recompile``);
+    # ``_preflight_skill_new`` does not gate overwrite, so unlocked concurrent
+    # streams would race on the same ``output_dir`` bytes.
+    async with mutation_lock:
+        async for event in _iter_deck(request, kb_dir, bundle=bundle):
+            name = event.pop("event")
+            yield _sse(name, event)
+    yield _sse("done", {})
+
+
+async def _iter_skill(
+    request: SkillRequest,
+    kb_dir: Path,
+    *,
+    bundle=None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Raw event generator for skill generation — same shape as ``_iter_deck``."""
+    from openkb.cli import _preflight_skill_new
+    from openkb.skill.generator import Generator
+
+    yield {"event": "start", "endpoint": "skill"}
+    err = _preflight_skill_new(kb_dir, request.name)
+    if err:
+        yield {"event": "error", "code": 400, "message": err}
+        return
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    model = config.get("model", DEFAULT_CONFIG["model"])
+    gen = Generator(
+        target_type="skill",
+        name=request.name,
+        intent=request.intent,
+        kb_dir=kb_dir,
+        model=model,
+        bundle=bundle,
+    )
+    try:
+        await gen.run()
+    except Exception as exc:
+        yield {"event": "error", "code": 500, "message": f"Skill generation failed: {exc}"}
+        return
+    yield {
+        "event": "final",
+        "name": request.name,
+        "status": "done",
+        "path": str(gen.output_dir),
+    }
+
+
+async def _stream_skill(
+    request: SkillRequest,
+    kb_dir: Path,
+    mutation_lock: asyncio.Lock,
+    *,
+    bundle=None,
+) -> AsyncIterator[str]:
+    """SSE-formatted view of ``_iter_skill``, for the ``stream=true`` branch."""
+    # Hold the per-KB asyncio.Lock for the entire stream so concurrent
+    # same-KB skill generations are serialized (mirrors ``_stream_recompile``);
+    # ``_preflight_skill_new`` does not gate overwrite, so unlocked concurrent
+    # streams would race on the same ``output_dir`` bytes.
+    async with mutation_lock:
+        async for event in _iter_skill(request, kb_dir, bundle=bundle):
+            name = event.pop("event")
+            yield _sse(name, event)
     yield _sse("done", {})
 
 
