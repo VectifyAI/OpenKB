@@ -209,6 +209,26 @@ class RecompileResponse(BaseModel):
     message: str | None = None
 
 
+class GraphRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+
+
+class GraphResponse(BaseModel):
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    types: list[str]
+
+
+class PageRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    path: str = Field(..., min_length=1)
+
+
+class PageResponse(BaseModel):
+    path: str
+    content: str
+
+
 class WatchStartRequest(BaseModel):
     kb: str = Field(..., min_length=1)
     debounce: float = Field(default=2.0, gt=0)

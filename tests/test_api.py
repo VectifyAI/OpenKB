@@ -1758,3 +1758,65 @@ def test_concurrent_different_kbs_do_not_block(monkeypatch, kb_dir, tmp_path_fac
     assert max_seen == 2, (
         f"expected 2 concurrent cross-KB recompiles, got {max_seen} (cross-KB serialized)"
     )
+
+
+def test_graph_endpoint_returns_build_graph_shape(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text(
+        "---\ntype: concept\n---\nSee [[concepts/b]].", encoding="utf-8"
+    )
+    (kb_dir / "wiki" / "concepts" / "b.md").write_text(
+        "---\ntype: concept\n---\nNo links here.", encoding="utf-8"
+    )
+
+    response = client.post("/api/v1/graph", json={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {n["id"] for n in body["nodes"]} == {"concepts/a", "concepts/b"}
+    assert body["edges"] == [{"source": "concepts/a", "target": "concepts/b"}]
+    assert body["types"] == ["concept"]
+
+
+def test_graph_endpoint_empty_wiki_returns_empty_shape(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post("/api/v1/graph", json={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json() == {"nodes": [], "edges": [], "types": []}
+
+
+def test_page_endpoint_returns_content(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text("# A\n\nHello.", encoding="utf-8")
+
+    response = client.post("/api/v1/page", json={"kb": kb, "path": "concepts/a"}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json() == {"path": "concepts/a", "content": "# A\n\nHello."}
+
+
+def test_page_endpoint_404_on_missing_page(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/page", json={"kb": kb, "path": "concepts/nope"}, headers=_auth()
+    )
+
+    assert response.status_code == 404
+
+
+def test_page_endpoint_rejects_path_traversal(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/page", json={"kb": kb, "path": "../../../etc/passwd"}, headers=_auth()
+    )
+
+    assert response.status_code == 400

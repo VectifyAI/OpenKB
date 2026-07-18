@@ -62,6 +62,8 @@ from openkb.api_models import (
     ChatSessionLoadRequest,
     ChatSessionLoadResponse,
     EnvWritten,
+    GraphRequest,
+    GraphResponse,
     InitRequest,
     InitResponse,
     KbListResponse,
@@ -69,6 +71,8 @@ from openkb.api_models import (
     LintRequest,
     LintResponse,
     ListResponse,
+    PageRequest,
+    PageResponse,
     QueryRequest,
     QueryResponse,
     RecompileRequest,
@@ -375,6 +379,33 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"List failed: {exc}",
             ) from exc
+
+    @app.post("/api/v1/graph", response_model=GraphResponse)
+    async def graph_endpoint(
+        request: GraphRequest,
+        _: None = Depends(require_bearer_token),
+    ) -> GraphResponse:
+        kb_dir = _resolve_kb(request.kb)
+        from openkb.visualize import build_graph
+
+        graph = await run_in_threadpool(build_graph, kb_dir / "wiki")
+        return GraphResponse(**graph)
+
+    @app.post("/api/v1/page", response_model=PageResponse)
+    async def page_endpoint(
+        request: PageRequest,
+        _: None = Depends(require_bearer_token),
+    ) -> PageResponse:
+        kb_dir = _resolve_kb(request.kb)
+        wiki_dir = (kb_dir / "wiki").resolve()
+        rel = request.path if request.path.endswith(".md") else f"{request.path}.md"
+        target = (wiki_dir / rel).resolve()
+        if not target.is_relative_to(wiki_dir):
+            raise HTTPException(status_code=400, detail="Invalid page path.")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail=f"Page not found: {request.path}")
+        content = await run_in_threadpool(target.read_text, encoding="utf-8")
+        return PageResponse(path=request.path, content=content)
 
     @app.post("/api/v1/status", response_model=StatusResponse)
     async def status_endpoint(
