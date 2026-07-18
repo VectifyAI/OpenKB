@@ -195,8 +195,15 @@ export default function ChatSession() {
 
   // Existing session (deep link / reload): resolve its KB, then restore turns.
   useEffect(() => {
-    if (id === "new" || restoredRef.current) return
+    if (restoredRef.current) return
     restoredRef.current = true
+    // A brand-new session ("new") has nothing to restore — but we still mark
+    // restoration as done here so that runTurn's self-triggered navigate() (which
+    // adopts the real session id mid-conversation, changing `id` without a
+    // remount) can't re-run this effect and clobber the live streamed msgs. A
+    // genuine cold navigation to /chat/<id> remounts with a fresh restoredRef,
+    // so real prior history still restores normally.
+    if (id === "new") return
     let cancelled = false
 
     const restore = async () => {
