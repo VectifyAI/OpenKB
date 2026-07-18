@@ -4,11 +4,14 @@ import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText } from "l
 import { toast } from "sonner"
 import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatInput"
 import MarkdownView from "@/components/MarkdownView"
+import ArtifactCard, { type Artifact } from "@/components/ArtifactCard"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
-import { getPage } from "@/api/wiki"
+import { getGraph, getPage } from "@/api/wiki"
 import { listKbs } from "@/api/kb"
+import { runDeckCommand, runSkillCommand } from "@/api/artifacts"
+import type { SseEvent } from "@/api/client"
 import {
   foldSseEvent, initialTurnState, listSessions, loadSession,
   streamChat, streamQuery,
@@ -20,10 +23,64 @@ const nid = () => `m${seq++}`
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
-/** A user turn, or an assistant turn holding its folded SSE state. */
+/**
+ * A generator turn (`/deck`, `/skill`, `/visualize`). Deck/skill accumulate an
+ * SSE stream whose `final` event is `{ name, status, path }` (a DIFFERENT shape
+ * than chat/query's `final` — folded by {@link foldArtifactEvent}, never
+ * `foldSseEvent`). `/visualize` is a one-shot fetch, not a stream.
+ */
+interface ArtifactTurn {
+  kind: "deck" | "skill" | "graph"
+  status: "streaming" | "done" | "error"
+  /** Human-readable phase label shown while streaming. */
+  phase: string
+  error: string | null
+  /** The finished artifact, present once generation succeeds. */
+  artifact: Artifact | null
+}
+
+/** A user turn, an assistant chat turn, or a generator (artifact) turn. */
 type Msg =
   | { id: string; role: "user"; text: string; command?: string }
   | { id: string; role: "assistant"; turn: ChatTurnState }
+  | { id: string; role: "artifact"; art: ArtifactTurn }
+
+/**
+ * Fold one deck/skill SSE event into the running artifact turn. Deliberately a
+ * dedicated accumulator (NOT `foldSseEvent`): the deck/skill `final` carries
+ * `{ name, status, path }`, whereas chat/query's `final` carries answer text /
+ * session id — reusing that mapper would silently drop the artifact identity.
+ */
+function foldArtifactEvent(
+  state: ArtifactTurn,
+  event: SseEvent,
+  kind: "deck" | "skill",
+  kb: string,
+): ArtifactTurn {
+  const data = (event?.data ?? {}) as Record<string, unknown>
+  switch (event?.event) {
+    case "start":
+      return { ...state, phase: "生成中（LLM 调用，可能需要数分钟）…" }
+    case "error": {
+      const message = typeof data.message === "string" ? data.message : "生成失败"
+      return { ...state, status: "error", error: message }
+    }
+    case "final": {
+      const name = typeof data.name === "string" ? data.name : ""
+      const status = typeof data.status === "string" ? data.status : "done"
+      const path = typeof data.path === "string" ? data.path : ""
+      const artifact: Artifact = { type: kind, kb, name, status, path }
+      return { ...state, status: "done", phase: "完成", artifact }
+    }
+    case "done":
+      // Terminal frame. Keep an error already recorded; otherwise settle "done".
+      if (state.status === "error") return state
+      return { ...state, status: state.artifact ? "done" : state.status }
+    default:
+      // "start" handled above; ignore anything else.
+      return state
+  }
+}
 
 interface NavState {
   text?: string
@@ -123,6 +180,31 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
   )
 }
 
+/** Renders a generator turn: a live status strip, then the finished artifact. */
+function ArtifactMessage({ art }: { art: ArtifactTurn }) {
+  return (
+    <div className="flex gap-3 anim-fade-up">
+      <span className="w-7 h-7 rounded-lg bg-blue-600 text-white grid place-items-center shrink-0 mt-0.5">
+        <Sparkles className="w-3.5 h-3.5" />
+      </span>
+      <div className="min-w-0 flex-1 max-w-[640px] space-y-3">
+        {art.status === "streaming" && (
+          <div className="inline-flex items-center gap-2 rounded-xl border border-black/6 bg-neutral-50/80 px-3 py-1.5 text-[12.5px] text-neutral-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+            {art.phase}
+          </div>
+        )}
+        {art.status === "error" && (
+          <div className="rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[13px] text-red-600">
+            {art.error ?? "生成失败"}
+          </div>
+        )}
+        {art.artifact && <ArtifactCard artifact={art.artifact} />}
+      </div>
+    </div>
+  )
+}
+
 export default function ChatSession() {
   const { id } = useParams()
   const location = useLocation() as { state?: NavState }
@@ -142,8 +224,68 @@ export default function ChatSession() {
   const startedRef = useRef(false)
   const restoredRef = useRef(false)
 
+  /**
+   * Run a generator command (`/deck`, `/skill`, `/visualize`) against the real
+   * backend and render its result as an {@link ArtifactCard}. Deck/skill stream
+   * SSE (accumulated via {@link foldArtifactEvent}); `/visualize` is a one-shot
+   * `getGraph` fetch (not SSE).
+   */
+  const runArtifactTurn = async (kind: "deck" | "skill" | "graph", text: string) => {
+    const activeKb = kbRef.current
+    if (!activeKb) return
+    setRunning(true)
+    const artId = nid()
+    setMsgs((m) => [
+      ...m,
+      { id: artId, role: "artifact", art: { kind, status: "streaming", phase: "准备中…", error: null, artifact: null } },
+    ])
+    const patch = (fn: (a: ArtifactTurn) => ArtifactTurn) =>
+      setMsgs((m) => m.map((x) => (x.id === artId && x.role === "artifact" ? { ...x, art: fn(x.art) } : x)))
+
+    try {
+      if (kind === "graph") {
+        patch((a) => ({ ...a, phase: "构建概念图谱…" }))
+        const graph = await getGraph(activeKb)
+        patch((a) => ({ ...a, status: "done", phase: "完成", artifact: { type: "graph", kb: activeKb, graph } }))
+        return
+      }
+      // deck / skill: first token is the artifact name (kebab-case slug), the
+      // rest is the free-text intent. Both are required (backend rejects empty).
+      const parts = text.trim().split(/\s+/)
+      const name = parts[0] ?? ""
+      const intent = parts.slice(1).join(" ").trim()
+      if (!name || !intent) {
+        const usage =
+          kind === "deck"
+            ? "用法：/deck <名称> <意图>，例如 “retrieval-intro 面向工程师介绍无向量检索”"
+            : "用法：/skill <名称> <意图>，例如 “pageindex-expert 长文档检索问答专家”"
+        patch((a) => ({ ...a, status: "error", error: usage }))
+        return
+      }
+      const stream = kind === "deck"
+        ? runDeckCommand(activeKb, name, intent)
+        : runSkillCommand(activeKb, name, intent)
+      for await (const event of stream) {
+        patch((a) => foldArtifactEvent(a, event, kind, activeKb))
+      }
+    } catch (e) {
+      const message = errMsg(e)
+      patch((a) => ({ ...a, status: a.status === "done" ? a.status : "error", error: a.error ?? message }))
+      toast.error(`生成失败：${message}`)
+    } finally {
+      // A stream that ended without a terminal `final`/`error` still settles.
+      patch((a) => (a.status === "streaming" ? { ...a, status: a.error ? "error" : "done" } : a))
+      setRunning(false)
+    }
+  }
+
   /** Stream one assistant turn, folding each SSE event into its state live. */
   const runTurn = async (question: string, command: SlashCommand | null) => {
+    // Generator commands route to real deck/skill/graph endpoints, not chat.
+    if (command?.id === "deck") return runArtifactTurn("deck", question)
+    if (command?.id === "skill") return runArtifactTurn("skill", question)
+    if (command?.id === "visualize") return runArtifactTurn("graph", question)
+
     const activeKb = kbRef.current
     if (!activeKb) return
     setRunning(true)
@@ -184,12 +326,14 @@ export default function ChatSession() {
   // New session opened from Home: seed the user message and run the agent once.
   useEffect(() => {
     const st = location.state
-    if (id !== "new" || !st?.text || startedRef.current) return
+    // Seed on any text OR a bare command (e.g. `/visualize` with no text).
+    if (id !== "new" || startedRef.current || (!st?.text && !st?.commandId)) return
     startedRef.current = true
     setKb(st.kbId ?? "")
     const command = st.commandId ? slashCommands.find((c) => c.id === st.commandId) ?? null : null
-    setMsgs([{ id: nid(), role: "user", text: st.text, command: command?.cmd }])
-    void runTurn(st.text, command)
+    const text = st.text ?? ""
+    setMsgs([{ id: nid(), role: "user", text, command: command?.cmd }])
+    void runTurn(text, command)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -274,7 +418,8 @@ export default function ChatSession() {
   }
 
   const send = (text: string, command: SlashCommand | null) => {
-    if (running || !text.trim() || !kbRef.current) return
+    // A selected command may carry no text (e.g. `/visualize` takes no args).
+    if (running || !kbRef.current || (!text.trim() && !command)) return
     setMsgs((m) => [...m, { id: nid(), role: "user", text, command: command?.cmd }])
     void runTurn(text, command)
   }
@@ -312,6 +457,8 @@ export default function ChatSession() {
                   <span className="text-[14px] leading-relaxed">{m.text}</span>
                 </div>
               </div>
+            ) : m.role === "artifact" ? (
+              <ArtifactMessage key={m.id} art={m.art} />
             ) : (
               <AssistantMessage key={m.id} turn={m.turn} onOpen={openSource} />
             ),

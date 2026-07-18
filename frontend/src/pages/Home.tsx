@@ -60,7 +60,8 @@ export default function Home() {
   const totalDocs = kbs.reduce((a, k) => a + k.document_count, 0)
 
   const send = (text: string, command: SlashCommand | null) => {
-    if (!kbId || !text.trim()) return
+    // A selected command may carry no text (e.g. `/visualize` takes no args).
+    if (!kbId || (!text.trim() && !command)) return
     navigate("/chat/new", {
       state: { text, commandId: command?.id ?? null, cmd: command?.cmd ?? null, kbId },
     })
