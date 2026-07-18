@@ -39,7 +39,7 @@ def test_skill_new_succeeds_and_writes_files(tmp_path):
     kb = _make_kb(tmp_path)
     runner = CliRunner()
 
-    async def fake_run(kb_dir, skill_name, intent, model):
+    async def fake_run(kb_dir, skill_name, intent, model, **_kw):
         _fake_compile(kb_dir, skill_name)
 
     with (
@@ -122,7 +122,7 @@ def test_skill_new_overwrites_with_yes_flag(tmp_path):
     (kb / "output" / "skills" / "demo" / "stale.txt").write_text("old")
     runner = CliRunner()
 
-    async def fake_run(kb_dir, skill_name, intent, model):
+    async def fake_run(kb_dir, skill_name, intent, model, **_kw):
         _fake_compile(kb_dir, skill_name)
 
     with (
@@ -148,7 +148,7 @@ def test_skill_new_saves_iteration_when_overwriting(tmp_path):
 
     runner = CliRunner()
 
-    async def fake_run(kb_dir, skill_name, intent, model):
+    async def fake_run(kb_dir, skill_name, intent, model, **_kw):
         _fake_compile(kb_dir, skill_name)
 
     with (

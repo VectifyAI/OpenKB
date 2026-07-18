@@ -20,7 +20,7 @@ from pathlib import Path
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from agents.model_settings import ModelSettings
 
-from openkb.config import resolve_model_settings
+from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.prompts import load_prompt
 from openkb.schema import get_agents_md
 from openkb.skill import skill_dir
@@ -50,6 +50,7 @@ def build_skill_create_agent(
     skill_name: str,
     intent: str,
     model: str,
+    bundle: LlmCredentialBundle | None = None,
 ) -> Agent:
     """Build the openai-agents Agent for compiling one skill.
 
@@ -61,6 +62,11 @@ def build_skill_create_agent(
         intent: the user's natural-language description of what this skill
             should do.
         model: LiteLLM-formatted model name from KB config.
+        bundle: Optional per-request LLM credential/config bundle. When
+            provided (REST path), its headers/timeout/parallel-tool-calls
+            drive the agent's model settings so concurrent requests never
+            share process-global config. ``None`` (CLI default) preserves
+            the existing ``resolve_model_settings`` behavior.
     """
     Path(skill_root).mkdir(parents=True, exist_ok=True)
 
@@ -143,6 +149,24 @@ def build_skill_create_agent(
         """Signal that the skill is complete. Call exactly once when finished."""
         return f"Compilation marked done: {summary}"
 
+    # Default to allowing parallel read tool calls — the compile's early
+    # phase is a fan-out (list dir -> read N summaries -> read N source
+    # page-ranges), and serialising each read into its own turn costs
+    # roughly 5-10 extra round-trips per compile. Writes serialise
+    # naturally because each `write_skill_file` depends on accumulated
+    # reads; the model has no reason to issue parallel writes to the
+    # same path. An explicit config value (e.g. `null` for Bedrock) wins.
+    if bundle is not None:
+        model_settings = {
+            "parallel_tool_calls": (
+                bundle.parallel_tool_calls if bundle.parallel_tool_calls_explicit else True
+            ),
+            "extra_headers": bundle.extra_headers or None,
+            "extra_args": {"timeout": bundle.timeout} if bundle.timeout is not None else None,
+        }
+    else:
+        model_settings = resolve_model_settings(default_parallel_tool_calls=True)
+
     return Agent(
         name="skill-creator",
         instructions=instructions,
@@ -156,14 +180,7 @@ def build_skill_create_agent(
             done,
         ],
         model=f"litellm/{model}",
-        # Default to allowing parallel read tool calls — the compile's early
-        # phase is a fan-out (list dir -> read N summaries -> read N source
-        # page-ranges), and serialising each read into its own turn costs
-        # roughly 5-10 extra round-trips per compile. Writes serialise
-        # naturally because each `write_skill_file` depends on accumulated
-        # reads; the model has no reason to issue parallel writes to the
-        # same path. An explicit config value (e.g. `null` for Bedrock) wins.
-        model_settings=ModelSettings(**resolve_model_settings(default_parallel_tool_calls=True)),
+        model_settings=ModelSettings(**model_settings),
     )
 
 
@@ -173,12 +190,17 @@ async def run_skill_create(
     skill_name: str,
     intent: str,
     model: str,
+    bundle: LlmCredentialBundle | None = None,
 ) -> Path:
     """Compile a single skill from the KB's wiki.
 
     Returns the path to the produced skill directory. Raises
     ``RuntimeError`` if the agent finishes without writing ``SKILL.md``,
     or if the SDK hits its turn cap before the agent declares done.
+
+    ``bundle`` is an optional per-request LLM credential/config bundle
+    forwarded to :func:`build_skill_create_agent`; ``None`` (CLI default)
+    preserves the existing behavior.
     """
     wiki_root = str(kb_dir / "wiki")
     skill_root = skill_dir(kb_dir, skill_name)
@@ -189,6 +211,7 @@ async def run_skill_create(
         skill_name=skill_name,
         intent=intent,
         model=model,
+        bundle=bundle,
     )
 
     # Single user message kicks off the compile. The system prompt already
@@ -202,8 +225,20 @@ async def run_skill_create(
     # internal exception layout in case its export path moves.
     from agents.exceptions import MaxTurnsExceeded
 
+    # Per-KB credential isolation: when a bundle is supplied (REST path) the
+    # RunConfig carries a dedicated LitellmModel with this KB's api_key/base_url,
+    # overriding the process-global provider for this run only. When bundle is
+    # None (CLI path) build_run_config_from_bundle returns None and the call is
+    # byte-identical to the pre-bundle behavior (no run_config kwarg passed).
+    # Lazy import mirrors this module's convention of keeping query imports local.
+    from openkb.agent.query import build_run_config_from_bundle
+
+    run_config = build_run_config_from_bundle(model, bundle)
     try:
-        await Runner.run(agent, seed, max_turns=MAX_TURNS)
+        if run_config:
+            await Runner.run(agent, seed, max_turns=MAX_TURNS, run_config=run_config)
+        else:
+            await Runner.run(agent, seed, max_turns=MAX_TURNS)
     except MaxTurnsExceeded as exc:
         raise RuntimeError(
             f"Skill compilation hit the {MAX_TURNS}-step cap before finishing. "
