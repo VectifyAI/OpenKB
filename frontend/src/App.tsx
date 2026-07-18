@@ -1,7 +1,14 @@
-import { Routes, Route } from "react-router"
+import { Routes, Route, useParams } from "react-router"
 import AppSidebar from "@/components/AppSidebar"
 import Home from "@/pages/Home"
 import KbList from "@/pages/KbList"
+import KbDetail from "@/pages/KbDetail"
+
+/** Remount KbDetail per KB so its page/tree state resets cleanly on nav. */
+function KbDetailRoute() {
+  const { id = "" } = useParams()
+  return <KbDetail key={id} />
+}
 
 export default function App() {
   return (
@@ -11,6 +18,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/kb" element={<KbList />} />
+          <Route path="/kb/:id" element={<KbDetailRoute />} />
         </Routes>
       </main>
     </div>
