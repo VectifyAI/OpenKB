@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class QueryRequest(BaseModel):
@@ -294,3 +294,38 @@ class KbSummaryItem(BaseModel):
 class KbListResponse(BaseModel):
     root: str
     knowledge_bases: list[KbSummaryItem]
+
+
+class _KbConfigWritable(BaseModel):
+    """Typed schema for the writable ``config.yaml`` fields.
+
+    All fields are optional so a partial merge-patch validates. Used to reject
+    a wrong-typed config VALUE with a 400 BEFORE it is persisted: a bad value
+    that reached disk would make every future ``read_kb_config`` re-read it and
+    500 (persisted corruption + endpoint DoS). Types MUST match what
+    ``read_kb_config``/``KbConfigResponse`` read back.
+    """
+
+    model: str | None = None
+    language: str | None = None
+    pageindex_threshold: int | None = None
+
+
+# Single source of truth for the writable config keys (derived from the model
+# above so the two never drift).
+_KB_CONFIG_WRITABLE_KEYS = set(_KbConfigWritable.model_fields)
+
+
+class KbConfigResponse(BaseModel):
+    model: str
+    language: str
+    pageindex_threshold: int
+    openai_api_base: str | None
+    has_api_key: bool
+
+
+class KbConfigPatchRequest(BaseModel):
+    kb: str
+    config: dict[str, Any] | None = None
+    api_key: SecretStr | None = None
+    openai_api_base: str | None = None

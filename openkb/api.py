@@ -32,6 +32,7 @@ from openkb.agent.query import (
     build_run_config_from_bundle,
     run_query,
 )
+from openkb.api_config import apply_kb_config_patch, read_kb_config
 from openkb.api_helpers import (
     _configure_cors,
     _init_kb_for_api,
@@ -73,6 +74,8 @@ from openkb.api_models import (
     GraphResponse,
     InitRequest,
     InitResponse,
+    KbConfigPatchRequest,
+    KbConfigResponse,
     KbListResponse,
     KbRequest,
     LintRequest,
@@ -166,6 +169,25 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> KbListResponse:
         return KbListResponse(**_list_knowledge_bases())
+
+    @app.get("/api/v1/kb/config", response_model=KbConfigResponse)
+    async def kb_config_get_endpoint(
+        kb: str = Query(...),
+        _: None = Depends(require_bearer_token),
+    ) -> KbConfigResponse:
+        return read_kb_config(_resolve_kb(kb))
+
+    @app.patch("/api/v1/kb/config", response_model=KbConfigResponse)
+    async def kb_config_patch_endpoint(
+        request: KbConfigPatchRequest,
+        _: None = Depends(require_bearer_token),
+    ) -> KbConfigResponse:
+        # The merge-PATCH is a read-modify-write over config.yaml + .env; hold
+        # the per-KB mutation lock so two concurrent patches cannot drop fields.
+        kb_dir = _resolve_kb(request.kb)
+        async with _kb_mutation_lock(request.kb):
+            apply_kb_config_patch(kb_dir, request)
+        return read_kb_config(kb_dir)
 
     @app.post("/api/v1/init", response_model=InitResponse)
     async def init_endpoint(

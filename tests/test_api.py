@@ -1925,3 +1925,146 @@ def test_skill_archive_endpoint_returns_zip(monkeypatch, kb_dir):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /api/v1/kb/config
+# ---------------------------------------------------------------------------
+
+
+def test_kb_config_get_returns_fields_and_key_presence(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "gpt-5.4"
+    assert body["has_api_key"] is True
+    assert "secret123" not in response.text
+
+
+def test_kb_config_patch_updates_model_only(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "claude-opus"}}, headers=_auth()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "claude-opus"
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert saved["model"] == "claude-opus"
+
+
+def test_kb_config_patch_unknown_field_is_400(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"modle": "x"}}, headers=_auth()
+    )
+
+    assert response.status_code == 400
+
+
+def test_kb_config_patch_clears_api_key_on_explicit_null(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.patch("/api/v1/kb/config", json={"kb": kb, "api_key": None}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is False
+    assert "LLM_API_KEY" not in (kb_dir / ".env").read_text()
+
+
+def test_kb_config_patch_leaves_api_key_unchanged_when_field_absent(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"language": "en"}}, headers=_auth()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is True
+    assert "LLM_API_KEY=secret123" in (kb_dir / ".env").read_text()
+
+
+def test_kb_config_patch_rejects_bad_value_type(monkeypatch, kb_dir):
+    """A wrong-typed config VALUE is a client error (400), not a 500, and must
+    NOT be persisted — otherwise every future GET would re-read the corrupt
+    value and 500 (a persisted-corruption + endpoint-DoS)."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "config": {"pageindex_threshold": "abc"}},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "pageindex_threshold" in response.json()["detail"]
+
+    # The bad value must not have reached disk: a follow-up GET still succeeds
+    # and returns the original int threshold (proving no config.yaml corruption).
+    follow_up = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["pageindex_threshold"] == 20
+
+
+def test_kb_config_patch_coerces_numeric_string_threshold(monkeypatch, kb_dir):
+    """A coercible numeric-string threshold (``"20"``) is a VALID int patch and
+    must persist as a native ``int`` on disk. Pydantic lax-coerces ``"20"→20``,
+    but that coerced value MUST be what reaches config.yaml — persisting the raw
+    string ``'20'`` would make ``converter.py`` do ``int >= str`` and crash the
+    next long-document ingestion (persisted corruption, different vector)."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "config": {"pageindex_threshold": "20"}},
+        headers=_auth(),
+    )
+
+    # A numeric string is a coercible, valid int — this succeeds (not a 400).
+    assert response.status_code == 200
+
+    # The coerced NATIVE int must be what landed on disk, not the string "20".
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert type(saved["pageindex_threshold"]) is int
+    assert saved["pageindex_threshold"] == 20
+
+    # Belt-and-suspenders: a follow-up GET reads it back as the int 20.
+    follow_up = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["pageindex_threshold"] == 20
+
+
+def test_kb_config_patch_api_key_rotation_preserves_other_env_lines(monkeypatch, kb_dir):
+    """Rotating LLM_API_KEY must rewrite only that line and leave co-existing
+    ``.env`` entries intact, never leaking the key value in the GET response."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=old\nPAGEINDEX_API_KEY=pk-123\n", encoding="utf-8")
+
+    response = client.patch("/api/v1/kb/config", json={"kb": kb, "api_key": "new"}, headers=_auth())
+
+    assert response.status_code == 200
+    env_text = (kb_dir / ".env").read_text()
+    assert "LLM_API_KEY=new" in env_text
+    assert "PAGEINDEX_API_KEY=pk-123" in env_text
+    assert "new" not in response.text
+
+    follow_up = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["has_api_key"] is True
+    assert "new" not in follow_up.text
