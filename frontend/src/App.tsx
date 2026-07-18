@@ -5,6 +5,7 @@ import Home from "@/pages/Home"
 import ChatSession from "@/pages/ChatSession"
 import KbList from "@/pages/KbList"
 import KbDetail from "@/pages/KbDetail"
+import Settings from "@/pages/Settings"
 
 /** Remount KbDetail per KB so its page/tree state resets cleanly on nav. */
 function KbDetailRoute() {
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/chat/:id" element={<ChatSession />} />
           <Route path="/kb" element={<KbList />} />
           <Route path="/kb/:id" element={<KbDetailRoute />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
       <Toaster />
