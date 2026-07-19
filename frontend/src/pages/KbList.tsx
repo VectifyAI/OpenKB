@@ -28,10 +28,10 @@ export default function KbList() {
       <div className="max-w-[900px] mx-auto px-6 py-8">
         <div className="flex items-end justify-between anim-fade-up">
           <div>
-            <h1 className="text-[22px] font-extrabold tracking-tight text-neutral-900">知识库</h1>
-            <p className="mt-1 text-[13px] text-neutral-400">每个知识库是一个持续编译的 wiki，可绑定多个数据源</p>
+            <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">知识库</h1>
+            <p className="mt-1 text-[13px] text-muted-foreground">每个知识库是一个持续编译的 wiki，可绑定多个数据源</p>
           </div>
-          <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-blue-600 text-white text-[13px] font-medium hover:bg-blue-700 shadow-sm transition-colors">
+          <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:opacity-90 shadow-sm transition-colors">
             <Plus className="w-4 h-4" />新建知识库
           </button>
         </div>
@@ -41,25 +41,25 @@ export default function KbList() {
             <button
               key={kb.name}
               onClick={() => navigate(`/kb/${encodeURIComponent(kb.name)}`)}
-              className={cn('anim-fade-up text-left rounded-2xl border border-black/8 bg-white p-5 hover:shadow-lg hover:-translate-y-0.5 hover:border-blue-200 transition-all', `anim-d${(i % 4) + 1}`)}
+              className={cn('anim-fade-up text-left rounded-2xl border border-[hsl(var(--glass-border))] glass-2 p-5 hover:shadow-glass hover:-translate-y-0.5 transition-all duration-fast ease-out-apple', `anim-d${(i % 4) + 1}`)}
             >
               <div className="flex items-center gap-2.5">
                 <span className={cn('w-2.5 h-2.5 rounded-full', dotFor(i))} />
-                <span className="text-[16px] font-bold text-neutral-800">{kb.name}</span>
+                <span className="text-[16px] font-bold text-foreground">{kb.name}</span>
               </div>
 
               <div className="mt-4">
-                <div className="inline-flex items-center gap-3 rounded-xl bg-neutral-50 border border-black/4 px-3.5 py-2.5">
-                  <FileText className="w-4 h-4 text-neutral-400" />
+                <div className="inline-flex items-center gap-3 rounded-xl bg-muted/50 border border-[hsl(var(--glass-border))] px-3.5 py-2.5">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
                   <div>
-                    <div className="text-[17px] font-bold text-neutral-800 leading-none">{kb.document_count}</div>
-                    <div className="mt-1 text-[11px] text-neutral-400">文档</div>
+                    <div className="text-[17px] font-bold text-foreground leading-none tabular-nums tracking-[-0.02em]">{kb.document_count}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">文档</div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-4 flex items-center justify-between text-[11.5px] text-neutral-400">
-                <span className={cn('font-mono2 rounded px-1.5 py-0.5', kb.has_raw ? 'bg-neutral-100' : 'bg-amber-50 text-amber-600')}>
+              <div className="mt-4 flex items-center justify-between text-[11.5px] text-muted-foreground">
+                <span className={cn('font-mono2 rounded px-1.5 py-0.5', kb.has_raw ? 'bg-muted' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400')}>
                   {kb.has_raw ? 'raw/ 已就绪' : '无 raw/'}
                 </span>
                 <span>{formatCompile(kb.last_compile)}</span>
@@ -68,7 +68,7 @@ export default function KbList() {
           ))}
 
           {/* 新建虚线卡 */}
-          <button className="anim-fade-up anim-d4 rounded-2xl border-2 border-dashed border-neutral-200 p-5 grid place-items-center text-neutral-300 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50/30 transition-all min-h-[160px]">
+          <button className="anim-fade-up anim-d4 rounded-2xl border-2 border-dashed border-[hsl(var(--glass-border))] p-5 grid place-items-center text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 hover:bg-accent-brand/5 transition-all duration-fast ease-out-apple min-h-[160px]">
             <span className="flex flex-col items-center gap-2">
               <Plus className="w-6 h-6" />
               <span className="text-[13px] font-medium">新建知识库</span>

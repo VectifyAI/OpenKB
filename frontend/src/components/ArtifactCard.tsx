@@ -267,7 +267,7 @@ function GraphCard({ a }: { a: Extract<Artifact, { type: "graph" }> }) {
                 y1={s.y}
                 x2={t.x}
                 y2={t.y}
-                stroke={i % 2 ? "#c7d2fe" : "#bfdbfe"}
+                className={i % 2 ? "stroke-accent-brand/25" : "stroke-accent-brand/40"}
                 strokeWidth="1"
               />
             )
@@ -280,8 +280,7 @@ function GraphCard({ a }: { a: Extract<Artifact, { type: "graph" }> }) {
                 cx={p.x}
                 cy={p.y}
                 r={p.r}
-                fill="#fff"
-                stroke="#60a5fa"
+                className="fill-background stroke-accent-brand"
                 strokeWidth="1.5"
               >
                 <title>{n.label}</title>
