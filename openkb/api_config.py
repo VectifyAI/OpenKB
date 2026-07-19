@@ -15,6 +15,7 @@ import yaml
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from openkb import config as _config_module
 from openkb.api_models import (
     _KB_CONFIG_WRITABLE_KEYS,
     GlobalConfigPatchRequest,
@@ -26,11 +27,13 @@ from openkb.api_models import (
 )
 from openkb.config import (
     DEFAULT_CONFIG,
+    _atomic_yaml_dump,
+    _load_global_config_unlocked,
+    _with_global_config_lock,
     load_global_config,
     resolve_credential_bundle,
     resolve_effective_config,
     save_config,
-    save_global_config,
 )
 from openkb.locks import atomic_write_text
 
@@ -173,8 +176,23 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
     """Apply an RFC 7386 merge-patch to the whitelisted scalar keys of
     global.yaml. Reuses _KbConfigWritable for VALUE-type validation (a wrong
     type is a 400, never persisted) and MUST preserve the non-scalar global keys
-    (known_kbs / kb_aliases / default_kb) by merging into the loaded dict. Writes
-    go through save_global_config, whose own lock serializes global writes.
+    (known_kbs / kb_aliases / default_kb) by merging into the loaded dict.
+
+    The read-modify-write is done under config._with_global_config_lock() held
+    across the ENTIRE section — not just the write — mirroring exactly how
+    config.register_kb/register_kb_alias mutate global.yaml: load via the
+    UNLOCKED _load_global_config_unlocked() and write DIRECTLY with
+    _atomic_yaml_dump while still holding the lock. Without this, a concurrent
+    registry mutation (e.g. ``openkb kb add`` -> register_kb, or another PATCH)
+    landing between an unlocked read and a separately-locked save would be
+    silently clobbered by this endpoint's stale in-memory dict, wiping the KB
+    registry. This deliberately does NOT call load_global_config()/
+    save_global_config() here: save_global_config() re-acquires the same
+    (non-reentrant, flock-based) lock internally, which would deadlock if
+    invoked from inside a lock we're already holding.
+
+    Validation happens BEFORE the lock is touched, so a bad request still
+    returns 400 without acquiring the lock or reading/writing disk.
     """
     if request.config is None:
         return
@@ -193,10 +211,16 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
             status_code=400,
             detail=f"Invalid type for config field '{field}': {first['msg']}",
         ) from exc
-    gc = load_global_config()
-    for key, value in validated.model_dump(exclude_unset=True).items():
-        if value is None:
-            gc.pop(key, None)  # RFC 7386 removal -> back to DEFAULT_CONFIG
-        else:
-            gc[key] = value
-    save_global_config(gc)
+    dumped = validated.model_dump(exclude_unset=True)
+    with _with_global_config_lock():
+        gc = _load_global_config_unlocked()
+        for key, value in dumped.items():
+            if value is None:
+                gc.pop(key, None)  # RFC 7386 removal -> back to DEFAULT_CONFIG
+            else:
+                gc[key] = value
+        # GLOBAL_CONFIG_PATH is read through the module object (not imported by
+        # name) because tests monkeypatch openkb.config.GLOBAL_CONFIG_PATH per
+        # test; a `from openkb.config import GLOBAL_CONFIG_PATH` would freeze a
+        # stale Path captured at first import instead of tracking the patch.
+        _atomic_yaml_dump(_config_module.GLOBAL_CONFIG_PATH, gc)

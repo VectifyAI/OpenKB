@@ -2471,6 +2471,26 @@ def test_global_config_patch_rejects_unknown_and_bad_type(monkeypatch, tmp_path)
     )
 
 
+def test_global_config_patch_rejects_registry_key(monkeypatch, tmp_path):
+    # known_kbs is a REAL global.yaml key (the KB registry), not a typo — this
+    # proves the endpoint cannot be used to write registry keys at all, since
+    # they're rejected by the same "unknown field" 400 as a typo'd scalar.
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(
+        yaml.safe_dump({"known_kbs": ["/a"], "kb_aliases": {"x": "/a"}, "default_kb": "/a"}),
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    response = client.patch(
+        "/api/v1/config", json={"config": {"known_kbs": ["/evil"]}}, headers=_auth()
+    )
+    assert response.status_code == 400
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["known_kbs"] == ["/a"]  # untouched
+
+
 def test_global_config_patch_null_reverts_to_default(monkeypatch, tmp_path):
     gp = tmp_path / "global.yaml"
     monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
