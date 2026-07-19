@@ -16,7 +16,7 @@ import { runDeckCommand, runSkillCommand } from "@/api/artifacts"
 import type { SseEvent } from "@/api/client"
 import {
   foldSseEvent, initialTurnState, listSessions, loadSession,
-  streamChat, streamQuery,
+  streamChat,
   type ChatTurnState, type Source,
 } from "@/api/chat"
 
@@ -318,16 +318,11 @@ export default function ChatSession() {
     const patch = (fn: (t: ChatTurnState) => ChatTurnState) =>
       setMsgs((m) => m.map((x) => (x.id === assistantId && x.role === "assistant" ? { ...x, turn: fn(x.turn) } : x)))
 
-    // `/ask` is a stateless one-off query; everything else is a chat turn that
-    // persists into a session.
-    const isAsk = command?.id === "ask"
     try {
-      const stream = isAsk
-        ? streamQuery(activeKb, question, { save: false })
-        : streamChat(activeKb, sessionIdRef.current, question)
+      const stream = streamChat(activeKb, sessionIdRef.current, question)
       for await (const event of stream) {
         patch((t) => foldSseEvent(t, event))
-        if (!isAsk && event.event === "final" && typeof event.data?.session_id === "string") {
+        if (event.event === "final" && typeof event.data?.session_id === "string") {
           const sid = event.data.session_id as string
           if (sid && sid !== sessionIdRef.current) {
             sessionIdRef.current = sid

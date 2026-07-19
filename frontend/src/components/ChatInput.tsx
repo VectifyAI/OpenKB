@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowUp, BookOpen, ChevronDown, X,
-  MessageCircleQuestion, Presentation, Sparkles, Waypoints, RefreshCw,
+  Presentation, Sparkles, Waypoints, RefreshCw,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -19,13 +19,11 @@ export interface SlashCommand {
 }
 
 /**
- * Slash commands. `/html` is intentionally absent (dropped for Task 5). Only
- * `/ask` is wired to real streaming today; the generator commands
- * (deck/skill/visualize/compile) land in later tasks and, until then, a picked
- * command still streams a normal chat turn.
+ * Slash commands for generators. Plain text (no command) is a grounded chat turn
+ * that answers questions from the wiki — asking IS the default, so there is no
+ * separate `/ask` command. `/html` is intentionally absent.
  */
 export const slashCommands: SlashCommand[] = [
-  { id: "ask", cmd: "/ask", label: "提问", desc: "基于 wiki 的单次问答，附来源", icon: MessageCircleQuestion },
   { id: "deck", cmd: "/deck", label: "生成幻灯片", desc: "把知识编译成单文件 HTML 演示", icon: Presentation },
   { id: "skill", cmd: "/skill", label: "蒸馏技能", desc: "生成可安装的 Agent Skill", icon: Sparkles },
   { id: "visualize", cmd: "/visualize", label: "知识图谱", desc: "生成交互式概念图谱", icon: Waypoints },
