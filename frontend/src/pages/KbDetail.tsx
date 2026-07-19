@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import {
-  FileText, ExternalLink, Loader2, Upload,
+  FileText, Loader2, Upload,
   RefreshCw, Play, CheckCircle2, AlertCircle, ShieldCheck, Clock, Radio,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -359,7 +359,7 @@ export default function KbDetail() {
               </div>
             )}
             <div className="shrink-0 m-2 mt-1 rounded-lg border border-dashed border-[hsl(var(--glass-border))] px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
-              wiki/ 是纯 Markdown 目录，可直接用 Obsidian 打开
+              wiki/ 是本机的纯 Markdown 目录，数据始终归你
             </div>
           </div>
           <div className="flex-1 min-w-0 overflow-y-auto">
@@ -370,14 +370,6 @@ export default function KbDetail() {
                     wiki/{selected.group}
                     {selected.title}
                   </span>
-                  <button
-                    type="button"
-                    disabled
-                    title="wiki/ 是本机的纯 Markdown 目录，请在本地用 Obsidian 打开此文件；浏览器标签页无法直接跳转到本地文件。"
-                    className="ml-auto inline-flex items-center gap-1 text-muted-foreground cursor-not-allowed"
-                  >
-                    <ExternalLink className="w-3 h-3" />在 Obsidian 中打开
-                  </button>
                 </div>
                 {pageFailed ? (
                   <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">

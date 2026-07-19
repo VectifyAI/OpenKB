@@ -125,7 +125,7 @@ export default function Home() {
         <div className="max-w-[760px] mx-auto px-6 pt-3 pb-2">
           <ChatInput kbId={kbId} onKbChange={setKbId} onSend={send} autoFocus large />
           <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
-            由 OpenKB 驱动 · wiki 是纯 Markdown，随时可用 Obsidian 打开
+            由 OpenKB 驱动 · 你的知识始终是纯 Markdown，归你所有
           </p>
         </div>
       </div>
