@@ -71,7 +71,7 @@ export default function Home() {
     <div className="h-full flex flex-col">
       {/* 上方：问候 + 最近会话（可滚动） */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-[760px] mx-auto px-6 pt-[7vh] pb-6">
+        <div className="max-w-[1100px] mx-auto px-6 lg:px-8 pt-[7vh] pb-6">
           <div className="anim-fade-up">
             <h1 className="text-[30px] font-bold tracking-[-0.02em]">有什么想问的？</h1>
             <p className="mt-1.5 text-[14px] text-muted-foreground">
@@ -86,7 +86,7 @@ export default function Home() {
                 <Clock className="w-3.5 h-3.5" />
                 最近会话
               </div>
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                 {recent.map((s, i) => (
                   <button
                     key={`${s.kb}/${s.id}`}
@@ -122,7 +122,7 @@ export default function Home() {
 
       {/* 底部：输入框（钉底，斜杠菜单向上弹有干净空间）+ tagline footer */}
       <div className="shrink-0 border-t border-[hsl(var(--glass-border))] glass-2">
-        <div className="max-w-[760px] mx-auto px-6 pt-3 pb-2">
+        <div className="max-w-[1100px] mx-auto px-6 lg:px-8 pt-3 pb-2">
           <ChatInput kbId={kbId} onKbChange={setKbId} onSend={send} autoFocus large />
           <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
             由 OpenKB 驱动 · 你的知识始终是纯 Markdown，归你所有

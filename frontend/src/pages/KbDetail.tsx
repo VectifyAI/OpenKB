@@ -73,6 +73,23 @@ export default function KbDetail() {
   const selected = useMemo(() => parseSelected(selectedPath), [selectedPath])
   const openPath = useCallback((path: string) => setSelectedPath(path), [])
 
+  /** Navigate a `[[type/name]]` wikilink: open its exact page, and if the
+   *  type matches a section card (concepts/entities/summaries/reports),
+   *  switch the active card so the Overview highlight follows the link —
+   *  mirrors `selectSection`'s card-highlight behavior, but opens the
+   *  clicked target instead of the section's first page. */
+  const onWikiLink = useCallback(
+    (target: string) => {
+      const slash = target.indexOf('/')
+      const type = slash < 0 ? '' : target.slice(0, slash)
+      if (type === 'concepts' || type === 'entities' || type === 'summaries' || type === 'reports') {
+        setSection(type)
+      }
+      openPath(target)
+    },
+    [openPath],
+  )
+
   // Load the inventory, then auto-select the first page. State is only ever
   // set inside the async callbacks (never synchronously in the effect body).
   // The component is remounted per KB via `key` in App, so no reset is needed.
@@ -219,6 +236,7 @@ export default function KbDetail() {
             selectedPath={selectedPath}
             hasPages={hasPages}
             inv={inv}
+            onWikiLink={onWikiLink}
           />
         ) : section === 'documents' ? (
           <DocumentsPane
@@ -249,7 +267,7 @@ export default function KbDetail() {
                 wiki/ 是本机的纯 Markdown 目录，数据始终归你
               </div>
             </div>
-            <Reader selected={selected} page={page} pageError={pageError} selectedPath={selectedPath} hasPages={hasPages} inv={inv} />
+            <Reader selected={selected} page={page} pageError={pageError} selectedPath={selectedPath} hasPages={hasPages} inv={inv} onWikiLink={onWikiLink} />
           </div>
         )}
       </motion.section>
@@ -274,12 +292,14 @@ interface ReaderProps {
   selectedPath: string | null
   hasPages: boolean
   inv: KbInventory | null
+  /** Navigate to a `[[wikilink]]` target clicked inside the rendered page. */
+  onWikiLink: (target: string) => void
 }
 
 /** The actual page body: breadcrumb + Markdown, or an empty/loading state.
  *  Shared verbatim by `Reader` (浏览) and `IndexReader` (Index, full width) —
  *  they differ only in their outer scroll container. */
-function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv }: ReaderProps) {
+function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, onWikiLink }: ReaderProps) {
   const pageReady = page && page.path === selectedPath
   const pageFailed = pageError && pageError.path === selectedPath
 
@@ -292,7 +312,7 @@ function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv }: 
   }
 
   return (
-    <div className="max-w-[640px] mx-auto px-8 py-7 anim-fade-up" key={selected.path}>
+    <div className="max-w-[760px] xl:max-w-[920px] 2xl:max-w-[1040px] mx-auto px-8 py-7 anim-fade-up" key={selected.path}>
       <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground mb-4">
         <span className="font-mono2 bg-muted rounded px-1.5 py-0.5">
           wiki/{selected.group}
@@ -304,7 +324,7 @@ function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv }: 
           页面加载失败：{pageError.message}
         </div>
       ) : pageReady ? (
-        <MarkdownView source={page.content} />
+        <MarkdownView source={page.content} onWikiLink={onWikiLink} />
       ) : (
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />加载中…
@@ -355,7 +375,7 @@ function DocumentsPane({
 }) {
   return (
     <div className="h-full overflow-y-auto scroll-edge-top">
-      <div className="max-w-[760px] mx-auto px-6 py-6">
+      <div className="max-w-[1040px] mx-auto px-6 lg:px-8 py-6">
         <p className="text-[13px] text-muted-foreground">
           上传的文档进入本地 raw/ 并自动编译进知识库；文件仅保存在本机
         </p>

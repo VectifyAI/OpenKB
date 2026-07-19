@@ -25,7 +25,7 @@ export default function KbList() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-[900px] mx-auto px-6 py-8">
+      <div className="max-w-screen-xl mx-auto px-6 lg:px-8 py-8">
         <div className="flex items-end justify-between anim-fade-up">
           <div>
             <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">知识库</h1>
@@ -36,7 +36,7 @@ export default function KbList() {
           </button>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
           {kbs.map((kb, i) => (
             <button
               key={kb.name}

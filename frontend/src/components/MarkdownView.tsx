@@ -2,7 +2,7 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 import { useTheme } from '@/lib/theme'
 
 /** 极简 Markdown 渲染：标题 / 列表 / 引用 / 粗体 / [[wikilink]] / 行内代码 / 代码块 / mermaid */
-function inline(text: string): React.ReactNode[] {
+function inline(text: string, onWikiLink?: (target: string) => void): React.ReactNode[] {
   const parts: React.ReactNode[] = []
   const re = /(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|`[^`]+`)/g
   let last = 0, m: RegExpExecArray | null, k = 0
@@ -10,10 +10,24 @@ function inline(text: string): React.ReactNode[] {
     if (m.index > last) parts.push(text.slice(last, m.index))
     const tok = m[0]
     if (tok.startsWith('[[')) {
+      const target = tok.slice(2, -2)
+      // Only clickable when a handler is wired — never imply navigation that
+      // does nothing (the previous bug: cursor-pointer with no onClick).
       parts.push(
-        <span key={k++} className="text-accent-brand bg-accent-brand/10 rounded px-1 py-px cursor-pointer hover:bg-accent-brand/20 transition-colors">
-          {tok.slice(2, -2)}
-        </span>,
+        onWikiLink ? (
+          <button
+            key={k++}
+            type="button"
+            onClick={() => onWikiLink(target)}
+            className="text-accent-brand bg-accent-brand/10 rounded px-1 py-px cursor-pointer hover:bg-accent-brand/20 transition-colors"
+          >
+            {target}
+          </button>
+        ) : (
+          <span key={k++} className="text-accent-brand bg-accent-brand/10 rounded px-1 py-px transition-colors">
+            {target}
+          </span>
+        ),
       )
     } else if (tok.startsWith('**')) {
       parts.push(<strong key={k++} className="font-semibold text-foreground">{tok.slice(2, -2)}</strong>)
@@ -82,7 +96,15 @@ function MermaidBlock({ code }: { code: string }) {
   )
 }
 
-export default function MarkdownView({ source }: { source: string }) {
+export default function MarkdownView({
+  source,
+  onWikiLink,
+}: {
+  source: string
+  /** Navigate to a `[[target]]` wikilink's page. Omit to render plain,
+   *  non-interactive tokens (no `cursor-pointer` implying a dead click). */
+  onWikiLink?: (target: string) => void
+}) {
   const lines = source.split('\n')
   const out: React.ReactNode[] = []
   let list: string[] = []
@@ -95,7 +117,7 @@ export default function MarkdownView({ source }: { source: string }) {
         {list.map((li, i) => (
           <li key={i} className="flex gap-2 text-[14px] leading-relaxed text-muted-foreground">
             <span className="mt-[9px] w-1 h-1 rounded-full bg-muted-foreground shrink-0" />
-            <span>{inline(li)}</span>
+            <span>{inline(li, onWikiLink)}</span>
           </li>
         ))}
       </ul>,
@@ -127,12 +149,12 @@ export default function MarkdownView({ source }: { source: string }) {
     if (line.startsWith('- ')) { list.push(line.slice(2)); continue }
     flushList()
     if (!line.trim()) { out.push(<div key={key++} className="h-2" />); continue }
-    if (line.startsWith('### ')) out.push(<h3 key={key++} className="mt-4 mb-1.5 text-[14px] font-semibold text-foreground">{inline(line.slice(4))}</h3>)
-    else if (line.startsWith('## ')) out.push(<h2 key={key++} className="mt-5 mb-2 text-[16px] font-bold text-foreground">{inline(line.slice(3))}</h2>)
-    else if (line.startsWith('# ')) out.push(<h1 key={key++} className="mb-3 text-[22px] font-extrabold tracking-tight text-foreground">{inline(line.slice(2))}</h1>)
-    else if (line.startsWith('> ')) out.push(<div key={key++} className="my-2.5 border-l-2 border-amber-400/70 bg-amber-400/10 rounded-r-lg px-3 py-2 text-[13px] text-muted-foreground">{inline(line.slice(2))}</div>)
-    else if (/^\d+\.\s/.test(line)) out.push(<p key={key++} className="my-1 text-[14px] leading-relaxed text-muted-foreground pl-1">{inline(line)}</p>)
-    else out.push(<p key={key++} className="my-1.5 text-[14px] leading-relaxed text-muted-foreground">{inline(line)}</p>)
+    if (line.startsWith('### ')) out.push(<h3 key={key++} className="mt-4 mb-1.5 text-[14px] font-semibold text-foreground">{inline(line.slice(4), onWikiLink)}</h3>)
+    else if (line.startsWith('## ')) out.push(<h2 key={key++} className="mt-5 mb-2 text-[16px] font-bold text-foreground">{inline(line.slice(3), onWikiLink)}</h2>)
+    else if (line.startsWith('# ')) out.push(<h1 key={key++} className="mb-3 text-[22px] font-extrabold tracking-tight text-foreground">{inline(line.slice(2), onWikiLink)}</h1>)
+    else if (line.startsWith('> ')) out.push(<div key={key++} className="my-2.5 border-l-2 border-amber-400/70 bg-amber-400/10 rounded-r-lg px-3 py-2 text-[13px] text-muted-foreground">{inline(line.slice(2), onWikiLink)}</div>)
+    else if (/^\d+\.\s/.test(line)) out.push(<p key={key++} className="my-1 text-[14px] leading-relaxed text-muted-foreground pl-1">{inline(line, onWikiLink)}</p>)
+    else out.push(<p key={key++} className="my-1.5 text-[14px] leading-relaxed text-muted-foreground">{inline(line, onWikiLink)}</p>)
   }
   flushList()
   return <div>{out}</div>

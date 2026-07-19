@@ -149,7 +149,7 @@ function AssistantMessage({
       <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
         <Sparkles className="w-3.5 h-3.5" />
       </span>
-      <div className="min-w-0 flex-1 max-w-[640px]">
+      <div className="min-w-0 flex-1 max-w-[720px]">
         {/* 执行状态：正在查阅 X…（来自实时 tool_call 流） */}
         {streaming && (turn.reading || showThinking) && (
           <div className="mb-3 inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground">
@@ -165,7 +165,10 @@ function AssistantMessage({
         {/* 正文（随 delta 流式渲染） */}
         {turn.answer && (
           <div className="text-[14px]">
-            <MarkdownView source={turn.answer} />
+            <MarkdownView
+              source={turn.answer}
+              onWikiLink={(target) => onOpen({ kind: "page", label: target, path: target })}
+            />
           </div>
         )}
 
@@ -210,7 +213,7 @@ function ArtifactMessage({ art, onOpen }: { art: ArtifactTurn; onOpen: (a: Artif
       <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
         <Sparkles className="w-3.5 h-3.5" />
       </span>
-      <div className="min-w-0 flex-1 max-w-[640px] space-y-3">
+      <div className="min-w-0 flex-1 max-w-[720px] space-y-3">
         {art.status === "streaming" && (
           <div className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-brand" />
@@ -486,7 +489,7 @@ export default function ChatSession() {
 
       {/* 消息流 */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-[760px] mx-auto px-6 py-6 space-y-6">
+        <div className="max-w-[860px] xl:max-w-[1000px] mx-auto px-6 py-6 space-y-6">
           {msgs.map((m) =>
             m.role === "user" ? (
               <div key={m.id} className="flex justify-end anim-fade-up">
@@ -514,7 +517,7 @@ export default function ChatSession() {
 
       {/* 底部输入 */}
       <div className="shrink-0 px-6 pb-5 pt-2 bg-gradient-to-t from-[hsl(var(--ambient))] via-[hsl(var(--ambient))] to-transparent">
-        <div className="max-w-[760px] mx-auto">
+        <div className="max-w-[860px] xl:max-w-[1000px] mx-auto">
           <ChatInput
             kbId={kb}
             onKbChange={setKb}

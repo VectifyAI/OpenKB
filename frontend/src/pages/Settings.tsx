@@ -171,7 +171,7 @@ export default function Settings() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-[780px] mx-auto px-6 py-8">
+      <div className="max-w-[1040px] mx-auto px-6 lg:px-8 py-8">
         <h1 className="text-[22px] font-extrabold tracking-tight text-foreground anim-fade-up">设置</h1>
 
         {/* 知识库选择 — 配置按知识库存储（.openkb/config.yaml + .env）。关于页是全局的，隐藏选择器。 */}
