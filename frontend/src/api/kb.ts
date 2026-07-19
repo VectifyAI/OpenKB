@@ -16,6 +16,8 @@ export function listKbs(): Promise<KbListResponse> {
   return apiFetch<KbListResponse>("/api/v1/kbs")
 }
 
+export type ConfigSource = "kb" | "global" | "default"
+
 export interface KbConfig {
   model: string
   language: string
@@ -24,6 +26,14 @@ export interface KbConfig {
   openai_api_base: string | null
   /** Presence flag only — the raw key value is NEVER returned by the API. */
   has_api_key: boolean
+  /** Which layer supplied each scalar's effective value. */
+  sources: Record<"model" | "language" | "pageindex_threshold", ConfigSource>
+  /** Raw global-layer scalars (null where global.yaml is silent). */
+  global_values: {
+    model: string | null
+    language: string | null
+    pageindex_threshold: number | null
+  }
 }
 
 /**
