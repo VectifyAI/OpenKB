@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react"
 import { Routes, Route, useParams } from "react-router"
+import { MotionConfig } from "motion/react"
 import { KeyRound, Loader2 } from "lucide-react"
 import AppSidebar from "@/components/AppSidebar"
 import TitleBar from "@/components/TitleBar"
+import { ThemeToggle } from "@/lib/theme"
+import { cn } from "@/lib/utils"
 import { Toaster } from "@/components/ui/sonner"
 import {
   Dialog,
@@ -131,26 +134,40 @@ export default function App() {
   }, [])
 
   return (
-    <div className="ambient-ground h-screen w-screen flex overflow-hidden">
-      {isDesktopShell && (
-        <div className="absolute top-0 inset-x-0 z-50">
-          <TitleBar />
+    <MotionConfig reducedMotion="user">
+      <div className="ambient-ground h-screen w-screen flex overflow-hidden">
+        {isDesktopShell && (
+          <div className="absolute top-0 inset-x-0 z-50">
+            <TitleBar />
+          </div>
+        )}
+        <div className="flex flex-1 min-h-0 w-full">
+          <AppSidebar />
+          <main className="relative flex-1 min-w-0 overflow-hidden">
+            {/* Global floating chrome cluster: overlays content on every route
+                (not the sidebar). Owns top-right; KbDetail's gear reserves pr-16
+                and sits to its left. Clears the desktop TitleBar via a top offset. */}
+            <div
+              className={cn(
+                "absolute right-3 z-40 flex items-center gap-1 rounded-full glass px-1 py-1",
+                isDesktopShell ? "top-10" : "top-2.5",
+              )}
+            >
+              <ThemeToggle className="text-muted-foreground hover:text-foreground transition-colors" />
+              {/* Sub-project H (i18n) language switcher slots in here — leave room, do NOT build */}
+            </div>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/chat/:id" element={<ChatSession />} />
+              <Route path="/kb" element={<KbList />} />
+              <Route path="/kb/:id" element={<KbDetailRoute />} />
+              <Route path="/settings" element={<Settings />} />
+            </Routes>
+          </main>
         </div>
-      )}
-      <div className="flex flex-1 min-h-0 w-full">
-        <AppSidebar />
-        <main className="relative flex-1 min-w-0 overflow-hidden">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/chat/:id" element={<ChatSession />} />
-            <Route path="/kb" element={<KbList />} />
-            <Route path="/kb/:id" element={<KbDetailRoute />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </main>
+        <ConnectionDialog open={authOpen} onOpenChange={setAuthOpen} />
+        <Toaster />
       </div>
-      <ConnectionDialog open={authOpen} onOpenChange={setAuthOpen} />
-      <Toaster />
-    </div>
+    </MotionConfig>
   )
 }

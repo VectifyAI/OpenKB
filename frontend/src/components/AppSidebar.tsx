@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 import { NavLink, useNavigate } from "react-router"
 import { MessageSquare, Library, Settings2, Plus } from "lucide-react"
 import { listKbs, type KbSummary } from "@/api/kb"
-import { ThemeToggle } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
 /** Decorative accent colors, cycled by position — the API carries no color. */
@@ -101,12 +100,9 @@ export default function AppSidebar() {
 
       <div className="flex-1" />
 
-      {/* 底部聚合：设置 → 主题切换 */}
+      {/* 底部：设置（主题切换已上移到全局右上角浮层） */}
       <div className="space-y-1.5">
         <NavItem to="/settings" icon={<Settings2 className="w-4 h-4" />} label="设置" />
-        <div className="flex items-center justify-end px-1 pt-0.5">
-          <ThemeToggle className="text-muted-foreground hover:text-foreground transition-colors" />
-        </div>
       </div>
     </aside>
   )
