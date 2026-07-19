@@ -12,7 +12,7 @@ import {
 } from '@/api/maintenance'
 import type { SseEvent } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
-import PageTypeTabs from '@/components/PageTypeTabs'
+import PageList from '@/components/PageList'
 import ConnectorCards from '@/components/ConnectorCards'
 import KbOverviewCards from '@/components/KbOverviewCards'
 import { cn } from '@/lib/utils'
@@ -355,7 +355,8 @@ export default function KbDetail() {
               <div className="px-4 py-3 text-[12px] text-muted-foreground">加载中…</div>
             ) : (
               <div className="flex-1 min-h-0">
-                <PageTypeTabs inv={inv} activePath={selected?.path ?? null} onOpen={openPath} />
+                {/* TODO(Task 13): drive `type` from the active Overview card instead of this fixed stopgap. */}
+                <PageList inv={inv} type="concepts" activePath={selected?.path ?? null} onOpen={openPath} />
               </div>
             )}
             <div className="shrink-0 m-2 mt-1 rounded-lg border border-dashed border-[hsl(var(--glass-border))] px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
