@@ -45,8 +45,8 @@ from openkb.cli import (
 from openkb.config import (
     DEFAULT_CONFIG,
     kb_root_dir,
-    load_config,
     register_kb_alias,
+    resolve_effective_config,
     resolve_kb_alias,
 )
 from openkb.log import append_log
@@ -440,7 +440,7 @@ def _load_or_create_session(kb_dir: Path, session_id: str | None) -> ChatSession
                 detail=f"Chat session not found: {session_id}",
             ) from exc
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
     language = config.get("language", "en")
     return ChatSession.new(kb_dir, model, language)
@@ -462,7 +462,7 @@ async def _stream_query(
     yield _sse("start", {"endpoint": "query"})
     run_config = build_run_config_from_bundle(model, bundle)
     try:
-        config = load_config(kb_dir / ".openkb" / "config.yaml")
+        config = resolve_effective_config(kb_dir)[0]
         language = config.get("language", "en")
         agent = build_query_agent(str(kb_dir / "wiki"), model, language=language, bundle=bundle)
         final_answer = ""
@@ -646,7 +646,7 @@ async def _iter_deck(
     if err:
         yield {"event": "error", "code": 400, "message": err}
         return
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
     gen = Generator(
         target_type="deck",
@@ -703,7 +703,7 @@ async def _iter_skill(
     if err:
         yield {"event": "error", "code": 400, "message": err}
         return
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
     gen = Generator(
         target_type="skill",

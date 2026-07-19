@@ -107,8 +107,8 @@ from openkb.cli import (
 from openkb.config import (
     DEFAULT_CONFIG,
     kb_root_dir,
-    load_config,
     resolve_credential_bundle,
+    resolve_effective_config,
     validate_kb_name,
 )
 from openkb.log import append_log
@@ -278,7 +278,7 @@ def create_app() -> FastAPI:
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
-        config = load_config(kb_dir / ".openkb" / "config.yaml")
+        config = resolve_effective_config(kb_dir)[0]
         model = config.get("model", DEFAULT_CONFIG["model"])
         run_config = build_run_config_from_bundle(model, bundle)
 

@@ -130,6 +130,32 @@ def test_query_stream_returns_sse_events(monkeypatch, kb_dir):
     assert events[-2]["data"]["answer"] == "A knowledge base."
 
 
+def test_query_endpoint_uses_global_model(monkeypatch, kb_dir, tmp_path):
+    """The non-streaming /query path builds its run config with the global.yaml
+    model when the KB config is silent — proving api.py:281 uses the resolver."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    from openkb.config import save_global_config
+
+    save_global_config({"model": "global-model"})
+
+    captured = {}
+
+    async def _fake_run_query(question, kb, model, *args, **kwargs):
+        captured["model"] = model
+        return "ok"
+
+    monkeypatch.setattr("openkb.api.run_query", _fake_run_query)
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/query", json={"kb": kb, "question": "hi", "stream": False}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert captured["model"] == "global-model"
+
+
 def test_chat_non_stream_creates_and_persists_session(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
