@@ -466,6 +466,56 @@ def load_global_config() -> dict[str, Any]:
     return _load_global_config_unlocked()
 
 
+# Whitelisted scalar keys that global.yaml may provide as shared defaults for
+# every KB. Non-scalar global keys (known_kbs, kb_aliases, default_kb) are NOT
+# config and must never leak into a KB's effective runtime config.
+GLOBAL_SCALAR_KEYS: tuple[str, ...] = ("model", "language", "pageindex_threshold")
+
+
+def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, str]]:
+    """Layer DEFAULT_CONFIG -> global.yaml (whitelisted scalars) -> KB config.yaml.
+
+    Returns ``(effective, sources)``. ``effective`` is the fully merged config
+    dict — a drop-in superset of :func:`load_config`'s result: it carries every
+    KB key plus the global-defaulted scalars. ``sources`` maps each key in
+    :data:`GLOBAL_SCALAR_KEYS` to the layer that supplied its effective value:
+    ``'kb'`` (KB config.yaml set it), ``'global'`` (global.yaml set it and the
+    KB did not), or ``'default'`` (neither did, so DEFAULT_CONFIG stands).
+
+    Precedence is the standard one: a KB-set scalar wins over global, which wins
+    over the default. A scalar written as explicit ``null`` in the KB config
+    means "inherit" (matches the RFC 7386 revert semantics of the config PATCH)
+    and does NOT clobber the layer below. Non-scalar keys come only from the KB
+    file and are copied verbatim (including a meaningful ``null`` such as
+    ``parallel_tool_calls: null``).
+    """
+    effective: dict[str, Any] = dict(DEFAULT_CONFIG)
+    sources: dict[str, str] = {key: "default" for key in GLOBAL_SCALAR_KEYS}
+
+    global_config = load_global_config()
+    for key in GLOBAL_SCALAR_KEYS:
+        value = global_config.get(key)
+        if value is not None:
+            effective[key] = value
+            sources[key] = "global"
+
+    kb_path = kb_dir / ".openkb" / "config.yaml"
+    if kb_path.exists():
+        with kb_path.open("r", encoding="utf-8") as fh:
+            kb_config = yaml.safe_load(fh) or {}
+        for key, value in kb_config.items():
+            # A scalar explicitly nulled in config.yaml means "inherit": don't
+            # let it clobber the global/default layer. The gate is on
+            # GLOBAL_SCALAR_KEYS so non-scalar nulls (parallel_tool_calls) stay.
+            if key in GLOBAL_SCALAR_KEYS and value is None:
+                continue
+            effective[key] = value
+            if key in GLOBAL_SCALAR_KEYS:
+                sources[key] = "kb"
+
+    return effective, sources
+
+
 def save_global_config(config: dict[str, Any]) -> None:
     """Save the global config to ~/.config/openkb/global.yaml."""
     with _with_global_config_lock():

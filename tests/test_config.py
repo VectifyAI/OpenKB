@@ -1,18 +1,24 @@
 import logging
+from pathlib import Path
+
+import pytest
 
 from openkb.config import (
     DEFAULT_CONFIG,
+    GLOBAL_SCALAR_KEYS,
     get_extra_headers,
     get_parallel_tool_calls,
     get_timeout,
     load_config,
     resolve_concurrency,
+    resolve_effective_config,
     resolve_extra_headers,
     resolve_litellm_settings,
     resolve_model_settings,
     resolve_parallel_tool_calls,
     resolve_timeout,
     save_config,
+    save_global_config,
     set_extra_headers,
     set_parallel_tool_calls,
     set_timeout,
@@ -358,3 +364,83 @@ def test_resolve_litellm_settings_warns_on_non_string_key(caplog):
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
         resolve_litellm_settings({"litellm": {5: "x", "drop_params": True}})
     assert "non-string key" in caplog.text
+
+
+# --- resolve_effective_config -------------------------------------------------
+
+
+def _kb(tmp_path: Path) -> Path:
+    (tmp_path / ".openkb").mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+@pytest.fixture
+def _isolated_global(monkeypatch, tmp_path):
+    gdir = tmp_path / "global-config"
+    gdir.mkdir()
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+    return gdir
+
+
+def test_effective_defaults_only(_isolated_global, tmp_path):
+    eff, src = resolve_effective_config(_kb(tmp_path / "kb"))
+    assert eff["model"] == DEFAULT_CONFIG["model"]
+    assert eff["language"] == DEFAULT_CONFIG["language"]
+    assert eff["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
+    assert src == {k: "default" for k in GLOBAL_SCALAR_KEYS}
+
+
+def test_effective_global_only(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model", "known_kbs": ["/a"]})
+    eff, src = resolve_effective_config(_kb(tmp_path / "kb"))
+    assert eff["model"] == "global-model"
+    assert src["model"] == "global"
+    assert src["language"] == "default"
+
+
+def test_effective_kb_override_wins_over_global(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model", "language": "fr"})
+    kb = _kb(tmp_path / "kb")
+    save_config(kb / ".openkb" / "config.yaml", {"model": "kb-model"})
+    eff, src = resolve_effective_config(kb)
+    assert eff["model"] == "kb-model"
+    assert src["model"] == "kb"
+    # language is global (KB silent on it)
+    assert eff["language"] == "fr"
+    assert src["language"] == "global"
+
+
+def test_effective_three_layer_precedence(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model"})  # global sets only model
+    kb = _kb(tmp_path / "kb")
+    # kb sets only threshold
+    save_config(kb / ".openkb" / "config.yaml", {"pageindex_threshold": 7})
+    eff, src = resolve_effective_config(kb)
+    assert (eff["model"], src["model"]) == ("global-model", "global")
+    assert (eff["pageindex_threshold"], src["pageindex_threshold"]) == (7, "kb")
+    assert (eff["language"], src["language"]) == (DEFAULT_CONFIG["language"], "default")
+
+
+def test_effective_scalar_null_in_kb_inherits_not_clobbers(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model"})
+    kb = _kb(tmp_path / "kb")
+    save_config(kb / ".openkb" / "config.yaml", {"model": None})
+    eff, src = resolve_effective_config(kb)
+    assert eff["model"] == "global-model"  # null means inherit, not None
+    assert src["model"] == "global"
+
+
+def test_effective_preserves_non_scalar_kb_keys_including_meaningful_null(
+    _isolated_global, tmp_path
+):
+    kb = _kb(tmp_path / "kb")
+    save_config(
+        kb / ".openkb" / "config.yaml",
+        {"litellm": {"drop_params": True}, "parallel_tool_calls": None},
+    )
+    eff, _ = resolve_effective_config(kb)
+    assert eff["litellm"] == {"drop_params": True}
+    # a non-scalar null is meaningful (Bedrock escape hatch) and must survive
+    assert "parallel_tool_calls" in eff
+    assert eff["parallel_tool_calls"] is None
