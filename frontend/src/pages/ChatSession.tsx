@@ -104,7 +104,7 @@ function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Sourc
   if (sources.length === 0) return null
   return (
     <div className="mt-3">
-      <div className="mb-1.5 text-[11px] font-semibold text-neutral-400 tracking-wide">参考来源</div>
+      <div className="mb-1.5 text-[11px] font-semibold text-muted-foreground tracking-wide">参考来源</div>
       <div className="flex flex-wrap gap-1.5">
         {sources.map((s, i) =>
           s.kind === "page" ? (
@@ -112,7 +112,7 @@ function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Sourc
               key={`${s.path}-${i}`}
               onClick={() => onOpen(s)}
               title="点击查看该 wiki 页面"
-              className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md bg-white border border-black/8 text-[11.5px] font-mono2 text-neutral-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
+              className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md glass-2 border border-[hsl(var(--glass-border))] text-[11.5px] font-mono2 text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 transition duration-fast ease-out-apple active:scale-[0.97]"
             >
               <FileText className="w-3 h-3" />{s.label}
             </button>
@@ -120,7 +120,7 @@ function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Sourc
             <span
               key={`${s.docName}-${i}`}
               title="长文档内部内容（PageIndex），无独立页面可打开"
-              className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md bg-neutral-50 border border-black/6 text-[11.5px] font-mono2 text-neutral-400"
+              className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md bg-muted/50 border border-[hsl(var(--glass-border))] text-[11.5px] font-mono2 text-muted-foreground"
             >
               <BookText className="w-3 h-3" />{s.label}
             </span>
@@ -136,18 +136,18 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
   const showThinking = streaming && !turn.answer && !turn.error
   return (
     <div className="flex gap-3 anim-fade-up">
-      <span className="w-7 h-7 rounded-lg bg-blue-600 text-white grid place-items-center shrink-0 mt-0.5">
+      <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
         <Sparkles className="w-3.5 h-3.5" />
       </span>
       <div className="min-w-0 flex-1 max-w-[640px]">
         {/* 执行状态：正在查阅 X…（来自实时 tool_call 流） */}
         {streaming && (turn.reading || showThinking) && (
-          <div className="mb-3 inline-flex items-center gap-2 rounded-xl border border-black/6 bg-neutral-50/80 px-3 py-1.5 text-[12.5px] text-neutral-500">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+          <div className="mb-3 inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-brand" />
             {turn.reading
               ? (turn.reading.kind === "page"
-                  ? <>正在查阅 <span className="font-mono2 text-neutral-600">{turn.reading.label}</span></>
-                  : <>正在读取长文档 <span className="font-mono2 text-neutral-600">{turn.reading.label}</span></>)
+                  ? <>正在查阅 <span className="font-mono2 text-foreground">{turn.reading.label}</span></>
+                  : <>正在读取长文档 <span className="font-mono2 text-foreground">{turn.reading.label}</span></>)
               : <>正在思考…</>}
           </div>
         )}
@@ -161,7 +161,7 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
 
         {/* 错误 */}
         {turn.error && (
-          <div className="mt-1 rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[13px] text-red-600">
+          <div className="mt-1 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
             请求失败：{turn.error}
           </div>
         )}
@@ -171,7 +171,7 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
 
         {/* 沉淀提示（query 的 saved_path） */}
         {turn.savedPath && (
-          <div className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200/70 rounded-lg px-2.5 py-1.5">
+          <div className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/70 dark:border-emerald-500/25 rounded-lg px-2.5 py-1.5">
             <FolderInput className="w-3.5 h-3.5" />已保存到 {turn.savedPath}
           </div>
         )}
@@ -184,18 +184,18 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
 function ArtifactMessage({ art }: { art: ArtifactTurn }) {
   return (
     <div className="flex gap-3 anim-fade-up">
-      <span className="w-7 h-7 rounded-lg bg-blue-600 text-white grid place-items-center shrink-0 mt-0.5">
+      <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
         <Sparkles className="w-3.5 h-3.5" />
       </span>
       <div className="min-w-0 flex-1 max-w-[640px] space-y-3">
         {art.status === "streaming" && (
-          <div className="inline-flex items-center gap-2 rounded-xl border border-black/6 bg-neutral-50/80 px-3 py-1.5 text-[12.5px] text-neutral-500">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+          <div className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-brand" />
             {art.phase}
           </div>
         )}
         {art.status === "error" && (
-          <div className="rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[13px] text-red-600">
+          <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
             {art.error ?? "生成失败"}
           </div>
         )}
@@ -430,16 +430,16 @@ export default function ChatSession() {
   return (
     <div className="h-full flex flex-col">
       {/* 会话头 */}
-      <div className="shrink-0 h-12 flex items-center gap-3 px-5 border-b border-black/6 bg-white/60 backdrop-blur">
-        <button onClick={() => navigate("/")} className="w-7 h-7 rounded-lg grid place-items-center text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition-colors">
+      <div className="shrink-0 h-12 flex items-center gap-3 px-5 border-b border-[hsl(var(--glass-border))] glass-2 backdrop-blur">
+        <button onClick={() => navigate("/")} className="w-7 h-7 rounded-lg grid place-items-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-neutral-800 truncate">{title}</div>
+          <div className="text-[14px] font-semibold text-foreground truncate">{title}</div>
         </div>
         {kb && (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] text-neutral-400 bg-neutral-100 rounded-full px-2.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />{kb}
+          <span className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground bg-muted rounded-full px-2.5 py-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-brand" />{kb}
           </span>
         )}
       </div>
@@ -450,9 +450,9 @@ export default function ChatSession() {
           {msgs.map((m) =>
             m.role === "user" ? (
               <div key={m.id} className="flex justify-end anim-fade-up">
-                <div className="max-w-[560px] rounded-2xl rounded-br-md bg-neutral-900 text-white px-4 py-2.5">
+                <div className="max-w-[560px] rounded-2xl rounded-br-md bg-accent-brand text-white px-4 py-2.5">
                   {m.command && (
-                    <span className="inline-block font-mono2 text-[11.5px] text-blue-300 bg-white/10 rounded px-1.5 py-0.5 mr-2 mb-0.5">{m.command}</span>
+                    <span className="inline-block font-mono2 text-[11.5px] text-white/90 bg-white/15 rounded px-1.5 py-0.5 mr-2 mb-0.5">{m.command}</span>
                   )}
                   <span className="text-[14px] leading-relaxed">{m.text}</span>
                 </div>
@@ -468,7 +468,7 @@ export default function ChatSession() {
       </div>
 
       {/* 底部输入 */}
-      <div className="shrink-0 px-6 pb-5 pt-2 bg-gradient-to-t from-[#f7f7f4] via-[#f7f7f4] to-transparent">
+      <div className="shrink-0 px-6 pb-5 pt-2 bg-gradient-to-t from-[hsl(var(--ambient))] via-[hsl(var(--ambient))] to-transparent">
         <div className="max-w-[760px] mx-auto">
           <ChatInput
             kbId={kb}
@@ -484,16 +484,16 @@ export default function ChatSession() {
       <Sheet open={panel.open} onOpenChange={(o) => setPanel((p) => ({ ...p, open: o }))}>
         <SheetContent side="right" className="w-full sm:max-w-[560px] overflow-y-auto">
           <SheetHeader>
-            <SheetTitle className="font-mono2 text-[13px] text-neutral-600 break-all">wiki/{panel.path}</SheetTitle>
+            <SheetTitle className="font-mono2 text-[13px] text-muted-foreground break-all">wiki/{panel.path}</SheetTitle>
           </SheetHeader>
           <div className="px-4 pb-8">
             {panel.loading && (
-              <div className="flex items-center gap-2 text-[13px] text-neutral-400">
+              <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />加载中…
               </div>
             )}
             {panel.error && (
-              <div className="rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[13px] text-red-600">
+              <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
                 页面加载失败：{panel.error}
               </div>
             )}

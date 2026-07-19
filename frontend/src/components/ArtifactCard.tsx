@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { motion, AnimatePresence, useReducedMotion } from "motion/react"
 import {
   Presentation, Sparkles, Waypoints, ExternalLink, Download, Check,
   Loader2, FileText, FileArchive,
@@ -51,8 +52,8 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={
         ok
-          ? "inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"
-          : "inline-flex items-center gap-1 text-[11px] text-neutral-500 bg-neutral-100 border border-black/5 rounded-full px-2 py-0.5"
+          ? "inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/25 rounded-full px-2 py-0.5"
+          : "inline-flex items-center gap-1 text-[11px] text-muted-foreground bg-muted border border-[hsl(var(--glass-border))] rounded-full px-2 py-0.5"
       }
     >
       {ok && <Check className="w-3 h-3" />}
@@ -64,6 +65,8 @@ function StatusBadge({ status }: { status: string }) {
 function DeckCard({ a }: { a: Extract<Artifact, { type: "deck" }> }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // Spring the preview open; degrade to a plain cross-fade under reduced motion.
+  const reduce = useReducedMotion()
   // Mirror the live preview URL so unmount cleanup sees the latest value
   // without re-subscribing the effect on every change.
   const previewRef = useRef<string | null>(null)
@@ -107,7 +110,7 @@ function DeckCard({ a }: { a: Extract<Artifact, { type: "deck" }> }) {
   }
 
   return (
-    <div className="rounded-2xl border border-black/8 overflow-hidden bg-white">
+    <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] overflow-hidden glass-2">
       <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 px-5 py-4 text-white">
         <div className="flex items-center gap-2 text-[11px] font-medium opacity-80">
           <Presentation className="w-3.5 h-3.5" />HTML DECK
@@ -116,30 +119,41 @@ function DeckCard({ a }: { a: Extract<Artifact, { type: "deck" }> }) {
         <div className="mt-1 text-[12px] opacity-75">已生成 · {baseName(a.path)}</div>
       </div>
 
-      {/* 预览：真实生成的 HTML，渲染在受限沙箱 iframe 内（allow-scripts） */}
-      {previewUrl && (
-        <div className="border-b border-black/5">
-          <iframe
-            title={`deck-${a.name}`}
-            src={previewUrl}
-            sandbox="allow-scripts"
-            className="w-full h-[420px] bg-white"
-          />
-        </div>
-      )}
+      {/* 预览：真实生成的 HTML，渲染在受限沙箱 iframe 内（allow-scripts）。
+          motion 弹簧只包裹面板做进出场动画，iframe 的 sandbox / blob src /
+          撤销逻辑保持原样不变。 */}
+      <AnimatePresence>
+        {previewUrl && (
+          <motion.div
+            key="deck-preview"
+            className="border-b border-[hsl(var(--glass-border))] overflow-hidden"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 6 }}
+            animate={reduce ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 6 }}
+            transition={reduce ? { duration: 0.12 } : { type: "spring", bounce: 0, duration: 0.24 }}
+          >
+            <iframe
+              title={`deck-${a.name}`}
+              src={previewUrl}
+              sandbox="allow-scripts"
+              className="w-full h-[420px] bg-white"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <div className="flex items-center gap-2 px-4 py-3 border-t border-black/5 bg-neutral-50/60">
+      <div className="flex items-center gap-2 px-4 py-3 border-t border-[hsl(var(--glass-border))] bg-muted/40">
         <button
           onClick={togglePreview}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-neutral-900 text-white text-[12px] font-medium hover:bg-neutral-700 transition-colors disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-accent-brand text-white text-[12px] font-medium hover:opacity-90 transition-colors disabled:opacity-60"
         >
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
           {previewUrl ? "收起预览" : "预览"}
         </button>
         <button
           onClick={download}
-          className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg border border-black/10 text-[12px] font-medium text-neutral-600 hover:bg-white transition-colors"
+          className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg border border-[hsl(var(--glass-border))] text-[12px] font-medium text-foreground hover:bg-accent transition-colors"
         >
           <Download className="w-3.5 h-3.5" />导出 HTML
         </button>
@@ -163,28 +177,28 @@ function SkillCard({ a }: { a: Extract<Artifact, { type: "skill" }> }) {
   }
 
   return (
-    <div className="rounded-2xl border border-black/8 overflow-hidden bg-white">
-      <div className="px-5 py-4 border-b border-black/5 flex items-start gap-3">
+    <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] overflow-hidden glass-2">
+      <div className="px-5 py-4 border-b border-[hsl(var(--glass-border))] flex items-start gap-3">
         <span className="w-9 h-9 rounded-xl bg-violet-100 text-violet-600 grid place-items-center shrink-0">
           <Sparkles className="w-[18px] h-[18px]" />
         </span>
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono2 text-[14px] font-semibold text-neutral-800">{a.name}</span>
+            <span className="font-mono2 text-[14px] font-semibold text-foreground">{a.name}</span>
             <StatusBadge status={a.status} />
           </div>
-          <div className="text-[12px] text-neutral-400 mt-0.5 truncate">Agent Skill · {baseName(a.path)}</div>
+          <div className="text-[12px] text-muted-foreground mt-0.5 truncate">Agent Skill · {baseName(a.path)}</div>
         </div>
       </div>
       <div className="px-5 py-4">
-        <p className="text-[12.5px] text-neutral-500 leading-relaxed mb-3">
-          技能已生成为可安装的目录，下载 <span className="font-mono2 text-neutral-600">.zip</span> 后解压到你的
+        <p className="text-[12.5px] text-muted-foreground leading-relaxed mb-3">
+          技能已生成为可安装的目录，下载 <span className="font-mono2 text-foreground">.zip</span> 后解压到你的
           Agent（Claude Code / Codex / Gemini CLI）技能目录即可使用。
         </p>
         <button
           onClick={download}
           disabled={downloading}
-          className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-neutral-900 text-white text-[12px] font-medium hover:bg-neutral-700 transition-colors disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-accent-brand text-white text-[12px] font-medium hover:opacity-90 transition-colors disabled:opacity-60"
         >
           {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileArchive className="w-3.5 h-3.5" />}
           下载技能包（.zip）
@@ -221,27 +235,27 @@ function GraphCard({ a }: { a: Extract<Artifact, { type: "graph" }> }) {
   const empty = graph.nodes.length === 0
 
   return (
-    <div className="rounded-2xl border border-black/8 overflow-hidden bg-white">
-      <div className="px-5 py-3.5 flex items-center gap-3 border-b border-black/5">
+    <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] overflow-hidden glass-2">
+      <div className="px-5 py-3.5 flex items-center gap-3 border-b border-[hsl(var(--glass-border))]">
         <span className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-600 grid place-items-center shrink-0">
           <Waypoints className="w-[18px] h-[18px]" />
         </span>
         <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-neutral-800">知识图谱</div>
-          <div className="text-[12px] text-neutral-400">
+          <div className="text-[14px] font-semibold text-foreground">知识图谱</div>
+          <div className="text-[12px] text-muted-foreground">
             {graph.nodes.length} 概念 · {graph.edges.length} 关联
             {graph.types.length > 0 && <> · {graph.types.length} 类型</>}
           </div>
         </div>
       </div>
       {empty ? (
-        <div className="px-5 py-8 text-center text-[13px] text-neutral-400">
+        <div className="px-5 py-8 text-center text-[13px] text-muted-foreground">
           该知识库暂无可视化的概念图谱
         </div>
       ) : (
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="w-full bg-gradient-to-b from-neutral-50 to-white"
+          className="w-full bg-gradient-to-b from-muted/30 to-transparent"
         >
           {edges.map((e, i) => {
             const s = pos.get(e.source)!
@@ -290,9 +304,9 @@ export default function ArtifactCard({ artifact }: { artifact: Artifact }) {
       return <GraphCard a={artifact} />
     default:
       return (
-        <div className="rounded-2xl border border-black/8 bg-white px-5 py-4 flex items-center gap-3">
-          <FileText className="w-4 h-4 text-neutral-400" />
-          <span className="text-[13px] text-neutral-700">未知产物</span>
+        <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] glass-2 px-5 py-4 flex items-center gap-3">
+          <FileText className="w-4 h-4 text-muted-foreground" />
+          <span className="text-[13px] text-foreground">未知产物</span>
         </div>
       )
   }

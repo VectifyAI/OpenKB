@@ -111,8 +111,8 @@ export default function ChatInput({
     <div className="relative">
       {/* 斜杠命令面板 */}
       {menuOpen && (
-        <div className="absolute bottom-full left-0 right-0 mb-2 rounded-2xl border border-black/8 bg-white shadow-xl shadow-black/5 overflow-hidden z-20 anim-fade-up">
-          <div className="px-3 pt-2.5 pb-1 text-[11px] font-semibold text-neutral-400 tracking-wide">命令 · 生成器</div>
+        <div className="absolute bottom-full left-0 right-0 mb-2 rounded-apple-lg glass overflow-hidden z-20 anim-fade-up">
+          <div className="px-3 pt-2.5 pb-1 text-[11px] font-semibold text-muted-foreground tracking-wide">命令 · 生成器</div>
           {filtered.map((c, i) => (
             <button
               key={c.id}
@@ -120,35 +120,35 @@ export default function ChatInput({
               onMouseEnter={() => setIdx(i)}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors",
-                i === idx ? "bg-blue-50" : "",
+                i === idx ? "bg-accent-brand/10" : "",
               )}
             >
-              <span className={cn("w-8 h-8 rounded-lg grid place-items-center shrink-0", i === idx ? "bg-blue-600 text-white" : "bg-neutral-100 text-neutral-500")}>
+              <span className={cn("w-8 h-8 rounded-lg grid place-items-center shrink-0", i === idx ? "bg-accent-brand text-white" : "bg-muted text-muted-foreground")}>
                 <c.icon className="w-4 h-4" />
               </span>
               <span className="min-w-0">
                 <span className="flex items-baseline gap-2">
-                  <span className="font-mono2 text-[13px] font-medium text-blue-600">{c.cmd}</span>
-                  <span className="text-[13px] font-medium text-neutral-800">{c.label}</span>
+                  <span className="font-mono2 text-[13px] font-medium text-accent-brand">{c.cmd}</span>
+                  <span className="text-[13px] font-medium text-foreground">{c.label}</span>
                 </span>
-                <span className="block text-[12px] text-neutral-400 truncate">{c.desc}</span>
+                <span className="block text-[12px] text-muted-foreground truncate">{c.desc}</span>
               </span>
-              {i === idx && <kbd className="ml-auto text-[10px] text-neutral-400 border border-neutral-200 rounded px-1 py-0.5">Tab</kbd>}
+              {i === idx && <kbd className="ml-auto text-[10px] text-muted-foreground border border-[hsl(var(--glass-border))] rounded px-1 py-0.5">Tab</kbd>}
             </button>
           ))}
         </div>
       )}
 
       {/* 输入框 */}
-      <div className="rounded-2xl border border-black/10 bg-white shadow-sm transition-shadow focus-within:shadow-md focus-within:border-blue-300">
+      <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] glass-2 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-accent-brand/40">
         {/* 命令 chip */}
         {cmd && (
           <div className="px-3 pt-3">
-            <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 border border-blue-200 pl-2 pr-1 py-1">
-              <cmd.icon className="w-3.5 h-3.5 text-blue-600" />
-              <span className="font-mono2 text-[12px] font-medium text-blue-700">{cmd.cmd}</span>
-              <span className="text-[12px] text-blue-600">{cmd.label}</span>
-              <button onClick={() => setCmd(null)} className="ml-0.5 rounded p-0.5 hover:bg-blue-100 text-blue-400">
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-accent-brand/10 border border-accent-brand/20 pl-2 pr-1 py-1">
+              <cmd.icon className="w-3.5 h-3.5 text-accent-brand" />
+              <span className="font-mono2 text-[12px] font-medium text-accent-brand">{cmd.cmd}</span>
+              <span className="text-[12px] text-accent-brand">{cmd.label}</span>
+              <button onClick={() => setCmd(null)} className="ml-0.5 rounded p-0.5 hover:bg-accent-brand/15 text-accent-brand/70">
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -162,13 +162,13 @@ export default function ChatInput({
           disabled={disabled}
           rows={large ? 3 : 2}
           placeholder={placeholder ?? (cmd ? `${cmd.label}：描述你的意图…` : "向你的知识库提问，或输入 / 使用命令…")}
-          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15px] leading-relaxed outline-none placeholder:text-neutral-400 disabled:cursor-not-allowed"
+          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
         />
         <div className="flex items-center gap-2 px-3 pb-3">
           {/* 作用域选择：必须选择一个真实知识库（无「自动选择」） */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-1.5 h-7 px-2 rounded-lg text-[12px] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors">
+              <button className="flex items-center gap-1.5 h-7 px-2 rounded-apple-sm text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
                 <BookOpen className="w-3.5 h-3.5" />
                 {currentKb?.name ?? kbId ?? "选择知识库"}
                 <ChevronDown className="w-3 h-3 opacity-60" />
@@ -176,7 +176,7 @@ export default function ChatInput({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-52">
               {kbs.length === 0 && (
-                <DropdownMenuItem disabled className="text-[13px] text-neutral-400">
+                <DropdownMenuItem disabled className="text-[13px] text-muted-foreground">
                   暂无知识库
                 </DropdownMenuItem>
               )}
@@ -184,20 +184,20 @@ export default function ChatInput({
                 <DropdownMenuItem key={k.name} onClick={() => onKbChange?.(k.name)} className="text-[13px]">
                   <span className={cn("w-2 h-2 rounded-full mr-1", dotFor(i))} />
                   {k.name}
-                  {k.name === kbId && <span className="ml-auto text-blue-600 text-[11px]">当前</span>}
+                  {k.name === kbId && <span className="ml-auto text-accent-brand text-[11px]">当前</span>}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
 
           <div className="flex-1" />
-          <span className="text-[11px] text-neutral-300 hidden md:block">输入 <span className="font-mono2 text-blue-500">/</span> 使用命令</span>
+          <span className="text-[11px] text-muted-foreground/70 hidden md:block">输入 <span className="font-mono2 text-accent-brand">/</span> 使用命令</span>
           <button
             onClick={send}
             disabled={disabled || (!value.trim() && !cmd)}
             className={cn(
               "w-8 h-8 rounded-full grid place-items-center transition-all",
-              !disabled && (value.trim() || cmd) ? "bg-blue-600 text-white hover:bg-blue-700 shadow-sm" : "bg-neutral-100 text-neutral-300",
+              !disabled && (value.trim() || cmd) ? "bg-accent-brand text-white hover:opacity-90 shadow-sm" : "bg-muted text-muted-foreground",
             )}
           >
             <ArrowUp className="w-4 h-4" />
