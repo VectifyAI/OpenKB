@@ -2274,3 +2274,51 @@ def test_kb_config_patch_api_key_rotation_preserves_other_env_lines(monkeypatch,
     assert follow_up.status_code == 200
     assert follow_up.json()["has_api_key"] is True
     assert "new" not in follow_up.text
+
+
+def test_kb_config_patch_null_removes_key(monkeypatch, kb_dir):
+    """config: {model: null} removes the key from config.yaml (revert to
+    inherited), not persist model: None."""
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+
+    # Isolate from any real ~/.config/openkb/global.yaml on the host so the
+    # "falls back to default" assertion below is deterministic.
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", kb_dir / "global" / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", kb_dir / "global")
+
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "kb-model"}}, headers=_auth()
+    )
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": None}}, headers=_auth()
+    )
+    assert response.status_code == 200
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert "model" not in saved
+
+    # The key must be truly gone, not merely nulled: resolve_effective_config
+    # now falls back to the default layer (no global override present here).
+    effective, sources = resolve_effective_config(kb_dir)
+    assert sources["model"] == "default"
+    assert effective["model"] == DEFAULT_CONFIG["model"]
+
+
+def test_kb_config_patch_field_omitted_leaves_key_unchanged(monkeypatch, kb_dir):
+    """An OMITTED config field (not present in the patch at all) must be left
+    unchanged — merge-patch semantics distinguish absent from explicit null."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "kb-model"}}, headers=_auth()
+    )
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"language": "en"}}, headers=_auth()
+    )
+
+    assert response.status_code == 200
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert saved["model"] == "kb-model"
+    assert saved["language"] == "en"

@@ -86,8 +86,16 @@ def apply_kb_config_patch(kb_dir: Path, request: KbConfigPatchRequest) -> None:
         # Persist the VALIDATED/coerced values (e.g. "20"→20), not the raw dict:
         # a coercible-but-wrong-typed value (numeric string, bool) would otherwise
         # land on disk verbatim and crash downstream int comparisons. exclude_unset
-        # keeps merge-patch semantics — only the keys the client sent get written.
-        config.update(validated.model_dump(exclude_unset=True))
+        # keeps merge-patch semantics — only the keys the client sent get touched.
+        # RFC 7386: an explicit null REMOVES the key (revert to inherited),
+        # while an absent field is left unchanged. model_fields_set (via
+        # exclude_unset) distinguishes the two; a None value = explicit null.
+        dumped = validated.model_dump(exclude_unset=True)
+        for key, value in dumped.items():
+            if value is None:
+                config.pop(key, None)
+            else:
+                config[key] = value
         save_config(config_path, config)
 
     if "api_key" in fields_set or "openai_api_base" in fields_set:
