@@ -32,6 +32,27 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Apple layer — light */
+    --ambient: 250 30% 97%;
+    --ambient-1: 214 90% 60% / 0.10;
+    --ambient-2: 190 85% 55% / 0.08;
+    --ambient-3: 265 80% 62% / 0.09;
+    --glass-bg: 0 0% 100% / 0.62;
+    --glass-2-bg: 0 0% 100% / 0.74;
+    --glass-border: 220 30% 55% / 0.12;
+    --glass-highlight: 0 0% 100% / 0.9;
+    --accent-brand: 224 76% 56%;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --dur-press: 120ms;
+    --dur-fast: 160ms;
+    --dur-modal: 240ms;
+    --r-lg: 18px;
+    --r-md: 13px;
+    --r-sm: 10px;
+    --shadow-glass: 0 14px 34px -16px rgb(24 38 80 / 0.20);
+    --shadow-glass-lg: 0 30px 60px -18px rgb(24 38 80 / 0.28), 0 10px 24px -12px rgb(24 38 80 / 0.16);
   }
 
   .dark {
@@ -62,6 +83,61 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Apple layer — dark */
+    --ambient: 230 25% 6%;
+    --ambient-1: 214 90% 62% / 0.20;
+    --ambient-2: 190 85% 55% / 0.12;
+    --ambient-3: 265 80% 62% / 0.16;
+    --glass-bg: 224 22% 12% / 0.56;
+    --glass-2-bg: 224 20% 16% / 0.64;
+    --glass-border: 0 0% 100% / 0.07;
+    --glass-highlight: 0 0% 100% / 0.08;
+    --accent-brand: 217 91% 66%;
+    --shadow-glass: 0 14px 34px -14px rgb(0 0 0 / 0.55);
+    --shadow-glass-lg: 0 30px 64px -14px rgb(0 0 0 / 0.66), 0 10px 26px -10px rgb(0 0 0 / 0.5);
+  }
+}
+
+/* System dark is the default signal (shadcn's .dark class is applied by the
+   ThemeProvider). data-theme on <html> is the explicit override, winning both
+   directions over the media query. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+@layer components {
+  .glass {
+    background: hsl(var(--glass-bg));
+    -webkit-backdrop-filter: blur(30px) saturate(1.7);
+    backdrop-filter: blur(30px) saturate(1.7);
+    border: 1px solid hsl(var(--glass-border));
+    box-shadow: var(--shadow-glass), inset 0 1px 0 0 hsl(var(--glass-highlight));
+  }
+  .glass-2 { background: hsl(var(--glass-2-bg)); }
+  .ambient-ground {
+    background: hsl(var(--ambient));
+    position: relative;
+    isolation: isolate;
+  }
+  .ambient-ground::before {
+    content: "";
+    position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+    background:
+      radial-gradient(60vw 60vw at -8% -12%, hsl(var(--ambient-1)), transparent 62%),
+      radial-gradient(52vw 52vw at 108% 112%, hsl(var(--ambient-2)), transparent 62%),
+      radial-gradient(44vw 44vw at 46% 38%, hsl(var(--ambient-3)), transparent 60%);
+    filter: blur(70px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass { -webkit-backdrop-filter: none; backdrop-filter: none; background: hsl(var(--background)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

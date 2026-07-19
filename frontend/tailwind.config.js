@@ -48,6 +48,16 @@ module.exports = {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        "accent-brand": "hsl(var(--accent-brand))",
+      },
+      transitionTimingFunction: {
+        "ease-out-apple": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "ease-in-out-apple": "cubic-bezier(0.77, 0, 0.175, 1)",
+      },
+      transitionDuration: {
+        press: "120ms",
+        fast: "160ms",
+        modal: "240ms",
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
@@ -55,9 +65,15 @@ module.exports = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
         xs: "calc(var(--radius) - 6px)",
+        // Apple continuous-corner scale (existing xl/lg/md/sm/xs stay; add these)
+        "apple-lg": "var(--r-lg)",
+        "apple-md": "var(--r-md)",
+        "apple-sm": "var(--r-sm)",
       },
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        glass: "var(--shadow-glass)",
+        "glass-lg": "var(--shadow-glass-lg)",
       },
       keyframes: {
         "accordion-down": {
