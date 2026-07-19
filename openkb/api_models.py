@@ -329,6 +329,16 @@ class GlobalConfigValues(BaseModel):
     pageindex_threshold: int | None = None
 
 
+class GlobalConfigResponse(BaseModel):
+    model: str
+    language: str
+    pageindex_threshold: int
+
+
+class GlobalConfigPatchRequest(BaseModel):
+    config: dict[str, Any] | None = None
+
+
 class KbConfigResponse(BaseModel):
     model: str
     language: str

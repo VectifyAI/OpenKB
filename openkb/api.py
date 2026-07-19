@@ -33,6 +33,7 @@ from openkb.agent.query import (
     run_query,
 )
 from openkb.api_config import apply_kb_config_patch, read_kb_config
+from openkb.api_config_router import config_router
 from openkb.api_graph import graph_router
 from openkb.api_helpers import (
     _configure_cors,
@@ -166,6 +167,7 @@ def create_app() -> FastAPI:
     _configure_cors(app)
     app.include_router(graph_router)
     app.include_router(output_router)
+    app.include_router(config_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(

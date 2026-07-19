@@ -17,16 +17,20 @@ from pydantic import ValidationError
 
 from openkb.api_models import (
     _KB_CONFIG_WRITABLE_KEYS,
+    GlobalConfigPatchRequest,
+    GlobalConfigResponse,
     GlobalConfigValues,
     KbConfigPatchRequest,
     KbConfigResponse,
     _KbConfigWritable,
 )
 from openkb.config import (
+    DEFAULT_CONFIG,
     load_global_config,
     resolve_credential_bundle,
     resolve_effective_config,
     save_config,
+    save_global_config,
 )
 from openkb.locks import atomic_write_text
 
@@ -153,3 +157,46 @@ def apply_kb_config_patch(kb_dir: Path, request: KbConfigPatchRequest) -> None:
             request.kb,
             sorted(f for f in ("api_key", "openai_api_base") if f in fields_set),
         )
+
+
+def read_global_config() -> GlobalConfigResponse:
+    """The global default scalars, DEFAULT_CONFIG-filled where global.yaml is silent."""
+    gc = load_global_config()
+    return GlobalConfigResponse(
+        model=gc.get("model", DEFAULT_CONFIG["model"]),
+        language=gc.get("language", DEFAULT_CONFIG["language"]),
+        pageindex_threshold=gc.get("pageindex_threshold", DEFAULT_CONFIG["pageindex_threshold"]),
+    )
+
+
+def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
+    """Apply an RFC 7386 merge-patch to the whitelisted scalar keys of
+    global.yaml. Reuses _KbConfigWritable for VALUE-type validation (a wrong
+    type is a 400, never persisted) and MUST preserve the non-scalar global keys
+    (known_kbs / kb_aliases / default_kb) by merging into the loaded dict. Writes
+    go through save_global_config, whose own lock serializes global writes.
+    """
+    if request.config is None:
+        return
+    unknown = set(request.config) - _KB_CONFIG_WRITABLE_KEYS
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown config field(s): {', '.join(sorted(unknown))}",
+        )
+    try:
+        validated = _KbConfigWritable.model_validate(request.config)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        field = ".".join(str(p) for p in first.get("loc", ())) or "config"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid type for config field '{field}': {first['msg']}",
+        ) from exc
+    gc = load_global_config()
+    for key, value in validated.model_dump(exclude_unset=True).items():
+        if value is None:
+            gc.pop(key, None)  # RFC 7386 removal -> back to DEFAULT_CONFIG
+        else:
+            gc[key] = value
+    save_global_config(gc)

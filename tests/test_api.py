@@ -2419,3 +2419,73 @@ def test_kb_config_patch_does_not_materialize_defaults(monkeypatch, kb_dir):
     assert sources["pageindex_threshold"] == "default"
     assert effective["language"] == DEFAULT_CONFIG["language"]
     assert effective["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /api/v1/config  (global defaults)
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body == {"model": "gpt-5.4", "language": "en", "pageindex_threshold": 20}
+
+
+def test_global_config_patch_sets_value_and_preserves_registry(monkeypatch, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(
+        yaml.safe_dump({"known_kbs": ["/a"], "kb_aliases": {"x": "/a"}, "default_kb": "/a"}),
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    response = client.patch(
+        "/api/v1/config", json={"config": {"model": "claude-opus"}}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == "claude-opus"
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["model"] == "claude-opus"
+    assert saved["known_kbs"] == ["/a"]
+    assert saved["kb_aliases"] == {"x": "/a"}
+    assert saved["default_kb"] == "/a"
+
+
+def test_global_config_patch_rejects_unknown_and_bad_type(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    assert (
+        client.patch("/api/v1/config", json={"config": {"modle": "x"}}, headers=_auth()).status_code
+        == 400
+    )
+    assert (
+        client.patch(
+            "/api/v1/config", json={"config": {"pageindex_threshold": "abc"}}, headers=_auth()
+        ).status_code
+        == 400
+    )
+
+
+def test_global_config_patch_null_reverts_to_default(monkeypatch, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"model": "global-model"}), encoding="utf-8")
+    client = _client(monkeypatch)
+    response = client.patch("/api/v1/config", json={"config": {"model": None}}, headers=_auth())
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-5.4"  # back to DEFAULT_CONFIG
+    assert "model" not in yaml.safe_load(gp.read_text())
+
+
+def test_global_config_requires_auth(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    assert client.get("/api/v1/config").status_code == 401
+    assert client.patch("/api/v1/config", json={"config": {"model": "x"}}).status_code == 401
