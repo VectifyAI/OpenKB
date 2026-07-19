@@ -1,6 +1,7 @@
-import React from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
+import { useTheme } from '@/lib/theme'
 
-/** 极简 Markdown 渲染：标题 / 列表 / 引用 / 粗体 / [[wikilink]] / 行内代码 */
+/** 极简 Markdown 渲染：标题 / 列表 / 引用 / 粗体 / [[wikilink]] / 行内代码 / 代码块 / mermaid */
 function inline(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = []
   const re = /(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|`[^`]+`)/g
@@ -25,6 +26,62 @@ function inline(text: string): React.ReactNode[] {
   return parts
 }
 
+/** A fenced code block (non-mermaid): tokenized, horizontally scrollable. */
+function CodeBox({ code, lang }: { code: string; lang?: string }) {
+  return (
+    <div className="my-3 overflow-hidden rounded-apple-md border border-[hsl(var(--glass-border))] bg-muted/50">
+      {lang && (
+        <div className="px-3.5 pt-2 text-[10.5px] uppercase tracking-wide text-muted-foreground">{lang}</div>
+      )}
+      <pre className="overflow-x-auto px-3.5 py-3 text-[12.5px] leading-relaxed">
+        <code className="font-mono2 whitespace-pre text-foreground">{code}</code>
+      </pre>
+    </div>
+  )
+}
+
+/**
+ * Render a ```mermaid block as an SVG diagram. Mermaid is lazily imported (its
+ * own bundle chunk, loaded only when a diagram appears). Theme-aware; on any
+ * import/parse/render error, falls back to the raw source in a code box so a
+ * malformed diagram never crashes the message.
+ */
+function MermaidBlock({ code }: { code: string }) {
+  const { resolved } = useTheme()
+  const ref = useRef<HTMLDivElement>(null)
+  const [error, setError] = useState(false)
+  const id = 'mmd-' + useId().replace(/[^a-zA-Z0-9]/g, '')
+
+  useEffect(() => {
+    let cancelled = false
+    setError(false)
+    import('mermaid')
+      .then(async ({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: resolved === 'dark' ? 'dark' : 'default',
+        })
+        const { svg } = await mermaid.render(id, code)
+        if (!cancelled && ref.current) ref.current.innerHTML = svg
+      })
+      .catch(() => {
+        if (!cancelled) setError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [code, resolved, id])
+
+  if (error) return <CodeBox code={code} lang="mermaid" />
+  return (
+    <div
+      ref={ref}
+      className="my-3 flex justify-center overflow-x-auto [&_svg]:h-auto [&_svg]:max-w-full"
+    />
+  )
+}
+
 export default function MarkdownView({ source }: { source: string }) {
   const lines = source.split('\n')
   const out: React.ReactNode[] = []
@@ -46,8 +103,27 @@ export default function MarkdownView({ source }: { source: string }) {
     list = []
   }
 
-  for (const raw of lines) {
-    const line = raw.trimEnd()
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd()
+
+    // Fenced code block: ``` or ```lang … ``` (accumulate until the closing fence)
+    const fence = /^```(\w*)\s*$/.exec(line.trim())
+    if (fence) {
+      flushList()
+      const lang = fence[1]
+      const body: string[] = []
+      i++
+      while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) {
+        body.push(lines[i])
+        i++
+      }
+      // i now sits on the closing fence (or past the end if unterminated).
+      const code = body.join('\n')
+      if (lang === 'mermaid') out.push(<MermaidBlock key={key++} code={code} />)
+      else out.push(<CodeBox key={key++} code={code} lang={lang || undefined} />)
+      continue
+    }
+
     if (line.startsWith('- ')) { list.push(line.slice(2)); continue }
     flushList()
     if (!line.trim()) { out.push(<div key={key++} className="h-2" />); continue }
