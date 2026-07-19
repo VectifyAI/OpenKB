@@ -461,11 +461,6 @@ export default function ChatSession() {
         <div className="min-w-0">
           <div className="text-[14px] font-semibold text-foreground truncate">{title}</div>
         </div>
-        {kb && (
-          <span className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground bg-muted rounded-full px-2.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent-brand" />{kb}
-          </span>
-        )}
       </div>
 
       {/* 消息流 */}

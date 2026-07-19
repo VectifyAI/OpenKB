@@ -5,8 +5,6 @@ import { listKbs, type KbSummary } from "@/api/kb"
 import { ThemeToggle } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
-const APP_VERSION = "0.1"
-
 /** Decorative accent colors, cycled by position — the API carries no color. */
 const DOTS = [
   "bg-blue-500",
@@ -103,19 +101,11 @@ export default function AppSidebar() {
 
       <div className="flex-1" />
 
-      {/* 底部聚合：进度 → 设置 → 版本（自上而下） */}
+      {/* 底部聚合：设置 → 主题切换 */}
       <div className="space-y-1.5">
-        {/* 后台进度指示（真实后台任务 widget 待后续接入；当前显示 KB 计数占位，非伪造进度） */}
-        <div className="rounded-apple-sm glass-2 px-3 py-2 flex items-center justify-between text-[11.5px] text-muted-foreground">
-          <span className="font-mono2">OpenKB</span>
-          <span className="tabular-nums">{kbs.length} 个知识库</span>
-        </div>
-
         <NavItem to="/settings" icon={<Settings2 className="w-4 h-4" />} label="设置" />
-
-        <div className="flex items-center justify-between px-3 pt-0.5 text-[11px] text-muted-foreground">
-          <span className="font-mono2">v{APP_VERSION}</span>
-          <ThemeToggle className="hover:text-foreground transition-colors" />
+        <div className="flex items-center justify-end px-1 pt-0.5">
+          <ThemeToggle className="text-muted-foreground hover:text-foreground transition-colors" />
         </div>
       </div>
     </aside>

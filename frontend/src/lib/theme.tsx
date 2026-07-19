@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import { Sun, Moon, Monitor } from "lucide-react"
 
 type Theme = "light" | "dark" | "system"
 type Resolved = "light" | "dark"
@@ -55,18 +56,20 @@ export function useTheme() {
   return ctx
 }
 
-/** Small light/dark toggle button (cycles light → dark → system). */
+/** Theme toggle icon button (cycles light → dark → system). */
 export function ThemeToggle({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme()
   const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"
   const label = theme === "light" ? "浅色" : theme === "dark" ? "深色" : "跟随系统"
+  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor
   return (
     <button
       onClick={() => setTheme(next)}
       title={`主题：${label}（点击切换）`}
-      className={className}
+      aria-label={`主题：${label}`}
+      className={`grid h-8 w-8 place-items-center rounded-lg ${className ?? ""}`}
     >
-      {label}
+      <Icon className="w-4 h-4" />
     </button>
   )
 }
