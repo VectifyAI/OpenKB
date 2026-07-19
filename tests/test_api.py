@@ -1921,6 +1921,25 @@ def test_output_endpoint_400_for_non_viewable_type(monkeypatch, kb_dir):
     assert response.status_code == 400
 
 
+def test_output_endpoint_400_for_wiki_prefix(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "x.html").write_text("<html><body>hi</body></html>", encoding="utf-8")
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "wiki/x.html"}, headers=_auth()
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_400_for_absolute_path(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "/etc/passwd"}, headers=_auth()
+    )
+    assert response.status_code == 400
+
+
 def test_output_endpoint_requires_token(monkeypatch, kb_dir):
     client = _client(monkeypatch)  # token enforced (default "secret")
     kb = _use_named_kb(monkeypatch, kb_dir)
