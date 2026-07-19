@@ -2322,3 +2322,62 @@ def test_kb_config_patch_field_omitted_leaves_key_unchanged(monkeypatch, kb_dir)
     saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
     assert saved["model"] == "kb-model"
     assert saved["language"] == "en"
+
+
+def test_kb_config_patch_does_not_materialize_defaults(monkeypatch, kb_dir):
+    """A PATCH that sets only ONE scalar must NOT materialize the OTHER
+    DEFAULT_CONFIG scalars into config.yaml.
+
+    Regression test: ``apply_kb_config_patch`` used to read the KB config via
+    ``load_config()`` — which returns ``dict(DEFAULT_CONFIG)`` merged with the
+    KB's own file — and then ``save_config()`` the WHOLE merged dict back. That
+    silently KB-pinned every default scalar (language, pageindex_threshold) to
+    its default value on the very first single-field PATCH, permanently
+    breaking global/default inheritance for fields the client never touched.
+    The fix does a RAW read-modify-write of only the KB's explicit keys.
+    """
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+
+    # Isolate from any real ~/.config/openkb/global.yaml on the host so the
+    # "still inherits" assertions below are deterministic.
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", kb_dir / "global" / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", kb_dir / "global")
+
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # The kb_dir fixture's config.yaml is silent on model/language/threshold —
+    # it only carries its own unrelated explicit keys.
+    before = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert "model" not in before
+    assert "language" not in before
+    assert "pageindex_threshold" not in before
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "claude-opus"}}, headers=_auth()
+    )
+    assert response.status_code == 200
+
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    # The patched key landed...
+    assert saved["model"] == "claude-opus"
+    # ...the KB's pre-existing explicit keys survive untouched...
+    for key, value in before.items():
+        assert saved[key] == value
+    # ...but NOTHING else was materialized: the only new key on disk is the
+    # one the client actually patched. In particular the other DEFAULT_CONFIG
+    # scalars must be absent, not pinned to their default values.
+    assert set(saved) - set(before) == {"model"}
+    assert "language" not in saved
+    assert "pageindex_threshold" not in saved
+
+    # And resolve_effective_config must still report the untouched scalars as
+    # inheriting (source "default", since no global.yaml override is set here)
+    # rather than "kb" — proving the KB config.yaml did not silently start
+    # pinning them.
+    effective, sources = resolve_effective_config(kb_dir)
+    assert sources["model"] == "kb"
+    assert sources["language"] == "default"
+    assert sources["pageindex_threshold"] == "default"
+    assert effective["language"] == DEFAULT_CONFIG["language"]
+    assert effective["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]

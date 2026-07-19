@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import yaml
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -82,7 +83,19 @@ def apply_kb_config_patch(kb_dir: Path, request: KbConfigPatchRequest) -> None:
                 detail=f"Invalid type for config field '{field}': {first['msg']}",
             ) from exc
         config_path = kb_dir / ".openkb" / "config.yaml"
-        config = load_config(config_path)
+        # RAW read of the KB's own config.yaml — NOT load_config(), which
+        # merges in DEFAULT_CONFIG. Merging defaults here would materialize
+        # every default key (model/language/pageindex_threshold/...) into
+        # config.yaml on the very next save_config() below, permanently
+        # KB-pinning them to their default values and breaking
+        # resolve_effective_config's global/default inheritance for every
+        # scalar the client didn't ask to change (see resolve_effective_config
+        # in config.py, which does the same raw read for its null-inherit gate).
+        if config_path.exists():
+            with config_path.open("r", encoding="utf-8") as fh:
+                config = yaml.safe_load(fh) or {}
+        else:
+            config = {}
         # Persist the VALIDATED/coerced values (e.g. "20"→20), not the raw dict:
         # a coercible-but-wrong-typed value (numeric string, bool) would otherwise
         # land on disk verbatim and crash downstream int comparisons. exclude_unset
