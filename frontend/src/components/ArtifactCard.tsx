@@ -1,6 +1,6 @@
 import { useState } from "react"
 import {
-  Presentation, Sparkles, Waypoints, Check, Loader2, FileText, FileArchive, ArrowUpRight,
+  Presentation, Sparkles, Waypoints, Check, Loader2, FileText, FileCode, FileArchive, ArrowUpRight,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -18,6 +18,7 @@ export type Artifact =
   | { type: "deck"; kb: string; name: string; status: string; path: string }
   | { type: "skill"; kb: string; name: string; status: string; path: string }
   | { type: "graph"; kb: string; graph: GraphData }
+  | { type: "file"; kb: string; name: string; path: string }
 
 /** Server output_dir is an absolute path; show only its final segment. */
 function baseName(path: string): string {
@@ -103,6 +104,18 @@ function DeckCard({ a, onOpen }: { a: Extract<Artifact, { type: "deck" }>; onOpe
   )
 }
 
+function FileCard({ a, onOpen }: { a: Extract<Artifact, { type: "file" }>; onOpen?: (a: Artifact) => void }) {
+  return (
+    <OpenableCard
+      icon={FileCode}
+      tint="bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
+      label={a.name}
+      subtitle={`HTML 文件 · ${baseName(a.path)}`}
+      onOpen={() => onOpen?.(a)}
+    />
+  )
+}
+
 function GraphCard({ a, onOpen }: { a: Extract<Artifact, { type: "graph" }>; onOpen?: (a: Artifact) => void }) {
   const { graph } = a
   const subtitle =
@@ -182,6 +195,8 @@ export default function ArtifactCard({
       return <SkillCard a={artifact} />
     case "graph":
       return <GraphCard a={artifact} onOpen={onOpen} />
+    case "file":
+      return <FileCard a={artifact} onOpen={onOpen} />
     default:
       return (
         <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] glass-2 px-5 py-4 flex items-center gap-3">

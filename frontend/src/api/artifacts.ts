@@ -49,3 +49,15 @@ export function getSkillArchiveBlobUrl(kb: string, name: string): Promise<string
     `/api/v1/skill/${encodeURIComponent(name)}/archive?kb=${encodeURIComponent(kb)}`,
   )
 }
+
+/**
+ * Fetch a conversationally-written viewable HTML artifact (output/**.html) with
+ * the bearer token attached CLIENT-SIDE and return a `blob:` URL for a sandboxed
+ * `<iframe src>`. Same rules as {@link getDeckBlobUrl}: never a raw href to the
+ * API path, never a token in a query string; caller MUST `URL.revokeObjectURL`.
+ */
+export function getOutputBlobUrl(kb: string, path: string): Promise<string> {
+  return fetchAsBlobUrl(
+    `/api/v1/output?kb=${encodeURIComponent(kb)}&path=${encodeURIComponent(path)}`,
+  )
+}

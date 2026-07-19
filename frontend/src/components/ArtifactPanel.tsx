@@ -1,24 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { motion, useReducedMotion } from "motion/react"
-import { Presentation, Waypoints, ExternalLink, Download, X, Loader2 } from "lucide-react"
+import { Presentation, Waypoints, FileCode, ExternalLink, Download, X, Loader2 } from "lucide-react"
 import { toast } from "sonner"
-import { getDeckBlobUrl, getGraphBlobUrl } from "@/api/artifacts"
+import { getDeckBlobUrl, getGraphBlobUrl, getOutputBlobUrl } from "@/api/artifacts"
 import type { Artifact } from "@/components/ArtifactCard"
 
 /** Stable identity for a viewable artifact (graph is one-per-kb; deck by name). */
 export function artifactKey(a: Artifact): string {
-  return a.type === "graph" ? `graph:${a.kb}` : `${a.type}:${a.kb}/${a.name}`
+  if (a.type === "graph") return `graph:${a.kb}`
+  if (a.type === "file") return `file:${a.kb}/${a.path}`
+  return `${a.type}:${a.kb}/${a.name}`
 }
 
 /** Human label for the header + switcher pill. */
 function artifactLabel(a: Artifact): string {
-  return a.type === "graph" ? "知识图谱" : a.name
+  if (a.type === "graph") return "知识图谱"
+  return a.name
 }
 
 /** Fetch the artifact's self-contained HTML as an authenticated blob: URL. */
 function fetchArtifactHtml(a: Artifact): Promise<string> {
   if (a.type === "deck") return getDeckBlobUrl(a.kb, a.name)
   if (a.type === "graph") return getGraphBlobUrl(a.kb)
+  if (a.type === "file") return getOutputBlobUrl(a.kb, a.path)
   // Skills are archives, not viewable HTML — they never reach the panel.
   return Promise.reject(new Error("该产物类型不可预览"))
 }
@@ -169,7 +173,12 @@ export default function ArtifactPanel({
       .then((url) => {
         const a = document.createElement("a")
         a.href = url
-        a.download = active.type === "graph" ? `${active.kb}-graph.html` : `${active.name}.html`
+        a.download =
+          active.type === "graph"
+            ? `${active.kb}-graph.html`
+            : active.type === "file"
+              ? active.name
+              : `${active.name}.html`
         document.body.appendChild(a)
         a.click()
         a.remove()
@@ -178,7 +187,8 @@ export default function ArtifactPanel({
       .catch((e) => toast.error(`下载失败：${errMsg(e)}`))
   }
 
-  const HeaderIcon = active.type === "graph" ? Waypoints : Presentation
+  const HeaderIcon =
+    active.type === "graph" ? Waypoints : active.type === "file" ? FileCode : Presentation
 
   return (
     <motion.aside
@@ -203,7 +213,7 @@ export default function ArtifactPanel({
           {artifactLabel(active)}
         </span>
         <span className="shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
-          {active.type === "graph" ? "GRAPH" : "DECK"}
+          {active.type === "graph" ? "GRAPH" : active.type === "file" ? "FILE" : "DECK"}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
@@ -249,6 +259,8 @@ export default function ArtifactPanel({
               >
                 {a.type === "graph" ? (
                   <Waypoints className="w-3 h-3" />
+                ) : a.type === "file" ? (
+                  <FileCode className="w-3 h-3" />
                 ) : (
                   <Presentation className="w-3 h-3" />
                 )}
