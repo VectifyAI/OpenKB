@@ -55,8 +55,12 @@ export interface ChatTurnState {
   /** Error message from an `error` event, else null. */
   error: string | null
   /** Viewable HTML files this turn produced via the chat agent's write_file
-   *  tool (from `artifact` SSE events). KB is attached by the caller. */
-  artifacts: { path: string; name: string }[]
+   *  tool (from `artifact` SSE events). `kb` is captured at fold time (the
+   *  active KB when the artifact event arrived), NOT re-attached at render
+   *  time — the top-level `kb` state can change mid-session (KB dropdown
+   *  switch), and a historical turn's file must keep pointing at the KB it
+   *  was actually produced under. */
+  artifacts: { path: string; name: string; kb: string }[]
 }
 
 export function initialTurnState(): ChatTurnState {
@@ -169,6 +173,11 @@ export function sourcesFromHistory(history: unknown): Source[] | null {
  * as the stream arrives (calling `setState`), so the UI reveals the answer and
  * the "reading" indicator live — no artificial delay.
  *
+ * `kb` is the KB active at fold time (captured once by the caller at turn
+ * start, e.g. `runTurn`'s `activeKb`), baked into any `artifact` produced this
+ * turn — never re-derived from render-time state, so a later KB switch can't
+ * retroactively repoint a historical turn's file artifact at the wrong KB.
+ *
  * Real backend event shapes (verified against `openkb/api_helpers.py`):
  *   - `delta`     → `{ text }`            (incremental answer text)
  *   - `tool_call` → `{ name, arguments }` (arguments is a JSON string)
@@ -180,7 +189,7 @@ export function sourcesFromHistory(history: unknown): Source[] | null {
  *   - `done`      → `{}`
  *   - `start`     → ignored
  */
-export function foldSseEvent(state: ChatTurnState, event: SseEvent): ChatTurnState {
+export function foldSseEvent(state: ChatTurnState, event: SseEvent, kb: string): ChatTurnState {
   const data = (event?.data ?? {}) as Record<string, unknown>
   switch (event?.event) {
     case "delta": {
@@ -212,11 +221,14 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent): ChatTurnSta
       return { ...state, reading: null, error: message }
     }
     case "artifact": {
+      // Forward-compat guard: only `kind: "file"` artifacts are folded here.
+      // A future non-file `kind` must not be silently mis-tagged as a file.
+      if (data.kind !== "file") return state
       const path = typeof data.path === "string" ? data.path.trim() : ""
       const name = typeof data.name === "string" ? data.name.trim() : ""
       if (!path || !name) return state
       if (state.artifacts.some((x) => x.path === path)) return state
-      return { ...state, artifacts: [...state.artifacts, { path, name }] }
+      return { ...state, artifacts: [...state.artifacts, { path, name, kb }] }
     }
     case "done":
       return { ...state, reading: null, done: true }

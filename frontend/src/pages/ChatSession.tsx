@@ -135,12 +135,10 @@ function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Sourc
 
 function AssistantMessage({
   turn,
-  kb,
   onOpen,
   onOpenArtifact,
 }: {
   turn: ChatTurnState
-  kb: string
   onOpen: (s: Source) => void
   onOpenArtifact: (a: Artifact) => void
 }) {
@@ -187,7 +185,7 @@ function AssistantMessage({
             {turn.artifacts.map((f) => (
               <ArtifactCard
                 key={f.path}
-                artifact={{ type: "file", kb, name: f.name, path: f.path }}
+                artifact={{ type: "file", kb: f.kb, name: f.name, path: f.path }}
                 onOpen={onOpenArtifact}
               />
             ))}
@@ -263,7 +261,7 @@ export default function ChatSession() {
           return [m.art.artifact]
         }
         if (m.role === "assistant") {
-          return m.turn.artifacts.map((f) => ({ type: "file", kb, name: f.name, path: f.path }))
+          return m.turn.artifacts.map((f) => ({ type: "file", kb: f.kb, name: f.name, path: f.path }))
         }
         return []
       })
@@ -349,7 +347,7 @@ export default function ChatSession() {
     try {
       const stream = streamChat(activeKb, sessionIdRef.current, question)
       for await (const event of stream) {
-        patch((t) => foldSseEvent(t, event))
+        patch((t) => foldSseEvent(t, event, activeKb))
         if (event.event === "final" && typeof event.data?.session_id === "string") {
           const sid = event.data.session_id as string
           if (sid && sid !== sessionIdRef.current) {
@@ -505,7 +503,6 @@ export default function ChatSession() {
               <AssistantMessage
                 key={m.id}
                 turn={m.turn}
-                kb={kb}
                 onOpen={openSource}
                 onOpenArtifact={setPanelArtifact}
               />
