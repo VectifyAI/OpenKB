@@ -54,6 +54,9 @@ export interface ChatTurnState {
   done: boolean
   /** Error message from an `error` event, else null. */
   error: string | null
+  /** Viewable HTML files this turn produced via the chat agent's write_file
+   *  tool (from `artifact` SSE events). KB is attached by the caller. */
+  artifacts: { path: string; name: string }[]
 }
 
 export function initialTurnState(): ChatTurnState {
@@ -66,6 +69,7 @@ export function initialTurnState(): ChatTurnState {
     turnCount: null,
     done: false,
     error: null,
+    artifacts: [],
   }
 }
 
@@ -171,6 +175,8 @@ export function sourcesFromHistory(history: unknown): Source[] | null {
  *   - `final`     → query: `{ answer, saved_path }`;
  *                   chat:  `{ answer, session_id, turn_count }`
  *   - `error`     → `{ message }`
+ *   - `artifact`  → `{ kind: "file", path, name }` (chat only, from a confirmed
+ *                   `write_file` of a viewable `output/**.html`)
  *   - `done`      → `{}`
  *   - `start`     → ignored
  */
@@ -204,6 +210,13 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent): ChatTurnSta
     case "error": {
       const message = typeof data.message === "string" ? data.message : "请求失败"
       return { ...state, reading: null, error: message }
+    }
+    case "artifact": {
+      const path = typeof data.path === "string" ? data.path.trim() : ""
+      const name = typeof data.name === "string" ? data.name.trim() : ""
+      if (!path || !name) return state
+      if (state.artifacts.some((x) => x.path === path)) return state
+      return { ...state, artifacts: [...state.artifacts, { path, name }] }
     }
     case "done":
       return { ...state, reading: null, done: true }

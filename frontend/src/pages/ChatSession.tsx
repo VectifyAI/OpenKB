@@ -133,7 +133,17 @@ function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Sourc
   )
 }
 
-function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: Source) => void }) {
+function AssistantMessage({
+  turn,
+  kb,
+  onOpen,
+  onOpenArtifact,
+}: {
+  turn: ChatTurnState
+  kb: string
+  onOpen: (s: Source) => void
+  onOpenArtifact: (a: Artifact) => void
+}) {
   const streaming = !turn.done
   const showThinking = streaming && !turn.answer && !turn.error
   return (
@@ -170,6 +180,19 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
 
         {/* 参考来源（whitelist 过滤、按轮去重） */}
         <SourceChips sources={turn.sources} onOpen={onOpen} />
+
+        {/* 会话中生成的可查看 HTML 文件（来自 write_file 的 artifact 事件） */}
+        {turn.artifacts.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {turn.artifacts.map((f) => (
+              <ArtifactCard
+                key={f.path}
+                artifact={{ type: "file", kb, name: f.name, path: f.path }}
+                onOpen={onOpenArtifact}
+              />
+            ))}
+          </div>
+        )}
 
         {/* 沉淀提示（query 的 saved_path） */}
         {turn.savedPath && (
@@ -227,18 +250,23 @@ export default function ChatSession() {
   // viewable artifact, or null when the panel is closed.
   const [panelArtifact, setPanelArtifact] = useState<Artifact | null>(null)
 
-  // Every viewable artifact this session produced (deck + graph) — the panel's
-  // switcher list. Skills are archives, not viewable, so excluded. Deduped by
-  // artifact identity (re-running /visualize yields the same graph key; a
-  // same-name /deck overwrites) so the switcher shows one pill per artifact and
-  // never emits duplicate React keys; the latest occurrence wins.
+  // Every viewable artifact this session produced (deck + graph + chat-turn
+  // files) — the panel's switcher list. Skills are archives, not viewable, so
+  // excluded. Deduped by artifact identity (re-running /visualize yields the
+  // same graph key; a same-name /deck overwrites; a re-written output/*.html
+  // path collapses to its latest) so the switcher shows one pill per artifact
+  // and never emits duplicate React keys; the latest occurrence wins.
   const viewableArtifacts = Array.from(
     msgs
-      .flatMap((m) =>
-        m.role === "artifact" && m.art.artifact && m.art.artifact.type !== "skill"
-          ? [m.art.artifact]
-          : [],
-      )
+      .flatMap((m): Artifact[] => {
+        if (m.role === "artifact" && m.art.artifact && m.art.artifact.type !== "skill") {
+          return [m.art.artifact]
+        }
+        if (m.role === "assistant") {
+          return m.turn.artifacts.map((f) => ({ type: "file", kb, name: f.name, path: f.path }))
+        }
+        return []
+      })
       .reduce((map, a) => map.set(artifactKey(a), a), new Map<string, Artifact>())
       .values(),
   )
@@ -474,7 +502,13 @@ export default function ChatSession() {
             ) : m.role === "artifact" ? (
               <ArtifactMessage key={m.id} art={m.art} onOpen={setPanelArtifact} />
             ) : (
-              <AssistantMessage key={m.id} turn={m.turn} onOpen={openSource} />
+              <AssistantMessage
+                key={m.id}
+                turn={m.turn}
+                kb={kb}
+                onOpen={openSource}
+                onOpenArtifact={setPanelArtifact}
+              />
             ),
           )}
           <div className="h-2" />
