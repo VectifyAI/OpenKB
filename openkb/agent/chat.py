@@ -563,9 +563,9 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     # Load model from KB config
-    from openkb.config import DEFAULT_CONFIG, load_config
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.skill.generator import Generator
@@ -694,9 +694,9 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     # Load model from KB config
-    from openkb.config import DEFAULT_CONFIG, load_config
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.deck.creator import DEFAULT_DECK_SKILL
@@ -860,9 +860,9 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
         SkillNotFoundError,
         run_skill,
     )
-    from openkb.config import DEFAULT_CONFIG, load_config
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     # Path passed to the skill is relative to kb_dir (the agent's cwd
@@ -909,9 +909,9 @@ def build_chat_session_agent(
     query.py) so the query module's ``build_chat_agent`` signature stays
     unchanged for the CLI; the API uses this session-aware variant instead.
     """
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language = session.language or config.get("language", "en")
     return build_chat_agent(kb_dir, session.model, language=language, bundle=bundle)
 
@@ -960,12 +960,12 @@ async def run_chat(
     raw: bool = False,
 ) -> None:
     """Run the chat REPL against ``session`` until the user exits."""
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
     use_color = _use_color(force_off=no_color)
     style = _build_style(use_color)
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language = session.language or config.get("language", "en")
     agent = build_chat_agent(kb_dir, session.model, language=language)
 

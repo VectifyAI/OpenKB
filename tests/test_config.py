@@ -485,3 +485,49 @@ def test_converter_uses_global_threshold(_isolated_global, tmp_path, monkeypatch
     # 1-page PDF only takes the long-doc branch if the *global* threshold (1)
     # was used instead of the default (20).
     assert result.is_long_doc is True
+
+
+def test_query_agent_uses_global_language(_isolated_global, tmp_path, monkeypatch):
+    """run_query resolves its language via resolve_effective_config(kb_dir) —
+    exercised through the real production call site (``run_query``), not by
+    calling the resolver directly (that would only re-test Task 1's resolver).
+
+    Spies on ``resolve_effective_config`` as invoked *by* run_query and records
+    the ``kb_dir`` it was called with, then confirms the global-only language
+    value actually reaches ``build_query_agent``. If agent/query.py were
+    reverted to ``load_config(openkb_dir / "config.yaml")``/``{}``, the spy
+    would never fire (or ``load_config`` on a KB with no config.yaml would
+    yield DEFAULT_CONFIG's language "en") and this test would fail.
+    """
+    import asyncio
+
+    import openkb.agent.query as q
+    import openkb.config as cfg
+
+    save_global_config({"language": "de"})
+    kb = _kb(tmp_path / "kb")
+
+    real_resolve = cfg.resolve_effective_config
+    calls: list[Path] = []
+
+    def _spy_resolve(kb_dir_arg):
+        calls.append(kb_dir_arg)
+        return real_resolve(kb_dir_arg)
+
+    monkeypatch.setattr(cfg, "resolve_effective_config", _spy_resolve)
+
+    captured = {}
+
+    def _fake_build(wiki_root, model, *, language, bundle=None):
+        captured["language"] = language
+        raise RuntimeError("stop-after-build")  # short-circuit before any LLM call
+
+    monkeypatch.setattr(q, "build_query_agent", _fake_build)
+
+    with pytest.raises(RuntimeError, match="stop-after-build"):
+        asyncio.run(q.run_query("q", kb, "some-model", stream=False))
+
+    # The resolver seam was actually invoked by run_query, with this KB dir.
+    assert calls == [kb]
+    # And the language it resolved actually reached build_query_agent.
+    assert captured["language"] == "de"
