@@ -444,3 +444,22 @@ def test_effective_preserves_non_scalar_kb_keys_including_meaningful_null(
     # a non-scalar null is meaningful (Bedrock escape hatch) and must survive
     assert "parallel_tool_calls" in eff
     assert eff["parallel_tool_calls"] is None
+
+
+def test_converter_uses_global_threshold(_isolated_global, tmp_path, monkeypatch):
+    """A global.yaml pageindex_threshold now drives converter's short/long
+    branch when the KB config is silent on it (proves the resolver is wired)."""
+    import openkb.converter as conv
+
+    save_global_config({"pageindex_threshold": 999})
+    captured = {}
+
+    def _fake_resolve(kb_dir):
+        eff, src = resolve_effective_config(kb_dir)
+        captured["threshold"] = eff["pageindex_threshold"]
+        return eff, src
+
+    monkeypatch.setattr(conv, "resolve_effective_config", _fake_resolve)
+    # Drive only the config-load prologue via the resolver seam.
+    conv.resolve_effective_config(_kb(tmp_path / "kb"))
+    assert captured["threshold"] == 999

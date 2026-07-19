@@ -13,7 +13,7 @@ from pathlib import Path
 import pymupdf
 from markitdown import MarkItDown
 
-from openkb.config import load_config
+from openkb.config import resolve_effective_config
 from openkb.images import convert_pdf_with_images, copy_relative_images, extract_base64_images
 from openkb.locks import atomic_write_text, kb_ingest_lock
 from openkb.state import HashRegistry
@@ -160,7 +160,7 @@ def convert_document(
         # Load config & state
         # ------------------------------------------------------------------
         openkb_dir = kb_dir / ".openkb"
-        config = load_config(openkb_dir / "config.yaml")
+        config = resolve_effective_config(kb_dir)[0]
         threshold: int = config.get("pageindex_threshold", 20)
         artifact_root = staging_dir if staging_dir is not None else kb_dir
         registry = HashRegistry(openkb_dir / "hashes.json")
