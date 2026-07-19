@@ -80,13 +80,8 @@ export default function TitleBar() {
     )
   }
 
-  // Browser tab: plain in-page header — no window buttons, no drag region.
-  return (
-    <div className="h-11 shrink-0 flex items-center px-4 select-none">
-      <div className="flex-1 text-center text-[13px] font-medium text-neutral-500">
-        {heading}
-      </div>
-      <ConnectionStatus />
-    </div>
-  )
+  // Browser tab (today's only delivery): no title strip at all — the browser
+  // tab already shows the app title, so an in-page "OpenKB Studio — <route>"
+  // bar is dead chrome. The desktop-shell branch above is kept for Sub-project C.
+  return null
 }

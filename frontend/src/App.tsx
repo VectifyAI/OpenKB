@@ -121,6 +121,9 @@ function ConnectionDialog({
 export default function App() {
   const [authOpen, setAuthOpen] = useState(false)
 
+  const isDesktopShell =
+    typeof (window as { __OPENKB_DESKTOP__?: unknown }).__OPENKB_DESKTOP__ !== "undefined"
+
   // Register the reactive 401 handler once. Any request that 401s opens the
   // connection prompt (idempotent — repeated 401s just keep it open).
   useEffect(() => {
@@ -128,11 +131,15 @@ export default function App() {
   }, [])
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#e8e8e4] overflow-hidden">
-      <TitleBar />
-      <div className="flex flex-1 min-h-0">
+    <div className="ambient-ground h-screen w-screen flex overflow-hidden">
+      {isDesktopShell && (
+        <div className="absolute top-0 inset-x-0 z-50">
+          <TitleBar />
+        </div>
+      )}
+      <div className="flex flex-1 min-h-0 w-full">
         <AppSidebar />
-        <main className="relative flex-1 min-w-0 bg-[#f7f7f4] overflow-hidden">
+        <main className="relative flex-1 min-w-0 overflow-hidden">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/chat/:id" element={<ChatSession />} />
