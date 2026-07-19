@@ -6,7 +6,7 @@ import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatIn
 import MarkdownView from "@/components/MarkdownView"
 import ArtifactCard, { type Artifact } from "@/components/ArtifactCard"
 import { AnimatePresence } from "motion/react"
-import ArtifactPanel from "@/components/ArtifactPanel"
+import ArtifactPanel, { artifactKey } from "@/components/ArtifactPanel"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
@@ -227,12 +227,20 @@ export default function ChatSession() {
   // viewable artifact, or null when the panel is closed.
   const [panelArtifact, setPanelArtifact] = useState<Artifact | null>(null)
 
-  // Every viewable artifact this session produced (deck + graph, in order) — the
-  // panel's switcher list. Skills are archives, not viewable, so excluded.
-  const viewableArtifacts = msgs.flatMap((m) =>
-    m.role === "artifact" && m.art.artifact && m.art.artifact.type !== "skill"
-      ? [m.art.artifact]
-      : [],
+  // Every viewable artifact this session produced (deck + graph) — the panel's
+  // switcher list. Skills are archives, not viewable, so excluded. Deduped by
+  // artifact identity (re-running /visualize yields the same graph key; a
+  // same-name /deck overwrites) so the switcher shows one pill per artifact and
+  // never emits duplicate React keys; the latest occurrence wins.
+  const viewableArtifacts = Array.from(
+    msgs
+      .flatMap((m) =>
+        m.role === "artifact" && m.art.artifact && m.art.artifact.type !== "skill"
+          ? [m.art.artifact]
+          : [],
+      )
+      .reduce((map, a) => map.set(artifactKey(a), a), new Map<string, Artifact>())
+      .values(),
   )
 
   const scrollRef = useRef<HTMLDivElement>(null)
