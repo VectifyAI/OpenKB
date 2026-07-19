@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import {
-  FileText, ExternalLink, Loader2, Upload, Cloud, HardDrive,
+  FileText, ExternalLink, Loader2, Upload,
   RefreshCw, Play, CheckCircle2, AlertCircle, ShieldCheck, Clock, Radio,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -13,23 +13,13 @@ import {
 import type { SseEvent } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
 import PageTypeTabs from '@/components/PageTypeTabs'
+import ConnectorCards from '@/components/ConnectorCards'
 import { cn } from '@/lib/utils'
 
 const tabs = [
   { id: 'browse', label: '浏览' },
   { id: 'sources', label: '来源' },
   { id: 'jobs', label: '任务' },
-] as const
-
-/**
- * Remote connectors are NOT implemented — there is no backend for Drive/S3/
- * OneDrive sync. These render as disabled "coming soon" cards so the UI never
- * fakes a connected/synced state. The only real sources are uploaded docs.
- */
-const connectors = [
-  { id: 'gdrive', label: 'Google Drive', icon: Cloud },
-  { id: 's3', label: 'Amazon S3', icon: HardDrive },
-  { id: 'onedrive', label: 'OneDrive', icon: Cloud },
 ] as const
 
 /** One selected wiki page, derived from its `<type>/<name>` path. */
@@ -525,26 +515,13 @@ export default function KbDetail() {
               ))}
             </div>
 
-            {/* 远程连接器：无后端，明确标注即将推出，绝不伪造已连接状态 */}
+            {/* 远程连接器：无后端。改为 GitHub 需求投票，绝不伪造已连接状态 */}
             <h2 className="mt-8 text-[13.5px] font-semibold text-foreground">远程数据源</h2>
-            <p className="mt-1 text-[12px] text-muted-foreground">云端连接器尚未实现，敬请期待</p>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              {connectors.map((c) => (
-                <div
-                  key={c.id}
-                  aria-disabled="true"
-                  title="即将推出"
-                  className="rounded-2xl border border-dashed border-[hsl(var(--glass-border))] bg-muted/40 px-4 py-3.5 flex items-center gap-3 opacity-70 cursor-not-allowed select-none"
-                >
-                  <span className="w-9 h-9 rounded-xl bg-muted border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
-                    <c.icon className="w-4 h-4 text-muted-foreground" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-medium text-muted-foreground truncate">{c.label}</div>
-                    <div className="text-[11.5px] text-muted-foreground mt-0.5">即将推出</div>
-                  </div>
-                </div>
-              ))}
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              云端连接器开发中，尚不可用 · 想要它？点卡片去 GitHub 投票
+            </p>
+            <div className="mt-3">
+              <ConnectorCards />
             </div>
           </div>
         </div>

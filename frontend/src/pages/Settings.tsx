@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Cpu, FolderCog, Cloud, HardDrive, KeyRound, Loader2, Save, Trash2 } from 'lucide-react'
+import { Cpu, FolderCog, Cloud, KeyRound, Loader2, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   listKbs, getKbConfig, patchKbConfig,
@@ -8,6 +8,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import ConnectorCards from '@/components/ConnectorCards'
 import { cn } from '@/lib/utils'
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -16,17 +17,6 @@ const subtabs = [
   { id: 'model', label: '模型', icon: Cpu },
   { id: 'general', label: '通用', icon: FolderCog },
   { id: 'conn', label: '数据源连接', icon: Cloud },
-] as const
-
-/**
- * Remote connectors are NOT implemented — there is no OAuth/S3 backend. These
- * render as disabled "coming soon" cards so the UI never fakes a connected or
- * authorized state (the reference's fake OAuth flow is intentionally dropped).
- */
-const connectors = [
-  { id: 'gdrive', label: 'Google Drive', icon: Cloud },
-  { id: 's3', label: 'Amazon S3', icon: HardDrive },
-  { id: 'onedrive', label: 'OneDrive', icon: Cloud },
 ] as const
 
 const inputCls =
@@ -334,30 +324,13 @@ export default function Settings() {
           </div>
         )}
 
-        {/* ---------- 数据源连接（无后端，明确标注即将推出，绝不伪造已连接） ---------- */}
+        {/* ---------- 数据源连接（无后端；改为 GitHub 需求投票，绝不伪造已连接） ---------- */}
         {tab === 'conn' && (
           <div className="mt-5 space-y-3">
             <p className="text-[13px] text-muted-foreground anim-fade-up">
-              云端数据源连接器（OAuth / S3）尚未实现，敬请期待；当前仅支持在知识库详情页手动上传本地文件。
+              云端数据源连接器（OAuth / S3）开发中，尚不可用；当前请在知识库详情页手动上传本地文件。想要某个连接器？点下方卡片去 GitHub 投票，帮我们排优先级。
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              {connectors.map((c) => (
-                <div
-                  key={c.id}
-                  aria-disabled="true"
-                  title="即将推出"
-                  className="anim-fade-up rounded-2xl border border-dashed border-[hsl(var(--glass-border))] glass px-4 py-3.5 flex items-center gap-3 opacity-70 cursor-not-allowed select-none"
-                >
-                  <span className="w-9 h-9 rounded-xl glass-2 border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
-                    <c.icon className="w-4 h-4 text-muted-foreground" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-medium text-foreground truncate">{c.label}</div>
-                    <div className="text-[11.5px] text-muted-foreground mt-0.5">即将推出</div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ConnectorCards />
           </div>
         )}
       </div>
