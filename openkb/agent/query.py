@@ -183,6 +183,7 @@ def build_chat_agent(
     kb_dir: Path,
     model: str,
     language: str = "en",
+    bundle: "LlmCredentialBundle | None" = None,
 ) -> Agent:
     """Build the chat agent: query agent + a write tool restricted to
     ``<kb>/wiki/explorations/**`` and ``<kb>/output/**`` + a ``ShellTool``
@@ -201,7 +202,7 @@ def build_chat_agent(
     """
     wiki_root = str(kb_dir / "wiki")
     kb_root = str(kb_dir)
-    base = build_query_agent(wiki_root, model, language=language)
+    base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     @function_tool
     def write_file(path: str, content: str) -> str:

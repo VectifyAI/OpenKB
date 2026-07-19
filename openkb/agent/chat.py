@@ -27,7 +27,6 @@ from openkb.agent.chat_session import ChatSession
 from openkb.agent.query import (
     MAX_TURNS,
     build_chat_agent,
-    build_query_agent,
     iter_agent_response_events,
 )
 from openkb.config import LlmCredentialBundle
@@ -903,10 +902,10 @@ def build_chat_session_agent(
     session: ChatSession,
     bundle: "LlmCredentialBundle | None" = None,
 ) -> Any:
-    """Build the query-backed agent for one chat session (REST ``/chat``).
+    """Build the write- and skill-capable agent for one chat session (REST ``/chat``).
 
     Thin wrapper that resolves language from the session/config and delegates
-    to ``build_query_agent`` with the session's model. Kept in chat.py (not
+    to ``build_chat_agent`` with the session's model. Kept in chat.py (not
     query.py) so the query module's ``build_chat_agent`` signature stays
     unchanged for the CLI; the API uses this session-aware variant instead.
     """
@@ -914,8 +913,7 @@ def build_chat_session_agent(
 
     config = load_config(kb_dir / ".openkb" / "config.yaml")
     language = session.language or config.get("language", "en")
-    wiki_root = str(kb_dir / "wiki")
-    return build_query_agent(wiki_root, session.model, language=language, bundle=bundle)
+    return build_chat_agent(kb_dir, session.model, language=language, bundle=bundle)
 
 
 async def iter_chat_turn_events(

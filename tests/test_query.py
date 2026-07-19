@@ -257,3 +257,20 @@ class TestBuildRunConfigFromBundle:
         # must not leak in.
         assert run_config.model.model == "openai/deepseek-v4-flash"
         assert not run_config.model.model.startswith("litellm/")
+
+
+def test_chat_session_agent_has_write_file(tmp_path):
+    from openkb.agent.chat import build_chat_session_agent
+    from openkb.agent.chat_session import ChatSession
+
+    kb_dir = tmp_path / "kb"
+    (kb_dir / "wiki").mkdir(parents=True)
+    (kb_dir / ".openkb").mkdir(parents=True)
+    (kb_dir / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
+
+    session = ChatSession.new(kb_dir, model="openai/gpt-4o", language="en")
+    agent = build_chat_session_agent(kb_dir, session)
+
+    tool_names = {getattr(t, "name", "") for t in agent.tools}
+    assert "write_file" in tool_names
+    assert "read_file" in tool_names  # still a superset of the query agent
