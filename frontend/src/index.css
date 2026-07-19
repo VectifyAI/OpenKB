@@ -114,6 +114,13 @@
     box-shadow: var(--shadow-glass), inset 0 1px 0 0 hsl(var(--glass-highlight));
   }
   .glass-2 { background: hsl(var(--glass-2-bg)); }
+  /* Apple scroll-edge effect (§12): a small blur/gradient fade where content
+     meets floating chrome, instead of a hard 1px divider. Apply to the scroll
+     container; it fades the top ~14px from the glass-2 material to transparent. */
+  .scroll-edge-top {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 14px);
+    mask-image: linear-gradient(to bottom, transparent 0, black 14px);
+  }
   .ambient-ground {
     background: hsl(var(--ambient));
     position: relative;
@@ -132,6 +139,7 @@
 
 @media (prefers-reduced-transparency: reduce) {
   .glass { -webkit-backdrop-filter: none; backdrop-filter: none; background: hsl(var(--background)); }
+  .scroll-edge-top { -webkit-mask-image: none; mask-image: none; border-top: 1px solid hsl(var(--glass-border)); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
