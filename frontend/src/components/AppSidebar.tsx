@@ -1,22 +1,43 @@
-import { useEffect, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router'
-import { MessageSquare, Library, Settings2, Plus } from 'lucide-react'
-import { listKbs, type KbSummary } from '@/api/kb'
-import { cn } from '@/lib/utils'
+import { useEffect, useState } from "react"
+import { NavLink, useNavigate } from "react-router"
+import { MessageSquare, Library, Settings2, Plus } from "lucide-react"
+import { listKbs, type KbSummary } from "@/api/kb"
+import { ThemeToggle } from "@/lib/theme"
+import { cn } from "@/lib/utils"
+
+const APP_VERSION = "0.1"
 
 /** Decorative accent colors, cycled by position — the API carries no color. */
-const DOTS = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500']
+const DOTS = [
+  "bg-blue-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-violet-500",
+  "bg-rose-500",
+]
 const dotFor = (i: number) => DOTS[i % DOTS.length]
 
-function NavItem({ to, icon, label, end }: { to: string; icon: React.ReactNode; label: string; end?: boolean }) {
+function NavItem({
+  to,
+  icon,
+  label,
+  end,
+}: {
+  to: string
+  icon: React.ReactNode
+  label: string
+  end?: boolean
+}) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-2.5 px-3 h-8 rounded-lg text-[13px] font-medium transition-colors',
-          isActive ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:bg-white/60 hover:text-neutral-900',
+          "flex items-center gap-2.5 px-3 h-9 rounded-apple-sm text-[14px] font-medium transition-colors duration-fast ease-out-apple active:scale-[0.98]",
+          isActive
+            ? "bg-accent text-accent-foreground shadow-sm"
+            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         )
       }
     >
@@ -32,54 +53,69 @@ export default function AppSidebar() {
 
   useEffect(() => {
     listKbs()
-      .then(r => setKbs(r.knowledge_bases))
+      .then((r) => setKbs(r.knowledge_bases))
       .catch(() => setKbs([]))
   }, [])
 
   return (
-    <aside className="w-[232px] shrink-0 flex flex-col px-3 pb-3 pt-1">
+    <aside className="glass m-2 mr-0 w-[236px] shrink-0 flex flex-col rounded-apple-lg px-3 pb-3 pt-2">
       {/* 品牌 */}
       <div className="flex items-center gap-2 px-2 h-10 mb-1">
-        <div className="w-6 h-6 rounded-md bg-blue-600 text-white grid place-items-center text-[13px] font-extrabold tracking-tighter">K</div>
-        <div className="text-[14px] font-bold text-neutral-800 tracking-tight">OpenKB Studio</div>
-        <span className="text-[10px] font-mono2 text-neutral-400 mt-0.5">0.1</span>
+        <div className="w-6 h-6 rounded-apple-sm bg-accent-brand text-white grid place-items-center text-[13px] font-extrabold tracking-tighter">
+          K
+        </div>
+        <div className="text-[15px] font-bold tracking-tight">OpenKB Studio</div>
       </div>
 
-      {/* 主导航 */}
+      {/* 主导航（不含设置，设置已下沉到底部） */}
       <nav className="space-y-0.5">
         <NavItem to="/" end icon={<MessageSquare className="w-4 h-4" />} label="首页" />
         <NavItem to="/kb" icon={<Library className="w-4 h-4" />} label="知识库" />
-        <NavItem to="/settings" icon={<Settings2 className="w-4 h-4" />} label="设置" />
       </nav>
 
       {/* 知识库列表 */}
       <div className="mt-5 px-3 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-neutral-400 tracking-wide">知识库</span>
-        <button className="text-neutral-400 hover:text-neutral-700 transition-colors" title="新建知识库">
+        <span className="text-[12px] font-semibold text-muted-foreground tracking-wide">
+          知识库
+        </span>
+        <button
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title="新建知识库"
+        >
           <Plus className="w-3.5 h-3.5" />
         </button>
       </div>
-      <div className="mt-1 space-y-0.5">
+      <div className="mt-1 space-y-0.5 overflow-y-auto">
         {kbs.map((kb, i) => (
           <button
             key={kb.name}
             onClick={() => navigate(`/kb/${encodeURIComponent(kb.name)}`)}
-            className="w-full flex items-center gap-2.5 px-3 h-8 rounded-lg text-[13px] text-neutral-600 hover:bg-white/60 hover:text-neutral-900 transition-colors"
+            className="w-full flex items-center gap-2.5 px-3 h-9 rounded-apple-sm text-[13.5px] text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors duration-fast ease-out-apple active:scale-[0.98]"
           >
-            <span className={cn('w-2 h-2 rounded-full shrink-0', dotFor(i))} />
+            <span className={cn("w-2 h-2 rounded-full shrink-0", dotFor(i))} />
             <span className="truncate">{kb.name}</span>
-            <span className="ml-auto text-[11px] text-neutral-400 font-mono2">{kb.document_count}</span>
+            <span className="ml-auto text-[11px] text-muted-foreground font-mono2 tabular-nums">
+              {kb.document_count}
+            </span>
           </button>
         ))}
       </div>
 
       <div className="flex-1" />
 
-      {/* 底部：知识库计数（后台任务 widget 在 Task 9 接入，此处不渲染占位） */}
-      <div className="rounded-xl bg-white/70 border border-black/5 p-3">
-        <div className="flex items-center justify-between text-[11px] text-neutral-400">
+      {/* 底部聚合：进度 → 设置 → 版本（自上而下） */}
+      <div className="space-y-1.5">
+        {/* 后台进度指示（真实后台任务 widget 待后续接入；当前显示 KB 计数占位，非伪造进度） */}
+        <div className="rounded-apple-sm glass-2 px-3 py-2 flex items-center justify-between text-[11.5px] text-muted-foreground">
           <span className="font-mono2">OpenKB</span>
-          <span>{kbs.length} 个知识库</span>
+          <span className="tabular-nums">{kbs.length} 个知识库</span>
+        </div>
+
+        <NavItem to="/settings" icon={<Settings2 className="w-4 h-4" />} label="设置" />
+
+        <div className="flex items-center justify-between px-3 pt-0.5 text-[11px] text-muted-foreground">
+          <span className="font-mono2">v{APP_VERSION}</span>
+          <ThemeToggle className="hover:text-foreground transition-colors" />
         </div>
       </div>
     </aside>
