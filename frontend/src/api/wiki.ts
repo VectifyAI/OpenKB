@@ -27,16 +27,16 @@ export interface WikiDocument {
 /**
  * The `/api/v1/list` response (`openkb.cli.get_kb_list` → `ListResponse`).
  *
- * `summaries` and `concepts` are page *stems* (no `.md`); `reports` are full
- * file *names* (with `.md`). NOTE: the endpoint does not surface `entities/`
- * pages even though they exist on disk — the browse tree can only show what
- * this payload carries.
+ * `summaries`, `concepts`, and `entities` are page *stems* (no `.md`);
+ * `reports` are full file *names* (with `.md`). The endpoint now surfaces
+ * `entities/` pages alongside the other wiki types.
  */
 export interface KbInventory {
   documents: WikiDocument[]
   document_count: number
   summaries: string[]
   concepts: string[]
+  entities: string[]
   reports: string[]
 }
 

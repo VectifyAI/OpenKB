@@ -123,6 +123,7 @@ class ListResponse(BaseModel):
     document_count: int
     summaries: list[str]
     concepts: list[str]
+    entities: list[str]
     reports: list[str]
 
 

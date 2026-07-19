@@ -3608,6 +3608,7 @@ def get_kb_list(kb_dir: Path) -> dict[str, Any]:
 
     summaries_dir = kb_dir / "wiki" / "summaries"
     concepts_dir = kb_dir / "wiki" / "concepts"
+    entities_dir = kb_dir / "wiki" / "entities"
     reports_dir = kb_dir / "wiki" / "reports"
     return {
         "documents": documents,
@@ -3617,6 +3618,9 @@ def get_kb_list(kb_dir: Path) -> dict[str, Any]:
         else [],
         "concepts": sorted(p.stem for p in concepts_dir.glob("*.md"))
         if concepts_dir.exists()
+        else [],
+        "entities": sorted(p.stem for p in entities_dir.glob("*.md"))
+        if entities_dir.exists()
         else [],
         "reports": sorted(p.name for p in reports_dir.glob("*.md")) if reports_dir.exists() else [],
     }

@@ -747,6 +747,7 @@ def test_list_endpoint_returns_empty_inventory(monkeypatch, kb_dir):
         "document_count": 0,
         "summaries": [],
         "concepts": [],
+        "entities": [],
         "reports": [],
     }
 
@@ -792,6 +793,22 @@ def test_list_endpoint_returns_structured_inventory(monkeypatch, kb_dir):
     assert payload["summaries"] == ["paper"]
     assert payload["concepts"] == ["attention"]
     assert payload["reports"] == ["lint_20260101_000000.md"]
+
+
+def test_list_endpoint_includes_entities(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps({"h1": {"name": "p.pdf", "type": "pdf"}}), encoding="utf-8"
+    )
+    (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
+    (kb_dir / "wiki" / "entities" / "nvidia.md").write_text("# NVIDIA", encoding="utf-8")
+    (kb_dir / "wiki" / "entities" / "anthropic.md").write_text("# Anthropic", encoding="utf-8")
+
+    response = client.post("/api/v1/list", json={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["entities"] == ["anthropic", "nvidia"]
 
 
 def test_status_endpoint_returns_structured_counts(monkeypatch, kb_dir):
