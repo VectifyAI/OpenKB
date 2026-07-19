@@ -29,6 +29,16 @@ export function getDeckBlobUrl(kb: string, name: string): Promise<string> {
 }
 
 /**
+ * Fetch the rendered knowledge-graph HTML (self-contained) with the bearer token
+ * attached CLIENT-SIDE and return a `blob:` URL for a sandboxed `<iframe src>`.
+ * Same rules as {@link getDeckBlobUrl}: never a raw href to the API path, never a
+ * token in a query string; caller MUST `URL.revokeObjectURL` when done.
+ */
+export function getGraphBlobUrl(kb: string): Promise<string> {
+  return fetchAsBlobUrl(`/api/v1/graph/html?kb=${encodeURIComponent(kb)}`)
+}
+
+/**
  * Fetch the skill's `.zip` archive with the bearer token attached CLIENT-SIDE
  * and return a `blob:` URL suitable for a temporary `<a download>`. Same rules
  * as {@link getDeckBlobUrl}: never a raw href to the API path; caller must
