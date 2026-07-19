@@ -52,6 +52,7 @@ from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG,
     load_config,
+    resolve_effective_config,
     save_config,
     load_global_config,
     register_kb,
@@ -471,7 +472,7 @@ def _add_single_file_locked(
     from openkb.state import HashRegistry
 
     openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     # The REST API passes a per-KB credential bundle so it never pollutes
     # process-wide state; only the CLI path needs the legacy global setup.
     if bundle is None:
@@ -712,7 +713,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
 
     logger = logging.getLogger(__name__)
     openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
@@ -1232,8 +1233,7 @@ def query(ctx, question, save, raw):
 
     from openkb.agent.query import run_query
 
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
 
@@ -1291,7 +1291,7 @@ def _cleanup_pageindex(
     from pageindex import PageIndexClient
 
     _setup_llm_key(kb_dir)
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-5.4"))
     client = PageIndexClient(model=model, storage_path=str(openkb_dir))
     col = client.collection()
@@ -1926,7 +1926,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
         _refresh_schema(wiki_dir)
 
     _setup_llm_key(kb_dir)
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     max_concurrency = resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY
 
@@ -2126,7 +2126,7 @@ async def iter_recompile(
 
         if bundle is None:
             _setup_llm_key(kb_dir)
-        config = load_config(openkb_dir / "config.yaml")
+        config = resolve_effective_config(kb_dir)[0]
         model: str = config.get("model", DEFAULT_CONFIG["model"])
 
         from openkb.agent import compiler
@@ -2334,8 +2334,7 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
             click.echo(f"Could not delete session: {resolved}")
         return
 
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
 
     if resume is not None:
@@ -2416,7 +2415,7 @@ async def run_lint(kb_dir: Path) -> Path | None:
             click.echo("Nothing to lint — no documents indexed yet. Run `openkb add` first.")
             return
 
-        config = load_config(openkb_dir / "config.yaml")
+        config = resolve_effective_config(kb_dir)[0]
         _setup_llm_key(kb_dir)
         model: str = config.get("model", DEFAULT_CONFIG["model"])
 
@@ -2873,7 +2872,7 @@ def skill_new(ctx, name, intent, yes_flag):
     except RuntimeError as exc:
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     # Overwrite handling (CLI-specific). Done AFTER key/config so a
@@ -3197,7 +3196,7 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
     except RuntimeError as exc:
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     eval_set: list[EvalPrompt] | None = None
@@ -3362,7 +3361,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
     except RuntimeError as exc:
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     # Overwrite handling — inline because openkb.skill.workspace.save_iteration
@@ -3711,7 +3710,7 @@ async def run_lint_report(
             "lint_ghosts_removed": lint_ghosts_removed,
         }
 
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     if bundle is None:
         _setup_llm_key(kb_dir)
     model: str = config.get("model", DEFAULT_CONFIG["model"])
