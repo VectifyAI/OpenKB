@@ -447,19 +447,41 @@ def test_effective_preserves_non_scalar_kb_keys_including_meaningful_null(
 
 
 def test_converter_uses_global_threshold(_isolated_global, tmp_path, monkeypatch):
-    """A global.yaml pageindex_threshold now drives converter's short/long
-    branch when the KB config is silent on it (proves the resolver is wired)."""
+    """A global.yaml pageindex_threshold drives convert_document's long/short
+    -doc routing when the KB config is silent on it — exercised through the
+    real production call site (``convert_document``), not just the resolver
+    in isolation. This proves ``convert_document`` actually consumes
+    ``resolve_effective_config(kb_dir)`` rather than, say, an empty dict."""
+    import pymupdf
+
     import openkb.converter as conv
 
-    save_global_config({"pageindex_threshold": 999})
-    captured = {}
+    # Global threshold of 1: even a single-page PDF counts as "long". The
+    # default threshold (20) would NOT trigger long-doc routing for 1 page,
+    # so this value can only reach convert_document via the resolver.
+    save_global_config({"pageindex_threshold": 1})
 
-    def _fake_resolve(kb_dir):
-        eff, src = resolve_effective_config(kb_dir)
-        captured["threshold"] = eff["pageindex_threshold"]
-        return eff, src
+    kb_dir = _kb(tmp_path / "kb")
+    real_resolve = conv.resolve_effective_config
+    calls: list[Path] = []
 
-    monkeypatch.setattr(conv, "resolve_effective_config", _fake_resolve)
-    # Drive only the config-load prologue via the resolver seam.
-    conv.resolve_effective_config(_kb(tmp_path / "kb"))
-    assert captured["threshold"] == 999
+    def _spy_resolve(kb_dir_arg):
+        calls.append(kb_dir_arg)
+        return real_resolve(kb_dir_arg)
+
+    monkeypatch.setattr(conv, "resolve_effective_config", _spy_resolve)
+
+    src = tmp_path / "doc.pdf"
+    pdf = pymupdf.open()
+    pdf.new_page()
+    pdf.save(str(src))
+    pdf.close()
+
+    result = conv.convert_document(src, kb_dir)
+
+    # The resolver seam was actually invoked by convert_document, with this KB.
+    assert calls == [kb_dir]
+    # And the threshold it returned actually drove the routing decision: a
+    # 1-page PDF only takes the long-doc branch if the *global* threshold (1)
+    # was used instead of the default (20).
+    assert result.is_long_doc is True
