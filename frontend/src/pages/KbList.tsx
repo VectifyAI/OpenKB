@@ -31,7 +31,7 @@ export default function KbList() {
             <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">知识库</h1>
             <p className="mt-1 text-[13px] text-muted-foreground">每个知识库是一个持续编译的 wiki，可绑定多个数据源</p>
           </div>
-          <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:opacity-90 shadow-sm transition-colors">
+          <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:opacity-90 shadow-sm transition duration-fast ease-out-apple active:scale-[0.97]">
             <Plus className="w-4 h-4" />新建知识库
           </button>
         </div>
@@ -41,7 +41,7 @@ export default function KbList() {
             <button
               key={kb.name}
               onClick={() => navigate(`/kb/${encodeURIComponent(kb.name)}`)}
-              className={cn('anim-fade-up text-left rounded-2xl border border-[hsl(var(--glass-border))] glass-2 p-5 hover:shadow-glass hover:-translate-y-0.5 transition-all duration-fast ease-out-apple', `anim-d${(i % 4) + 1}`)}
+              className={cn('anim-fade-up text-left rounded-2xl border border-[hsl(var(--glass-border))] glass-2 p-5 hover:shadow-glass hover:-translate-y-0.5 transition-[transform,box-shadow] duration-fast ease-out-apple active:scale-[0.98]', `anim-d${(i % 4) + 1}`)}
             >
               <div className="flex items-center gap-2.5">
                 <span className={cn('w-2.5 h-2.5 rounded-full', dotFor(i))} />
@@ -68,7 +68,7 @@ export default function KbList() {
           ))}
 
           {/* 新建虚线卡 */}
-          <button className="anim-fade-up anim-d4 rounded-2xl border-2 border-dashed border-[hsl(var(--glass-border))] p-5 grid place-items-center text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 hover:bg-accent-brand/5 transition-all duration-fast ease-out-apple min-h-[160px]">
+          <button className="anim-fade-up anim-d4 rounded-2xl border-2 border-dashed border-[hsl(var(--glass-border))] p-5 grid place-items-center text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 hover:bg-accent-brand/5 transition-[color,background-color,border-color,transform] duration-fast ease-out-apple active:scale-[0.97] min-h-[160px]">
             <span className="flex flex-col items-center gap-2">
               <Plus className="w-6 h-6" />
               <span className="text-[13px] font-medium">新建知识库</span>
