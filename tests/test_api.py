@@ -1874,6 +1874,60 @@ def test_graph_html_endpoint_empty_wiki_still_renders(monkeypatch, kb_dir):
     assert "<title>openkb · knowledge graph</title>" in response.text
 
 
+def test_output_endpoint_serves_output_html(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    out = kb_dir / "output"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "nvda-guizang-test.html").write_text("<html><body>hi</body></html>", encoding="utf-8")
+
+    response = client.get(
+        "/api/v1/output",
+        params={"kb": kb, "path": "output/nvda-guizang-test.html"},
+        headers=_auth(),
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "hi" in response.text
+
+
+def test_output_endpoint_404_for_missing_file(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "output/nope.html"}, headers=_auth()
+    )
+    assert response.status_code == 404
+
+
+def test_output_endpoint_400_for_traversal(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get(
+        "/api/v1/output",
+        params={"kb": kb, "path": "output/../../etc/passwd"},
+        headers=_auth(),
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_400_for_non_viewable_type(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "index.md").write_text("# hi\n", encoding="utf-8")
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "wiki/index.md"}, headers=_auth()
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_requires_token(monkeypatch, kb_dir):
+    client = _client(monkeypatch)  # token enforced (default "secret")
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get("/api/v1/output", params={"kb": kb, "path": "output/x.html"})
+    assert response.status_code == 401
+
+
 def test_page_endpoint_returns_content(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)

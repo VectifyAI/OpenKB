@@ -96,6 +96,7 @@ from openkb.api_models import (
     WatchStartRequest,
     WatchStatusResponse,
 )
+from openkb.api_output import output_router
 from openkb.cli import (
     get_kb_list,
     get_kb_status,
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
 
     _configure_cors(app)
     app.include_router(graph_router)
+    app.include_router(output_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(
