@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Cpu, FolderCog, Cloud, KeyRound, Loader2, Save, Trash2 } from 'lucide-react'
+import { Cpu, FolderCog, Cloud, Info, KeyRound, Loader2, Save, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   listKbs, getKbConfig, patchKbConfig,
@@ -9,6 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import ConnectorCards from '@/components/ConnectorCards'
+import AboutTab from '@/components/AboutTab'
 import { cn } from '@/lib/utils'
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -17,6 +18,7 @@ const subtabs = [
   { id: 'model', label: '模型', icon: Cpu },
   { id: 'general', label: '通用', icon: FolderCog },
   { id: 'conn', label: '数据源连接', icon: Cloud },
+  { id: 'about', label: '关于', icon: Info },
 ] as const
 
 const inputCls =
@@ -172,26 +174,31 @@ export default function Settings() {
       <div className="max-w-[780px] mx-auto px-6 py-8">
         <h1 className="text-[22px] font-extrabold tracking-tight text-foreground anim-fade-up">设置</h1>
 
-        {/* 知识库选择 — 配置是按知识库存储的（.openkb/config.yaml + .env） */}
-        <div className="mt-4 flex items-center gap-3 anim-fade-up">
-          <span className="text-[13px] text-muted-foreground">知识库</span>
-          {kbs.length > 0 ? (
-            <Select value={kb} onValueChange={setKb}>
-              <SelectTrigger className="h-9 w-64 text-[13px]">
-                <SelectValue placeholder="选择知识库" />
-              </SelectTrigger>
-              <SelectContent>
-                {kbs.map((k) => (
-                  <SelectItem key={k.name} value={k.name}>
-                    {k.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <span className="text-[13px] text-muted-foreground">尚无知识库</span>
-          )}
-        </div>
+        {/* 知识库选择 — 配置按知识库存储（.openkb/config.yaml + .env）。关于页是全局的，隐藏选择器。 */}
+        {tab !== 'about' && (
+          <div className="mt-4 anim-fade-up">
+            <div className="flex items-center gap-3">
+              <span className="text-[13px] text-muted-foreground">知识库</span>
+              {kbs.length > 0 ? (
+                <Select value={kb} onValueChange={setKb}>
+                  <SelectTrigger className="h-9 w-64 text-[13px]">
+                    <SelectValue placeholder="选择知识库" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {kbs.map((k) => (
+                      <SelectItem key={k.name} value={k.name}>
+                        {k.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="text-[13px] text-muted-foreground">尚无知识库</span>
+              )}
+            </div>
+            <p className="mt-1.5 text-[11.5px] text-muted-foreground">以下为该知识库的配置，写入其 .openkb/config.yaml 与 .env。</p>
+          </div>
+        )}
 
         {/* 子页签 */}
         <div className="mt-5 flex gap-1.5 anim-fade-up anim-d1">
@@ -333,6 +340,9 @@ export default function Settings() {
             <ConnectorCards />
           </div>
         )}
+
+        {/* ---------- 关于 ---------- */}
+        {tab === 'about' && <AboutTab />}
       </div>
     </div>
   )
