@@ -14,7 +14,7 @@ import type { SseEvent } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
 import PageList from '@/components/PageList'
 import ConnectorCards from '@/components/ConnectorCards'
-import KbOverviewCards from '@/components/KbOverviewCards'
+import KbOverviewCards, { type Section } from '@/components/KbOverviewCards'
 import { cn } from '@/lib/utils'
 
 const tabs = [
@@ -120,6 +120,12 @@ export default function KbDetail() {
   const [inv, setInv] = useState<KbInventory | null>(null)
   const [invError, setInvError] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  // Nav-card selection (Sub-project G, Task 11). The cards are stat display
+  // AND navigation; wiring `active`/`onSelect` to drive the page's content
+  // sections is Task 13's job — for now this just keeps KbOverviewCards'
+  // new interface satisfied and preserves the old "Index → open index.md"
+  // click behavior.
+  const [navSection, setNavSection] = useState<Section>('index')
 
   // Page content and error are tagged with the path they belong to so a stale
   // response never renders under a newly selected page.
@@ -323,7 +329,17 @@ export default function KbDetail() {
           <span className="w-3 h-3 rounded-full bg-accent-brand" />
           <h1 className="text-[19px] font-extrabold tracking-tight text-foreground">{id}</h1>
         </div>
-        {inv && <KbOverviewCards inv={inv} docCount={docCount} onOpenIndex={() => openPath('index.md')} />}
+        {inv && (
+          <KbOverviewCards
+            inv={inv}
+            docCount={docCount}
+            active={navSection}
+            onSelect={(section) => {
+              setNavSection(section)
+              if (section === 'index') openPath('index.md')
+            }}
+          />
+        )}
         <div className="mt-3 flex gap-1">
           {tabs.map((t) => (
             <button
