@@ -5,6 +5,8 @@ import { toast } from "sonner"
 import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatInput"
 import MarkdownView from "@/components/MarkdownView"
 import ArtifactCard, { type Artifact } from "@/components/ArtifactCard"
+import { AnimatePresence } from "motion/react"
+import ArtifactPanel from "@/components/ArtifactPanel"
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
@@ -181,7 +183,7 @@ function AssistantMessage({ turn, onOpen }: { turn: ChatTurnState; onOpen: (s: S
 }
 
 /** Renders a generator turn: a live status strip, then the finished artifact. */
-function ArtifactMessage({ art }: { art: ArtifactTurn }) {
+function ArtifactMessage({ art, onOpen }: { art: ArtifactTurn; onOpen: (a: Artifact) => void }) {
   return (
     <div className="flex gap-3 anim-fade-up">
       <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
@@ -199,7 +201,7 @@ function ArtifactMessage({ art }: { art: ArtifactTurn }) {
             {art.error ?? "生成失败"}
           </div>
         )}
-        {art.artifact && <ArtifactCard artifact={art.artifact} />}
+        {art.artifact && <ArtifactCard artifact={art.artifact} onOpen={onOpen} />}
       </div>
     </div>
   )
@@ -219,6 +221,19 @@ export default function ChatSession() {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [running, setRunning] = useState(false)
   const [panel, setPanel] = useState<PanelState>(CLOSED_PANEL)
+
+  // The docked artifact panel (deck/graph). Distinct from `panel` above, which
+  // is the modal source-page Sheet. `panelArtifact` is the currently-open
+  // viewable artifact, or null when the panel is closed.
+  const [panelArtifact, setPanelArtifact] = useState<Artifact | null>(null)
+
+  // Every viewable artifact this session produced (deck + graph, in order) — the
+  // panel's switcher list. Skills are archives, not viewable, so excluded.
+  const viewableArtifacts = msgs.flatMap((m) =>
+    m.role === "artifact" && m.art.artifact && m.art.artifact.type !== "skill"
+      ? [m.art.artifact]
+      : [],
+  )
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const startedRef = useRef(false)
@@ -428,8 +443,9 @@ export default function ChatSession() {
   const title = firstUser?.text.slice(0, 24) || "新会话"
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 会话头 */}
+    <div className="h-full flex">
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* 会话头 */}
       <div className="shrink-0 h-12 flex items-center gap-3 px-5 border-b border-[hsl(var(--glass-border))] glass-2 backdrop-blur">
         <button onClick={() => navigate("/")} className="w-7 h-7 rounded-lg grid place-items-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
           <ArrowLeft className="w-4 h-4" />
@@ -458,7 +474,7 @@ export default function ChatSession() {
                 </div>
               </div>
             ) : m.role === "artifact" ? (
-              <ArtifactMessage key={m.id} art={m.art} />
+              <ArtifactMessage key={m.id} art={m.art} onOpen={setPanelArtifact} />
             ) : (
               <AssistantMessage key={m.id} turn={m.turn} onOpen={openSource} />
             ),
@@ -501,6 +517,20 @@ export default function ChatSession() {
           </div>
         </SheetContent>
       </Sheet>
+      </div>
+
+      {/* 产物面板（Claude 式右侧停靠；deck / graph 在沙箱 iframe 内全高渲染） */}
+      <AnimatePresence>
+        {panelArtifact && (
+          <ArtifactPanel
+            key="artifact-panel"
+            artifacts={viewableArtifacts}
+            active={panelArtifact}
+            onSwitch={setPanelArtifact}
+            onClose={() => setPanelArtifact(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
