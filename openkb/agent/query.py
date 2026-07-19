@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
 from openkb.agent.tools import (
+    artifact_event_from_write,
     get_wiki_page_content,
     read_wiki_file,
     read_wiki_image,
@@ -147,6 +148,7 @@ async def iter_agent_response_events(
         else Runner.run_streamed(agent, input_data, max_turns=max_turns)
     )
     collected: list[str] = []
+    pending_calls: dict[str, tuple[str, str]] = {}
 
     async for event in result.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
@@ -159,13 +161,27 @@ async def iter_agent_response_events(
             item = event.item
             if item.type == "tool_call_item":
                 raw_item = item.raw_item
-                yield {
-                    "event": "tool_call",
-                    "data": {
-                        "name": getattr(raw_item, "name", "?"),
-                        "arguments": getattr(raw_item, "arguments", "") or "",
-                    },
-                }
+                name = getattr(raw_item, "name", "?")
+                arguments = getattr(raw_item, "arguments", "") or ""
+                call_id = getattr(raw_item, "call_id", None)
+                if call_id:
+                    pending_calls[call_id] = (name, arguments)
+                yield {"event": "tool_call", "data": {"name": name, "arguments": arguments}}
+            elif item.type == "tool_call_output_item":
+                raw_item = item.raw_item
+                call_id = (
+                    raw_item.get("call_id")
+                    if isinstance(raw_item, dict)
+                    else getattr(raw_item, "call_id", None)
+                )
+                name, arguments = (
+                    pending_calls.pop(call_id, ("", "")) if isinstance(call_id, str) else ("", "")
+                )
+                payload = artifact_event_from_write(
+                    name, arguments, str(getattr(item, "output", "") or "")
+                )
+                if payload is not None:
+                    yield {"event": "artifact", "data": payload}
 
     answer = "".join(collected).strip()
     if not answer:

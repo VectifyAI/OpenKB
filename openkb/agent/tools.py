@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json as _json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def list_wiki_files(directory: str, wiki_root: str) -> str:
@@ -269,3 +269,36 @@ def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
     return f"Written: {path}"
+
+
+_VIEWABLE_ARTIFACT_SUFFIXES = (".html", ".htm")
+
+
+def artifact_event_from_write(name: str, arguments: str, output: str) -> dict | None:
+    """Return the ``artifact`` SSE payload for a completed ``write_file`` call
+    that produced a viewable artifact under ``output/``, else ``None``.
+
+    Gated so it fires ONLY for a *successful* ``write_file`` (``write_kb_file``
+    returns ``"Written: {path}"`` on success) of a viewable ``.html``/``.htm``
+    file under the sanctioned ``output/`` zone — the same zone ``write_kb_file``
+    itself allows. Every other case (a read tool, a failed/denied write, a
+    non-html path, a non-output zone, malformed arguments) returns ``None`` so
+    no card is ever painted for a file that isn't a viewable artifact on disk.
+    """
+    if name != "write_file":
+        return None
+    if not isinstance(output, str) or not output.startswith("Written:"):
+        return None
+    try:
+        parsed = _json.loads(arguments)
+        path = str(parsed.get("path", "")).strip()
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if not path:
+        return None
+    rel = PurePosixPath(path.replace("\\", "/"))
+    if not rel.parts or rel.parts[0] != "output":
+        return None
+    if rel.suffix.lower() not in _VIEWABLE_ARTIFACT_SUFFIXES:
+        return None
+    return {"kind": "file", "path": path, "name": rel.name}

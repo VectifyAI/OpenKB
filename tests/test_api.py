@@ -204,6 +204,30 @@ def test_chat_stream_resumes_session(monkeypatch, kb_dir):
     assert events[-2]["data"]["turn_count"] == 2
 
 
+def test_chat_stream_forwards_artifact_event(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    async def fake_chat_events(agent, session, message, **kwargs):
+        yield {
+            "event": "artifact",
+            "data": {"kind": "file", "path": "output/x.html", "name": "x.html"},
+        }
+        yield {"event": "final", "data": {"answer": "done", "session_id": "s1", "turn_count": 1}}
+
+    monkeypatch.setattr("openkb.api_helpers.build_chat_session_agent", lambda *a, **k: object())
+    monkeypatch.setattr("openkb.api_helpers.iter_chat_turn_events", fake_chat_events)
+
+    response = client.post(
+        "/api/v1/chat", json={"kb": kb, "message": "hi", "stream": True}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _events_from_sse(response.text)
+    artifact = next(e for e in events if e["event"] == "artifact")
+    assert artifact["data"] == {"kind": "file", "path": "output/x.html", "name": "x.html"}
+
+
 def test_init_endpoint_creates_named_kb_under_env_root(monkeypatch, tmp_path):
     client = _client(monkeypatch)
     root = tmp_path / "api-kbs"
