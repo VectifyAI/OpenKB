@@ -2152,6 +2152,44 @@ def test_kb_config_get_returns_fields_and_key_presence(monkeypatch, kb_dir):
     assert "secret123" not in response.text
 
 
+def test_kb_config_get_reports_default_source(monkeypatch, kb_dir, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["sources"]["model"] == "default"
+    assert body["global_values"]["model"] is None
+
+
+def test_kb_config_get_reports_global_source(monkeypatch, kb_dir, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"model": "global-model"}), encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["model"] == "global-model"
+    assert body["sources"]["model"] == "global"
+    assert body["global_values"]["model"] == "global-model"
+
+
+def test_kb_config_get_reports_kb_source_on_override(monkeypatch, kb_dir, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"model": "global-model"}), encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "kb-model"}}, headers=_auth()
+    )
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["model"] == "kb-model"
+    assert body["sources"]["model"] == "kb"
+
+
 def test_kb_config_patch_updates_model_only(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)

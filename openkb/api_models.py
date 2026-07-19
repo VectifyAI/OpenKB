@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr
 
@@ -321,12 +321,24 @@ class _KbConfigWritable(BaseModel):
 _KB_CONFIG_WRITABLE_KEYS = set(_KbConfigWritable.model_fields)
 
 
+class GlobalConfigValues(BaseModel):
+    """Raw global-layer scalar values (null where global.yaml is silent)."""
+
+    model: str | None = None
+    language: str | None = None
+    pageindex_threshold: int | None = None
+
+
 class KbConfigResponse(BaseModel):
     model: str
     language: str
     pageindex_threshold: int
     openai_api_base: str | None
     has_api_key: bool
+    # Additive (non-breaking): which layer supplied each scalar's effective
+    # value, and the raw global-layer values for the "继承 · 全局(値)" badge.
+    sources: dict[str, Literal["kb", "global", "default"]]
+    global_values: GlobalConfigValues
 
 
 class KbConfigPatchRequest(BaseModel):

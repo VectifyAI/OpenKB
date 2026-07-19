@@ -17,14 +17,15 @@ from pydantic import ValidationError
 
 from openkb.api_models import (
     _KB_CONFIG_WRITABLE_KEYS,
+    GlobalConfigValues,
     KbConfigPatchRequest,
     KbConfigResponse,
     _KbConfigWritable,
 )
 from openkb.config import (
-    DEFAULT_CONFIG,
-    load_config,
+    load_global_config,
     resolve_credential_bundle,
+    resolve_effective_config,
     save_config,
 )
 from openkb.locks import atomic_write_text
@@ -35,20 +36,27 @@ logger = logging.getLogger(__name__)
 def read_kb_config(kb_dir: Path) -> KbConfigResponse:
     """Build the config response for a KB.
 
-    Returns the ``config.yaml`` fields as-is, plus ``openai_api_base`` in
-    plaintext (a config value, not a credential) and ``has_api_key`` — a boolean
-    presence flag that NEVER exposes the API key value itself.
+    Reports the EFFECTIVE scalar values (DEFAULT -> global.yaml -> KB config.yaml
+    via resolve_effective_config), plus per-field ``sources`` and the raw
+    ``global_values`` so the UI can render 继承(全局/默认) vs 本库覆盖. Credentials
+    (openai_api_base plaintext + has_api_key presence flag) are bundle-resolved
+    and unchanged; the API key value is NEVER exposed.
     """
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    effective, sources = resolve_effective_config(kb_dir)
     bundle = resolve_credential_bundle(kb_dir)
+    global_config = load_global_config()
     return KbConfigResponse(
-        model=config.get("model", DEFAULT_CONFIG["model"]),
-        language=config.get("language", DEFAULT_CONFIG["language"]),
-        pageindex_threshold=config.get(
-            "pageindex_threshold", DEFAULT_CONFIG["pageindex_threshold"]
-        ),
+        model=effective["model"],
+        language=effective["language"],
+        pageindex_threshold=effective["pageindex_threshold"],
         openai_api_base=bundle.base_url,
         has_api_key=bundle.api_key is not None,
+        sources=sources,
+        global_values=GlobalConfigValues(
+            model=global_config.get("model"),
+            language=global_config.get("language"),
+            pageindex_threshold=global_config.get("pageindex_threshold"),
+        ),
     )
 
 
