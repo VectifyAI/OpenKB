@@ -28,9 +28,15 @@ const MAX_FRAC = 0.65
 const DEFAULT_W = 520
 const WIDTH_KEY = "openkb.artifactPanelWidth"
 
+/** Clamp a width to [MIN_W, 65% of the viewport]. */
+function clampWidth(w: number): number {
+  const maxW = Math.max(MIN_W, window.innerWidth * MAX_FRAC)
+  return Math.min(Math.max(w, MIN_W), maxW)
+}
+
 function loadWidth(): number {
   const raw = Number(localStorage.getItem(WIDTH_KEY))
-  return Number.isFinite(raw) && raw >= MIN_W ? raw : DEFAULT_W
+  return clampWidth(Number.isFinite(raw) && raw >= MIN_W ? raw : DEFAULT_W)
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -64,6 +70,14 @@ export default function ArtifactPanel({
   useEffect(() => {
     localStorage.setItem(WIDTH_KEY, String(Math.round(width)))
   }, [width])
+
+  // Re-clamp when the viewport shrinks so a persisted wide panel never exceeds
+  // the MAX_FRAC cap on a smaller window.
+  useEffect(() => {
+    const onResize = () => setWidth((w) => clampWidth(w))
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [])
 
   // (Re)load the active artifact's HTML blob whenever the active identity
   // changes; revoke the blob it replaces.
@@ -101,25 +115,37 @@ export default function ArtifactPanel({
     [],
   )
 
+  // A ref to the current drag's listener-teardown, so an unmount mid-drag can
+  // tear it down (pointerup alone would otherwise be the only remover).
+  const resizeCleanup = useRef<(() => void) | null>(null)
+
   // Resize by dragging the left edge (1:1 pointer tracking; dragging left grows).
   const startResize = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault()
       const startX = e.clientX
       const startW = width
-      const maxW = window.innerWidth * MAX_FRAC
       const onMove = (ev: PointerEvent) => {
+        // Recompute the cap each move so a mid-drag window resize is honored.
+        const maxW = Math.max(MIN_W, window.innerWidth * MAX_FRAC)
         setWidth(Math.min(maxW, Math.max(MIN_W, startW + (startX - ev.clientX))))
       }
-      const onUp = () => {
+      const cleanup = () => {
         window.removeEventListener("pointermove", onMove)
-        window.removeEventListener("pointerup", onUp)
+        window.removeEventListener("pointerup", cleanup)
+        document.body.style.userSelect = ""
+        resizeCleanup.current = null
       }
+      resizeCleanup.current = cleanup
+      document.body.style.userSelect = "none"
       window.addEventListener("pointermove", onMove)
-      window.addEventListener("pointerup", onUp)
+      window.addEventListener("pointerup", cleanup)
     },
     [width],
   )
+
+  // Tear down an in-flight resize drag if the panel unmounts mid-drag.
+  useEffect(() => () => resizeCleanup.current?.(), [])
 
   // Open the active artifact full-screen in a new tab. Open the tab SYNCHRONOUSLY
   // (inside the click gesture) to dodge popup blockers, then set its location once
