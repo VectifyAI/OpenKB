@@ -373,7 +373,7 @@ export default function KbDetail() {
         <div className="flex-1 min-h-0 flex">
           <div className="w-[300px] shrink-0 border-r border-[hsl(var(--glass-border))] glass-2 flex flex-col min-h-0">
             {invError ? (
-              <div className="m-2 rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[12px] text-red-600">
+              <div className="m-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12px] text-red-600 dark:text-red-400">
                 加载失败：{invError}
               </div>
             ) : !inv ? (
@@ -405,7 +405,7 @@ export default function KbDetail() {
                   </button>
                 </div>
                 {pageFailed ? (
-                  <div className="rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[13px] text-red-600">
+                  <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
                     页面加载失败：{pageError.message}
                   </div>
                 ) : pageReady ? (
@@ -489,7 +489,7 @@ export default function KbDetail() {
             </div>
             <div className="mt-3 space-y-2">
               {invError && (
-                <div className="rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[12px] text-red-600">
+                <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12px] text-red-600 dark:text-red-400">
                   加载失败：{invError}
                 </div>
               )}
@@ -560,7 +560,7 @@ export default function KbDetail() {
                 <span
                   className={cn(
                     'w-8 h-8 rounded-lg grid place-items-center shrink-0',
-                    watchActive ? 'bg-emerald-50 text-emerald-500' : 'bg-muted text-muted-foreground',
+                    watchActive ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 dark:text-emerald-400' : 'bg-muted text-muted-foreground',
                   )}
                 >
                   <Radio className={cn('w-4 h-4', watchActive && 'animate-pulse')} />
@@ -595,7 +595,7 @@ export default function KbDetail() {
                 </button>
               </div>
               {watchError && (
-                <div className="mt-2.5 rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[12px] text-red-600">
+                <div className="mt-2.5 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12px] text-red-600 dark:text-red-400">
                   {watchError}
                 </div>
               )}
@@ -660,8 +660,8 @@ export default function KbDetail() {
               <div className="space-y-2.5">
                 <div className="flex items-center gap-2 text-[13px] font-medium text-foreground">
                   {recompile.status === 'running' && <Loader2 className="w-4 h-4 animate-spin text-accent-brand" />}
-                  {recompile.status === 'done' && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-                  {recompile.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500" />}
+                  {recompile.status === 'done' && <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />}
+                  {recompile.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400" />}
                   重新编译
                   {recompile.summary && (
                     <span className="text-[12px] font-normal text-muted-foreground">
@@ -670,7 +670,7 @@ export default function KbDetail() {
                   )}
                 </div>
                 {recompile.error && (
-                  <div className="rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[12px] text-red-600">
+                  <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12px] text-red-600 dark:text-red-400">
                     {recompile.error}
                   </div>
                 )}
@@ -680,9 +680,9 @@ export default function KbDetail() {
                       className={cn(
                         'w-8 h-8 rounded-lg grid place-items-center shrink-0',
                         d.status === 'ok'
-                          ? 'bg-emerald-50 text-emerald-500'
+                          ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 dark:text-emerald-400'
                           : d.status === 'error'
-                            ? 'bg-red-50 text-red-500'
+                            ? 'bg-red-50 dark:bg-red-500/10 text-red-500 dark:text-red-400'
                             : 'bg-muted text-muted-foreground',
                       )}
                     >
