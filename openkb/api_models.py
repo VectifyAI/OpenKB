@@ -297,6 +297,10 @@ class KbListResponse(BaseModel):
     knowledge_bases: list[KbSummaryItem]
 
 
+class MetaResponse(BaseModel):
+    version: str
+
+
 class _KbConfigWritable(BaseModel):
     """Typed schema for the writable ``config.yaml`` fields.
 

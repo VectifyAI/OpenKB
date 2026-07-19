@@ -1500,6 +1500,18 @@ def test_token_compare_digest_accepts_correct(monkeypatch, kb_dir):
     assert r.status_code == 200
 
 
+def test_meta_endpoint_returns_real_version(monkeypatch):
+    import openkb
+
+    client = _client(monkeypatch)
+    response = client.get("/api/v1/meta", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version"] == openkb.__version__
+    assert isinstance(body["version"], str) and body["version"]
+
+
 def test_concurrent_same_kb_lint_serialized(monkeypatch, kb_dir):
     """Two concurrent lint requests to the same KB must not overlap.
 

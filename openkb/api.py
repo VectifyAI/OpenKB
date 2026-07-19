@@ -80,6 +80,7 @@ from openkb.api_models import (
     LintRequest,
     LintResponse,
     ListResponse,
+    MetaResponse,
     PageRequest,
     PageResponse,
     QueryRequest,
@@ -169,6 +170,14 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> KbListResponse:
         return KbListResponse(**_list_knowledge_bases())
+
+    @app.get("/api/v1/meta", response_model=MetaResponse)
+    async def meta_endpoint(
+        _: None = Depends(require_bearer_token),
+    ) -> MetaResponse:
+        from openkb import __version__
+
+        return MetaResponse(version=__version__)
 
     @app.get("/api/v1/kb/config", response_model=KbConfigResponse)
     async def kb_config_get_endpoint(
