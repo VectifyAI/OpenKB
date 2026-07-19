@@ -60,7 +60,7 @@ export default function KbSettingsSheet({
             initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
             animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0, scale: 1 }}
             exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
-            transition={reduce ? { duration: 0.12 } : { type: 'spring', bounce: 0.15, duration: 0.3 }}
+            transition={reduce ? { duration: 0.12 } : { type: 'spring', bounce: 0, duration: 0.3 }}
           >
             <div className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-[hsl(var(--glass-border))]">
               <span className="text-[14px] font-semibold text-foreground">知识库设置</span>
@@ -208,10 +208,10 @@ function KbConfigSection({ kb }: { kb: string }) {
         }
         busy={busy}
         numeric
-        onSet={(v) => {
-          const n = Number(v)
-          setOverride('pageindex_threshold', v.trim() !== '' && Number.isInteger(n) ? n : null)
-        }}
+        // OverrideRow's onBlur only calls onSet once `draft` has already been
+        // validated as a non-negative integer string, so this is safe to
+        // convert directly (no silent null-on-invalid — see OverrideRow).
+        onSet={(v) => setOverride('pageindex_threshold', Number(v))}
         onRevert={() => setOverride('pageindex_threshold', null)}
       />
 
@@ -307,7 +307,23 @@ function OverrideRow({
           value={draft}
           disabled={busy}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => draft !== effective && onSet(draft)}
+          onBlur={() => {
+            if (numeric) {
+              // A non-integer/empty blur must never silently revert the
+              // override to inherited — that's a data change the user
+              // didn't ask for. Only a valid non-negative integer patches;
+              // anything else just snaps the field back to its real value.
+              // Reverting to inherit stays the toggle's job (onRevert).
+              const trimmed = draft.trim()
+              const n = Number(trimmed)
+              const valid = trimmed !== '' && Number.isInteger(n) && n >= 0
+              if (!valid) {
+                setDraft(effective)
+                return
+              }
+            }
+            if (draft !== effective) onSet(draft)
+          }}
           className="mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
         />
       ) : (
