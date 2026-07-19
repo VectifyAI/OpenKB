@@ -33,6 +33,7 @@ from openkb.agent.query import (
     run_query,
 )
 from openkb.api_config import apply_kb_config_patch, read_kb_config
+from openkb.api_graph import graph_router
 from openkb.api_helpers import (
     _configure_cors,
     _init_kb_for_api,
@@ -70,8 +71,6 @@ from openkb.api_models import (
     DeckRequest,
     DeckResponse,
     EnvWritten,
-    GraphRequest,
-    GraphResponse,
     InitRequest,
     InitResponse,
     KbConfigPatchRequest,
@@ -163,6 +162,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="OpenKB API", lifespan=lifespan)
 
     _configure_cors(app)
+    app.include_router(graph_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(
@@ -411,17 +411,6 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"List failed: {exc}",
             ) from exc
-
-    @app.post("/api/v1/graph", response_model=GraphResponse)
-    async def graph_endpoint(
-        request: GraphRequest,
-        _: None = Depends(require_bearer_token),
-    ) -> GraphResponse:
-        kb_dir = _resolve_kb(request.kb)
-        from openkb.visualize import build_graph
-
-        graph = await run_in_threadpool(build_graph, kb_dir / "wiki")
-        return GraphResponse(**graph)
 
     @app.post("/api/v1/page", response_model=PageResponse)
     async def page_endpoint(

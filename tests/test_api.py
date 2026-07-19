@@ -1806,6 +1806,38 @@ def test_graph_endpoint_empty_wiki_returns_empty_shape(monkeypatch, kb_dir):
     assert response.json() == {"nodes": [], "edges": [], "types": []}
 
 
+def test_graph_html_endpoint_returns_self_contained_html(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text(
+        "---\ntype: concept\n---\nSee [[concepts/b]].", encoding="utf-8"
+    )
+    (kb_dir / "wiki" / "concepts" / "b.md").write_text(
+        "---\ntype: concept\n---\nNo links here.", encoding="utf-8"
+    )
+
+    response = client.get("/api/v1/graph/html", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    body = response.text
+    # Self-contained template rendered, placeholder substituted with real data.
+    assert "<title>openkb · knowledge graph</title>" in body
+    assert "__GRAPH_DATA__" not in body
+    assert "concepts/a" in body  # a node id from the injected graph JSON
+
+
+def test_graph_html_endpoint_empty_wiki_still_renders(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.get("/api/v1/graph/html", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>openkb · knowledge graph</title>" in response.text
+
+
 def test_page_endpoint_returns_content(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
