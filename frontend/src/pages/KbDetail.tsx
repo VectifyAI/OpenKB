@@ -14,6 +14,7 @@ import type { SseEvent } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
 import PageTypeTabs from '@/components/PageTypeTabs'
 import ConnectorCards from '@/components/ConnectorCards'
+import KbOverviewCards from '@/components/KbOverviewCards'
 import { cn } from '@/lib/utils'
 
 const tabs = [
@@ -40,23 +41,10 @@ interface SelectedPage {
 function parseSelected(path: string | null): SelectedPage | null {
   if (!path) return null
   const slash = path.indexOf('/')
-  if (slash < 0) return null
+  if (slash < 0) return { path, group: '', title: path }  // root file, e.g. index.md
   const type = path.slice(0, slash)
   const name = path.slice(slash + 1)
   return { path, group: `${type}/`, title: type === 'reports' ? name : `${name}.md` }
-}
-
-/**
- * First browsable page across types, in the same order the type tabs default
- * to (concepts → entities → summaries → reports) so the reader and the active
- * tab line up on load.
- */
-function firstPath(inv: KbInventory): string | null {
-  if (inv.concepts[0]) return `concepts/${inv.concepts[0]}`
-  if (inv.entities[0]) return `entities/${inv.entities[0]}`
-  if (inv.summaries[0]) return `summaries/${inv.summaries[0]}`
-  if (inv.reports[0]) return `reports/${inv.reports[0]}`
-  return null
 }
 
 /** Total compiled pages across all wiki types. */
@@ -164,8 +152,8 @@ export default function KbDetail() {
       .then((r) => {
         if (cancelled) return
         setInv(r)
-        const first = firstPath(r)
-        if (first) setSelectedPath(first)
+        // Land on the wiki home (index.md) like a real wiki, not the first concept.
+        setSelectedPath('index.md')
       })
       .catch((e) => {
         if (!cancelled) setInvError(errMsg(e))
@@ -335,10 +323,7 @@ export default function KbDetail() {
           <span className="w-3 h-3 rounded-full bg-accent-brand" />
           <h1 className="text-[19px] font-extrabold tracking-tight text-foreground">{id}</h1>
         </div>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          {docCount} 篇文档 · {inv?.concepts.length ?? 0} 概念 · {inv?.entities.length ?? 0} 实体 · {inv?.summaries.length ?? 0} 摘要
-          {inv && inv.reports.length > 0 && <> · {inv.reports.length} 报告</>}
-        </p>
+        {inv && <KbOverviewCards inv={inv} docCount={docCount} onOpenIndex={() => openPath('index.md')} />}
         <div className="mt-3 flex gap-1">
           {tabs.map((t) => (
             <button
