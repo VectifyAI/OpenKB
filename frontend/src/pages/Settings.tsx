@@ -30,7 +30,7 @@ const connectors = [
 ] as const
 
 const inputCls =
-  'mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus:border-blue-400'
+  'mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand'
 
 export default function Settings() {
   const [tab, setTab] = useState<string>('model')
@@ -180,11 +180,11 @@ export default function Settings() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-[780px] mx-auto px-6 py-8">
-        <h1 className="text-[22px] font-extrabold tracking-tight text-neutral-900 anim-fade-up">设置</h1>
+        <h1 className="text-[22px] font-extrabold tracking-tight text-foreground anim-fade-up">设置</h1>
 
         {/* 知识库选择 — 配置是按知识库存储的（.openkb/config.yaml + .env） */}
         <div className="mt-4 flex items-center gap-3 anim-fade-up">
-          <span className="text-[13px] text-neutral-500">知识库</span>
+          <span className="text-[13px] text-muted-foreground">知识库</span>
           {kbs.length > 0 ? (
             <Select value={kb} onValueChange={setKb}>
               <SelectTrigger className="h-9 w-64 text-[13px]">
@@ -199,7 +199,7 @@ export default function Settings() {
               </SelectContent>
             </Select>
           ) : (
-            <span className="text-[13px] text-neutral-400">尚无知识库</span>
+            <span className="text-[13px] text-muted-foreground">尚无知识库</span>
           )}
         </div>
 
@@ -211,7 +211,7 @@ export default function Settings() {
               onClick={() => setTab(t.id)}
               className={cn(
                 'inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl text-[13px] font-medium transition-colors',
-                tab === t.id ? 'bg-neutral-900 text-white shadow-sm' : 'text-neutral-500 hover:bg-white hover:text-neutral-800',
+                tab === t.id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
               )}
             >
               <t.icon className="w-3.5 h-3.5" />
@@ -221,7 +221,7 @@ export default function Settings() {
         </div>
 
         {loadError && (
-          <div className="mt-4 rounded-lg bg-red-50 border border-red-200/70 px-3 py-2 text-[12.5px] text-red-600">
+          <div className="mt-4 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12.5px] text-red-600 dark:text-red-400">
             加载配置失败：{loadError}
           </div>
         )}
@@ -229,17 +229,17 @@ export default function Settings() {
         {/* ---------- 模型 ---------- */}
         {tab === 'model' && (
           <div className="mt-5 space-y-4">
-            <div className="anim-fade-up rounded-2xl border border-black/8 bg-white p-5">
-              <div className="flex items-center gap-2 text-[14px] font-semibold text-neutral-800">
-                <Cpu className="w-4 h-4 text-blue-600" />模型与凭证
+            <div className="anim-fade-up rounded-2xl border border-[hsl(var(--glass-border))] glass-2 p-5">
+              <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
+                <Cpu className="w-4 h-4 text-accent-brand" />模型与凭证
               </div>
-              <p className="mt-0.5 text-[12.5px] text-neutral-400">
+              <p className="mt-0.5 text-[12.5px] text-muted-foreground">
                 写入该知识库的 .openkb/config.yaml（model / 阈值）与 .env（API Key / base URL）
               </p>
 
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[12px] font-medium text-neutral-500">模型</label>
+                  <label className="text-[12px] font-medium text-muted-foreground">模型</label>
                   <input
                     value={model}
                     disabled={loading || !config}
@@ -249,7 +249,7 @@ export default function Settings() {
                   />
                 </div>
                 <div>
-                  <label className="text-[12px] font-medium text-neutral-500">PageIndex 阈值（页数）</label>
+                  <label className="text-[12px] font-medium text-muted-foreground">PageIndex 阈值（页数）</label>
                   <input
                     type="number"
                     min={1}
@@ -261,7 +261,7 @@ export default function Settings() {
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-[12px] font-medium text-neutral-500 flex items-center gap-1">
+                  <label className="text-[12px] font-medium text-muted-foreground flex items-center gap-1">
                     <KeyRound className="w-3 h-3" />API Key
                   </label>
                   <input
@@ -273,14 +273,14 @@ export default function Settings() {
                     placeholder={hasKey ? '已设置密钥 · 留空则保持不变' : '未设置 · 输入以启用'}
                     className={inputCls}
                   />
-                  <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-neutral-400">
-                    <span className={cn('inline-block w-1.5 h-1.5 rounded-full', hasKey ? 'bg-emerald-500' : 'bg-neutral-300')} />
+                  <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-muted-foreground">
+                    <span className={cn('inline-block w-1.5 h-1.5 rounded-full', hasKey ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
                     {hasKey ? '已设置密钥（永不回显；输入新值即可轮换）' : '未设置密钥'}
                     {hasKey && (
                       <button
                         onClick={clearApiKey}
                         disabled={clearing}
-                        className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-black/10 text-[12px] font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-60"
+                        className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[hsl(var(--glass-border))] text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
                       >
                         {clearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                         清除
@@ -289,7 +289,7 @@ export default function Settings() {
                   </div>
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-[12px] font-medium text-neutral-500">API Base URL（可选）</label>
+                  <label className="text-[12px] font-medium text-muted-foreground">API Base URL（可选）</label>
                   <input
                     value={apiBase}
                     disabled={loading || !config}
@@ -299,7 +299,7 @@ export default function Settings() {
                   />
                 </div>
               </div>
-              <p className="mt-3 text-[12px] text-neutral-400">
+              <p className="mt-3 text-[12px] text-muted-foreground">
                 经 LiteLLM 路由，支持任意 provider/model 格式；本地运行时需填写 base URL。
               </p>
             </div>
@@ -311,10 +311,10 @@ export default function Settings() {
         {/* ---------- 通用 ---------- */}
         {tab === 'general' && (
           <div className="mt-5 space-y-4">
-            <div className="anim-fade-up rounded-2xl border border-black/8 bg-white p-5 space-y-5">
+            <div className="anim-fade-up rounded-2xl border border-[hsl(var(--glass-border))] glass-2 p-5 space-y-5">
               <div>
-                <label className="text-[13px] font-semibold text-neutral-800">Wiki 输出语言</label>
-                <p className="mt-0.5 text-[12px] text-neutral-400">写入编译 prompt 的输出语言，例如 en / 中文 / 日本語</p>
+                <label className="text-[13px] font-semibold text-foreground">Wiki 输出语言</label>
+                <p className="mt-0.5 text-[12px] text-muted-foreground">写入编译 prompt 的输出语言，例如 en / 中文 / 日本語</p>
                 <input
                   value={language}
                   disabled={loading || !config}
@@ -327,8 +327,8 @@ export default function Settings() {
 
             <SaveBar dirty={dirty} saving={saving} onSave={save} disabled={loading || !config} />
 
-            <div className="anim-fade-up anim-d2 rounded-2xl border border-black/8 bg-white px-5 py-4 flex items-center gap-3 text-[12.5px] text-neutral-400">
-              <span className="w-6 h-6 rounded-md bg-blue-600 text-white grid place-items-center text-[12px] font-extrabold">K</span>
+            <div className="anim-fade-up anim-d2 rounded-2xl border border-[hsl(var(--glass-border))] glass-2 px-5 py-4 flex items-center gap-3 text-[12.5px] text-muted-foreground">
+              <span className="w-6 h-6 rounded-md bg-accent-brand text-white grid place-items-center text-[12px] font-extrabold">K</span>
               OpenKB Studio · 由 PageIndex 提供无向量化检索 · wiki 与你的数据始终留在本地
             </div>
           </div>
@@ -337,7 +337,7 @@ export default function Settings() {
         {/* ---------- 数据源连接（无后端，明确标注即将推出，绝不伪造已连接） ---------- */}
         {tab === 'conn' && (
           <div className="mt-5 space-y-3">
-            <p className="text-[13px] text-neutral-400 anim-fade-up">
+            <p className="text-[13px] text-muted-foreground anim-fade-up">
               云端数据源连接器（OAuth / S3）尚未实现，敬请期待；当前仅支持在知识库详情页手动上传本地文件。
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -346,14 +346,14 @@ export default function Settings() {
                   key={c.id}
                   aria-disabled="true"
                   title="即将推出"
-                  className="anim-fade-up rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/60 px-4 py-3.5 flex items-center gap-3 opacity-70 cursor-not-allowed select-none"
+                  className="anim-fade-up rounded-2xl border border-dashed border-[hsl(var(--glass-border))] glass px-4 py-3.5 flex items-center gap-3 opacity-70 cursor-not-allowed select-none"
                 >
-                  <span className="w-9 h-9 rounded-xl bg-white border border-black/5 grid place-items-center shrink-0">
-                    <c.icon className="w-4 h-4 text-neutral-400" />
+                  <span className="w-9 h-9 rounded-xl glass-2 border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
+                    <c.icon className="w-4 h-4 text-muted-foreground" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-[13px] font-medium text-neutral-500 truncate">{c.label}</div>
-                    <div className="text-[11.5px] text-neutral-400 mt-0.5">即将推出</div>
+                    <div className="text-[13px] font-medium text-foreground truncate">{c.label}</div>
+                    <div className="text-[11.5px] text-muted-foreground mt-0.5">即将推出</div>
                   </div>
                 </div>
               ))}
@@ -378,12 +378,12 @@ function SaveBar({
       <button
         onClick={onSave}
         disabled={disabled || saving || !dirty}
-        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-blue-600 text-white text-[13px] font-medium hover:bg-blue-700 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:bg-accent-brand/90 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
         保存更改
       </button>
-      {dirty && !saving && <span className="text-[12px] text-neutral-400">有未保存的更改</span>}
+      {dirty && !saving && <span className="text-[12px] text-muted-foreground">有未保存的更改</span>}
     </div>
   )
 }

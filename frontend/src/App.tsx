@@ -27,7 +27,7 @@ function KbDetailRoute() {
 }
 
 const inputCls =
-  "mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus:border-blue-400"
+  "mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
 
 /**
  * Reactive connection prompt. Opened only when a request 401s — i.e. the server
@@ -68,7 +68,7 @@ function ConnectionDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-blue-600" />
+            <KeyRound className="w-4 h-4 text-accent-brand" />
             需要访问令牌
           </DialogTitle>
           <DialogDescription>
@@ -84,7 +84,7 @@ function ConnectionDialog({
           className="space-y-3"
         >
           <div>
-            <label className="text-[12px] font-medium text-neutral-500">访问令牌</label>
+            <label className="text-[12px] font-medium text-muted-foreground">访问令牌</label>
             <input
               autoFocus
               type="password"
@@ -95,7 +95,7 @@ function ConnectionDialog({
             />
           </div>
           <div>
-            <label className="text-[12px] font-medium text-neutral-500">
+            <label className="text-[12px] font-medium text-muted-foreground">
               API 地址（可选，留空使用当前源）
             </label>
             <input
