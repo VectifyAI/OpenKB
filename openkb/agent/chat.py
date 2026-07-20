@@ -72,6 +72,13 @@ _HELP_TEXT = (
 
 _SIGINT_EXIT_WINDOW = 2.0
 
+# The read-only tools whose calls are recorded into a chat turn's persisted
+# trace. Mirrors the frontend's toolCallSource whitelist (chat.ts): these are
+# the only tool reads the UI renders, and limiting the trace to them keeps a
+# non-read tool's large arguments (e.g. write_file's full file `content`) out
+# of the session JSON and off the restore wire.
+_TRACE_READ_TOOLS = frozenset({"read_file", "get_page_content"})
+
 
 def _use_color(force_off: bool) -> bool:
     if force_off:
@@ -935,9 +942,12 @@ async def iter_chat_turn_events(
     # Accumulate the ordered, interleaved trace (narration text + tool reads) in
     # SSE arrival order, mirroring the frontend's live fold, so a RESTORED turn
     # renders step-by-step identically instead of collapsing to one text block.
-    # Persisted per turn via record_turn(trace=...). Non-read tool calls (e.g.
-    # write_file) are still recorded here; the frontend's read-only whitelist
-    # drops them on restore, exactly as it does live.
+    # Persisted per turn via record_turn(trace=...). Only READ tools go into the
+    # trace (see _TRACE_READ_TOOLS): they are all the frontend renders, and
+    # recording a non-read tool like write_file would persist its full `content`
+    # argument (the whole generated file) into the session JSON and ship it to
+    # the browser on restore only to be dropped — the same large-payload waste
+    # the `final` frame already avoids by stripping history.
     trace: list[dict[str, Any]] = []
 
     async for event in iter_agent_response_events(
@@ -955,7 +965,13 @@ async def iter_chat_turn_events(
             continue
         if kind == "tool_call":
             d = event["data"]
-            trace.append({"kind": "tool", "name": d.get("name"), "arguments": d.get("arguments")})
+            # Record only read-tool calls (the frontend renders nothing else);
+            # this keeps write_file's large `content` argument out of the
+            # persisted trace and off the restore wire.
+            if d.get("name") in _TRACE_READ_TOOLS:
+                trace.append(
+                    {"kind": "tool", "name": d.get("name"), "arguments": d.get("arguments")}
+                )
             yield event
             continue
         if kind != "final":

@@ -2,7 +2,7 @@
  * The six official languages of the United Nations, offered as quick-pick
  * options for the "wiki output language" (the language written verbatim into
  * the compile prompt). The field stays free-text so any other language (e.g.
- * 日本語) can still be typed — these are suggestions, not a hard whitelist.
+ * Japanese) can still be typed — these are suggestions, not a hard whitelist.
  *
  * `value` is the string handed to the compile prompt AND the option label: a
  * language is shown by its own autonym regardless of the UI language (the same
