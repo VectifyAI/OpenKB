@@ -107,7 +107,7 @@ function ConnectionDialog({
             <input
               value={base}
               onChange={(e) => setBase(e.target.value)}
-              placeholder="http://127.0.0.1:8000"
+              placeholder="http://127.0.0.1:7566"
               className={inputCls}
             />
           </div>

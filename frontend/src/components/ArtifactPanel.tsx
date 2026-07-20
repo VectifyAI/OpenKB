@@ -222,8 +222,11 @@ export default function ArtifactPanel({
         className="absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize hover:bg-accent-brand/30"
       />
 
-      {/* header */}
-      <div className="shrink-0 h-12 flex items-center gap-2 px-3 border-b border-[hsl(var(--glass-border))]">
+      {/* header — pr-28 reserves the global top-right chrome lane (theme + i18n
+          pills in App.tsx, absolute right-3 z-40) so the panel's action buttons
+          (open / download / close) never sit UNDER it. Same reserve convention
+          as KbList's header row and KbDetail's gear row. */}
+      <div className="shrink-0 h-12 flex items-center gap-2 pl-3 pr-28 border-b border-[hsl(var(--glass-border))]">
         <HeaderIcon className="w-4 h-4 text-accent-brand shrink-0" />
         <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
           {artifactLabel(active, t)}

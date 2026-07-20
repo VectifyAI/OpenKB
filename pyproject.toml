@@ -59,6 +59,8 @@ Issues = "https://github.com/VectifyAI/OpenKB/issues"
 
 [project.scripts]
 openkb = "openkb.cli:cli"
+openkb-web = "openkb.api:main"
+# Backwards-compatible alias for the historical name; same entry point.
 openkb-api = "openkb.api:main"
 
 [tool.pytest.ini_options]
@@ -73,7 +75,11 @@ dev = [
     "mypy==1.15.0",
     "types-PyYAML==6.0.12.20260518",
 ]
-api = ["fastapi", "uvicorn", "python-multipart"]
+# The Knowledge Workbench Web UI is served by this FastAPI server. `web` is the
+# canonical extra; `api` is a backwards-compatible alias so an existing
+# `pip install "openkb[api]"` keeps working.
+web = ["fastapi", "uvicorn", "python-multipart"]
+api = ["openkb[web]"]
 
 [tool.hatch.version]
 source = "vcs"

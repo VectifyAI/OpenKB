@@ -123,13 +123,13 @@ Subscription-based providers that authenticate via OAuth device flow (e.g. `chat
 OpenKB ships a bundled web UI, served by the REST API at `/`. Install the API extra and start the server — no configuration needed:
 
 ```bash
-pip install "openkb[api]"
-openkb-api                       # serves the API + Workbench at http://127.0.0.1:8000/
+pip install "openkb[web]"
+openkb-web                       # serves the API + Workbench at http://127.0.0.1:7566/
 ```
 
-Open `http://127.0.0.1:8000/` for the Workbench. Auth is off by default (local-first); set `OPENKB_API_TOKEN` to require a bearer token before exposing the server. See the [full Web UI guide](examples/rest-api/README.md#knowledge-workbench-web-ui).
+Open `http://127.0.0.1:7566/` for the Workbench. Auth is off by default (local-first); set `OPENKB_API_TOKEN` to require a bearer token before exposing the server. See the [full Web UI guide](examples/rest-api/README.md#knowledge-workbench-web-ui).
 
-> Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-api`), or `npm run build` to regenerate the bundled `openkb/web/`.
+> Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-web`), or `npm run build` to regenerate the bundled `openkb/web/`.
 
 # 🧩 How OpenKB Works
 
@@ -341,7 +341,7 @@ The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` wit
 
 # REST API
 
-OpenKB ships a FastAPI service for HTTP clients. Install with `pip install -e ".[api]"`, then start with `python -m openkb.api`. The interactive API reference is at [`/docs`](http://127.0.0.1:8000/docs) (importable into Postman).
+OpenKB ships a FastAPI service for HTTP clients. Install with `pip install -e ".[web]"`, then start with `python -m openkb.api`. The interactive API reference is at [`/docs`](http://127.0.0.1:7566/docs) (importable into Postman).
 
 See the [full REST API reference](examples/rest-api/README.md#rest-api) for endpoints, auth, and SSE streaming.
 
