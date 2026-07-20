@@ -71,7 +71,16 @@ export default function ArtifactPanel({
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const blobRef = useRef<string | null>(null)
+  const panelRef = useRef<HTMLElement | null>(null)
   const activeKey = artifactKey(active)
+
+  // Non-modal landmark: move focus to the panel once when it opens so screen
+  // readers announce the labeled region. NOT a trap — the panel deliberately
+  // coexists with the chat, so Tab still flows out to the conversation. Runs
+  // once per open (the instance persists across artifact switches).
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true })
+  }, [])
 
   // Persist the chosen width across reloads.
   useEffect(() => {
@@ -195,7 +204,11 @@ export default function ArtifactPanel({
 
   return (
     <motion.aside
-      className="shrink-0 relative flex flex-col glass border-l border-[hsl(var(--glass-border))] shadow-glass"
+      ref={panelRef}
+      role="complementary"
+      aria-label={artifactLabel(active, t)}
+      tabIndex={-1}
+      className="shrink-0 relative flex flex-col glass border-l border-[hsl(var(--glass-border))] shadow-glass outline-none"
       style={{ width }}
       initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
       animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0, scale: 1 }}
@@ -222,6 +235,7 @@ export default function ArtifactPanel({
           <button
             onClick={openInNewTab}
             title={t("artifacts:panel.openTab")}
+            aria-label={t("artifacts:panel.openTab")}
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <ExternalLink className="w-4 h-4" />
@@ -229,6 +243,7 @@ export default function ArtifactPanel({
           <button
             onClick={download}
             title={t("artifacts:panel.download")}
+            aria-label={t("artifacts:panel.download")}
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Download className="w-4 h-4" />
@@ -236,6 +251,7 @@ export default function ArtifactPanel({
           <button
             onClick={onClose}
             title={t("common:actions.close")}
+            aria-label={t("common:actions.close")}
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="w-4 h-4" />

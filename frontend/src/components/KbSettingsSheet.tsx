@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
+import * as Dialog from '@radix-ui/react-dialog'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   X, KeyRound, Loader2, Trash2, RefreshCw, Play, CheckCircle2, AlertCircle,
@@ -35,55 +36,90 @@ export default function KbSettingsSheet({
 }) {
   const { t } = useTranslation(['kbSettings', 'common'])
   const reduce = useReducedMotion()
+  // The control that opened the sheet (KbDetail's gear), captured just before
+  // Radix moves focus inward, so we can hand focus back to it on close. We open
+  // from external state rather than a Dialog.Trigger, so Radix's own triggerRef
+  // is null and its default close-autofocus would drop focus to <body>.
+  const openerRef = useRef<HTMLElement | null>(null)
 
-  // Esc dismisses (Apple wayfinding — always an exit).
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
+  // Radix Dialog (composed around the existing motion spring via asChild +
+  // forceMount) supplies the modal a11y: focus trap, initial focus into the
+  // sheet, and Escape-to-close. We add aria-modal explicitly (this compose path
+  // doesn't set it) and drive focus return via on{Open,Close}AutoFocus. The
+  // motion.aside/motion.div keep the D-era spring + reduced-motion; AnimatePresence
+  // still owns mount/unmount so exit animations run before focus is restored.
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            className="fixed inset-0 z-40 bg-black/30"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={reduce ? { duration: 0.12 } : { duration: 0.2 }}
-            onClick={onClose}
-          />
-          <motion.aside
-            className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[92vw] flex-col glass border-l border-[hsl(var(--glass-border))] shadow-glass-lg rounded-l-apple-lg"
-            initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
-            animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0, scale: 1 }}
-            exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
-            transition={reduce ? { duration: 0.12 } : { type: 'spring', bounce: 0, duration: 0.3 }}
-          >
-            <div className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-[hsl(var(--glass-border))]">
-              <span className="text-[14px] font-semibold text-foreground">{t('kbSettings:title')}</span>
-              <button
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        // Any Radix-initiated close (Escape, pointer-outside) routes through
+        // the single onClose the parent owns. Idempotent, so a scrim click that
+        // also fires the explicit onClick below is harmless.
+        if (!next) onClose()
+      }}
+    >
+      <AnimatePresence>
+        {open && (
+          <Dialog.Portal forceMount>
+            <Dialog.Overlay asChild forceMount>
+              <motion.div
+                className="fixed inset-0 z-40 bg-black/30"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={reduce ? { duration: 0.12 } : { duration: 0.2 }}
                 onClick={onClose}
-                title={t('common:actions.close')}
-                className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              />
+            </Dialog.Overlay>
+            <Dialog.Content
+              asChild
+              forceMount
+              aria-modal="true"
+              aria-describedby={undefined}
+              onOpenAutoFocus={() => {
+                // Fires before Radix moves focus in — activeElement is still
+                // the opener (the gear). Don't preventDefault: let Radix put
+                // initial focus on the sheet's first control.
+                openerRef.current = document.activeElement as HTMLElement | null
+              }}
+              onCloseAutoFocus={(e) => {
+                // Override Radix's null-trigger default (which lands on <body>)
+                // and return focus to whatever opened the sheet.
+                e.preventDefault()
+                openerRef.current?.focus()
+              }}
+            >
+              <motion.aside
+                className="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[92vw] flex-col glass border-l border-[hsl(var(--glass-border))] shadow-glass-lg rounded-l-apple-lg"
+                initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
+                animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0, scale: 1 }}
+                exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.98 }}
+                transition={reduce ? { duration: 0.12 } : { type: 'spring', bounce: 0, duration: 0.3 }}
               >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+                <div className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-[hsl(var(--glass-border))]">
+                  <Dialog.Title asChild>
+                    <span className="text-[14px] font-semibold text-foreground">{t('kbSettings:title')}</span>
+                  </Dialog.Title>
+                  <button
+                    onClick={onClose}
+                    title={t('common:actions.close')}
+                    aria-label={t('common:actions.close')}
+                    className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto scroll-edge-top px-4 py-4 space-y-6">
-              <KbConfigSection kb={kb} />
-              <KbMaintenanceSection kb={kb} open={open} docCount={docCount} onChanged={onChanged} />
-            </div>
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
+                <div className="flex-1 min-h-0 overflow-y-auto scroll-edge-top px-4 py-4 space-y-6">
+                  <KbConfigSection kb={kb} />
+                  <KbMaintenanceSection kb={kb} open={open} docCount={docCount} onChanged={onChanged} />
+                </div>
+              </motion.aside>
+            </Dialog.Content>
+          </Dialog.Portal>
+        )}
+      </AnimatePresence>
+    </Dialog.Root>
   )
 }
 
