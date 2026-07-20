@@ -333,10 +333,22 @@ class GlobalConfigResponse(BaseModel):
     model: str
     language: str
     pageindex_threshold: int
+    # Global-default credentials read from ~/.config/openkb/.env (the
+    # lowest-precedence credential source). openai_api_base is plaintext (a
+    # config value, not a secret); has_api_key is a presence flag only — the raw
+    # key value is NEVER returned by the API. Mirrors KbConfigResponse.
+    openai_api_base: str | None
+    has_api_key: bool
 
 
 class GlobalConfigPatchRequest(BaseModel):
     config: dict[str, Any] | None = None
+    # Global-default credentials (mirrors KbConfigPatchRequest). Merge-patch
+    # semantics via model_fields_set: an ABSENT field is left unchanged, an
+    # explicit null CLEARS it. api_key is a SecretStr so its value never lands
+    # in logs/reprs.
+    api_key: SecretStr | None = None
+    openai_api_base: str | None = None
 
 
 class KbConfigResponse(BaseModel):

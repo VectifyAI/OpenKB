@@ -12,9 +12,14 @@
     "title": "Model & threshold",
     "desc": "Global default model & threshold (written to ~/.config/openkb/global.yaml; each KB can inherit or override in its own settings)"
   },
+  "credSection": {
+    "title": "Default credentials",
+    "desc": "Global default API credentials (written to ~/.config/openkb/.env; a KB's own .env and process env vars take precedence)",
+    "clearPending": "Marked for removal; takes effect on save",
+    "undoClear": "Undo"
+  },
   "general": {
-    "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語",
-    "footer": "OpenKB Studio · vectorless retrieval by PageIndex · your wiki and data always stay local"
+    "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語"
   },
   "conn": {
     "note": "Cloud data-source connectors (OAuth / S3) are in development and not yet available; for now, upload local files from the KB detail page. Want a connector? Click a card below to vote on GitHub and help us prioritize."

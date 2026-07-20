@@ -2431,7 +2431,13 @@ def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
     monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
     client = _client(monkeypatch)
     body = client.get("/api/v1/config", headers=_auth()).json()
-    assert body == {"model": "gpt-5.4", "language": "en", "pageindex_threshold": 20}
+    assert body == {
+        "model": "gpt-5.4",
+        "language": "en",
+        "pageindex_threshold": 20,
+        "openai_api_base": None,
+        "has_api_key": False,
+    }
 
 
 def test_global_config_patch_sets_value_and_preserves_registry(monkeypatch, tmp_path):
@@ -2509,3 +2515,110 @@ def test_global_config_requires_auth(monkeypatch, tmp_path):
     client = _client(monkeypatch)
     assert client.get("/api/v1/config").status_code == 401
     assert client.patch("/api/v1/config", json={"config": {"model": "x"}}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /api/v1/config  — global-default credentials (global .env)
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_get_reports_no_credentials_when_env_absent(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body["has_api_key"] is False
+    assert body["openai_api_base"] is None
+
+
+def test_global_config_get_reports_credentials_without_leaking_key(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text(
+        "LLM_API_KEY=global-secret\nOPENAI_API_BASE=https://gw.example/v1\n", encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    response = client.get("/api/v1/config", headers=_auth())
+    body = response.json()
+    assert body["has_api_key"] is True
+    assert body["openai_api_base"] == "https://gw.example/v1"
+    # The presence flag NEVER leaks the value.
+    assert "global-secret" not in response.text
+
+
+def test_global_config_patch_writes_api_key_to_global_env_0600(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+
+    response = client.patch("/api/v1/config", json={"api_key": "sk-global"}, headers=_auth())
+
+    assert response.status_code == 200
+    # The value is never echoed back in the response.
+    assert "sk-global" not in response.text
+    assert response.json()["has_api_key"] is True
+
+    env_path = tmp_path / ".env"
+    assert "LLM_API_KEY=sk-global" in env_path.read_text(encoding="utf-8")
+    # The credential file must never be world-readable.
+    assert (env_path.stat().st_mode & 0o777) == 0o600
+
+    follow_up = client.get("/api/v1/config", headers=_auth())
+    assert follow_up.json()["has_api_key"] is True
+    assert "sk-global" not in follow_up.text
+
+
+def test_global_config_patch_clears_api_key_on_explicit_null(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text("LLM_API_KEY=global-secret\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch("/api/v1/config", json={"api_key": None}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is False
+    assert "LLM_API_KEY" not in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_global_config_patch_roundtrips_openai_api_base(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/v1/config", json={"openai_api_base": "https://local.example/v1"}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert response.json()["openai_api_base"] == "https://local.example/v1"
+    assert "OPENAI_API_BASE=https://local.example/v1" in (tmp_path / ".env").read_text(
+        encoding="utf-8"
+    )
+
+    # An explicit null clears it again.
+    cleared = client.patch("/api/v1/config", json={"openai_api_base": None}, headers=_auth())
+    assert cleared.json()["openai_api_base"] is None
+    assert "OPENAI_API_BASE" not in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_global_config_patch_credential_rotation_preserves_env_and_registry(monkeypatch, tmp_path):
+    """A credential-only PATCH (no ``config`` block) rotates just the key line,
+    leaves co-existing .env entries intact, and never clobbers global.yaml's KB
+    registry (the write is under the same global lock)."""
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"known_kbs": ["/a"], "model": "global-model"}), encoding="utf-8")
+    (tmp_path / ".env").write_text("LLM_API_KEY=old\nPAGEINDEX_API_KEY=pk-123\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch("/api/v1/config", json={"api_key": "new"}, headers=_auth())
+
+    assert response.status_code == 200
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "LLM_API_KEY=new" in env_text
+    assert "PAGEINDEX_API_KEY=pk-123" in env_text
+    # The scalar merge is untouched and the KB registry survives.
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["known_kbs"] == ["/a"]
+    assert saved["model"] == "global-model"

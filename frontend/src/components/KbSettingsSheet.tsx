@@ -15,6 +15,7 @@ import {
 import type { SseEvent } from '@/api/client'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { UnLanguageDatalist, UN_LANG_LIST_ID } from '@/components/UnLanguageDatalist'
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -330,6 +331,7 @@ function OverrideRow({
 
   return (
     <div>
+      {field === 'language' && <UnLanguageDatalist />}
       <div className="flex items-center justify-between">
         <label className="text-[12px] font-medium text-muted-foreground">{label}</label>
         <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -345,6 +347,7 @@ function OverrideRow({
       {overridden ? (
         <input
           type={numeric ? 'number' : 'text'}
+          list={field === 'language' ? UN_LANG_LIST_ID : undefined}
           value={draft}
           disabled={busy}
           onChange={(e) => setDraft(e.target.value)}

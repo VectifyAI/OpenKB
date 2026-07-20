@@ -12,9 +12,14 @@
     "title": "模型与阈值",
     "desc": "全局默认模型与阈值（写入 ~/.config/openkb/global.yaml；各知识库可在其设置中继承或覆盖）"
   },
+  "credSection": {
+    "title": "默认凭证",
+    "desc": "全局默认 API 凭证（写入 ~/.config/openkb/.env；各知识库自身的 .env 与进程环境变量优先级更高）",
+    "clearPending": "已标记为清除，保存后生效",
+    "undoClear": "撤销"
+  },
   "general": {
-    "langDesc": "写入编译 prompt 的输出语言，例如 en / 中文 / 日本語",
-    "footer": "OpenKB Studio · 由 PageIndex 提供无向量化检索 · wiki 与你的数据始终留在本地"
+    "langDesc": "写入编译 prompt 的输出语言，例如 en / 中文 / 日本語"
   },
   "conn": {
     "note": "云端数据源连接器（OAuth / S3）开发中，尚不可用；当前请在知识库详情页手动上传本地文件。想要某个连接器？点下方卡片去 GitHub 投票，帮我们排优先级。"

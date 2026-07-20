@@ -43,8 +43,8 @@ export function useLanguage() {
   return ctx
 }
 
-/** Language toggle icon button (cycles zh → en → zh). Same `h-8 w-8` shape as
- * ThemeToggle; slots into App.tsx's top-right chrome pill next to it. */
+/** Language toggle icon button (toggles between zh and en). Same `h-8 w-8`
+ * shape as ThemeToggle; slots into App.tsx's top-right chrome pill next to it. */
 export function LanguageToggle({ className }: { className?: string }) {
   const { language, setLanguage } = useLanguage()
   const { t } = useTranslation("common")
