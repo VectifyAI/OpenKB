@@ -84,7 +84,12 @@ deliberately — they are load-bearing for OpenKB's document formats.
 Full builds need, per platform: Rust + Cargo, Node + npm, a Python 3.10+ env,
 and on **Linux `webkit2gtk`** (`libwebkit2gtk-4.1-dev`) for the WebView.
 
-**Status:** the API sidecar freeze (`packaging/`) is implemented and verified.
-The `src-tauri/` shell is a reference skeleton — it is *not* compiled in the
-CI/dev container used so far because `webkit2gtk` is absent there; build it on a
-machine (or CI runner) that has the WebView libraries installed.
+**Status:**
+- **API sidecar** (`packaging/`) — implemented and verified: the frozen slim
+  binary boots uvicorn and serves `GET /api/v1/kbs` → 200.
+- **Web UI** — builds (`npm run build` → `openkb/web/`) and renders end-to-end
+  against the sidecar (verified via headless Chromium screenshot).
+- **Tauri shell** (`src-tauri/`) — **compiles** (`cargo build`, with
+  `libwebkit2gtk-4.1-dev` installed). *Running* the window needs a display, so
+  the end-to-end "double-click → window → sidecar" flow must be exercised on a
+  desktop machine or a display-equipped CI runner (e.g. via `xvfb`).
