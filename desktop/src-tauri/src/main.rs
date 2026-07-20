@@ -68,8 +68,16 @@ fn main() {
     tauri::Builder::default()
         .manage(Sidecar(Mutex::new(None)))
         .setup(|app| {
-            let child = spawn_sidecar(app)?;
-            app.state::<Sidecar>().0.lock().unwrap().replace(child);
+            // Non-fatal: if the sidecar can't start (missing binary, port in
+            // use), keep the window up on the splash rather than crashing the
+            // app. In `cargo run` dev the bundled sidecar isn't present, so
+            // this lets the shell attach to an externally-run `openkb-api`.
+            match spawn_sidecar(app) {
+                Ok(child) => {
+                    app.state::<Sidecar>().0.lock().unwrap().replace(child);
+                }
+                Err(e) => eprintln!("openkb: could not spawn sidecar: {e}"),
+            }
 
             let url = format!("http://{HOST}:{PORT}/");
             let handle = app.handle().clone();
