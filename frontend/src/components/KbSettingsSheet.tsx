@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   X, KeyRound, Loader2, Trash2, RefreshCw, Play, CheckCircle2, AlertCircle,
@@ -31,6 +33,7 @@ export default function KbSettingsSheet({
   docCount: number
   onChanged?: () => void
 }) {
+  const { t } = useTranslation(['kbSettings', 'common'])
   const reduce = useReducedMotion()
 
   // Esc dismisses (Apple wayfinding — always an exit).
@@ -63,10 +66,10 @@ export default function KbSettingsSheet({
             transition={reduce ? { duration: 0.12 } : { type: 'spring', bounce: 0, duration: 0.3 }}
           >
             <div className="shrink-0 h-12 flex items-center gap-2 px-4 border-b border-[hsl(var(--glass-border))]">
-              <span className="text-[14px] font-semibold text-foreground">知识库设置</span>
+              <span className="text-[14px] font-semibold text-foreground">{t('kbSettings:title')}</span>
               <button
                 onClick={onClose}
-                title="关闭"
+                title={t('common:actions.close')}
                 className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 <X className="w-4 h-4" />
@@ -87,6 +90,7 @@ export default function KbSettingsSheet({
 /** Effective-value + inherit/override editor for the three scalar fields, plus
  *  write-only credentials — all written to the KB's config.yaml / .env. */
 function KbConfigSection({ kb }: { kb: string }) {
+  const { t } = useTranslation(['kbSettings', 'common'])
   const [config, setConfig] = useState<KbConfig | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [apiKeyInput, setApiKeyInput] = useState('')
@@ -117,12 +121,12 @@ function KbConfigSection({ kb }: { kb: string }) {
         const next = await patchKbConfig(kb, { config: { [field]: value } })
         apply(next)
       } catch (e) {
-        toast.error(`保存失败：${errMsg(e)}`)
+        toast.error(t('common:saveError', { error: errMsg(e) }))
       } finally {
         setBusy(false)
       }
     },
-    [kb, apply],
+    [kb, apply, t],
   )
 
   const saveCredentials = useCallback(async () => {
@@ -135,49 +139,49 @@ function KbConfigSection({ kb }: { kb: string }) {
       if (baseTrim !== currentBase) patch.openai_api_base = baseTrim === '' ? null : baseTrim
       if (apiKeyInput !== '') patch.api_key = apiKeyInput
       if (Object.keys(patch).length === 0) {
-        toast.info('没有需要保存的更改')
+        toast.info(t('common:noChanges'))
         return
       }
       apply(await patchKbConfig(kb, patch))
-      toast.success('凭证已保存')
+      toast.success(t('kbSettings:credSaved'))
     } catch (e) {
-      toast.error(`保存失败：${errMsg(e)}`)
+      toast.error(t('common:saveError', { error: errMsg(e) }))
     } finally {
       setBusy(false)
     }
-  }, [kb, config, apiBase, apiKeyInput, apply])
+  }, [kb, config, apiBase, apiKeyInput, apply, t])
 
   const clearApiKey = useCallback(async () => {
     setBusy(true)
     try {
       apply(await patchKbConfig(kb, { api_key: null }))
-      toast.success('已清除 API Key')
+      toast.success(t('kbSettings:keyCleared'))
     } catch (e) {
-      toast.error(`清除失败：${errMsg(e)}`)
+      toast.error(t('kbSettings:clearError', { error: errMsg(e) }))
     } finally {
       setBusy(false)
     }
-  }, [kb, apply])
+  }, [kb, apply, t])
 
   if (loadError) {
     return (
       <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12.5px] text-red-600 dark:text-red-400">
-        加载配置失败：{loadError}
+        {t('common:configLoadError', { error: loadError })}
       </div>
     )
   }
   if (!config) {
-    return <div className="text-[12.5px] text-muted-foreground">加载中…</div>
+    return <div className="text-[12.5px] text-muted-foreground">{t('common:loading')}</div>
   }
 
   const hasKey = config.has_api_key
 
   return (
     <div className="space-y-4">
-      <h3 className="text-[12px] font-semibold text-muted-foreground tracking-wide">配置</h3>
+      <h3 className="text-[12px] font-semibold text-muted-foreground tracking-wide">{t('kbSettings:configHeading')}</h3>
 
       <OverrideRow
-        label="模型"
+        label={t('common:fields.model')}
         field="model"
         source={config.sources.model}
         effective={config.model}
@@ -187,7 +191,7 @@ function KbConfigSection({ kb }: { kb: string }) {
         onRevert={() => setOverride('model', null)}
       />
       <OverrideRow
-        label="Wiki 输出语言"
+        label={t('common:fields.wikiLanguage')}
         field="language"
         source={config.sources.language}
         effective={config.language}
@@ -197,7 +201,7 @@ function KbConfigSection({ kb }: { kb: string }) {
         onRevert={() => setOverride('language', null)}
       />
       <OverrideRow
-        label="PageIndex 阈值（页数）"
+        label={t('common:fields.threshold')}
         field="pageindex_threshold"
         source={config.sources.pageindex_threshold}
         effective={String(config.pageindex_threshold)}
@@ -215,7 +219,7 @@ function KbConfigSection({ kb }: { kb: string }) {
         onRevert={() => setOverride('pageindex_threshold', null)}
       />
 
-      <h3 className="pt-2 text-[12px] font-semibold text-muted-foreground tracking-wide">凭证（本库 .env）</h3>
+      <h3 className="pt-2 text-[12px] font-semibold text-muted-foreground tracking-wide">{t('kbSettings:credHeading')}</h3>
       <div>
         <label className="text-[12px] font-medium text-muted-foreground flex items-center gap-1">
           <KeyRound className="w-3 h-3" />API Key
@@ -226,30 +230,30 @@ function KbConfigSection({ kb }: { kb: string }) {
           autoComplete="new-password"
           disabled={busy}
           onChange={(e) => setApiKeyInput(e.target.value)}
-          placeholder={hasKey ? '已设置密钥 · 留空则保持不变' : '未设置 · 输入以启用'}
+          placeholder={hasKey ? t('kbSettings:keyPlaceholderSet') : t('kbSettings:keyPlaceholderUnset')}
           className="mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
         />
         <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-muted-foreground">
           <span className={cn('inline-block w-1.5 h-1.5 rounded-full', hasKey ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
-          {hasKey ? '已设置密钥（永不回显；输入新值即可轮换）' : '未设置密钥'}
+          {hasKey ? t('kbSettings:keyHintSet') : t('kbSettings:keyHintUnset')}
           {hasKey && (
             <button
               onClick={clearApiKey}
               disabled={busy}
               className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[hsl(var(--glass-border))] text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
             >
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}清除
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}{t('kbSettings:clear')}
             </button>
           )}
         </div>
       </div>
       <div>
-        <label className="text-[12px] font-medium text-muted-foreground">API Base URL（可选）</label>
+        <label className="text-[12px] font-medium text-muted-foreground">{t('kbSettings:baseLabel')}</label>
         <input
           value={apiBase}
           disabled={busy}
           onChange={(e) => setApiBase(e.target.value)}
-          placeholder="留空使用 provider 默认；本地/兼容端点时填写"
+          placeholder={t('kbSettings:basePlaceholder')}
           className="mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
         />
       </div>
@@ -258,7 +262,7 @@ function KbConfigSection({ kb }: { kb: string }) {
         disabled={busy}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:bg-accent-brand/90 shadow-sm transition-colors disabled:opacity-50"
       >
-        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}保存凭证
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}{t('kbSettings:saveCred')}
       </button>
     </div>
   )
@@ -278,26 +282,27 @@ function OverrideRow({
   onSet: (value: string) => void
   onRevert: () => void
 }) {
+  const { t } = useTranslation(['kbSettings', 'common'])
   const overridden = source === 'kb'
   const [draft, setDraft] = useState(effective)
   useEffect(() => setDraft(effective), [effective])
 
   const inheritedBadge =
     source === 'global'
-      ? `继承 · 全局(${globalValue ?? effective})`
-      : `继承 · 默认(${effective})`
+      ? t('kbSettings:inheritGlobal', { value: globalValue ?? effective })
+      : t('kbSettings:inheritDefault', { value: effective })
 
   return (
     <div>
       <div className="flex items-center justify-between">
         <label className="text-[12px] font-medium text-muted-foreground">{label}</label>
         <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          为本库覆盖
+          {t('kbSettings:override')}
           <Switch
             checked={overridden}
             disabled={busy}
             onCheckedChange={(v) => (v ? onSet(effective) : onRevert())}
-            aria-label={`${label} 为本库覆盖`}
+            aria-label={t('kbSettings:overrideAria', { label })}
           />
         </span>
       </div>
@@ -365,7 +370,7 @@ const initialRecompile: RecompileState = { status: 'idle', docs: [], summary: nu
  * `doc` appends a row, `final` records the summary, `error` is terminal.
  * Moved verbatim from `pages/KbDetail.tsx`.
  */
-function foldRecompile(s: RecompileState, ev: SseEvent): RecompileState {
+function foldRecompile(s: RecompileState, ev: SseEvent, t: TFunction): RecompileState {
   switch (ev.event) {
     case 'start':
       return { status: 'running', docs: [], summary: null, error: null }
@@ -375,7 +380,7 @@ function foldRecompile(s: RecompileState, ev: SseEvent): RecompileState {
         docs: [
           ...s.docs,
           {
-            name: ev.data?.doc_name ?? ev.data?.name ?? '(未命名)',
+            name: ev.data?.doc_name ?? ev.data?.name ?? t('kbSettings:unnamed'),
             type: ev.data?.type ?? '',
             status: ev.data?.status ?? '',
             elapsed: ev.data?.elapsed ?? null,
@@ -394,7 +399,7 @@ function foldRecompile(s: RecompileState, ev: SseEvent): RecompileState {
         },
       }
     case 'error':
-      return { ...s, status: 'error', error: ev.data?.message ?? '重新编译失败' }
+      return { ...s, status: 'error', error: ev.data?.message ?? t('kbSettings:recompileFailed') }
     default:
       return s
   }
@@ -414,6 +419,7 @@ function KbMaintenanceSection({
   docCount: number
   onChanged?: () => void
 }) {
+  const { t } = useTranslation(['kbSettings', 'common'])
   const [watch, setWatch] = useState<WatchStatus | null>(null)
   const [watchError, setWatchError] = useState<string | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
@@ -454,13 +460,13 @@ function KbMaintenanceSection({
       const s = wasActive ? await watchStop(kb) : await watchStart(kb)
       setWatch(s)
       setWatchError(null)
-      toast.success(wasActive ? '已停止文件监听' : '已启动文件监听')
+      toast.success(wasActive ? t('kbSettings:watchStopped') : t('kbSettings:watchStarted'))
     } catch (e) {
       toast.error(errMsg(e))
     } finally {
       setWatchBusy(false)
     }
-  }, [kb, watch?.active, watchBusy])
+  }, [kb, watch?.active, watchBusy, t])
 
   const startRecompile = useCallback(async () => {
     if (recompileRunning) return
@@ -468,12 +474,12 @@ function KbMaintenanceSection({
     setRecompile({ status: 'running', docs: [], summary: null, error: null })
     try {
       for await (const ev of runRecompile(kb)) {
-        setRecompile((s) => foldRecompile(s, ev))
+        setRecompile((s) => foldRecompile(s, ev, t))
       }
     } catch (e) {
       const message = errMsg(e)
       setRecompile((s) => ({ ...s, status: 'error', error: s.error ?? message }))
-      toast.error(`重新编译失败：${message}`)
+      toast.error(t('kbSettings:recompileErrorToast', { error: message }))
     } finally {
       // A stream that ended without a terminal `final`/`error` still settles.
       setRecompile((s) => (s.status === 'running' ? { ...s, status: s.error ? 'error' : 'done' } : s))
@@ -481,27 +487,27 @@ function KbMaintenanceSection({
       // Recompiled pages change the wiki tree; keep the browse/来源 lists fresh.
       onChanged?.()
     }
-  }, [kb, recompileRunning, onChanged])
+  }, [kb, recompileRunning, onChanged, t])
 
   const runStructuralLint = useCallback(async () => {
     if (lintBusy) return
     setLintBusy(true)
     try {
       const res = (await runLint(kb, false)) as { message?: string; skipped?: boolean }
-      setLintResult(res.message ?? (res.skipped ? '检查已跳过' : '检查完成'))
-      toast.success('结构检查完成')
+      setLintResult(res.message ?? (res.skipped ? t('kbSettings:lintSkipped') : t('kbSettings:lintDone')))
+      toast.success(t('kbSettings:lintSuccessToast'))
     } catch (e) {
-      toast.error(`检查失败：${errMsg(e)}`)
+      toast.error(t('kbSettings:lintErrorToast', { error: errMsg(e) }))
     } finally {
       setLintBusy(false)
     }
-  }, [kb, lintBusy])
+  }, [kb, lintBusy, t])
 
   const watchActive = watch?.active === true
 
   return (
     <div className="space-y-5">
-      <h3 className="text-[12px] font-semibold text-muted-foreground tracking-wide">维护</h3>
+      <h3 className="text-[12px] font-semibold text-muted-foreground tracking-wide">{t('kbSettings:maintHeading')}</h3>
 
       {/* 文件监听（真实 /api/v1/watch/status） */}
       <div className="rounded-2xl border border-[hsl(var(--glass-border))] glass-2 px-4 py-3.5">
@@ -515,11 +521,13 @@ function KbMaintenanceSection({
             <Radio className={cn('w-4 h-4', watchActive && 'animate-pulse')} />
           </span>
           <div className="min-w-0 flex-1">
-            <div className="text-[13.5px] font-medium text-foreground">文件监听</div>
+            <div className="text-[13.5px] font-medium text-foreground">{t('kbSettings:watchLabel')}</div>
             <div className="text-[12px] text-muted-foreground mt-0.5 truncate">
               {watchActive
-                ? `监听中${watch?.raw_dir ? ` · ${watch.raw_dir}` : ''}`
-                : '未运行 · 启动后新文件会自动编译'}
+                ? watch?.raw_dir
+                  ? t('kbSettings:watchOnDir', { dir: watch.raw_dir })
+                  : t('kbSettings:watchOn')
+                : t('kbSettings:watchOff')}
             </div>
           </div>
           <button
@@ -535,10 +543,10 @@ function KbMaintenanceSection({
             {watchBusy ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : watchActive ? (
-              <>停止</>
+              <>{t('kbSettings:stop')}</>
             ) : (
               <>
-                <Play className="w-3.5 h-3.5" />启动监听
+                <Play className="w-3.5 h-3.5" />{t('kbSettings:startWatch')}
               </>
             )}
           </button>
@@ -582,11 +590,11 @@ function KbMaintenanceSection({
         <button
           onClick={startRecompile}
           disabled={recompileRunning || docCount === 0}
-          title={docCount === 0 ? '暂无已编译文档' : undefined}
+          title={docCount === 0 ? t('kbSettings:noCompiledDocs') : undefined}
           className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-[12.5px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
           {recompileRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          重新编译全部
+          {t('kbSettings:recompileAll')}
         </button>
         <button
           onClick={runStructuralLint}
@@ -594,7 +602,7 @@ function KbMaintenanceSection({
           className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[hsl(var(--glass-border))] text-[12.5px] font-medium text-muted-foreground hover:bg-accent transition-colors disabled:opacity-60"
         >
           {lintBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-          结构检查
+          {t('kbSettings:lint')}
         </button>
       </div>
 
@@ -611,10 +619,14 @@ function KbMaintenanceSection({
             {recompile.status === 'running' && <Loader2 className="w-4 h-4 animate-spin text-accent-brand" />}
             {recompile.status === 'done' && <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />}
             {recompile.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400" />}
-            重新编译
+            {t('kbSettings:recompileHeading')}
             {recompile.summary && (
               <span className="text-[12px] font-normal text-muted-foreground">
-                · 共 {recompile.summary.total} · 编译 {recompile.summary.recompiled} · 跳过 {recompile.summary.skipped}
+                {t('kbSettings:recompileSummary', {
+                  total: recompile.summary.total,
+                  recompiled: recompile.summary.recompiled,
+                  skipped: recompile.summary.skipped,
+                })}
               </span>
             )}
           </div>
@@ -657,7 +669,7 @@ function KbMaintenanceSection({
             </div>
           ))}
           {recompile.status === 'running' && recompile.docs.length === 0 && (
-            <div className="text-[12.5px] text-muted-foreground">正在准备…</div>
+            <div className="text-[12.5px] text-muted-foreground">{t('kbSettings:preparing')}</div>
           )}
         </div>
       )}
