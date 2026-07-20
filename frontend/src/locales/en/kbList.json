@@ -1,0 +1,9 @@
+{
+  "notCompiled": "Not compiled yet",
+  "updatedAt": "Updated {{date}}",
+  "title": "Knowledge bases",
+  "subtitle": "Each knowledge base is a continuously-compiled wiki that can bind multiple data sources",
+  "docsLabel": "Docs",
+  "rawReady": "raw/ ready",
+  "rawMissing": "No raw/"
+}

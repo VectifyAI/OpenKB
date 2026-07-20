@@ -1,0 +1,9 @@
+{
+  "notCompiled": "尚未编译",
+  "updatedAt": "更新于 {{date}}",
+  "title": "知识库",
+  "subtitle": "每个知识库是一个持续编译的 wiki，可绑定多个数据源",
+  "docsLabel": "文档",
+  "rawReady": "raw/ 已就绪",
+  "rawMissing": "无 raw/"
+}

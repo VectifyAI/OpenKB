@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useTranslation } from 'react-i18next'
 import { Plus, FileText } from 'lucide-react'
 import { listKbs, type KbSummary } from '@/api/kb'
 import { cn } from '@/lib/utils'
@@ -8,14 +9,14 @@ import { cn } from '@/lib/utils'
 const DOTS = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500']
 const dotFor = (i: number) => DOTS[i % DOTS.length]
 
-function formatCompile(last: string | null): string {
-  if (!last) return '尚未编译'
-  return `更新于 ${last.replace('T', ' ').slice(0, 16)}`
-}
-
 export default function KbList() {
+  const { t } = useTranslation(['kbList', 'common'])
   const navigate = useNavigate()
   const [kbs, setKbs] = useState<KbSummary[]>([])
+
+  // Date formatting stays a runtime value; only the surrounding copy is i18n'd.
+  const formatCompile = (last: string | null): string =>
+    last ? t('updatedAt', { date: last.replace('T', ' ').slice(0, 16) }) : t('notCompiled')
 
   useEffect(() => {
     listKbs()
@@ -31,11 +32,11 @@ export default function KbList() {
             Only this control row reserves — the card grid below keeps full width. */}
         <div className="flex items-end justify-between anim-fade-up pr-28">
           <div>
-            <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">知识库</h1>
-            <p className="mt-1 text-[13px] text-muted-foreground">每个知识库是一个持续编译的 wiki，可绑定多个数据源</p>
+            <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">{t('title')}</h1>
+            <p className="mt-1 text-[13px] text-muted-foreground">{t('subtitle')}</p>
           </div>
           <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:opacity-90 shadow-sm transition duration-fast ease-out-apple active:scale-[0.97]">
-            <Plus className="w-4 h-4" />新建知识库
+            <Plus className="w-4 h-4" />{t('common:actions.newKb')}
           </button>
         </div>
 
@@ -56,14 +57,14 @@ export default function KbList() {
                   <FileText className="w-4 h-4 text-muted-foreground" />
                   <div>
                     <div className="text-[17px] font-bold text-foreground leading-none tabular-nums tracking-[-0.02em]">{kb.document_count}</div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">文档</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">{t('docsLabel')}</div>
                   </div>
                 </div>
               </div>
 
               <div className="mt-4 flex items-center justify-between text-[11.5px] text-muted-foreground">
                 <span className={cn('font-mono2 rounded px-1.5 py-0.5', kb.has_raw ? 'bg-muted' : 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400')}>
-                  {kb.has_raw ? 'raw/ 已就绪' : '无 raw/'}
+                  {kb.has_raw ? t('rawReady') : t('rawMissing')}
                 </span>
                 <span>{formatCompile(kb.last_compile)}</span>
               </div>
@@ -74,7 +75,7 @@ export default function KbList() {
           <button className="anim-fade-up anim-d4 rounded-2xl border-2 border-dashed border-[hsl(var(--glass-border))] p-5 grid place-items-center text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 hover:bg-accent-brand/5 transition-[color,background-color,border-color,transform] duration-fast ease-out-apple active:scale-[0.97] min-h-[160px]">
             <span className="flex flex-col items-center gap-2">
               <Plus className="w-6 h-6" />
-              <span className="text-[13px] font-medium">新建知识库</span>
+              <span className="text-[13px] font-medium">{t('common:actions.newKb')}</span>
             </span>
           </button>
         </div>
