@@ -274,7 +274,11 @@ def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     if not full_path.is_relative_to(root):
         return "Access denied: path escapes wiki root."
     full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
+    # Atomic temp-file + os.replace rename (openkb.locks): reached from the
+    # write-capable REST /chat agent, a plain write_text could leave a torn
+    # page for a concurrent lint/recompile scan — the same hazard write_kb_file
+    # already closes. (See write_kb_file above.)
+    atomic_write_text(full_path, content)
     return f"Written: {path}"
 
 

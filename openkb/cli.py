@@ -51,7 +51,6 @@ from dotenv import load_dotenv
 from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG,
-    load_config,
     resolve_effective_config,
     save_config,
     load_global_config,
@@ -181,13 +180,17 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     parallel_tool_calls_explicit = False
     litellm_settings: dict = {}
     if kb_dir is not None:
-        config_path = kb_dir / ".openkb" / "config.yaml"
-        if config_path.exists():
-            config = load_config(config_path)
-            model = config.get("model", "")
-            provider = _extract_provider(str(model))
-            extra_headers, timeout, litellm_settings = resolve_per_request_overrides(config)
-            parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
+        # Resolve model the same way the command bodies do (DEFAULT -> global.yaml
+        # -> KB config.yaml) so provider extraction sees the effective, global-
+        # layered model. Reading KB config.yaml alone would miss a global-only
+        # default model (or fall back to DEFAULT_CONFIG's model) and derive the
+        # wrong provider. resolve_effective_config handles a missing config.yaml
+        # internally, so no config_path.exists() gate is needed.
+        config = resolve_effective_config(kb_dir)[0]
+        model = config.get("model", DEFAULT_CONFIG["model"])
+        provider = _extract_provider(str(model))
+        extra_headers, timeout, litellm_settings = resolve_per_request_overrides(config)
+        parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
     set_extra_headers(extra_headers)
     set_timeout(timeout)
     set_parallel_tool_calls(parallel_tool_calls, parallel_tool_calls_explicit)

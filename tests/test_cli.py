@@ -549,3 +549,28 @@ class TestSetupLlmKey:
         kb = self._make_kb(tmp_path, "gpt-5.4-mini")
         _setup_llm_key(kb)
         assert get_timeout() is None
+
+    def test_provider_derived_from_global_only_model(self, tmp_path, monkeypatch, capsys):
+        """A global-only default model (KB config.yaml silent on ``model``) must
+        drive provider extraction the same way the command bodies do — via
+        ``resolve_effective_config`` — so an OAuth provider set only in
+        ``global.yaml`` suppresses the missing-key warning. Before the fix,
+        ``_setup_llm_key`` read the KB config alone and fell back to
+        ``DEFAULT_CONFIG``'s (API-key) model, wrongly emitting the warning.
+        """
+        from openkb.cli import _setup_llm_key
+        from openkb.config import save_global_config
+
+        gdir = tmp_path / "global-config"
+        gdir.mkdir()
+        monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+        monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+        save_global_config({"model": "github_copilot/gpt-5-mini"})
+
+        # KB exists but its config.yaml never sets a model of its own.
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("", encoding="utf-8")
+
+        _setup_llm_key(tmp_path)
+        assert "No LLM API key found" not in capsys.readouterr().out
