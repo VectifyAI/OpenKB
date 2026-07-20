@@ -21,7 +21,12 @@ cd "$HERE"
 
 rm -rf build dist openkb-api-sidecar.spec
 
-COLLECT=(litellm markitdown pageindex tiktoken agents openai tiktoken_ext uvicorn fastapi)
+# `openkb` is collected whole so PyInstaller bundles (a) its data files —
+# crucially the built web UI at openkb/web that the API serves at `/`, plus
+# prompt/template assets — and (b) submodules reached only via lazy/dynamic
+# imports (e.g. the deferred `from openkb.converter import ...`). The web UI
+# must be built (npm run build → openkb/web) BEFORE this script runs.
+COLLECT=(openkb litellm markitdown pageindex tiktoken agents openai tiktoken_ext uvicorn fastapi)
 EXCLUDE=(magika onnxruntime)
 
 ARGS=(--onedir --name openkb-api-sidecar --noconfirm --clean --log-level=WARN)
