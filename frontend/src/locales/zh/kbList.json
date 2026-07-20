@@ -1,0 +1,22 @@
+{
+  "notCompiled": "尚未编译",
+  "updatedAt": "更新于 {{date}}",
+  "title": "知识库",
+  "subtitle": "每个知识库是一个持续编译的 wiki，可绑定多个数据源",
+  "docsLabel": "文档",
+  "rawReady": "raw/ 已就绪",
+  "rawMissing": "无 raw/",
+  "create": {
+    "description": "为新的知识库取一个名称。模型与凭证将沿用全局默认值，稍后可在知识库设置中调整。",
+    "nameLabel": "名称",
+    "namePlaceholder": "例如 my-kb",
+    "cancel": "取消",
+    "submit": "创建",
+    "submitting": "创建中…",
+    "previewLabel": "将创建于 {{path}}",
+    "advancedToggle": "自定义路径",
+    "customPathLabel": "自定义路径",
+    "customPathPlaceholder": "/绝对/路径/到/知识库",
+    "customPathHint": "留空则使用默认根目录"
+  }
+}

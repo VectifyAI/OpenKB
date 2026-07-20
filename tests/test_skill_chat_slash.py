@@ -30,7 +30,7 @@ async def test_slash_skill_new_calls_generator(tmp_path):
     session = ChatSession.new(kb, "gpt-4o-mini", "en")
     style = Style.from_dict({})
 
-    async def fake_run(kb_dir, skill_name, intent, model):
+    async def fake_run(kb_dir, skill_name, intent, model, **_kw):
         target = kb_dir / "output" / "skills" / skill_name
         target.mkdir(parents=True, exist_ok=True)
         (target / "SKILL.md").write_text(

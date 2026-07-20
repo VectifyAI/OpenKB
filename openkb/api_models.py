@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class QueryRequest(BaseModel):
@@ -45,12 +45,29 @@ class ChatSessionListResponse(BaseModel):
     sessions: list[ChatSessionItem]
 
 
+class ChatTraceStep(BaseModel):
+    """One persisted step of a chat turn's interleaved trace: a run of
+    narration/answer text (``kind="text"``) or one tool call (``kind="tool"``,
+    with the raw ``name``/``arguments`` so the frontend applies on restore the
+    same read-only whitelist it uses live). Turns recorded before traces
+    existed or via the CLI have an empty trace, and the client then falls back
+    to the flat ``assistant_texts`` entry."""
+
+    kind: str
+    text: str | None = None
+    name: str | None = None
+    arguments: str | None = None
+
+
 class ChatSessionLoadResponse(BaseModel):
     session_id: str
     title: str
     turn_count: int
     user_turns: list[str]
     assistant_texts: list[str]
+    # Parallel to assistant_texts (1:1 by index); an empty inner list means
+    # "no trace for this turn — render the flat assistant_texts entry instead".
+    assistant_traces: list[list[ChatTraceStep]] = Field(default_factory=list)
 
 
 class ChatSessionLoadRequest(BaseModel):
@@ -72,6 +89,10 @@ class InitRequest(BaseModel):
     model: str | None = None
     api_key: str | None = None
     openai_api_base: str | None = None
+    # Optional custom location for the KB: an ABSOLUTE directory (a relative
+    # path is a 400). Absent → created under kb_root_dir() / kb. Either way the
+    # KB is registered under `kb` so it resolves by name afterwards.
+    path: str | None = None
 
 
 class EnvWritten(BaseModel):
@@ -123,6 +144,7 @@ class ListResponse(BaseModel):
     document_count: int
     summaries: list[str]
     concepts: list[str]
+    entities: list[str]
     reports: list[str]
 
 
@@ -209,6 +231,60 @@ class RecompileResponse(BaseModel):
     message: str | None = None
 
 
+class DeckRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    intent: str = Field(..., min_length=1)
+    stream: bool = True
+
+
+class DeckResponse(BaseModel):
+    name: str
+    status: str
+    path: str
+
+
+class DeckListResponse(BaseModel):
+    decks: list[dict]
+
+
+class SkillRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    intent: str = Field(..., min_length=1)
+    stream: bool = True
+
+
+class SkillResponse(BaseModel):
+    name: str
+    status: str
+    path: str
+
+
+class SkillListResponse(BaseModel):
+    skills: list[dict]
+
+
+class GraphRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+
+
+class GraphResponse(BaseModel):
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    types: list[str]
+
+
+class PageRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    path: str = Field(..., min_length=1)
+
+
+class PageResponse(BaseModel):
+    path: str
+    content: str
+
+
 class WatchStartRequest(BaseModel):
     kb: str = Field(..., min_length=1)
     debounce: float = Field(default=2.0, gt=0)
@@ -232,6 +308,10 @@ class WatchStatusResponse(BaseModel):
 
 class KbSummaryItem(BaseModel):
     name: str
+    # Resolved directory of the KB. Present for every item so a KB registered
+    # OUTSIDE kb_root_dir() is addressable/locatable by the UI, not just root
+    # children.
+    path: str
     document_count: int = 0
     last_compile: str | None = None
     has_raw: bool = False
@@ -240,3 +320,87 @@ class KbSummaryItem(BaseModel):
 class KbListResponse(BaseModel):
     root: str
     knowledge_bases: list[KbSummaryItem]
+
+
+class MetaResponse(BaseModel):
+    version: str
+
+
+class _KbConfigWritable(BaseModel):
+    """Typed schema for the writable ``config.yaml`` fields.
+
+    All fields are optional so a partial merge-patch validates. Used to reject
+    a wrong-typed config VALUE with a 400 BEFORE it is persisted: a bad value
+    that reached disk would make every future ``read_kb_config`` re-read it and
+    500 (persisted corruption + endpoint DoS). Types MUST match what
+    ``read_kb_config``/``KbConfigResponse`` read back.
+    """
+
+    model: str | None = None
+    language: str | None = None
+    pageindex_threshold: int | None = None
+
+
+# Single source of truth for the writable config keys (derived from the model
+# above so the two never drift).
+_KB_CONFIG_WRITABLE_KEYS = set(_KbConfigWritable.model_fields)
+
+
+class GlobalConfigValues(BaseModel):
+    """Raw global-layer scalar values (null where global.yaml is silent)."""
+
+    model: str | None = None
+    language: str | None = None
+    pageindex_threshold: int | None = None
+
+
+class GlobalConfigResponse(BaseModel):
+    model: str
+    language: str
+    pageindex_threshold: int
+    # Effective KB root that kb_root_dir() would return (env OPENKB_KB_ROOT >
+    # global.yaml kb_root > default <config>/kbs). kb_root_env_pinned is True
+    # when OPENKB_KB_ROOT is set — a global.yaml kb_root is then ineffective, so
+    # the UI can note that editing it won't take effect on this server.
+    kb_root: str
+    kb_root_env_pinned: bool
+    # Global-default credentials read from ~/.config/openkb/.env (the
+    # lowest-precedence credential source). openai_api_base is plaintext (a
+    # config value, not a secret); has_api_key is a presence flag only — the raw
+    # key value is NEVER returned by the API. Mirrors KbConfigResponse.
+    openai_api_base: str | None
+    has_api_key: bool
+
+
+class GlobalConfigPatchRequest(BaseModel):
+    config: dict[str, Any] | None = None
+    # Global-default credentials (mirrors KbConfigPatchRequest). Merge-patch
+    # semantics via model_fields_set: an ABSENT field is left unchanged, an
+    # explicit null CLEARS it. api_key is a SecretStr so its value never lands
+    # in logs/reprs.
+    api_key: SecretStr | None = None
+    openai_api_base: str | None = None
+    # RFC 7386 merge-patch (via model_fields_set): a string SETS global.yaml
+    # `kb_root`, an explicit null REMOVES it (revert to the default root), and an
+    # absent field leaves it unchanged. NOT a credential — persisted to
+    # global.yaml, never the .env. Env OPENKB_KB_ROOT still overrides at runtime.
+    kb_root: str | None = None
+
+
+class KbConfigResponse(BaseModel):
+    model: str
+    language: str
+    pageindex_threshold: int
+    openai_api_base: str | None
+    has_api_key: bool
+    # Additive (non-breaking): which layer supplied each scalar's effective
+    # value, and the raw global-layer values for the "继承 · 全局(値)" badge.
+    sources: dict[str, Literal["kb", "global", "default"]]
+    global_values: GlobalConfigValues
+
+
+class KbConfigPatchRequest(BaseModel):
+    kb: str
+    config: dict[str, Any] | None = None
+    api_key: SecretStr | None = None
+    openai_api_base: str | None = None

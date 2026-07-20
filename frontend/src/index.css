@@ -1,0 +1,185 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.625rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Apple layer — light */
+    --ambient: 250 30% 97%;
+    --ambient-1: 214 90% 60% / 0.10;
+    --ambient-2: 190 85% 55% / 0.08;
+    --ambient-3: 265 80% 62% / 0.09;
+    --glass-bg: 0 0% 100% / 0.62;
+    --glass-2-bg: 0 0% 100% / 0.74;
+    --glass-border: 220 30% 55% / 0.12;
+    --glass-highlight: 0 0% 100% / 0.9;
+    --accent-brand: 224 76% 56%;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --dur-press: 120ms;
+    --dur-fast: 160ms;
+    --dur-modal: 240ms;
+    --r-lg: 18px;
+    --r-md: 13px;
+    --r-sm: 10px;
+    --shadow-glass: 0 14px 34px -16px rgb(24 38 80 / 0.20);
+    --shadow-glass-lg: 0 30px 60px -18px rgb(24 38 80 / 0.28), 0 10px 24px -12px rgb(24 38 80 / 0.16);
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Apple layer — dark */
+    --ambient: 230 25% 6%;
+    --ambient-1: 214 90% 62% / 0.20;
+    --ambient-2: 190 85% 55% / 0.12;
+    --ambient-3: 265 80% 62% / 0.16;
+    --glass-bg: 224 22% 12% / 0.56;
+    --glass-2-bg: 224 20% 16% / 0.64;
+    --glass-border: 0 0% 100% / 0.07;
+    --glass-highlight: 0 0% 100% / 0.08;
+    --accent-brand: 217 91% 66%;
+    --shadow-glass: 0 14px 34px -14px rgb(0 0 0 / 0.55);
+    --shadow-glass-lg: 0 30px 64px -14px rgb(0 0 0 / 0.66), 0 10px 26px -10px rgb(0 0 0 / 0.5);
+  }
+}
+
+/* System dark is the default signal (shadcn's .dark class is applied by the
+   ThemeProvider). data-theme on <html> is the explicit override, winning both
+   directions over the media query. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+@layer components {
+  .glass {
+    background: hsl(var(--glass-bg));
+    -webkit-backdrop-filter: blur(30px) saturate(1.7);
+    backdrop-filter: blur(30px) saturate(1.7);
+    border: 1px solid hsl(var(--glass-border));
+    box-shadow: var(--shadow-glass), inset 0 1px 0 0 hsl(var(--glass-highlight));
+  }
+  .glass-2 { background: hsl(var(--glass-2-bg)); }
+  /* Apple scroll-edge effect (§12): a small blur/gradient fade where content
+     meets floating chrome, instead of a hard 1px divider. Apply to the scroll
+     container; it fades the top ~14px from the glass-2 material to transparent. */
+  .scroll-edge-top {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 14px);
+    mask-image: linear-gradient(to bottom, transparent 0, black 14px);
+  }
+  .ambient-ground {
+    background: hsl(var(--ambient));
+    position: relative;
+    isolation: isolate;
+  }
+  .ambient-ground::before {
+    content: "";
+    position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+    background:
+      radial-gradient(60vw 60vw at -8% -12%, hsl(var(--ambient-1)), transparent 62%),
+      radial-gradient(52vw 52vw at 108% 112%, hsl(var(--ambient-2)), transparent 62%),
+      radial-gradient(44vw 44vw at 46% 38%, hsl(var(--ambient-3)), transparent 60%);
+    filter: blur(70px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass { -webkit-backdrop-filter: none; backdrop-filter: none; background: hsl(var(--background)); }
+  .scroll-edge-top { -webkit-mask-image: none; mask-image: none; border-top: 1px solid hsl(var(--glass-border)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ---------- custom ---------- */
+.font-mono2 { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.anim-fade-up { animation: fadeUp .45s cubic-bezier(.21,.9,.35,1) both; }
+.anim-d1 { animation-delay: .05s } .anim-d2 { animation-delay: .12s }
+.anim-d3 { animation-delay: .19s } .anim-d4 { animation-delay: .26s }
+
+@keyframes pulseDot { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.anim-pulse-dot { animation: pulseDot 1.6s ease-in-out infinite; }
+
+@keyframes dashFlow { to { stroke-dashoffset: -12; } }
+.edge-flow { stroke-dasharray: 5 4; animation: dashFlow 1.2s linear infinite; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,.14); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.24); border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+::selection { background: rgba(37, 99, 235, .16); }

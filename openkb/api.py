@@ -23,19 +23,20 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from openkb.agent.chat import build_chat_session_agent, iter_chat_turn_events
 from openkb.agent.chat_session import delete_session, list_sessions, load_session
-from openkb.agent.query import (
-    build_run_config_from_bundle,
-    run_query,
-)
+from openkb.agent.query import build_run_config_from_bundle, run_query
+from openkb.api_config import apply_kb_config_patch, read_kb_config
+from openkb.api_config_router import config_router
+from openkb.api_graph import graph_router
 from openkb.api_helpers import (
     _configure_cors,
     _init_kb_for_api,
-    _list_knowledge_bases,
+    _iter_deck,
+    _iter_skill,
     _load_or_create_session,
     _mount_web_ui,
     _parse_stream_form,
@@ -45,13 +46,16 @@ from openkb.api_helpers import (
     _save_query_answer,
     _stream_add_uploads,
     _stream_chat,
+    _stream_deck,
     _stream_query,
     _stream_recompile,
     _stream_remove,
+    _stream_skill,
     _stream_watch_events,
     _write_add_uploads,
     require_bearer_token,
 )
+from openkb.api_kbs import _list_knowledge_bases
 from openkb.api_models import (
     AddResponse,
     ChatRequest,
@@ -61,24 +65,36 @@ from openkb.api_models import (
     ChatSessionListResponse,
     ChatSessionLoadRequest,
     ChatSessionLoadResponse,
+    DeckListResponse,
+    DeckRequest,
+    DeckResponse,
     EnvWritten,
     InitRequest,
     InitResponse,
+    KbConfigPatchRequest,
+    KbConfigResponse,
     KbListResponse,
     KbRequest,
     LintRequest,
     LintResponse,
     ListResponse,
+    MetaResponse,
+    PageRequest,
+    PageResponse,
     QueryRequest,
     QueryResponse,
     RecompileRequest,
     RecompileResponse,
     RemoveRequest,
     RemoveResponse,
+    SkillListResponse,
+    SkillRequest,
+    SkillResponse,
     StatusResponse,
     WatchStartRequest,
     WatchStatusResponse,
 )
+from openkb.api_output import output_router
 from openkb.cli import (
     get_kb_list,
     get_kb_status,
@@ -88,9 +104,9 @@ from openkb.cli import (
 )
 from openkb.config import (
     DEFAULT_CONFIG,
-    kb_root_dir,
-    load_config,
     resolve_credential_bundle,
+    resolve_effective_config,
+    resolve_init_kb_dir,
     validate_kb_name,
 )
 from openkb.log import append_log
@@ -146,12 +162,42 @@ def create_app() -> FastAPI:
     app = FastAPI(title="OpenKB API", lifespan=lifespan)
 
     _configure_cors(app)
+    app.include_router(graph_router)
+    app.include_router(output_router)
+    app.include_router(config_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(
         _: None = Depends(require_bearer_token),
     ) -> KbListResponse:
         return KbListResponse(**_list_knowledge_bases())
+
+    @app.get("/api/v1/meta", response_model=MetaResponse)
+    async def meta_endpoint(
+        _: None = Depends(require_bearer_token),
+    ) -> MetaResponse:
+        from openkb import __version__
+
+        return MetaResponse(version=__version__)
+
+    @app.get("/api/v1/kb/config", response_model=KbConfigResponse)
+    async def kb_config_get_endpoint(
+        kb: str = Query(...),
+        _: None = Depends(require_bearer_token),
+    ) -> KbConfigResponse:
+        return read_kb_config(_resolve_kb(kb))
+
+    @app.patch("/api/v1/kb/config", response_model=KbConfigResponse)
+    async def kb_config_patch_endpoint(
+        request: KbConfigPatchRequest,
+        _: None = Depends(require_bearer_token),
+    ) -> KbConfigResponse:
+        # The merge-PATCH is a read-modify-write over config.yaml + .env; hold
+        # the per-KB mutation lock so two concurrent patches cannot drop fields.
+        kb_dir = _resolve_kb(request.kb)
+        async with _kb_mutation_lock(request.kb):
+            apply_kb_config_patch(kb_dir, request)
+        return read_kb_config(kb_dir)
 
     @app.post("/api/v1/init", response_model=InitResponse)
     async def init_endpoint(
@@ -160,7 +206,7 @@ def create_app() -> FastAPI:
     ) -> InitResponse:
         try:
             kb_name = validate_kb_name(request.kb)
-            kb_dir = (kb_root_dir() / kb_name).resolve()
+            kb_dir = resolve_init_kb_dir(kb_name, request.path)
             # Run lock-holding work in a threadpool so each request gets its
             # own threading.local (kb_ingest_lock reentrancy is per-thread)
             # and the event loop is not blocked by file I/O / flock.
@@ -172,12 +218,7 @@ def create_app() -> FastAPI:
                 api_key=request.api_key,
                 openai_api_base=request.openai_api_base,
             )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(exc),
-            ) from exc
-        except FileExistsError as exc:
+        except (ValueError, FileExistsError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),
@@ -231,7 +272,7 @@ def create_app() -> FastAPI:
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
-        config = load_config(kb_dir / ".openkb" / "config.yaml")
+        config = resolve_effective_config(kb_dir)[0]
         model = config.get("model", DEFAULT_CONFIG["model"])
         run_config = build_run_config_from_bundle(model, bundle)
 
@@ -340,6 +381,7 @@ def create_app() -> FastAPI:
             turn_count=session.turn_count,
             user_turns=session.user_turns,
             assistant_texts=session.assistant_texts,
+            assistant_traces=session.assistant_traces,
         )
 
     @app.post("/api/v1/chat/sessions/delete", response_model=ChatSessionDeleteResponse)
@@ -375,6 +417,22 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"List failed: {exc}",
             ) from exc
+
+    @app.post("/api/v1/page", response_model=PageResponse)
+    async def page_endpoint(
+        request: PageRequest,
+        _: None = Depends(require_bearer_token),
+    ) -> PageResponse:
+        kb_dir = _resolve_kb(request.kb)
+        wiki_dir = (kb_dir / "wiki").resolve()
+        rel = request.path if request.path.endswith(".md") else f"{request.path}.md"
+        target = (wiki_dir / rel).resolve()
+        if not target.is_relative_to(wiki_dir):
+            raise HTTPException(status_code=400, detail="Invalid page path.")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail=f"Page not found: {request.path}")
+        content = await run_in_threadpool(target.read_text, encoding="utf-8")
+        return PageResponse(path=request.path, content=content)
 
     @app.post("/api/v1/status", response_model=StatusResponse)
     async def status_endpoint(
@@ -447,13 +505,15 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/recompile", response_model=RecompileResponse)
     async def recompile_endpoint(
         request: RecompileRequest,
+        fastapi_request: Request,
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
         if request.stream:
+            lock = _kb_mutation_lock(request.kb)
             return StreamingResponse(
-                _stream_recompile(request, kb_dir, _kb_mutation_lock(request.kb), bundle=bundle),
+                _stream_recompile(request, kb_dir, lock, fastapi_request, bundle=bundle),
                 media_type="text/event-stream",
             )
         # Aggregate the async generator into a single JSON response. Terminal
@@ -550,6 +610,150 @@ def create_app() -> FastAPI:
             _stream_watch_events(registry, kb, max_events, timeout_seconds, request),
             media_type="text/event-stream",
         )
+
+    @app.post("/api/v1/deck", response_model=DeckResponse)
+    async def deck_endpoint(
+        request: DeckRequest,
+        fastapi_request: Request,
+        _: None = Depends(require_bearer_token),
+    ) -> Any:
+        kb_dir = _resolve_kb(request.kb)
+        bundle = resolve_credential_bundle(kb_dir)
+        if request.stream:
+            lock = _kb_mutation_lock(request.kb)
+            return StreamingResponse(
+                _stream_deck(request, kb_dir, lock, fastapi_request, bundle=bundle),
+                media_type="text/event-stream",
+            )
+        error_code: int | None = None
+        error_message: str | None = None
+        result: dict = {}
+        async with _kb_mutation_lock(request.kb):
+            async for event in _iter_deck(request, kb_dir, bundle=bundle):
+                name = event.get("event")
+                if name == "error":
+                    error_code = event.get("code", 500)
+                    error_message = event.get("message", "Deck generation failed.")
+                elif name == "final":
+                    result = event
+        if error_code is not None:
+            raise HTTPException(status_code=error_code, detail=error_message)
+        return DeckResponse(name=result["name"], status=result["status"], path=result["path"])
+
+    @app.get("/api/v1/deck", response_model=DeckListResponse)
+    async def deck_list_endpoint(
+        kb: str = Query(...),
+        _: None = Depends(require_bearer_token),
+    ) -> DeckListResponse:
+        from openkb.deck import decks_root
+
+        kb_dir = _resolve_kb(kb)
+        root = decks_root(kb_dir)
+        decks = (
+            sorted(
+                p.name for p in root.iterdir() if p.is_dir() and not p.name.endswith("-workspace")
+            )
+            if root.is_dir()
+            else []
+        )
+        return DeckListResponse(decks=[{"name": n} for n in decks])
+
+    @app.get("/api/v1/deck/{name}")
+    async def deck_download_endpoint(
+        name: str,
+        kb: str = Query(...),
+        _: None = Depends(require_bearer_token),
+    ) -> Any:
+        from openkb.cli import _validate_skill_name
+        from openkb.deck import deck_dir, decks_root
+
+        if _validate_skill_name(name):
+            raise HTTPException(status_code=400, detail="Invalid deck name.")
+        kb_dir = _resolve_kb(kb)
+        root = decks_root(kb_dir).resolve()
+        target = deck_dir(kb_dir, name).resolve()
+        if not target.is_relative_to(root):
+            raise HTTPException(status_code=400, detail="Invalid deck name.")
+        index = target / "index.html"
+        if not index.is_file():
+            raise HTTPException(status_code=404, detail=f"Deck not found: {name}")
+        return FileResponse(index, media_type="text/html")
+
+    @app.post("/api/v1/skill", response_model=SkillResponse)
+    async def skill_endpoint(
+        request: SkillRequest,
+        fastapi_request: Request,
+        _: None = Depends(require_bearer_token),
+    ) -> Any:
+        kb_dir = _resolve_kb(request.kb)
+        bundle = resolve_credential_bundle(kb_dir)
+        if request.stream:
+            lock = _kb_mutation_lock(request.kb)
+            return StreamingResponse(
+                _stream_skill(request, kb_dir, lock, fastapi_request, bundle=bundle),
+                media_type="text/event-stream",
+            )
+        error_code: int | None = None
+        error_message: str | None = None
+        result: dict = {}
+        async with _kb_mutation_lock(request.kb):
+            async for event in _iter_skill(request, kb_dir, bundle=bundle):
+                name = event.get("event")
+                if name == "error":
+                    error_code = event.get("code", 500)
+                    error_message = event.get("message", "Skill generation failed.")
+                elif name == "final":
+                    result = event
+        if error_code is not None:
+            raise HTTPException(status_code=error_code, detail=error_message)
+        return SkillResponse(name=result["name"], status=result["status"], path=result["path"])
+
+    @app.get("/api/v1/skill", response_model=SkillListResponse)
+    async def skill_list_endpoint(
+        kb: str = Query(...),
+        _: None = Depends(require_bearer_token),
+    ) -> SkillListResponse:
+        from openkb.skill import skills_root
+
+        kb_dir = _resolve_kb(kb)
+        root = skills_root(kb_dir)
+        skills = (
+            sorted(
+                p.name for p in root.iterdir() if p.is_dir() and not p.name.endswith("-workspace")
+            )
+            if root.is_dir()
+            else []
+        )
+        return SkillListResponse(skills=[{"name": n} for n in skills])
+
+    @app.get("/api/v1/skill/{name}/archive")
+    async def skill_archive_endpoint(
+        name: str,
+        kb: str = Query(...),
+        _: None = Depends(require_bearer_token),
+    ) -> Any:
+        import io
+        import zipfile
+
+        from openkb.cli import _validate_skill_name
+        from openkb.skill import skill_dir, skills_root
+
+        if _validate_skill_name(name):
+            raise HTTPException(status_code=400, detail="Invalid skill name.")
+        kb_dir = _resolve_kb(kb)
+        root = skills_root(kb_dir).resolve()
+        target = skill_dir(kb_dir, name).resolve()
+        if not target.is_relative_to(root):
+            raise HTTPException(status_code=400, detail="Invalid skill name.")
+        if not target.is_dir():
+            raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in target.rglob("*"):
+                if f.is_file():
+                    zf.write(f, f.relative_to(target))
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="application/zip")
 
     # Catch-all for unknown API paths so they return JSON 404 instead of being
     # swallowed by the StaticFiles mount below (which serves index.html for SPA

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import contextlib
 import json as _json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+from openkb.locks import atomic_write_text
 
 
 def list_wiki_files(directory: str, wiki_root: str) -> str:
@@ -245,7 +247,12 @@ def write_kb_file(path: str, content: str, kb_root: str) -> str:
     if not allowed:
         return "Access denied: path must be a file under wiki/explorations/ or output/."
     full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
+    # Atomic temp-file + os.replace rename (openkb.locks): a crash/interleave
+    # mid-write can never leave a truncated page for a concurrent lint/recompile
+    # scan to read, and this satisfies the AGENTS.md "wiki writes go through
+    # locks.py" invariant. (No per-turn KB mutation lock — that would serialize
+    # every chat turn; atomic rename alone resolves the torn-file hazard.)
+    atomic_write_text(full_path, content)
     return f"Written: {path}"
 
 
@@ -267,5 +274,42 @@ def write_wiki_file(path: str, content: str, wiki_root: str) -> str:
     if not full_path.is_relative_to(root):
         return "Access denied: path escapes wiki root."
     full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
+    # Atomic temp-file + os.replace rename (openkb.locks): reached from the
+    # write-capable REST /chat agent, a plain write_text could leave a torn
+    # page for a concurrent lint/recompile scan — the same hazard write_kb_file
+    # already closes. (See write_kb_file above.)
+    atomic_write_text(full_path, content)
     return f"Written: {path}"
+
+
+_VIEWABLE_ARTIFACT_SUFFIXES = (".html", ".htm")
+
+
+def artifact_event_from_write(name: str, arguments: str, output: str) -> dict | None:
+    """Return the ``artifact`` SSE payload for a completed ``write_file`` call
+    that produced a viewable artifact under ``output/``, else ``None``.
+
+    Gated so it fires ONLY for a *successful* ``write_file`` (``write_kb_file``
+    returns ``"Written: {path}"`` on success) of a viewable ``.html``/``.htm``
+    file under the sanctioned ``output/`` zone — the same zone ``write_kb_file``
+    itself allows. Every other case (a read tool, a failed/denied write, a
+    non-html path, a non-output zone, malformed arguments) returns ``None`` so
+    no card is ever painted for a file that isn't a viewable artifact on disk.
+    """
+    if name != "write_file":
+        return None
+    if not isinstance(output, str) or not output.startswith("Written:"):
+        return None
+    try:
+        parsed = _json.loads(arguments)
+        path = str(parsed.get("path", "")).strip()
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if not path:
+        return None
+    rel = PurePosixPath(path.replace("\\", "/"))
+    if not rel.parts or rel.parts[0] != "output":
+        return None
+    if rel.suffix.lower() not in _VIEWABLE_ARTIFACT_SUFFIXES:
+        return None
+    return {"kind": "file", "path": path, "name": rel.name}

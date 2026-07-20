@@ -1,0 +1,28 @@
+{
+  "card": { "done": "生成完成", "open": "打开" },
+  "deck": { "subtitle": "HTML 幻灯片 · {{name}}" },
+  "file": { "subtitle": "HTML 文件 · {{name}}" },
+  "graph": {
+    "label": "知识图谱",
+    "empty": "暂无可视化的概念图谱",
+    "subtitle_one": "{{count}} 概念 · {{edges}} 关联",
+    "subtitle_other": "{{count}} 概念 · {{edges}} 关联",
+    "subtitleWithTypes_one": "{{count}} 概念 · {{edges}} 关联 · {{types}} 类型",
+    "subtitleWithTypes_other": "{{count}} 概念 · {{edges}} 关联 · {{types}} 类型"
+  },
+  "skill": {
+    "downloadError": "下载技能包失败：{{error}}",
+    "body": "技能已生成为可安装的目录，下载 <0>.zip</0> 后解压到你的 Agent（Claude Code / Codex / Gemini CLI）技能目录即可使用。",
+    "download": "下载技能包（.zip）"
+  },
+  "unknown": "未知产物",
+  "previewUnsupported": "该产物类型不可预览",
+  "loadError": "无法加载产物：{{error}}",
+  "openError": "无法打开：{{error}}",
+  "downloadError": "下载失败：{{error}}",
+  "panel": {
+    "resize": "拖动调整宽度",
+    "openTab": "在新标签页打开",
+    "download": "下载"
+  }
+}

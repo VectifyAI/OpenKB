@@ -1,0 +1,28 @@
+{
+  "card": { "done": "Generated", "open": "Open" },
+  "deck": { "subtitle": "HTML deck · {{name}}" },
+  "file": { "subtitle": "HTML file · {{name}}" },
+  "graph": {
+    "label": "Knowledge graph",
+    "empty": "No concept graph to visualize yet",
+    "subtitle_one": "{{count}} concept · {{edges}} links",
+    "subtitle_other": "{{count}} concepts · {{edges}} links",
+    "subtitleWithTypes_one": "{{count}} concept · {{edges}} links · {{types}} types",
+    "subtitleWithTypes_other": "{{count}} concepts · {{edges}} links · {{types}} types"
+  },
+  "skill": {
+    "downloadError": "Failed to download the skill package: {{error}}",
+    "body": "The skill has been generated as an installable directory. Download the <0>.zip</0>, unzip it into your Agent's (Claude Code / Codex / Gemini CLI) skills folder, and it's ready to use.",
+    "download": "Download skill package (.zip)"
+  },
+  "unknown": "Unknown artifact",
+  "previewUnsupported": "This artifact type can't be previewed",
+  "loadError": "Failed to load artifact: {{error}}",
+  "openError": "Failed to open: {{error}}",
+  "downloadError": "Download failed: {{error}}",
+  "panel": {
+    "resize": "Drag to resize width",
+    "openTab": "Open in a new tab",
+    "download": "Download"
+  }
+}
