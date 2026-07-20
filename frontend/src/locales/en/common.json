@@ -59,6 +59,7 @@
     "configTitle": "Connect your model",
     "configBody": "OpenKB uses an LLM to compile and answer. Paste an API key — it is stored locally and never leaves your machine.",
     "modelLabel": "LLM model",
+    "langLabel": "Wiki language",
     "apiKeyLabel": "LLM API key",
     "apiKeyPlaceholder": "Paste your API key",
     "baseUrlLabel": "Custom base URL (optional)",

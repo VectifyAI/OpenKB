@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { UnLanguageDatalist, UN_LANG_LIST_ID } from "@/components/UnLanguageDatalist"
 import { patchGlobalConfig, type GlobalConfigPatch } from "@/api/config"
 import { createKb } from "@/api/kb"
 
@@ -28,6 +29,7 @@ export default function Onboarding({ open, onClose }: { open: boolean; onClose: 
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [model, setModel] = useState("gpt-5.4")
+  const [language, setLanguage] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
   const [kbName, setKbName] = useState("my-kb")
@@ -39,6 +41,7 @@ export default function Onboarding({ open, onClose }: { open: boolean; onClose: 
     setBusy(true)
     try {
       const patch: GlobalConfigPatch = { config: { model: model.trim() } }
+      if (language.trim()) patch.config!.language = language.trim()
       if (apiKey.trim()) patch.api_key = apiKey.trim()
       if (baseUrl.trim()) patch.openai_api_base = baseUrl.trim()
       await patchGlobalConfig(patch)
@@ -107,6 +110,19 @@ export default function Onboarding({ open, onClose }: { open: boolean; onClose: 
                   {t("onboarding.modelLabel")}
                 </label>
                 <input value={model} onChange={(e) => setModel(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="text-[12px] font-medium text-muted-foreground">
+                  {t("onboarding.langLabel")}
+                </label>
+                <input
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  list={UN_LANG_LIST_ID}
+                  placeholder="English"
+                  className={inputCls}
+                />
+                <UnLanguageDatalist />
               </div>
               <div>
                 <label className="text-[12px] font-medium text-muted-foreground">

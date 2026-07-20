@@ -59,6 +59,7 @@
     "configTitle": "连接你的模型",
     "configBody": "OpenKB 用大模型来编译和回答。粘贴一个 API 密钥即可——它只存在本机,不会外传。",
     "modelLabel": "模型",
+    "langLabel": "知识库语言",
     "apiKeyLabel": "LLM API 密钥",
     "apiKeyPlaceholder": "粘贴 API 密钥",
     "baseUrlLabel": "自定义 Base URL（可选）",
