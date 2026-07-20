@@ -37,10 +37,12 @@ GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
 GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
 
-# Portable KB names for the REST API: letters, numbers, underscores, hyphens.
-# Lets clients address a knowledge base by a filesystem-safe short name
-# (``kb``) instead of an absolute path, resolved via kb_aliases/OPENKB_KB_ROOT.
-KB_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+# Portable KB names for the REST API: letters (any script, incl. CJK), numbers,
+# underscores, hyphens — but NO spaces, dots, or path separators. Lets clients
+# address a knowledge base by a filesystem-safe short name (``kb``) instead of an
+# absolute path, resolved via kb_aliases/known_kbs/OPENKB_KB_ROOT. `\w` is Unicode
+# for str patterns in Python 3, so a CJK-named KB (e.g. 笔记) is a valid name.
+KB_NAME_RE = re.compile(r"[\w-]+")
 
 
 @contextlib.contextmanager
@@ -68,9 +70,21 @@ def _atomic_yaml_dump(path: Path, config: dict[str, Any]) -> None:
 
 
 def _load_global_config_unlocked() -> dict[str, Any]:
+    """Load global.yaml, returning ``{}`` when absent, empty, or malformed.
+
+    The coercion of a non-mapping document (a bare list/scalar from a
+    hand-edited global.yaml) to ``{}`` is sunk HERE — the single load choke
+    point — so every reader (:func:`kb_root_dir`, :func:`registered_kbs`,
+    :func:`resolve_kb_alias`, :func:`resolve_effective_config`, and the config
+    PATCH in ``api_config``) can treat the result as a dict without repeating an
+    ``isinstance`` guard, and a malformed file degrades to defaults on every
+    command's hot path instead of raising ``AttributeError``.
+    """
     if GLOBAL_CONFIG_PATH.exists():
         with GLOBAL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
+            data = yaml.safe_load(fh)
+        if isinstance(data, dict):
+            return data
     return {}
 
 
@@ -466,6 +480,62 @@ def load_global_config() -> dict[str, Any]:
     return _load_global_config_unlocked()
 
 
+# Whitelisted scalar keys that global.yaml may provide as shared defaults for
+# every KB. Non-scalar global keys (known_kbs, kb_aliases, default_kb) are NOT
+# config and must never leak into a KB's effective runtime config.
+GLOBAL_SCALAR_KEYS: tuple[str, ...] = ("model", "language", "pageindex_threshold")
+
+
+def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, str]]:
+    """Layer DEFAULT_CONFIG -> global.yaml (whitelisted scalars) -> KB config.yaml.
+
+    Returns ``(effective, sources)``. ``effective`` is the fully merged config
+    dict — a drop-in superset of :func:`load_config`'s result: it carries every
+    KB key plus the global-defaulted scalars. ``sources`` maps each key in
+    :data:`GLOBAL_SCALAR_KEYS` to the layer that supplied its effective value:
+    ``'kb'`` (KB config.yaml set it), ``'global'`` (global.yaml set it and the
+    KB did not), or ``'default'`` (neither did, so DEFAULT_CONFIG stands).
+
+    Precedence is the standard one: a KB-set scalar wins over global, which wins
+    over the default. A scalar written as explicit ``null`` in the KB config
+    means "inherit" (matches the RFC 7386 revert semantics of the config PATCH)
+    and does NOT clobber the layer below. Non-scalar keys come only from the KB
+    file and are copied verbatim (including a meaningful ``null`` such as
+    ``parallel_tool_calls: null``).
+    """
+    effective: dict[str, Any] = dict(DEFAULT_CONFIG)
+    sources: dict[str, str] = {key: "default" for key in GLOBAL_SCALAR_KEYS}
+
+    # A malformed global.yaml (bare list/scalar) is coerced to {} inside the
+    # loader (_load_global_config_unlocked), so no guard is needed here.
+    global_config = load_global_config()
+    for key in GLOBAL_SCALAR_KEYS:
+        value = global_config.get(key)
+        if value is not None:
+            effective[key] = value
+            sources[key] = "global"
+
+    kb_path = kb_dir / ".openkb" / "config.yaml"
+    if kb_path.exists():
+        with kb_path.open("r", encoding="utf-8") as fh:
+            kb_config = yaml.safe_load(fh) or {}
+        # Same defensive coercion for a malformed KB config.yaml (list/scalar):
+        # .items() below would otherwise raise and break this single KB.
+        if not isinstance(kb_config, dict):
+            kb_config = {}
+        for key, value in kb_config.items():
+            # A scalar explicitly nulled in config.yaml means "inherit": don't
+            # let it clobber the global/default layer. The gate is on
+            # GLOBAL_SCALAR_KEYS so non-scalar nulls (parallel_tool_calls) stay.
+            if key in GLOBAL_SCALAR_KEYS and value is None:
+                continue
+            effective[key] = value
+            if key in GLOBAL_SCALAR_KEYS:
+                sources[key] = "kb"
+
+    return effective, sources
+
+
 def save_global_config(config: dict[str, Any]) -> None:
     """Save the global config to ~/.config/openkb/global.yaml."""
     with _with_global_config_lock():
@@ -488,20 +558,76 @@ def register_kb(kb_path: Path) -> None:
 def kb_root_dir() -> Path:
     """Return the root directory for API-addressable KB names.
 
-    Controlled by ``OPENKB_KB_ROOT``; defaults to ``<config>/kbs`` so REST
-    ``/init`` creates knowledge bases under a predictable location.
+    Precedence: env ``OPENKB_KB_ROOT`` > global.yaml ``kb_root`` > the default
+    ``<GLOBAL_CONFIG_DIR>/kbs``. The env var stays the top override (a deployer
+    pins it per-process); a ``kb_root`` string in global.yaml lets the UI move
+    the root persistently. Each candidate is ``expanduser().resolve()``d so
+    ``~`` and relative segments normalize. A malformed global.yaml (coerced to
+    ``{}`` by the loader) or a blank/non-string ``kb_root`` degrades to the
+    default.
     """
     configured_root = os.environ.get("OPENKB_KB_ROOT")
     if configured_root:
         return Path(configured_root).expanduser().resolve()
+    global_root = _load_global_config_unlocked().get("kb_root")
+    if isinstance(global_root, str) and global_root.strip():
+        return Path(global_root).expanduser().resolve()
     return (GLOBAL_CONFIG_DIR / "kbs").resolve()
+
+
+def _is_kb_dir(kb_dir: Path) -> bool:
+    """Whether ``kb_dir`` is a KB directory (has both ``.openkb`` and ``wiki``).
+
+    Mirrors ``openkb.api_helpers._is_kb_dir``; duplicated here (rather than
+    imported) so this low-level config module — used by the CLI — does not pull
+    in the FastAPI web stack, and to avoid an import cycle (``api_helpers``
+    imports this module). Used to recognize ``kb_root_dir()`` children so a
+    root-level KB is never shadowed by a same-named off-root registry entry.
+    """
+    return (kb_dir / ".openkb").is_dir() and (kb_dir / "wiki").is_dir()
+
+
+def _root_child_names() -> set[str]:
+    """Directory names of ``kb_root_dir()`` children that look like a KB.
+
+    These names are reserved in the unified name→path registry: a root-level KB
+    wins a basename tie over a bare ``known_kbs`` entry, so an off-root KB with a
+    colliding basename can neither shadow it (:func:`resolve_kb_alias`) nor
+    duplicate its card (:func:`registered_kbs` / ``_list_knowledge_bases``).
+    """
+    root = kb_root_dir()
+    if not root.is_dir():
+        return set()
+    return {child.name for child in root.iterdir() if child.is_dir() and _is_kb_dir(child)}
+
+
+def resolve_init_kb_dir(kb_name: str, path: str | None = None) -> Path:
+    """Resolve the target directory for a newly-initialized KB.
+
+    Default: ``kb_root_dir() / kb_name``. When ``path`` is given it must be an
+    ABSOLUTE directory (a relative path raises ``ValueError`` — the REST init
+    endpoint maps that to a 400); it is used verbatim after ``expanduser()`` +
+    ``resolve()``. Any absolute location is allowed, matching the CLI's
+    cwd-based init (OpenKB is a local-first tool). The caller still registers
+    the alias (``register_kb_alias``) so name→path resolution keeps working for
+    a custom-path KB.
+    """
+    if path is not None:
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            raise ValueError("KB path must be an absolute directory")
+        return candidate.resolve()
+    return (kb_root_dir() / kb_name).resolve()
 
 
 def validate_kb_name(name: str) -> str:
     """Validate and return a portable KB name."""
     normalized = name.strip()
     if not normalized or not KB_NAME_RE.fullmatch(normalized):
-        raise ValueError("KB name must contain only letters, numbers, underscores, and hyphens")
+        raise ValueError(
+            "KB name may contain only letters, numbers, underscores, and hyphens "
+            "(no spaces, dots, or path separators)"
+        )
     return normalized
 
 
@@ -527,16 +653,98 @@ def register_kb_alias(name: str, kb_path: Path) -> None:
 
 
 def resolve_kb_alias(name: str) -> Path:
-    """Resolve a portable KB name to its registered path or root fallback.
+    """Resolve a portable KB name to its path, using the unified name→path map.
 
-    If the name is a registered alias, return its path; otherwise fall back to
-    ``<kb_root_dir>/<name>`` so a freshly created KB is addressable without an
-    explicit alias round-trip.
+    Resolution is kept in lock-step with :func:`registered_kbs` (and hence the
+    ``/api/v1/kbs`` list) so the two can never disagree. Order:
+
+    1. an explicit ``kb_aliases`` entry (user-set name→path) wins outright;
+    2. else ``<kb_root>/<name>`` when it is a KB dir — a root-level KB is never
+       shadowed by a same-named off-root ``known_kbs`` entry;
+    3. else a :func:`registered_kbs` name match — an off-root registered KB is
+       addressable by its directory basename (e.g. ``~/Documents/笔记`` as
+       ``笔记``);
+    4. else the ``<kb_root>/<name>`` fallback, so a freshly-created KB is
+       addressable before it is registered.
+
+    The old standalone ``known_kbs`` basename loop (which ran before the root
+    check, could shadow a root child, and picked an arbitrary first match on a
+    basename collision) is gone: resolution now goes through the same
+    collision-resolved registry as discovery.
     """
     alias = validate_kb_name(name)
     with _with_global_config_lock():
         gc = _load_global_config_unlocked()
-        aliases = gc.get("kb_aliases", {})
-    if alias in aliases:
-        return Path(aliases[alias]).expanduser().resolve()
-    return (kb_root_dir() / alias).resolve()
+    aliases = gc.get("kb_aliases", {})
+    if isinstance(aliases, dict):
+        raw = aliases.get(alias)
+        if isinstance(raw, str):
+            return Path(raw).expanduser().resolve()
+    root_candidate = (kb_root_dir() / alias).resolve()
+    if _is_kb_dir(root_candidate):
+        return root_candidate
+    for reg_name, reg_path in registered_kbs():
+        if reg_name == alias:
+            return reg_path
+    return root_candidate
+
+
+def registered_kbs() -> list[tuple[str, Path]]:
+    """Enumerate registered KBs as UNIQUE ``(name, resolved_path)`` pairs.
+
+    The single name→path registry view shared by API discovery
+    (``_list_knowledge_bases``) and name resolution (:func:`resolve_kb_alias`),
+    so the KB list and resolution can never disagree. Names are deduped by name
+    AND resolved path:
+
+    * ``kb_aliases`` (explicit name→path) come first and keep their name;
+    * a bare ``known_kbs`` path is surfaced by its directory basename ONLY when
+      that name is not already claimed by an alias or by a ``kb_root_dir()``
+      child (a root child wins the basename tie). A colliding entry is SKIPPED
+      with a warning — never silently truncated to a wrong path or emitted as a
+      duplicate name.
+
+    Root children are NOT emitted here (``_list_knowledge_bases`` surfaces them
+    from the filesystem and :func:`resolve_kb_alias` prefers them before this
+    registry); they participate only as reserved names for the tie-break above.
+    A malformed global.yaml (coerced to ``{}`` by the loader) or a non-string
+    entry is tolerated rather than raising.
+    """
+    global_config = _load_global_config_unlocked()
+    seen_paths: set[str] = set()
+    # Root-child names are reserved up front so a colliding bare known_kbs entry
+    # is hidden rather than shadowing/duplicating the same-named root-level KB.
+    taken_names: set[str] = set(_root_child_names())
+    result: list[tuple[str, Path]] = []
+    aliases = global_config.get("kb_aliases", {})
+    if isinstance(aliases, dict):
+        for name, raw in aliases.items():
+            if not isinstance(name, str) or not isinstance(raw, str):
+                continue
+            resolved = Path(raw).expanduser().resolve()
+            if name in taken_names or str(resolved) in seen_paths:
+                continue
+            taken_names.add(name)
+            seen_paths.add(str(resolved))
+            result.append((name, resolved))
+    known = global_config.get("known_kbs", [])
+    if isinstance(known, list):
+        for raw in known:
+            if not isinstance(raw, str):
+                continue
+            resolved = Path(raw).expanduser().resolve()
+            if str(resolved) in seen_paths:
+                continue
+            name = resolved.name
+            if name in taken_names:
+                logger.warning(
+                    "config: registered KB %s is hidden — its name %r is already "
+                    "claimed by an alias or a root-level KB.",
+                    resolved,
+                    name,
+                )
+                continue
+            taken_names.add(name)
+            seen_paths.add(str(resolved))
+            result.append((name, resolved))
+    return result

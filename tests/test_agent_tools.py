@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from openkb.agent.tools import (
+    artifact_event_from_write,
     get_wiki_page_content,
     list_wiki_files,
     parse_pages,
@@ -272,3 +273,50 @@ class TestGetWikiPageContent:
         (tmp_path / "sources").mkdir()
         result = get_wiki_page_content("../../etc/passwd", "1", wiki_root)
         assert "denied" in result.lower() or "not found" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# artifact_event_from_write
+# ---------------------------------------------------------------------------
+
+_ARGS = '{"path": "output/nvda-guizang-test.html", "content": "<html></html>"}'
+
+
+def test_artifact_event_for_successful_output_html():
+    ev = artifact_event_from_write("write_file", _ARGS, "Written: output/nvda-guizang-test.html")
+    assert ev == {
+        "kind": "file",
+        "path": "output/nvda-guizang-test.html",
+        "name": "nvda-guizang-test.html",
+    }
+
+
+def test_artifact_event_none_for_non_write_tool():
+    assert artifact_event_from_write("read_file", _ARGS, "…") is None
+
+
+def test_artifact_event_none_when_write_failed():
+    # write_kb_file returns an "Access denied: …" string on rejection.
+    assert (
+        artifact_event_from_write("write_file", _ARGS, "Access denied: path escapes KB root.")
+        is None
+    )
+
+
+def test_artifact_event_none_for_non_html():
+    args = '{"path": "output/skills/x/SKILL.md", "content": "…"}'
+    assert (
+        artifact_event_from_write("write_file", args, "Written: output/skills/x/SKILL.md") is None
+    )
+
+
+def test_artifact_event_none_for_non_output_zone():
+    args = '{"path": "wiki/explorations/note.html", "content": "…"}'
+    assert (
+        artifact_event_from_write("write_file", args, "Written: wiki/explorations/note.html")
+        is None
+    )
+
+
+def test_artifact_event_none_for_bad_json():
+    assert artifact_event_from_write("write_file", "not json", "Written: output/x.html") is None

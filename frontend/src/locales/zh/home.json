@@ -1,0 +1,7 @@
+{
+  "greeting": "有什么想问的？",
+  "ready": "知识已编译就绪 · <0>{{docs}}</0> 篇文档 · <1>{{kbs}}</1> 个知识库",
+  "recentSessions": "最近会话",
+  "untitledSession": "未命名会话",
+  "tagline": "由 OpenKB 驱动 · 你的知识始终是纯 Markdown，归你所有"
+}

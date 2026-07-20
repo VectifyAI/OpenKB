@@ -1,18 +1,27 @@
 import logging
+from pathlib import Path
+
+import pytest
 
 from openkb.config import (
     DEFAULT_CONFIG,
+    GLOBAL_SCALAR_KEYS,
     get_extra_headers,
     get_parallel_tool_calls,
     get_timeout,
+    kb_root_dir,
     load_config,
+    registered_kbs,
     resolve_concurrency,
+    resolve_effective_config,
     resolve_extra_headers,
+    resolve_init_kb_dir,
     resolve_litellm_settings,
     resolve_model_settings,
     resolve_parallel_tool_calls,
     resolve_timeout,
     save_config,
+    save_global_config,
     set_extra_headers,
     set_parallel_tool_calls,
     set_timeout,
@@ -358,3 +367,341 @@ def test_resolve_litellm_settings_warns_on_non_string_key(caplog):
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
         resolve_litellm_settings({"litellm": {5: "x", "drop_params": True}})
     assert "non-string key" in caplog.text
+
+
+# --- resolve_effective_config -------------------------------------------------
+
+
+def _kb(tmp_path: Path) -> Path:
+    (tmp_path / ".openkb").mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+@pytest.fixture
+def _isolated_global(monkeypatch, tmp_path):
+    gdir = tmp_path / "global-config"
+    gdir.mkdir()
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+    return gdir
+
+
+def test_effective_defaults_only(_isolated_global, tmp_path):
+    eff, src = resolve_effective_config(_kb(tmp_path / "kb"))
+    assert eff["model"] == DEFAULT_CONFIG["model"]
+    assert eff["language"] == DEFAULT_CONFIG["language"]
+    assert eff["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
+    assert src == {k: "default" for k in GLOBAL_SCALAR_KEYS}
+
+
+def test_effective_global_only(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model", "known_kbs": ["/a"]})
+    eff, src = resolve_effective_config(_kb(tmp_path / "kb"))
+    assert eff["model"] == "global-model"
+    assert src["model"] == "global"
+    assert src["language"] == "default"
+
+
+def test_effective_kb_override_wins_over_global(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model", "language": "fr"})
+    kb = _kb(tmp_path / "kb")
+    save_config(kb / ".openkb" / "config.yaml", {"model": "kb-model"})
+    eff, src = resolve_effective_config(kb)
+    assert eff["model"] == "kb-model"
+    assert src["model"] == "kb"
+    # language is global (KB silent on it)
+    assert eff["language"] == "fr"
+    assert src["language"] == "global"
+
+
+def test_effective_three_layer_precedence(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model"})  # global sets only model
+    kb = _kb(tmp_path / "kb")
+    # kb sets only threshold
+    save_config(kb / ".openkb" / "config.yaml", {"pageindex_threshold": 7})
+    eff, src = resolve_effective_config(kb)
+    assert (eff["model"], src["model"]) == ("global-model", "global")
+    assert (eff["pageindex_threshold"], src["pageindex_threshold"]) == (7, "kb")
+    assert (eff["language"], src["language"]) == (DEFAULT_CONFIG["language"], "default")
+
+
+def test_effective_scalar_null_in_kb_inherits_not_clobbers(_isolated_global, tmp_path):
+    save_global_config({"model": "global-model"})
+    kb = _kb(tmp_path / "kb")
+    save_config(kb / ".openkb" / "config.yaml", {"model": None})
+    eff, src = resolve_effective_config(kb)
+    assert eff["model"] == "global-model"  # null means inherit, not None
+    assert src["model"] == "global"
+
+
+def test_effective_preserves_non_scalar_kb_keys_including_meaningful_null(
+    _isolated_global, tmp_path
+):
+    kb = _kb(tmp_path / "kb")
+    save_config(
+        kb / ".openkb" / "config.yaml",
+        {"litellm": {"drop_params": True}, "parallel_tool_calls": None},
+    )
+    eff, _ = resolve_effective_config(kb)
+    assert eff["litellm"] == {"drop_params": True}
+    # a non-scalar null is meaningful (Bedrock escape hatch) and must survive
+    assert "parallel_tool_calls" in eff
+    assert eff["parallel_tool_calls"] is None
+
+
+def test_effective_config_degrades_on_non_dict_yaml(_isolated_global, tmp_path):
+    """A malformed global.yaml OR KB config.yaml that parses to a list/scalar
+    (not a mapping) must degrade to defaults, not raise AttributeError on every
+    command's hot path (the global case is KB-wide). Mirrors the empty-file
+    tolerance (`safe_load(...) or {}`)."""
+    # global.yaml parses to a bare list; KB config.yaml to a bare scalar string.
+    (_isolated_global / "global.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    kb = _kb(tmp_path / "kb")
+    (kb / ".openkb" / "config.yaml").write_text("just-a-string\n", encoding="utf-8")
+
+    eff, src = resolve_effective_config(kb)
+
+    assert eff["model"] == DEFAULT_CONFIG["model"]
+    assert eff["language"] == DEFAULT_CONFIG["language"]
+    assert eff["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
+    assert src == {k: "default" for k in GLOBAL_SCALAR_KEYS}
+
+
+def test_converter_uses_global_threshold(_isolated_global, tmp_path, monkeypatch):
+    """A global.yaml pageindex_threshold drives convert_document's long/short
+    -doc routing when the KB config is silent on it — exercised through the
+    real production call site (``convert_document``), not just the resolver
+    in isolation. This proves ``convert_document`` actually consumes
+    ``resolve_effective_config(kb_dir)`` rather than, say, an empty dict."""
+    import pymupdf
+
+    import openkb.converter as conv
+
+    # Global threshold of 1: even a single-page PDF counts as "long". The
+    # default threshold (20) would NOT trigger long-doc routing for 1 page,
+    # so this value can only reach convert_document via the resolver.
+    save_global_config({"pageindex_threshold": 1})
+
+    kb_dir = _kb(tmp_path / "kb")
+    real_resolve = conv.resolve_effective_config
+    calls: list[Path] = []
+
+    def _spy_resolve(kb_dir_arg):
+        calls.append(kb_dir_arg)
+        return real_resolve(kb_dir_arg)
+
+    monkeypatch.setattr(conv, "resolve_effective_config", _spy_resolve)
+
+    src = tmp_path / "doc.pdf"
+    pdf = pymupdf.open()
+    pdf.new_page()
+    pdf.save(str(src))
+    pdf.close()
+
+    result = conv.convert_document(src, kb_dir)
+
+    # The resolver seam was actually invoked by convert_document, with this KB.
+    assert calls == [kb_dir]
+    # And the threshold it returned actually drove the routing decision: a
+    # 1-page PDF only takes the long-doc branch if the *global* threshold (1)
+    # was used instead of the default (20).
+    assert result.is_long_doc is True
+
+
+def test_query_agent_uses_global_language(_isolated_global, tmp_path, monkeypatch):
+    """run_query resolves its language via resolve_effective_config(kb_dir) —
+    exercised through the real production call site (``run_query``), not by
+    calling the resolver directly (that would only re-test Task 1's resolver).
+
+    Spies on ``resolve_effective_config`` as invoked *by* run_query and records
+    the ``kb_dir`` it was called with, then confirms the global-only language
+    value actually reaches ``build_query_agent``. If agent/query.py were
+    reverted to ``load_config(openkb_dir / "config.yaml")``/``{}``, the spy
+    would never fire (or ``load_config`` on a KB with no config.yaml would
+    yield DEFAULT_CONFIG's language "en") and this test would fail.
+    """
+    import asyncio
+
+    import openkb.agent.query as q
+    import openkb.config as cfg
+
+    save_global_config({"language": "de"})
+    kb = _kb(tmp_path / "kb")
+
+    real_resolve = cfg.resolve_effective_config
+    calls: list[Path] = []
+
+    def _spy_resolve(kb_dir_arg):
+        calls.append(kb_dir_arg)
+        return real_resolve(kb_dir_arg)
+
+    monkeypatch.setattr(cfg, "resolve_effective_config", _spy_resolve)
+
+    captured = {}
+
+    def _fake_build(wiki_root, model, *, language, bundle=None):
+        captured["language"] = language
+        raise RuntimeError("stop-after-build")  # short-circuit before any LLM call
+
+    monkeypatch.setattr(q, "build_query_agent", _fake_build)
+
+    with pytest.raises(RuntimeError, match="stop-after-build"):
+        asyncio.run(q.run_query("q", kb, "some-model", stream=False))
+
+    # The resolver seam was actually invoked by run_query, with this KB dir.
+    assert calls == [kb]
+    # And the language it resolved actually reached build_query_agent.
+    assert captured["language"] == "de"
+
+
+# --- scalar-whitelist parity --------------------------------------------------
+
+
+def test_global_scalar_keys_match_api_writable_keys():
+    # GLOBAL_SCALAR_KEYS (resolver) and _KB_CONFIG_WRITABLE_KEYS (config PATCH)
+    # must stay identical: a scalar added to only one would let the global PATCH
+    # persist a key the resolver ignores (or vice-versa). Guard the drift here
+    # rather than merging the two sources (lower-risk).
+    from openkb.api_models import _KB_CONFIG_WRITABLE_KEYS
+
+    assert set(GLOBAL_SCALAR_KEYS) == set(_KB_CONFIG_WRITABLE_KEYS)
+
+
+# --- kb_root_dir precedence / resolve_init_kb_dir / registered_kbs ------------
+
+
+def test_kb_root_dir_env_wins_over_global(_isolated_global, monkeypatch, tmp_path):
+    save_global_config({"kb_root": str(tmp_path / "from-global")})
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(tmp_path / "from-env"))
+    assert kb_root_dir() == (tmp_path / "from-env").resolve()
+
+
+def test_kb_root_dir_global_when_no_env(_isolated_global, monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    save_global_config({"kb_root": str(tmp_path / "from-global")})
+    assert kb_root_dir() == (tmp_path / "from-global").resolve()
+
+
+def test_kb_root_dir_default_when_neither(_isolated_global, monkeypatch):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    # global.yaml is absent under _isolated_global -> the built-in default root.
+    assert kb_root_dir() == (_isolated_global / "kbs").resolve()
+
+
+def test_kb_root_dir_blank_global_falls_through_to_default(_isolated_global, monkeypatch):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    save_global_config({"kb_root": "   "})  # whitespace-only == unset
+    assert kb_root_dir() == (_isolated_global / "kbs").resolve()
+
+
+def test_resolve_init_kb_dir_default_uses_root(_isolated_global, monkeypatch):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    assert resolve_init_kb_dir("my-kb") == (_isolated_global / "kbs" / "my-kb").resolve()
+
+
+def test_resolve_init_kb_dir_absolute_path_used_verbatim(tmp_path):
+    custom = tmp_path / "elsewhere" / "kb"
+    assert resolve_init_kb_dir("my-kb", str(custom)) == custom.resolve()
+
+
+def test_resolve_init_kb_dir_rejects_relative_path():
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="absolute"):
+        resolve_init_kb_dir("my-kb", "relative/dir")
+
+
+def test_registered_kbs_unions_and_dedupes_by_path(_isolated_global, tmp_path):
+    kb_a = tmp_path / "a"
+    kb_b = tmp_path / "b"
+    # kb_a is both aliased AND in known_kbs; aliases are visited first, so it
+    # keeps its alias name and is not double-counted. kb_b (bare known_kbs) uses
+    # its directory name.
+    save_global_config(
+        {
+            "kb_aliases": {"alias-a": str(kb_a)},
+            "known_kbs": [str(kb_a), str(kb_b)],
+        }
+    )
+    result = dict(registered_kbs())
+    assert result == {"alias-a": kb_a.resolve(), "b": kb_b.resolve()}
+
+
+def test_validate_kb_name_accepts_unicode_and_rejects_unsafe():
+    from openkb.config import validate_kb_name
+
+    # Non-ASCII (e.g. CJK) letters are valid so a Chinese-named KB is addressable.
+    assert validate_kb_name("笔记") == "笔记"
+    assert validate_kb_name("my-kb_2") == "my-kb_2"
+    # Path separators, dots, and spaces stay rejected (traversal-safe).
+    for bad in ("a/b", "a.b", "a b", "../x", ""):
+        with pytest.raises(ValueError):
+            validate_kb_name(bad)
+
+
+def test_resolve_kb_alias_resolves_known_kbs_by_basename(_isolated_global, tmp_path):
+    from openkb.config import resolve_kb_alias
+
+    # A KB registered in known_kbs (not an alias) that lives outside kb_root and
+    # has a non-ASCII directory name must resolve by its basename — this is what
+    # the KB list surfaces and what the frontend addresses it by.
+    kb = tmp_path / "笔记"
+    kb.mkdir()
+    save_global_config({"known_kbs": [str(kb)]})
+    assert resolve_kb_alias("笔记") == kb.resolve()
+
+
+def _make_kb_dir(path: Path) -> Path:
+    """Create the minimal KB shape (`.openkb` + `wiki`) recognized as a KB dir."""
+    (path / ".openkb").mkdir(parents=True)
+    (path / "wiki").mkdir(parents=True)
+    return path
+
+
+def test_resolve_kb_alias_root_child_wins_over_off_root_known_kbs(
+    _isolated_global, monkeypatch, tmp_path
+):
+    from openkb.config import resolve_kb_alias
+
+    # A root-level KB "notes" and an off-root known_kbs KB with the SAME basename.
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    root_notes = _make_kb_dir(root / "notes")
+    off_notes = tmp_path / "x" / "notes"
+    off_notes.mkdir(parents=True)
+    save_global_config({"known_kbs": [str(off_notes)]})
+
+    # The root child WINS — the off-root KB must never shadow it (regression:
+    # the old known_kbs basename loop ran first and returned the off-root path).
+    assert resolve_kb_alias("notes") == root_notes.resolve()
+
+
+def test_registered_kbs_hides_bare_known_kbs_colliding_with_root_child(
+    _isolated_global, monkeypatch, tmp_path, caplog
+):
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    _make_kb_dir(root / "notes")
+    off_notes = tmp_path / "x" / "notes"
+    off_notes.mkdir(parents=True)
+    save_global_config({"known_kbs": [str(off_notes)]})
+
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = registered_kbs()
+
+    # The colliding off-root "notes" is HIDDEN (root child reserves the name),
+    # logged rather than emitted as a duplicate/shadowing entry.
+    assert all(name != "notes" for name, _ in result)
+    assert "hidden" in caplog.text
+
+
+def test_resolve_kb_alias_degrades_on_non_mapping_global_yaml(
+    _isolated_global, monkeypatch, tmp_path
+):
+    from openkb.config import resolve_kb_alias
+
+    # A hand-corrupted global.yaml (bare list) must not 500 resolution: the
+    # loader coerces it to {} so resolve falls back to <kb_root>/<name>.
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    (_isolated_global / "global.yaml").write_text("- a\n- b\n", encoding="utf-8")
+    assert resolve_kb_alias("mykb") == (_isolated_global / "kbs" / "mykb").resolve()

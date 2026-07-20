@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
 from openkb.agent.tools import (
+    artifact_event_from_write,
     get_wiki_page_content,
     read_wiki_file,
     read_wiki_image,
@@ -122,6 +123,23 @@ def build_query_agent(
     )
 
 
+def _resolve_tool_call_id(raw_item: Any) -> str | None:
+    """Resolve a tool call's correlation id exactly as the Agents SDK's
+    ``ToolCallItem.call_id`` / ``ToolCallOutputItem.call_id`` property does:
+    prefer ``call_id``, fall back to ``id``, dict-aware.
+
+    The ChatCompletions/LiteLLM path emits only ``id`` (no ``call_id``) on the
+    output item, so without the ``id`` fallback the key written on the
+    ``tool_call`` side and the key read on the ``tool_call_output_item`` side
+    disagree, ``pending_calls.pop`` misses, and the ``output/*.html`` artifact
+    card silently never fires. Deriving the key with this one helper on BOTH
+    sides keeps them aligned.
+    """
+    if isinstance(raw_item, dict):
+        return raw_item.get("call_id") or raw_item.get("id")
+    return getattr(raw_item, "call_id", None) or getattr(raw_item, "id", None)
+
+
 async def iter_agent_response_events(
     agent: Agent,
     input_data: str | list[dict[str, Any]],
@@ -147,6 +165,7 @@ async def iter_agent_response_events(
         else Runner.run_streamed(agent, input_data, max_turns=max_turns)
     )
     collected: list[str] = []
+    pending_calls: dict[str, tuple[str, str]] = {}
 
     async for event in result.stream_events():
         if isinstance(event, RawResponsesStreamEvent):
@@ -159,13 +178,23 @@ async def iter_agent_response_events(
             item = event.item
             if item.type == "tool_call_item":
                 raw_item = item.raw_item
-                yield {
-                    "event": "tool_call",
-                    "data": {
-                        "name": getattr(raw_item, "name", "?"),
-                        "arguments": getattr(raw_item, "arguments", "") or "",
-                    },
-                }
+                name = getattr(raw_item, "name", "?")
+                arguments = getattr(raw_item, "arguments", "") or ""
+                call_id = _resolve_tool_call_id(raw_item)
+                if call_id:
+                    pending_calls[call_id] = (name, arguments)
+                yield {"event": "tool_call", "data": {"name": name, "arguments": arguments}}
+            elif item.type == "tool_call_output_item":
+                raw_item = item.raw_item
+                call_id = _resolve_tool_call_id(raw_item)
+                name, arguments = (
+                    pending_calls.pop(call_id, ("", "")) if isinstance(call_id, str) else ("", "")
+                )
+                payload = artifact_event_from_write(
+                    name, arguments, str(getattr(item, "output", "") or "")
+                )
+                if payload is not None:
+                    yield {"event": "artifact", "data": payload}
 
     answer = "".join(collected).strip()
     if not answer:
@@ -183,6 +212,7 @@ def build_chat_agent(
     kb_dir: Path,
     model: str,
     language: str = "en",
+    bundle: "LlmCredentialBundle | None" = None,
 ) -> Agent:
     """Build the chat agent: query agent + a write tool restricted to
     ``<kb>/wiki/explorations/**`` and ``<kb>/output/**`` + a ``ShellTool``
@@ -201,7 +231,7 @@ def build_chat_agent(
     """
     wiki_root = str(kb_dir / "wiki")
     kb_root = str(kb_dir)
-    base = build_query_agent(wiki_root, model, language=language)
+    base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     @function_tool
     def write_file(path: str, content: str) -> str:
@@ -347,10 +377,9 @@ async def run_query(
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")

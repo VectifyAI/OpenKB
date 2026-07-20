@@ -130,6 +130,32 @@ def test_query_stream_returns_sse_events(monkeypatch, kb_dir):
     assert events[-2]["data"]["answer"] == "A knowledge base."
 
 
+def test_query_endpoint_uses_global_model(monkeypatch, kb_dir, tmp_path):
+    """The non-streaming /query path builds its run config with the global.yaml
+    model when the KB config is silent — proving api.py:281 uses the resolver."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    from openkb.config import save_global_config
+
+    save_global_config({"model": "global-model"})
+
+    captured = {}
+
+    async def _fake_run_query(question, kb, model, *args, **kwargs):
+        captured["model"] = model
+        return "ok"
+
+    monkeypatch.setattr("openkb.api.run_query", _fake_run_query)
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/query", json={"kb": kb, "question": "hi", "stream": False}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert captured["model"] == "global-model"
+
+
 def test_chat_non_stream_creates_and_persists_session(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
@@ -202,6 +228,30 @@ def test_chat_stream_resumes_session(monkeypatch, kb_dir):
     events = _events_from_sse(response.text)
     assert events[0]["data"]["session_id"] == session.id
     assert events[-2]["data"]["turn_count"] == 2
+
+
+def test_chat_stream_forwards_artifact_event(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    async def fake_chat_events(agent, session, message, **kwargs):
+        yield {
+            "event": "artifact",
+            "data": {"kind": "file", "path": "output/x.html", "name": "x.html"},
+        }
+        yield {"event": "final", "data": {"answer": "done", "session_id": "s1", "turn_count": 1}}
+
+    monkeypatch.setattr("openkb.api_helpers.build_chat_session_agent", lambda *a, **k: object())
+    monkeypatch.setattr("openkb.api_helpers.iter_chat_turn_events", fake_chat_events)
+
+    response = client.post(
+        "/api/v1/chat", json={"kb": kb, "message": "hi", "stream": True}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _events_from_sse(response.text)
+    artifact = next(e for e in events if e["event"] == "artifact")
+    assert artifact["data"] == {"kind": "file", "path": "output/x.html", "name": "x.html"}
 
 
 def test_init_endpoint_creates_named_kb_under_env_root(monkeypatch, tmp_path):
@@ -747,6 +797,7 @@ def test_list_endpoint_returns_empty_inventory(monkeypatch, kb_dir):
         "document_count": 0,
         "summaries": [],
         "concepts": [],
+        "entities": [],
         "reports": [],
     }
 
@@ -792,6 +843,22 @@ def test_list_endpoint_returns_structured_inventory(monkeypatch, kb_dir):
     assert payload["summaries"] == ["paper"]
     assert payload["concepts"] == ["attention"]
     assert payload["reports"] == ["lint_20260101_000000.md"]
+
+
+def test_list_endpoint_includes_entities(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".openkb" / "hashes.json").write_text(
+        json.dumps({"h1": {"name": "p.pdf", "type": "pdf"}}), encoding="utf-8"
+    )
+    (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
+    (kb_dir / "wiki" / "entities" / "nvidia.md").write_text("# NVIDIA", encoding="utf-8")
+    (kb_dir / "wiki" / "entities" / "anthropic.md").write_text("# Anthropic", encoding="utf-8")
+
+    response = client.post("/api/v1/list", json={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["entities"] == ["anthropic", "nvidia"]
 
 
 def test_status_endpoint_returns_structured_counts(monkeypatch, kb_dir):
@@ -1483,6 +1550,18 @@ def test_token_compare_digest_accepts_correct(monkeypatch, kb_dir):
     assert r.status_code == 200
 
 
+def test_meta_endpoint_returns_real_version(monkeypatch):
+    import openkb
+
+    client = _client(monkeypatch)
+    response = client.get("/api/v1/meta", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version"] == openkb.__version__
+    assert isinstance(body["version"], str) and body["version"]
+
+
 def test_concurrent_same_kb_lint_serialized(monkeypatch, kb_dir):
     """Two concurrent lint requests to the same KB must not overlap.
 
@@ -1758,3 +1837,1196 @@ def test_concurrent_different_kbs_do_not_block(monkeypatch, kb_dir, tmp_path_fac
     assert max_seen == 2, (
         f"expected 2 concurrent cross-KB recompiles, got {max_seen} (cross-KB serialized)"
     )
+
+
+def test_graph_endpoint_returns_build_graph_shape(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text(
+        "---\ntype: concept\n---\nSee [[concepts/b]].", encoding="utf-8"
+    )
+    (kb_dir / "wiki" / "concepts" / "b.md").write_text(
+        "---\ntype: concept\n---\nNo links here.", encoding="utf-8"
+    )
+
+    response = client.post("/api/v1/graph", json={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {n["id"] for n in body["nodes"]} == {"concepts/a", "concepts/b"}
+    assert body["edges"] == [{"source": "concepts/a", "target": "concepts/b"}]
+    assert body["types"] == ["concept"]
+
+
+def test_graph_endpoint_empty_wiki_returns_empty_shape(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post("/api/v1/graph", json={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json() == {"nodes": [], "edges": [], "types": []}
+
+
+def test_graph_html_endpoint_returns_self_contained_html(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text(
+        "---\ntype: concept\n---\nSee [[concepts/b]].", encoding="utf-8"
+    )
+    (kb_dir / "wiki" / "concepts" / "b.md").write_text(
+        "---\ntype: concept\n---\nNo links here.", encoding="utf-8"
+    )
+
+    response = client.get("/api/v1/graph/html", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    body = response.text
+    # Self-contained template rendered, placeholder substituted with real data.
+    assert "<title>openkb · knowledge graph</title>" in body
+    assert "__GRAPH_DATA__" not in body
+    assert "concepts/a" in body  # a node id from the injected graph JSON
+
+
+def test_graph_html_endpoint_empty_wiki_still_renders(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.get("/api/v1/graph/html", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>openkb · knowledge graph</title>" in response.text
+
+
+def test_output_endpoint_serves_output_html(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    out = kb_dir / "output"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "nvda-guizang-test.html").write_text("<html><body>hi</body></html>", encoding="utf-8")
+
+    response = client.get(
+        "/api/v1/output",
+        params={"kb": kb, "path": "output/nvda-guizang-test.html"},
+        headers=_auth(),
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "hi" in response.text
+
+
+def test_output_endpoint_404_for_missing_file(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "output/nope.html"}, headers=_auth()
+    )
+    assert response.status_code == 404
+
+
+def test_output_endpoint_400_for_traversal(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get(
+        "/api/v1/output",
+        params={"kb": kb, "path": "output/../../etc/passwd"},
+        headers=_auth(),
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_400_for_non_viewable_type(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "index.md").write_text("# hi\n", encoding="utf-8")
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "wiki/index.md"}, headers=_auth()
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_400_for_wiki_prefix(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "x.html").write_text("<html><body>hi</body></html>", encoding="utf-8")
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "wiki/x.html"}, headers=_auth()
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_400_for_absolute_path(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get(
+        "/api/v1/output", params={"kb": kb, "path": "/etc/passwd"}, headers=_auth()
+    )
+    assert response.status_code == 400
+
+
+def test_output_endpoint_requires_token(monkeypatch, kb_dir):
+    client = _client(monkeypatch)  # token enforced (default "secret")
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    response = client.get("/api/v1/output", params={"kb": kb, "path": "output/x.html"})
+    assert response.status_code == 401
+
+
+def test_page_endpoint_returns_content(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text("# A\n\nHello.", encoding="utf-8")
+
+    response = client.post("/api/v1/page", json={"kb": kb, "path": "concepts/a"}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json() == {"path": "concepts/a", "content": "# A\n\nHello."}
+
+
+def test_page_endpoint_404_on_missing_page(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/page", json={"kb": kb, "path": "concepts/nope"}, headers=_auth()
+    )
+
+    assert response.status_code == 404
+
+
+def test_page_endpoint_rejects_path_traversal(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/page", json={"kb": kb, "path": "../../../etc/passwd"}, headers=_auth()
+    )
+
+    assert response.status_code == 400
+
+
+def test_page_endpoint_rejects_absolute_path(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post("/api/v1/page", json={"kb": kb, "path": "/etc/passwd"}, headers=_auth())
+
+    assert response.status_code == 400
+
+
+def test_page_endpoint_rejects_mid_path_escape(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.post(
+        "/api/v1/page",
+        json={"kb": kb, "path": "concepts/../../../secret"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+
+
+def test_deck_endpoint_non_stream_generates_artifact(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text("# A\n\nContent.", encoding="utf-8")
+
+    async def fake_run(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "index.html").write_text("<html>deck</html>", encoding="utf-8")
+        self.validation = None
+        return self.output_dir
+
+    monkeypatch.setattr("openkb.skill.generator.Generator.run", fake_run)
+
+    response = client.post(
+        "/api/v1/deck",
+        json={"kb": kb, "name": "my-deck", "intent": "explain X", "stream": False},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "my-deck"
+    assert (kb_dir / "output" / "decks" / "my-deck" / "index.html").exists()
+
+
+def test_deck_list_endpoint(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    deck_dir = kb_dir / "output" / "decks" / "existing-deck"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    response = client.get("/api/v1/deck", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert [d["name"] for d in response.json()["decks"]] == ["existing-deck"]
+
+
+def test_deck_download_endpoint_serves_html(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    deck_dir = kb_dir / "output" / "decks" / "my-deck"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "index.html").write_text("<html>hi</html>", encoding="utf-8")
+
+    response = client.get("/api/v1/deck/my-deck", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.text == "<html>hi</html>"
+
+
+def test_deck_download_endpoint_404_unknown_name(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.get("/api/v1/deck/nope", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 404
+
+
+def test_deck_download_rejects_path_traversal_name(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.get("/api/v1/deck/..%2F..%2Fetc", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code in (400, 404)
+
+
+def test_skill_endpoint_non_stream_generates_artifact(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "concepts" / "a.md").write_text("# A\n\nContent.", encoding="utf-8")
+
+    async def fake_run(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "SKILL.md").write_text("---\nname: x\n---\nbody", encoding="utf-8")
+        self.validation = None
+        return self.output_dir
+
+    monkeypatch.setattr("openkb.skill.generator.Generator.run", fake_run)
+
+    response = client.post(
+        "/api/v1/skill",
+        json={"kb": kb, "name": "my-skill", "intent": "be an expert", "stream": False},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    assert (kb_dir / "output" / "skills" / "my-skill" / "SKILL.md").exists()
+
+
+def test_skill_archive_endpoint_returns_zip(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    skill_dir = kb_dir / "output" / "skills" / "my-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: my-skill\n---\nbody", encoding="utf-8")
+
+    response = client.get("/api/v1/skill/my-skill/archive", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /api/v1/kb/config
+# ---------------------------------------------------------------------------
+
+
+def test_kb_config_get_returns_fields_and_key_presence(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "gpt-5.4"
+    assert body["has_api_key"] is True
+    assert "secret123" not in response.text
+
+
+def test_kb_config_get_reports_default_source(monkeypatch, kb_dir, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["sources"]["model"] == "default"
+    assert body["global_values"]["model"] is None
+
+
+def test_kb_config_get_reports_global_source(monkeypatch, kb_dir, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"model": "global-model"}), encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["model"] == "global-model"
+    assert body["sources"]["model"] == "global"
+    assert body["global_values"]["model"] == "global-model"
+
+
+def test_kb_config_get_reports_kb_source_on_override(monkeypatch, kb_dir, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"model": "global-model"}), encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "kb-model"}}, headers=_auth()
+    )
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["model"] == "kb-model"
+    assert body["sources"]["model"] == "kb"
+
+
+def test_kb_config_patch_updates_model_only(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "claude-opus"}}, headers=_auth()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "claude-opus"
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert saved["model"] == "claude-opus"
+
+
+def test_kb_config_patch_unknown_field_is_400(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"modle": "x"}}, headers=_auth()
+    )
+
+    assert response.status_code == 400
+
+
+def test_kb_config_patch_clears_api_key_on_explicit_null(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.patch("/api/v1/kb/config", json={"kb": kb, "api_key": None}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is False
+    assert "LLM_API_KEY" not in (kb_dir / ".env").read_text()
+
+
+def test_kb_config_patch_leaves_api_key_unchanged_when_field_absent(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"language": "en"}}, headers=_auth()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is True
+    assert "LLM_API_KEY=secret123" in (kb_dir / ".env").read_text()
+
+
+def test_kb_config_patch_rejects_bad_value_type(monkeypatch, kb_dir):
+    """A wrong-typed config VALUE is a client error (400), not a 500, and must
+    NOT be persisted — otherwise every future GET would re-read the corrupt
+    value and 500 (a persisted-corruption + endpoint-DoS)."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "config": {"pageindex_threshold": "abc"}},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "pageindex_threshold" in response.json()["detail"]
+
+    # The bad value must not have reached disk: a follow-up GET still succeeds
+    # and returns the original int threshold (proving no config.yaml corruption).
+    follow_up = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["pageindex_threshold"] == 20
+
+
+def test_kb_config_patch_coerces_numeric_string_threshold(monkeypatch, kb_dir):
+    """A coercible numeric-string threshold (``"20"``) is a VALID int patch and
+    must persist as a native ``int`` on disk. Pydantic lax-coerces ``"20"→20``,
+    but that coerced value MUST be what reaches config.yaml — persisting the raw
+    string ``'20'`` would make ``converter.py`` do ``int >= str`` and crash the
+    next long-document ingestion (persisted corruption, different vector)."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "config": {"pageindex_threshold": "20"}},
+        headers=_auth(),
+    )
+
+    # A numeric string is a coercible, valid int — this succeeds (not a 400).
+    assert response.status_code == 200
+
+    # The coerced NATIVE int must be what landed on disk, not the string "20".
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert type(saved["pageindex_threshold"]) is int
+    assert saved["pageindex_threshold"] == 20
+
+    # Belt-and-suspenders: a follow-up GET reads it back as the int 20.
+    follow_up = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["pageindex_threshold"] == 20
+
+
+def test_kb_config_patch_api_key_rotation_preserves_other_env_lines(monkeypatch, kb_dir):
+    """Rotating LLM_API_KEY must rewrite only that line and leave co-existing
+    ``.env`` entries intact, never leaking the key value in the GET response."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=old\nPAGEINDEX_API_KEY=pk-123\n", encoding="utf-8")
+
+    response = client.patch("/api/v1/kb/config", json={"kb": kb, "api_key": "new"}, headers=_auth())
+
+    assert response.status_code == 200
+    env_text = (kb_dir / ".env").read_text()
+    assert "LLM_API_KEY=new" in env_text
+    assert "PAGEINDEX_API_KEY=pk-123" in env_text
+    assert "new" not in response.text
+
+    follow_up = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["has_api_key"] is True
+    assert "new" not in follow_up.text
+
+
+def test_kb_config_patch_rejects_newline_in_api_key(monkeypatch, kb_dir):
+    """An api_key containing a newline is a 400 BEFORE any write: written
+    verbatim as ``LLM_API_KEY=<value>\\n`` it would inject extra KEY=VALUE lines
+    into .env (e.g. a smuggled OPENAI_API_BASE). Nothing must reach disk."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=old\n", encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "api_key": "sk-good\nEVIL_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "api_key" in response.json()["detail"]
+    # No injection reached disk: the original line is untouched, no smuggled key.
+    env_text = (kb_dir / ".env").read_text()
+    assert "EVIL_KEY" not in env_text
+    assert "LLM_API_KEY=old" in env_text
+
+
+def test_kb_config_patch_clears_export_prefixed_api_key(monkeypatch, kb_dir):
+    """A pre-existing ``export LLM_API_KEY=...`` line (shell-style .env) must be
+    cleared by an explicit-null patch. The parser strips the ``export `` prefix
+    so ``pop("LLM_API_KEY")`` matches; otherwise the key would survive under
+    ``"export LLM_API_KEY"`` while python-dotenv (which strips ``export``) keeps
+    reading it back as a live credential."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("export LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.patch("/api/v1/kb/config", json={"kb": kb, "api_key": None}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is False
+    env_text = (kb_dir / ".env").read_text()
+    assert "LLM_API_KEY" not in env_text
+    assert "secret123" not in env_text
+
+
+def test_kb_config_patch_null_removes_key(monkeypatch, kb_dir):
+    """config: {model: null} removes the key from config.yaml (revert to
+    inherited), not persist model: None."""
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+
+    # Isolate from any real ~/.config/openkb/global.yaml on the host so the
+    # "falls back to default" assertion below is deterministic.
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", kb_dir / "global" / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", kb_dir / "global")
+
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "kb-model"}}, headers=_auth()
+    )
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": None}}, headers=_auth()
+    )
+    assert response.status_code == 200
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert "model" not in saved
+
+    # The key must be truly gone, not merely nulled: resolve_effective_config
+    # now falls back to the default layer (no global override present here).
+    effective, sources = resolve_effective_config(kb_dir)
+    assert sources["model"] == "default"
+    assert effective["model"] == DEFAULT_CONFIG["model"]
+
+
+def test_kb_config_patch_field_omitted_leaves_key_unchanged(monkeypatch, kb_dir):
+    """An OMITTED config field (not present in the patch at all) must be left
+    unchanged — merge-patch semantics distinguish absent from explicit null."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "kb-model"}}, headers=_auth()
+    )
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"language": "en"}}, headers=_auth()
+    )
+
+    assert response.status_code == 200
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert saved["model"] == "kb-model"
+    assert saved["language"] == "en"
+
+
+def test_kb_config_patch_does_not_materialize_defaults(monkeypatch, kb_dir):
+    """A PATCH that sets only ONE scalar must NOT materialize the OTHER
+    DEFAULT_CONFIG scalars into config.yaml.
+
+    Regression test: ``apply_kb_config_patch`` used to read the KB config via
+    ``load_config()`` — which returns ``dict(DEFAULT_CONFIG)`` merged with the
+    KB's own file — and then ``save_config()`` the WHOLE merged dict back. That
+    silently KB-pinned every default scalar (language, pageindex_threshold) to
+    its default value on the very first single-field PATCH, permanently
+    breaking global/default inheritance for fields the client never touched.
+    The fix does a RAW read-modify-write of only the KB's explicit keys.
+    """
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+
+    # Isolate from any real ~/.config/openkb/global.yaml on the host so the
+    # "still inherits" assertions below are deterministic.
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", kb_dir / "global" / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", kb_dir / "global")
+
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # The kb_dir fixture's config.yaml is silent on model/language/threshold —
+    # it only carries its own unrelated explicit keys.
+    before = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert "model" not in before
+    assert "language" not in before
+    assert "pageindex_threshold" not in before
+
+    response = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"model": "claude-opus"}}, headers=_auth()
+    )
+    assert response.status_code == 200
+
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    # The patched key landed...
+    assert saved["model"] == "claude-opus"
+    # ...the KB's pre-existing explicit keys survive untouched...
+    for key, value in before.items():
+        assert saved[key] == value
+    # ...but NOTHING else was materialized: the only new key on disk is the
+    # one the client actually patched. In particular the other DEFAULT_CONFIG
+    # scalars must be absent, not pinned to their default values.
+    assert set(saved) - set(before) == {"model"}
+    assert "language" not in saved
+    assert "pageindex_threshold" not in saved
+
+    # And resolve_effective_config must still report the untouched scalars as
+    # inheriting (source "default", since no global.yaml override is set here)
+    # rather than "kb" — proving the KB config.yaml did not silently start
+    # pinning them.
+    effective, sources = resolve_effective_config(kb_dir)
+    assert sources["model"] == "kb"
+    assert sources["language"] == "default"
+    assert sources["pageindex_threshold"] == "default"
+    assert effective["language"] == DEFAULT_CONFIG["language"]
+    assert effective["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /api/v1/config  (global defaults)
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body == {
+        "model": "gpt-5.4",
+        "language": "en",
+        "pageindex_threshold": 20,
+        # kb_root reports the EFFECTIVE root; with no env/global override it is
+        # the default <GLOBAL_CONFIG_DIR>/kbs, and env_pinned is False.
+        "kb_root": str((tmp_path / "kbs").resolve()),
+        "kb_root_env_pinned": False,
+        "openai_api_base": None,
+        "has_api_key": False,
+    }
+
+
+def test_global_config_patch_sets_value_and_preserves_registry(monkeypatch, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(
+        yaml.safe_dump({"known_kbs": ["/a"], "kb_aliases": {"x": "/a"}, "default_kb": "/a"}),
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    response = client.patch(
+        "/api/v1/config", json={"config": {"model": "claude-opus"}}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == "claude-opus"
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["model"] == "claude-opus"
+    assert saved["known_kbs"] == ["/a"]
+    assert saved["kb_aliases"] == {"x": "/a"}
+    assert saved["default_kb"] == "/a"
+
+
+def test_global_config_patch_rejects_unknown_and_bad_type(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    assert (
+        client.patch("/api/v1/config", json={"config": {"modle": "x"}}, headers=_auth()).status_code
+        == 400
+    )
+    assert (
+        client.patch(
+            "/api/v1/config", json={"config": {"pageindex_threshold": "abc"}}, headers=_auth()
+        ).status_code
+        == 400
+    )
+
+
+def test_global_config_patch_rejects_registry_key(monkeypatch, tmp_path):
+    # known_kbs is a REAL global.yaml key (the KB registry), not a typo — this
+    # proves the endpoint cannot be used to write registry keys at all, since
+    # they're rejected by the same "unknown field" 400 as a typo'd scalar.
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(
+        yaml.safe_dump({"known_kbs": ["/a"], "kb_aliases": {"x": "/a"}, "default_kb": "/a"}),
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    response = client.patch(
+        "/api/v1/config", json={"config": {"known_kbs": ["/evil"]}}, headers=_auth()
+    )
+    assert response.status_code == 400
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["known_kbs"] == ["/a"]  # untouched
+
+
+def test_global_config_patch_null_reverts_to_default(monkeypatch, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"model": "global-model"}), encoding="utf-8")
+    client = _client(monkeypatch)
+    response = client.patch("/api/v1/config", json={"config": {"model": None}}, headers=_auth())
+    assert response.status_code == 200
+    assert response.json()["model"] == "gpt-5.4"  # back to DEFAULT_CONFIG
+    assert "model" not in yaml.safe_load(gp.read_text())
+
+
+def test_global_config_requires_auth(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    assert client.get("/api/v1/config").status_code == 401
+    assert client.patch("/api/v1/config", json={"config": {"model": "x"}}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET/PATCH /api/v1/config  — global-default credentials (global .env)
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_get_reports_no_credentials_when_env_absent(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body["has_api_key"] is False
+    assert body["openai_api_base"] is None
+
+
+def test_global_config_get_reports_credentials_without_leaking_key(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text(
+        "LLM_API_KEY=global-secret\nOPENAI_API_BASE=https://gw.example/v1\n", encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    response = client.get("/api/v1/config", headers=_auth())
+    body = response.json()
+    assert body["has_api_key"] is True
+    assert body["openai_api_base"] == "https://gw.example/v1"
+    # The presence flag NEVER leaks the value.
+    assert "global-secret" not in response.text
+
+
+def test_global_config_patch_writes_api_key_to_global_env_0600(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+
+    response = client.patch("/api/v1/config", json={"api_key": "sk-global"}, headers=_auth())
+
+    assert response.status_code == 200
+    # The value is never echoed back in the response.
+    assert "sk-global" not in response.text
+    assert response.json()["has_api_key"] is True
+
+    env_path = tmp_path / ".env"
+    assert "LLM_API_KEY=sk-global" in env_path.read_text(encoding="utf-8")
+    # The credential file must never be world-readable.
+    assert (env_path.stat().st_mode & 0o777) == 0o600
+
+    follow_up = client.get("/api/v1/config", headers=_auth())
+    assert follow_up.json()["has_api_key"] is True
+    assert "sk-global" not in follow_up.text
+
+
+def test_global_config_patch_clears_api_key_on_explicit_null(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text("LLM_API_KEY=global-secret\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch("/api/v1/config", json={"api_key": None}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is False
+    assert "LLM_API_KEY" not in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_global_config_patch_roundtrips_openai_api_base(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/v1/config", json={"openai_api_base": "https://local.example/v1"}, headers=_auth()
+    )
+    assert response.status_code == 200
+    assert response.json()["openai_api_base"] == "https://local.example/v1"
+    assert "OPENAI_API_BASE=https://local.example/v1" in (tmp_path / ".env").read_text(
+        encoding="utf-8"
+    )
+
+    # An explicit null clears it again.
+    cleared = client.patch("/api/v1/config", json={"openai_api_base": None}, headers=_auth())
+    assert cleared.json()["openai_api_base"] is None
+    assert "OPENAI_API_BASE" not in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_global_config_patch_credential_rotation_preserves_env_and_registry(monkeypatch, tmp_path):
+    """A credential-only PATCH (no ``config`` block) rotates just the key line,
+    leaves co-existing .env entries intact, and never clobbers global.yaml's KB
+    registry (the write is under the same global lock)."""
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    gp.write_text(yaml.safe_dump({"known_kbs": ["/a"], "model": "global-model"}), encoding="utf-8")
+    (tmp_path / ".env").write_text("LLM_API_KEY=old\nPAGEINDEX_API_KEY=pk-123\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch("/api/v1/config", json={"api_key": "new"}, headers=_auth())
+
+    assert response.status_code == 200
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "LLM_API_KEY=new" in env_text
+    assert "PAGEINDEX_API_KEY=pk-123" in env_text
+    # The scalar merge is untouched and the KB registry survives.
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["known_kbs"] == ["/a"]
+    assert saved["model"] == "global-model"
+
+
+def test_global_config_patch_rejects_newline_in_credential(monkeypatch, tmp_path):
+    """The global patch path rejects a newline/CR in a credential value (400)
+    BEFORE the global lock is touched — a raw \\r\\n in openai_api_base would
+    otherwise inject extra KEY=VALUE lines into the global .env. Disk untouched."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text("LLM_API_KEY=keep\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/v1/config",
+        json={"openai_api_base": "https://ok/v1\r\nLLM_API_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "openai_api_base" in response.json()["detail"]
+    # Nothing was written: the pre-existing key is intact, no injected line.
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert env_text == "LLM_API_KEY=keep\n"
+
+
+# ---------------------------------------------------------------------------
+# KB root: GET reports it, PATCH sets/clears it (global.yaml)
+# ---------------------------------------------------------------------------
+
+
+def _make_kb(path: Path) -> None:
+    """Create the minimal shape _is_kb_dir accepts: `.openkb` + `wiki` dirs."""
+    (path / ".openkb").mkdir(parents=True)
+    (path / "wiki").mkdir(parents=True)
+
+
+def test_global_config_get_reports_kb_root_env_pinned(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    root = tmp_path / "env-root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    # A global.yaml kb_root is ineffective while env pins the root.
+    (tmp_path / "global.yaml").write_text(
+        yaml.safe_dump({"kb_root": str(tmp_path / "ignored")}), encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body["kb_root"] == str(root.resolve())
+    assert body["kb_root_env_pinned"] is True
+
+
+def test_global_config_get_reports_global_kb_root(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    custom = tmp_path / "custom"
+    (tmp_path / "global.yaml").write_text(
+        yaml.safe_dump({"kb_root": str(custom)}), encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body["kb_root"] == str(custom.resolve())
+    assert body["kb_root_env_pinned"] is False
+
+
+def test_global_config_patch_sets_and_clears_kb_root(monkeypatch, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    # Pre-existing registry keys must survive the kb_root write.
+    gp.write_text(
+        yaml.safe_dump({"known_kbs": ["/a"], "kb_aliases": {"x": "/a"}}), encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    custom = tmp_path / "custom-root"
+
+    set_resp = client.patch("/api/v1/config", json={"kb_root": str(custom)}, headers=_auth())
+    assert set_resp.status_code == 200
+    assert set_resp.json()["kb_root"] == str(custom.resolve())
+    assert set_resp.json()["kb_root_env_pinned"] is False
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["kb_root"] == str(custom)
+    assert saved["known_kbs"] == ["/a"]  # registry preserved
+    assert saved["kb_aliases"] == {"x": "/a"}
+
+    clear_resp = client.patch("/api/v1/config", json={"kb_root": None}, headers=_auth())
+    assert clear_resp.status_code == 200
+    # Cleared -> effective root reverts to the default <GLOBAL_CONFIG_DIR>/kbs.
+    assert clear_resp.json()["kb_root"] == str((tmp_path / "kbs").resolve())
+    assert "kb_root" not in yaml.safe_load(gp.read_text())
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/init with a custom absolute path
+# ---------------------------------------------------------------------------
+
+
+def test_init_endpoint_creates_kb_at_custom_absolute_path(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    root = tmp_path / "api-kbs"
+    custom = tmp_path / "elsewhere" / "my-kb"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    response = client.post(
+        "/api/v1/init",
+        json={"kb": "outside-kb", "path": str(custom)},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created"] is True
+    # Created at the custom path, NOT under the root.
+    assert (custom / ".openkb" / "config.yaml").is_file()
+    assert (custom / "wiki" / "AGENTS.md").is_file()
+    assert not (root / "outside-kb").exists()
+    # Registered under its name so it resolves by name afterwards.
+    gc = yaml.safe_load((tmp_path / "global.yaml").read_text(encoding="utf-8"))
+    assert gc["kb_aliases"]["outside-kb"] == str(custom.resolve())
+    # And it appears in the KB list (with its path) even though it's off-root.
+    body = client.get("/api/v1/kbs", headers=_auth()).json()
+    entry = next(k for k in body["knowledge_bases"] if k["name"] == "outside-kb")
+    assert entry["path"] == str(custom.resolve())
+
+
+def test_init_endpoint_rejects_relative_path(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    response = client.post(
+        "/api/v1/init",
+        json={"kb": "rel-kb", "path": "relative/dir"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "absolute" in response.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/kbs discovery: root children ∪ registered KBs (deduped)
+# ---------------------------------------------------------------------------
+
+
+def test_kbs_discovery_unions_root_and_registered_deduped(monkeypatch, tmp_path):
+    from openkb.config import register_kb_alias
+
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    child = root / "child-kb"  # a root child
+    _make_kb(child)
+    outside = tmp_path / "outside-kb"  # a registered KB living outside the root
+    _make_kb(outside)
+    register_kb_alias("outside-kb", outside)
+    register_kb_alias("child-kb", child)  # duplicates the root child in the registry
+
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/kbs", headers=_auth()).json()
+
+    assert body["root"] == str(root.resolve())
+    names = [k["name"] for k in body["knowledge_bases"]]
+    # The root child appears exactly once despite also being registered (dedupe
+    # by resolved path), and the off-root registered KB is included.
+    assert names.count("child-kb") == 1
+    assert "outside-kb" in names
+    paths = {k["name"]: k["path"] for k in body["knowledge_bases"]}
+    assert paths["child-kb"] == str(child.resolve())
+    assert paths["outside-kb"] == str(outside.resolve())
+
+
+def test_kbs_discovery_skips_stale_registered_entry(monkeypatch, tmp_path):
+    from openkb.config import register_kb_alias
+
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    live = tmp_path / "live-kb"
+    _make_kb(live)
+    register_kb_alias("live-kb", live)
+    # A registered path that is not (or no longer) a KB dir must be skipped.
+    register_kb_alias("stale-kb", tmp_path / "does-not-exist")
+
+    client = _client(monkeypatch)
+    names = [
+        k["name"] for k in client.get("/api/v1/kbs", headers=_auth()).json()["knowledge_bases"]
+    ]
+    assert "live-kb" in names
+    assert "stale-kb" not in names
+
+
+def test_kbs_discovery_root_child_shadows_colliding_off_root_kb(monkeypatch, tmp_path):
+    """A root-level KB and an off-root ``known_kbs`` KB share a basename: the
+    list must show that name EXACTLY ONCE (the root one), never two same-named
+    cards. Regression for the by-path-only dedupe that let a basename collision
+    duplicate the name."""
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    root_notes = root / "notes"
+    _make_kb(root_notes)
+    off_notes = tmp_path / "x" / "notes"
+    _make_kb(off_notes)
+    # Register the off-root KB as a BARE known_kbs entry (no alias).
+    (tmp_path / "global.yaml").write_text(
+        yaml.safe_dump({"known_kbs": [str(off_notes)]}), encoding="utf-8"
+    )
+
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/kbs", headers=_auth()).json()
+
+    names = [k["name"] for k in body["knowledge_bases"]]
+    assert names.count("notes") == 1
+    paths = {k["name"]: k["path"] for k in body["knowledge_bases"]}
+    assert paths["notes"] == str(root_notes.resolve())
+
+
+# ---------------------------------------------------------------------------
+# Credential guard matches the .env parser (splitlines, not just CR/LF)
+# ---------------------------------------------------------------------------
+
+
+def test_kb_config_patch_rejects_splitlines_separator_in_api_key(monkeypatch, kb_dir):
+    """A credential value containing ANY char ``str.splitlines()`` splits on —
+    here a vertical tab ``\\x0b``, not just ``\\r``/``\\n`` — is a 400 BEFORE any
+    write. ``_merge_patch_env`` parses ``.env`` with ``splitlines()``, so such a
+    char would inject a second ``KEY=VALUE`` line; the guard must match the
+    parser exactly. Nothing reaches disk."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=old\n", encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "api_key": "sk-good\x0bEVIL_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "api_key" in response.json()["detail"]
+    env_text = (kb_dir / ".env").read_text()
+    assert "EVIL_KEY" not in env_text
+    assert "LLM_API_KEY=old" in env_text
+
+
+def test_global_config_patch_rejects_splitlines_separator_in_credential(monkeypatch, tmp_path):
+    """The global patch path also rejects a non-CR/LF ``splitlines`` separator
+    (here a file-separator ``\\x1c``) in a credential value — same parser, same
+    guard. The global ``.env`` is untouched."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text("LLM_API_KEY=keep\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/v1/config",
+        json={"openai_api_base": "https://ok/v1\x1cLLM_API_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "openai_api_base" in response.json()["detail"]
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "LLM_API_KEY=keep\n"
+
+
+# ---------------------------------------------------------------------------
+# Global config endpoints degrade on a non-mapping global.yaml (no 500)
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_endpoints_degrade_on_non_mapping_yaml(monkeypatch, tmp_path):
+    """A hand-corrupted global.yaml that parses to a bare list must not 500 the
+    config endpoints: GET reports defaults and PATCH stays operable (the loader
+    coerces the non-mapping to ``{}``)."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    (tmp_path / "global.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    got = client.get("/api/v1/config", headers=_auth())
+    assert got.status_code == 200
+    assert got.json()["model"] == "gpt-5.4"
+
+    patched = client.patch("/api/v1/config", json={"config": {"model": "x"}}, headers=_auth())
+    assert patched.status_code == 200
+    assert patched.json()["model"] == "x"
+
+
+# ---------------------------------------------------------------------------
+# Global kb_root PATCH must reject a relative path
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_patch_rejects_relative_kb_root(monkeypatch, tmp_path):
+    """A relative kb_root is a 400 (mirrors ``/init``'s absolute-path guard); an
+    absolute path is accepted and an explicit null clears it back to default."""
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    client = _client(monkeypatch)
+
+    rel = client.patch("/api/v1/config", json={"kb_root": "kbs"}, headers=_auth())
+    assert rel.status_code == 400
+    assert "absolute" in rel.json()["detail"].lower()
+    # Nothing persisted (the 400 is raised before the lock/write).
+    assert not gp.exists() or "kb_root" not in (yaml.safe_load(gp.read_text()) or {})
+
+    absolute = tmp_path / "abs-root"
+    set_resp = client.patch("/api/v1/config", json={"kb_root": str(absolute)}, headers=_auth())
+    assert set_resp.status_code == 200
+    assert set_resp.json()["kb_root"] == str(absolute.resolve())
+
+    clear = client.patch("/api/v1/config", json={"kb_root": None}, headers=_auth())
+    assert clear.status_code == 200
+    assert clear.json()["kb_root"] == str((tmp_path / "kbs").resolve())
+
+
+# ---------------------------------------------------------------------------
+# /kbs survives an unstattable summaries entry (dangling symlink)
+# ---------------------------------------------------------------------------
+
+
+def test_kbs_listing_survives_dangling_summary_symlink(monkeypatch, tmp_path):
+    """One KB with an unstattable summaries entry (a dangling symlink) must not
+    500 the whole listing: that KB still lists (``last_compile`` None) and the
+    other KBs are unaffected."""
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    bad = root / "bad-kb"
+    _make_kb(bad)
+    bad_summaries = bad / "wiki" / "summaries"
+    bad_summaries.mkdir(parents=True)
+    # A dangling symlink named like a summary: glob() yields it, stat() raises.
+    (bad_summaries / "ghost.md").symlink_to(tmp_path / "nonexistent-target.md")
+
+    good = root / "good-kb"
+    _make_kb(good)
+
+    client = _client(monkeypatch)
+    response = client.get("/api/v1/kbs", headers=_auth())
+
+    assert response.status_code == 200
+    items = {k["name"]: k for k in response.json()["knowledge_bases"]}
+    assert set(items) == {"bad-kb", "good-kb"}
+    # The bad KB lists with no last_compile rather than throwing out of the scan.
+    assert items["bad-kb"]["last_compile"] is None

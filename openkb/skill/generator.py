@@ -26,6 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Union
 
+from openkb.config import LlmCredentialBundle
 from openkb.deck import deck_dir
 from openkb.deck.creator import DEFAULT_DECK_SKILL, run_deck_create
 from openkb.deck.validator import ValidationResult as DeckValidationResult
@@ -67,11 +68,16 @@ class Generator:
         model: str,
         critique: bool = False,
         skill_name: str | None = None,
+        bundle: LlmCredentialBundle | None = None,
     ) -> None:
         """Args:
         skill_name: For ``target_type="deck"``, which deck skill to use.
             Defaults to :data:`openkb.deck.creator.DEFAULT_DECK_SKILL`
             (``"openkb-deck-neon"``). Ignored for skill target.
+        bundle: Optional per-request LLM credential/config bundle threaded
+            down to the agent's model settings so concurrent REST requests
+            for different KBs never share process-global credentials.
+            ``None`` (CLI default) preserves the existing behavior.
         """
         if target_type not in ("skill", "deck"):
             raise ValueError(
@@ -84,6 +90,7 @@ class Generator:
         self.model = model
         self.critique = critique
         self.skill_name = skill_name or DEFAULT_DECK_SKILL
+        self.bundle = bundle
         self.output_dir = (
             deck_dir(kb_dir, name) if target_type == "deck" else skill_dir(kb_dir, name)
         )
@@ -104,6 +111,7 @@ class Generator:
                 skill_name=self.name,
                 intent=self.intent,
                 model=self.model,
+                bundle=self.bundle,
             )
             self.validation = validate_skill(self.output_dir)
             regenerate_marketplace(self.kb_dir)
@@ -117,6 +125,7 @@ class Generator:
             model=self.model,
             critique=self.critique,
             skill_name=self.skill_name,
+            bundle=self.bundle,
         )
         # run_deck_create returns a SkillRunResult-like (or Path) — use its
         # validation if present; otherwise fall back to None (skill didn't

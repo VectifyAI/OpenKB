@@ -32,9 +32,10 @@ from typing import Any, Optional
 
 from agents import Runner, function_tool
 
-from openkb.agent.query import build_query_agent
+from openkb.agent.query import build_query_agent, build_run_config_from_bundle
 from openkb.agent.skills import _parse_frontmatter, scan_local_skills
 from openkb.agent.tools import read_kb_file, write_kb_file
+from openkb.config import LlmCredentialBundle
 
 MAX_TURNS = 80
 MAX_TURNS_WITH_CRITIQUE = 120
@@ -72,6 +73,7 @@ async def run_skill(
     seed: Optional[str] = None,
     slug: Optional[str] = None,
     extra_skill_roots: tuple[str | Path, ...] = (),
+    bundle: LlmCredentialBundle | None = None,
 ) -> SkillRunResult:
     """Load ``skill_name`` and run it as an agent with ``intent``.
 
@@ -101,6 +103,10 @@ async def run_skill(
         extra_skill_roots: Additional directories to scan beyond the
             built-in ``<kb>/skills``, ``~/.openkb/skills``,
             ``~/.claude/skills``.
+        bundle: Optional per-request LLM credential/config bundle. When
+            provided (REST path), it is forwarded to the query agent so
+            concurrent requests never share process-global credentials.
+            ``None`` (CLI default) preserves the existing behavior.
 
     Returns:
         A :class:`SkillRunResult` carrying the resolved output path (if
@@ -138,7 +144,7 @@ async def run_skill(
 
     wiki_root = str(kb_dir / "wiki")
     kb_root = str(kb_dir)
-    base = build_query_agent(wiki_root, model, language=language)
+    base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     @function_tool
     def write_file(path: str, content: str) -> str:
@@ -182,8 +188,17 @@ async def run_skill(
 
     from agents.exceptions import MaxTurnsExceeded
 
+    # Per-KB credential isolation: when a bundle is supplied (REST path) the
+    # RunConfig carries a dedicated LitellmModel with this KB's api_key/base_url,
+    # overriding the process-global provider for this run only. When bundle is
+    # None (CLI path) build_run_config_from_bundle returns None and the call is
+    # byte-identical to the pre-bundle behavior (no run_config kwarg passed).
+    run_config = build_run_config_from_bundle(model, bundle)
     try:
-        await Runner.run(agent, user_seed, max_turns=max_turns)
+        if run_config:
+            await Runner.run(agent, user_seed, max_turns=max_turns, run_config=run_config)
+        else:
+            await Runner.run(agent, user_seed, max_turns=max_turns)
     except MaxTurnsExceeded as exc:
         raise RuntimeError(
             f"Skill {skill_name!r} hit the {max_turns}-step cap before "
