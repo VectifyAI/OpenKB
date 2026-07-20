@@ -17,8 +17,8 @@ import { listKbs } from "@/api/kb"
 import { runDeckCommand, runSkillCommand } from "@/api/artifacts"
 import type { SseEvent } from "@/api/client"
 import {
-  foldSseEvent, initialTurnState, listSessions, loadSession, stepsFromTrace,
-  streamChat,
+  foldSseEvent, initialTurnState, listSessions, loadSession, markToolStepsDone,
+  stepsFromTrace, streamChat,
   type ChatTurnState, type Source,
 } from "@/api/chat"
 
@@ -388,10 +388,18 @@ export default function ChatSession() {
       }
     } catch (e) {
       const message = errMsg(e)
-      patch((prev) => ({ ...prev, reading: null, error: prev.error ?? message, done: true }))
+      // Settle any tool read still in flight when the stream threw — otherwise
+      // its spinner spins forever (done flips true but the step doesn't).
+      patch((prev) => ({
+        ...prev,
+        reading: null,
+        error: prev.error ?? message,
+        done: true,
+        steps: markToolStepsDone(prev.steps),
+      }))
       toast.error(t("chat:requestErrorToast", { error: message }))
     } finally {
-      patch((t) => ({ ...t, reading: null, done: true }))
+      patch((t) => ({ ...t, reading: null, done: true, steps: markToolStepsDone(t.steps) }))
       setRunning(false)
     }
   }

@@ -93,7 +93,7 @@ export default function Settings() {
     const l = language.trim()
     if (l && l !== config.language) cfg.language = l
     const n = Number(threshold)
-    if (threshold.trim() !== '' && Number.isInteger(n) && n !== config.pageindex_threshold) {
+    if (threshold.trim() !== '' && Number.isInteger(n) && n >= 0 && n !== config.pageindex_threshold) {
       cfg.pageindex_threshold = n
     }
     if (Object.keys(cfg).length > 0) patch.config = cfg

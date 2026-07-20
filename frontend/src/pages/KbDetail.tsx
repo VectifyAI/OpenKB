@@ -14,14 +14,17 @@ import KbSettingsSheet from '@/components/KbSettingsSheet'
 import { useAnimatedSwitch } from '@/hooks/useAnimatedSwitch'
 import { cn } from '@/lib/utils'
 
-/** Strip a leading YAML frontmatter block (`--- … ---`) from a raw wiki page.
- *  Pages are served verbatim by `GET /api/v1/page`, so the OKF frontmatter
+/** Strip a leading YAML-mapping frontmatter block (`--- … ---`) from a raw wiki
+ *  page. Pages are served verbatim by `GET /api/v1/page`, so the OKF frontmatter
  *  would otherwise render in the reader as junk metadata lines — and, now that
  *  MarkdownView renders thematic breaks, its `---` delimiters as horizontal
- *  rules. No-op when there is no leading frontmatter. Only the reader strips it;
- *  chat answers (which carry no frontmatter) go through MarkdownView untouched. */
+ *  rules. The lookahead requires the first inner line to be a YAML mapping (it
+ *  contains a `:`), so a body that legitimately opens with a `---` thematic
+ *  break (e.g. `---\nIntro paragraph\n---`) is left intact. No-op when there is
+ *  no leading frontmatter. Only the reader strips it; chat answers (which carry
+ *  no frontmatter) go through MarkdownView untouched. */
 function stripFrontmatter(md: string): string {
-  return md.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+  return md.replace(/^---\r?\n(?=[^\n]*?:)[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
 }
 
 /** One selected wiki page, derived from its `<type>/<name>` path. */

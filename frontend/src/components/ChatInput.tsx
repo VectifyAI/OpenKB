@@ -104,7 +104,7 @@ export default function ChatInput({
       if (e.key === "Escape") { setMenuOpen(false); return }
     }
     if (e.key === "Backspace" && value === "" && cmd) { setCmd(null); return }
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() }
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
   }
 
   const currentIndex = kbs.findIndex((k) => k.name === kbId)
@@ -173,7 +173,7 @@ export default function ChatInput({
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-1.5 h-7 px-2 rounded-apple-sm text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
                 <BookOpen className="w-3.5 h-3.5" />
-                {currentKb?.name ?? kbId ?? t("input.selectKb")}
+                {currentKb?.name || kbId || t("input.selectKb")}
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
             </DropdownMenuTrigger>

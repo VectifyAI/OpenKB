@@ -171,8 +171,10 @@ function appendDelta(steps: TurnStep[], text: string): TurnStep[] {
 }
 
 /** Flip every still-in-flight tool step to `done` (a fresh copy of any changed
- *  step; unchanged steps keep their identity). */
-function markToolStepsDone(steps: TurnStep[]): TurnStep[] {
+ *  step; unchanged steps keep their identity). Exported so a stream that throws
+ *  (see ChatSession's runTurn catch/finally) can settle any spinner still
+ *  spinning on an unfinished tool read. */
+export function markToolStepsDone(steps: TurnStep[]): TurnStep[] {
   return steps.map((s) => (s.kind === "tool" && !s.done ? { ...s, done: true } : s))
 }
 
@@ -274,8 +276,11 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent, kb: string):
       // streamed text delta (narration + answer); the streamed trace already
       // ends with the answer run, so do NOT overwrite the trailing step with it
       // (that would duplicate narration whenever tool reads split the text).
-      // Only inject it when the model streamed no text at all.
-      if (authoritative && !steps.some((s) => s.kind === "text")) {
+      // Only inject it when the model streamed no NON-WHITESPACE text: a
+      // whitespace-only delta (" "/"\n") still creates a text step but renders
+      // as null in AssistantMessage, so without this the user would see tool
+      // chips and no answer at all.
+      if (authoritative && !steps.some((s) => s.kind === "text" && s.text.trim())) {
         steps = [...steps, { kind: "text", text: authoritative }]
       }
       return {

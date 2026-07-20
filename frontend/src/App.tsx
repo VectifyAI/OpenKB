@@ -31,6 +31,16 @@ function KbDetailRoute() {
   return <KbDetail key={id} />
 }
 
+/** Remount ChatSession per session id so its restore effect (which guards on a
+ *  module-instance restoredRef and only depends on [id]) re-runs on a genuine
+ *  navigation between sessions — otherwise back/forward or a hash edit between
+ *  /chat/A and /chat/B changes the id without a remount and shows the stale
+ *  session. */
+function ChatSessionRoute() {
+  const { id = "" } = useParams()
+  return <ChatSession key={id} />
+}
+
 const inputCls =
   "mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
 
@@ -165,7 +175,7 @@ export default function App() {
             </div>
             <Routes>
               <Route path="/" element={<Home />} />
-              <Route path="/chat/:id" element={<ChatSession />} />
+              <Route path="/chat/:id" element={<ChatSessionRoute />} />
               <Route path="/kb" element={<KbList />} />
               <Route path="/kb/:id" element={<KbDetailRoute />} />
               <Route path="/settings" element={<Settings />} />
