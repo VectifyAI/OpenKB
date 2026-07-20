@@ -1,10 +1,12 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import { useTheme } from '@/lib/theme'
 
 /** 极简 Markdown 渲染：标题 / 列表 / 引用 / 粗体 / [[wikilink]] / 行内代码 / 代码块 / mermaid */
 function inline(text: string, onWikiLink?: (target: string) => void): React.ReactNode[] {
   const parts: React.ReactNode[] = []
-  const re = /(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|`[^`]+`)/g
+  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*[^*]+\*\*|`[^`]+`)/g
   let last = 0, m: RegExpExecArray | null, k = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
@@ -36,6 +38,22 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
           </span>
         ),
       )
+    } else if (tok.startsWith('\\(')) {
+      // Inline math \( … \) via KaTeX; on a KaTeX error fall back to a code chip.
+      const tex = tok.slice(2, -2)
+      let html = ''
+      try {
+        html = katex.renderToString(tex, { displayMode: false, throwOnError: false })
+      } catch {
+        html = ''
+      }
+      parts.push(
+        html ? (
+          <span key={k++} className="text-foreground" dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <code key={k++} className="font-mono2 text-[12px] bg-muted rounded px-1 py-px">{tex}</code>
+        ),
+      )
     } else if (tok.startsWith('**')) {
       parts.push(<strong key={k++} className="font-semibold text-foreground">{tok.slice(2, -2)}</strong>)
     } else {
@@ -58,6 +76,23 @@ function CodeBox({ code, lang }: { code: string; lang?: string }) {
         <code className="font-mono2 whitespace-pre text-foreground">{code}</code>
       </pre>
     </div>
+  )
+}
+
+/** Display (block) math via KaTeX. On a KaTeX error, falls back to the raw TeX
+ *  in a code box so a malformed formula never crashes the message. */
+function MathBlock({ tex }: { tex: string }) {
+  let html = ''
+  try {
+    html = katex.renderToString(tex, { displayMode: true, throwOnError: false })
+  } catch {
+    return <CodeBox code={tex} />
+  }
+  return (
+    <div
+      className="my-3 overflow-x-auto text-center text-foreground"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   )
 }
 
@@ -150,6 +185,30 @@ export default function MarkdownView({
       const code = body.join('\n')
       if (lang === 'mermaid') out.push(<MermaidBlock key={key++} code={code} />)
       else out.push(<CodeBox key={key++} code={code} lang={lang || undefined} />)
+      continue
+    }
+
+    // Block math: LaTeX \[ … \] display delimiters. Handle a single-line form
+    // and the model's usual three-line form (\[ alone, body lines, \] alone).
+    const oneLineMath = /^\\\[([\s\S]*?)\\\]$/.exec(line.trim())
+    if (oneLineMath) {
+      flushList()
+      out.push(<MathBlock key={key++} tex={oneLineMath[1].trim()} />)
+      continue
+    }
+    if (line.trim() === '\\[') {
+      flushList()
+      const body: string[] = []
+      i++
+      while (i < lines.length && lines[i].trim() !== '\\]') { body.push(lines[i]); i++ }
+      out.push(<MathBlock key={key++} tex={body.join('\n').trim()} />)
+      continue
+    }
+
+    // Horizontal rule / thematic break: ---, ***, or ___
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+      flushList()
+      out.push(<hr key={key++} className="my-4 border-0 border-t border-[hsl(var(--glass-border))]" />)
       continue
     }
 
