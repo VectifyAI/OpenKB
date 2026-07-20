@@ -44,7 +44,6 @@ from openkb.cli import (
 )
 from openkb.config import (
     DEFAULT_CONFIG,
-    kb_root_dir,
     register_kb_alias,
     resolve_effective_config,
     resolve_kb_alias,
@@ -99,45 +98,6 @@ def _mount_web_ui(app: FastAPI) -> None:
     web_dir = Path(__file__).resolve().parent / "web"
     if web_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web-ui")
-
-
-def _list_knowledge_bases() -> dict[str, Any]:
-    """List knowledge bases under the server's ``OPENKB_KB_ROOT``.
-
-    Used by the web UI's KB switcher. There is no persisted KB registry, so
-    discovery is directory-based: a child of ``OPENKB_KB_ROOT`` counts as a KB
-    when it has both ``.openkb`` and ``wiki`` subdirectories.
-    """
-    root = kb_root_dir()
-    items: list[dict[str, Any]] = []
-    if root.is_dir():
-        for child in sorted(root.iterdir()):
-            if not child.is_dir():
-                continue
-            if not _is_kb_dir(child):
-                continue
-            hashes_file = child / ".openkb" / "hashes.json"
-            doc_count = 0
-            if hashes_file.exists():
-                try:
-                    doc_count = len(json.loads(hashes_file.read_text(encoding="utf-8")))
-                except (ValueError, OSError):
-                    doc_count = 0
-            last_compile = None
-            summaries_dir = child / "wiki" / "summaries"
-            if summaries_dir.is_dir():
-                mtimes = [p.stat().st_mtime for p in summaries_dir.glob("*.md")]
-                if mtimes:
-                    last_compile = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(max(mtimes)))
-            items.append(
-                {
-                    "name": child.name,
-                    "document_count": doc_count,
-                    "last_compile": last_compile,
-                    "has_raw": (child / "raw").is_dir(),
-                }
-            )
-    return {"root": str(root), "knowledge_bases": items}
 
 
 def require_bearer_token(

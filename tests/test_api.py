@@ -2470,12 +2470,17 @@ def test_kb_config_patch_does_not_materialize_defaults(monkeypatch, kb_dir):
 def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
     monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
     monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
     client = _client(monkeypatch)
     body = client.get("/api/v1/config", headers=_auth()).json()
     assert body == {
         "model": "gpt-5.4",
         "language": "en",
         "pageindex_threshold": 20,
+        # kb_root reports the EFFECTIVE root; with no env/global override it is
+        # the default <GLOBAL_CONFIG_DIR>/kbs, and env_pinned is False.
+        "kb_root": str((tmp_path / "kbs").resolve()),
+        "kb_root_env_pinned": False,
         "openai_api_base": None,
         "has_api_key": False,
     }
@@ -2685,3 +2690,179 @@ def test_global_config_patch_rejects_newline_in_credential(monkeypatch, tmp_path
     # Nothing was written: the pre-existing key is intact, no injected line.
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert env_text == "LLM_API_KEY=keep\n"
+
+
+# ---------------------------------------------------------------------------
+# KB root: GET reports it, PATCH sets/clears it (global.yaml)
+# ---------------------------------------------------------------------------
+
+
+def _make_kb(path: Path) -> None:
+    """Create the minimal shape _is_kb_dir accepts: `.openkb` + `wiki` dirs."""
+    (path / ".openkb").mkdir(parents=True)
+    (path / "wiki").mkdir(parents=True)
+
+
+def test_global_config_get_reports_kb_root_env_pinned(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    root = tmp_path / "env-root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    # A global.yaml kb_root is ineffective while env pins the root.
+    (tmp_path / "global.yaml").write_text(
+        yaml.safe_dump({"kb_root": str(tmp_path / "ignored")}), encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body["kb_root"] == str(root.resolve())
+    assert body["kb_root_env_pinned"] is True
+
+
+def test_global_config_get_reports_global_kb_root(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    custom = tmp_path / "custom"
+    (tmp_path / "global.yaml").write_text(
+        yaml.safe_dump({"kb_root": str(custom)}), encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/config", headers=_auth()).json()
+    assert body["kb_root"] == str(custom.resolve())
+    assert body["kb_root_env_pinned"] is False
+
+
+def test_global_config_patch_sets_and_clears_kb_root(monkeypatch, tmp_path):
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    # Pre-existing registry keys must survive the kb_root write.
+    gp.write_text(
+        yaml.safe_dump({"known_kbs": ["/a"], "kb_aliases": {"x": "/a"}}), encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    custom = tmp_path / "custom-root"
+
+    set_resp = client.patch("/api/v1/config", json={"kb_root": str(custom)}, headers=_auth())
+    assert set_resp.status_code == 200
+    assert set_resp.json()["kb_root"] == str(custom.resolve())
+    assert set_resp.json()["kb_root_env_pinned"] is False
+    saved = yaml.safe_load(gp.read_text())
+    assert saved["kb_root"] == str(custom)
+    assert saved["known_kbs"] == ["/a"]  # registry preserved
+    assert saved["kb_aliases"] == {"x": "/a"}
+
+    clear_resp = client.patch("/api/v1/config", json={"kb_root": None}, headers=_auth())
+    assert clear_resp.status_code == 200
+    # Cleared -> effective root reverts to the default <GLOBAL_CONFIG_DIR>/kbs.
+    assert clear_resp.json()["kb_root"] == str((tmp_path / "kbs").resolve())
+    assert "kb_root" not in yaml.safe_load(gp.read_text())
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/init with a custom absolute path
+# ---------------------------------------------------------------------------
+
+
+def test_init_endpoint_creates_kb_at_custom_absolute_path(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    root = tmp_path / "api-kbs"
+    custom = tmp_path / "elsewhere" / "my-kb"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    response = client.post(
+        "/api/v1/init",
+        json={"kb": "outside-kb", "path": str(custom)},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["created"] is True
+    # Created at the custom path, NOT under the root.
+    assert (custom / ".openkb" / "config.yaml").is_file()
+    assert (custom / "wiki" / "AGENTS.md").is_file()
+    assert not (root / "outside-kb").exists()
+    # Registered under its name so it resolves by name afterwards.
+    gc = yaml.safe_load((tmp_path / "global.yaml").read_text(encoding="utf-8"))
+    assert gc["kb_aliases"]["outside-kb"] == str(custom.resolve())
+    # And it appears in the KB list (with its path) even though it's off-root.
+    body = client.get("/api/v1/kbs", headers=_auth()).json()
+    entry = next(k for k in body["knowledge_bases"] if k["name"] == "outside-kb")
+    assert entry["path"] == str(custom.resolve())
+
+
+def test_init_endpoint_rejects_relative_path(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    response = client.post(
+        "/api/v1/init",
+        json={"kb": "rel-kb", "path": "relative/dir"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "absolute" in response.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/kbs discovery: root children ∪ registered KBs (deduped)
+# ---------------------------------------------------------------------------
+
+
+def test_kbs_discovery_unions_root_and_registered_deduped(monkeypatch, tmp_path):
+    from openkb.config import register_kb_alias
+
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    child = root / "child-kb"  # a root child
+    _make_kb(child)
+    outside = tmp_path / "outside-kb"  # a registered KB living outside the root
+    _make_kb(outside)
+    register_kb_alias("outside-kb", outside)
+    register_kb_alias("child-kb", child)  # duplicates the root child in the registry
+
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/kbs", headers=_auth()).json()
+
+    assert body["root"] == str(root.resolve())
+    names = [k["name"] for k in body["knowledge_bases"]]
+    # The root child appears exactly once despite also being registered (dedupe
+    # by resolved path), and the off-root registered KB is included.
+    assert names.count("child-kb") == 1
+    assert "outside-kb" in names
+    paths = {k["name"]: k["path"] for k in body["knowledge_bases"]}
+    assert paths["child-kb"] == str(child.resolve())
+    assert paths["outside-kb"] == str(outside.resolve())
+
+
+def test_kbs_discovery_skips_stale_registered_entry(monkeypatch, tmp_path):
+    from openkb.config import register_kb_alias
+
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    live = tmp_path / "live-kb"
+    _make_kb(live)
+    register_kb_alias("live-kb", live)
+    # A registered path that is not (or no longer) a KB dir must be skipped.
+    register_kb_alias("stale-kb", tmp_path / "does-not-exist")
+
+    client = _client(monkeypatch)
+    names = [
+        k["name"] for k in client.get("/api/v1/kbs", headers=_auth()).json()["knowledge_bases"]
+    ]
+    assert "live-kb" in names
+    assert "stale-kb" not in names

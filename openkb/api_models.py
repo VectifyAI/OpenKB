@@ -89,6 +89,10 @@ class InitRequest(BaseModel):
     model: str | None = None
     api_key: str | None = None
     openai_api_base: str | None = None
+    # Optional custom location for the KB: an ABSOLUTE directory (a relative
+    # path is a 400). Absent → created under kb_root_dir() / kb. Either way the
+    # KB is registered under `kb` so it resolves by name afterwards.
+    path: str | None = None
 
 
 class EnvWritten(BaseModel):
@@ -304,6 +308,10 @@ class WatchStatusResponse(BaseModel):
 
 class KbSummaryItem(BaseModel):
     name: str
+    # Resolved directory of the KB. Present for every item so a KB registered
+    # OUTSIDE kb_root_dir() is addressable/locatable by the UI, not just root
+    # children.
+    path: str
     document_count: int = 0
     last_compile: str | None = None
     has_raw: bool = False
@@ -350,6 +358,12 @@ class GlobalConfigResponse(BaseModel):
     model: str
     language: str
     pageindex_threshold: int
+    # Effective KB root that kb_root_dir() would return (env OPENKB_KB_ROOT >
+    # global.yaml kb_root > default <config>/kbs). kb_root_env_pinned is True
+    # when OPENKB_KB_ROOT is set — a global.yaml kb_root is then ineffective, so
+    # the UI can note that editing it won't take effect on this server.
+    kb_root: str
+    kb_root_env_pinned: bool
     # Global-default credentials read from ~/.config/openkb/.env (the
     # lowest-precedence credential source). openai_api_base is plaintext (a
     # config value, not a secret); has_api_key is a presence flag only — the raw
@@ -366,6 +380,11 @@ class GlobalConfigPatchRequest(BaseModel):
     # in logs/reprs.
     api_key: SecretStr | None = None
     openai_api_base: str | None = None
+    # RFC 7386 merge-patch (via model_fields_set): a string SETS global.yaml
+    # `kb_root`, an explicit null REMOVES it (revert to the default root), and an
+    # absent field leaves it unchanged. NOT a credential — persisted to
+    # global.yaml, never the .env. Env OPENKB_KB_ROOT still overrides at runtime.
+    kb_root: str | None = None
 
 
 class KbConfigResponse(BaseModel):

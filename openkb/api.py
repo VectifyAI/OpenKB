@@ -40,7 +40,6 @@ from openkb.api_helpers import (
     _init_kb_for_api,
     _iter_deck,
     _iter_skill,
-    _list_knowledge_bases,
     _load_or_create_session,
     _mount_web_ui,
     _parse_stream_form,
@@ -59,6 +58,7 @@ from openkb.api_helpers import (
     _write_add_uploads,
     require_bearer_token,
 )
+from openkb.api_kbs import _list_knowledge_bases
 from openkb.api_models import (
     AddResponse,
     ChatRequest,
@@ -107,9 +107,9 @@ from openkb.cli import (
 )
 from openkb.config import (
     DEFAULT_CONFIG,
-    kb_root_dir,
     resolve_credential_bundle,
     resolve_effective_config,
+    resolve_init_kb_dir,
     validate_kb_name,
 )
 from openkb.log import append_log
@@ -209,7 +209,7 @@ def create_app() -> FastAPI:
     ) -> InitResponse:
         try:
             kb_name = validate_kb_name(request.kb)
-            kb_dir = (kb_root_dir() / kb_name).resolve()
+            kb_dir = resolve_init_kb_dir(kb_name, request.path)
             # Run lock-holding work in a threadpool so each request gets its
             # own threading.local (kb_ingest_lock reentrancy is per-thread)
             # and the event loop is not blocked by file I/O / flock.

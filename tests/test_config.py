@@ -9,10 +9,13 @@ from openkb.config import (
     get_extra_headers,
     get_parallel_tool_calls,
     get_timeout,
+    kb_root_dir,
     load_config,
+    registered_kbs,
     resolve_concurrency,
     resolve_effective_config,
     resolve_extra_headers,
+    resolve_init_kb_dir,
     resolve_litellm_settings,
     resolve_model_settings,
     resolve_parallel_tool_calls,
@@ -562,3 +565,63 @@ def test_global_scalar_keys_match_api_writable_keys():
     from openkb.api_models import _KB_CONFIG_WRITABLE_KEYS
 
     assert set(GLOBAL_SCALAR_KEYS) == set(_KB_CONFIG_WRITABLE_KEYS)
+
+
+# --- kb_root_dir precedence / resolve_init_kb_dir / registered_kbs ------------
+
+
+def test_kb_root_dir_env_wins_over_global(_isolated_global, monkeypatch, tmp_path):
+    save_global_config({"kb_root": str(tmp_path / "from-global")})
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(tmp_path / "from-env"))
+    assert kb_root_dir() == (tmp_path / "from-env").resolve()
+
+
+def test_kb_root_dir_global_when_no_env(_isolated_global, monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    save_global_config({"kb_root": str(tmp_path / "from-global")})
+    assert kb_root_dir() == (tmp_path / "from-global").resolve()
+
+
+def test_kb_root_dir_default_when_neither(_isolated_global, monkeypatch):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    # global.yaml is absent under _isolated_global -> the built-in default root.
+    assert kb_root_dir() == (_isolated_global / "kbs").resolve()
+
+
+def test_kb_root_dir_blank_global_falls_through_to_default(_isolated_global, monkeypatch):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    save_global_config({"kb_root": "   "})  # whitespace-only == unset
+    assert kb_root_dir() == (_isolated_global / "kbs").resolve()
+
+
+def test_resolve_init_kb_dir_default_uses_root(_isolated_global, monkeypatch):
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    assert resolve_init_kb_dir("my-kb") == (_isolated_global / "kbs" / "my-kb").resolve()
+
+
+def test_resolve_init_kb_dir_absolute_path_used_verbatim(tmp_path):
+    custom = tmp_path / "elsewhere" / "kb"
+    assert resolve_init_kb_dir("my-kb", str(custom)) == custom.resolve()
+
+
+def test_resolve_init_kb_dir_rejects_relative_path():
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="absolute"):
+        resolve_init_kb_dir("my-kb", "relative/dir")
+
+
+def test_registered_kbs_unions_and_dedupes_by_path(_isolated_global, tmp_path):
+    kb_a = tmp_path / "a"
+    kb_b = tmp_path / "b"
+    # kb_a is both aliased AND in known_kbs; aliases are visited first, so it
+    # keeps its alias name and is not double-counted. kb_b (bare known_kbs) uses
+    # its directory name.
+    save_global_config(
+        {
+            "kb_aliases": {"alias-a": str(kb_a)},
+            "known_kbs": [str(kb_a), str(kb_b)],
+        }
+    )
+    result = dict(registered_kbs())
+    assert result == {"alias-a": kb_a.resolve(), "b": kb_b.resolve()}

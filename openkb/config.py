@@ -547,13 +547,42 @@ def register_kb(kb_path: Path) -> None:
 def kb_root_dir() -> Path:
     """Return the root directory for API-addressable KB names.
 
-    Controlled by ``OPENKB_KB_ROOT``; defaults to ``<config>/kbs`` so REST
-    ``/init`` creates knowledge bases under a predictable location.
+    Precedence: env ``OPENKB_KB_ROOT`` > global.yaml ``kb_root`` > the default
+    ``<GLOBAL_CONFIG_DIR>/kbs``. The env var stays the top override (a deployer
+    pins it per-process); a ``kb_root`` string in global.yaml lets the UI move
+    the root persistently. Each candidate is ``expanduser().resolve()``d so
+    ``~`` and relative segments normalize. A malformed global.yaml (parses to a
+    non-mapping) or a blank/non-string ``kb_root`` degrades to the default,
+    matching :func:`resolve_effective_config`'s defensive coercion.
     """
     configured_root = os.environ.get("OPENKB_KB_ROOT")
     if configured_root:
         return Path(configured_root).expanduser().resolve()
+    global_config = _load_global_config_unlocked()
+    if isinstance(global_config, dict):
+        global_root = global_config.get("kb_root")
+        if isinstance(global_root, str) and global_root.strip():
+            return Path(global_root).expanduser().resolve()
     return (GLOBAL_CONFIG_DIR / "kbs").resolve()
+
+
+def resolve_init_kb_dir(kb_name: str, path: str | None = None) -> Path:
+    """Resolve the target directory for a newly-initialized KB.
+
+    Default: ``kb_root_dir() / kb_name``. When ``path`` is given it must be an
+    ABSOLUTE directory (a relative path raises ``ValueError`` — the REST init
+    endpoint maps that to a 400); it is used verbatim after ``expanduser()`` +
+    ``resolve()``. Any absolute location is allowed, matching the CLI's
+    cwd-based init (OpenKB is a local-first tool). The caller still registers
+    the alias (``register_kb_alias``) so name→path resolution keeps working for
+    a custom-path KB.
+    """
+    if path is not None:
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            raise ValueError("KB path must be an absolute directory")
+        return candidate.resolve()
+    return (kb_root_dir() / kb_name).resolve()
 
 
 def validate_kb_name(name: str) -> str:
@@ -599,3 +628,42 @@ def resolve_kb_alias(name: str) -> Path:
     if alias in aliases:
         return Path(aliases[alias]).expanduser().resolve()
     return (kb_root_dir() / alias).resolve()
+
+
+def registered_kbs() -> list[tuple[str, Path]]:
+    """Enumerate KBs recorded in global.yaml as ``(name, resolved_path)`` pairs.
+
+    Unions ``kb_aliases`` (name→path) with ``known_kbs`` (bare paths), de-duping
+    by resolved path — aliases are considered first, so an aliased KB keeps its
+    alias name while a ``known_kbs`` path with no alias falls back to its
+    directory name. This is the registry view API discovery uses to surface KBs
+    living OUTSIDE ``kb_root_dir()``; callers filter stale/missing entries with
+    their own KB-dir predicate. A malformed global.yaml (non-mapping, or a
+    non-string entry) is tolerated defensively rather than raising.
+    """
+    global_config = _load_global_config_unlocked()
+    if not isinstance(global_config, dict):
+        return []
+    seen: set[str] = set()
+    result: list[tuple[str, Path]] = []
+    aliases = global_config.get("kb_aliases", {})
+    if isinstance(aliases, dict):
+        for name, raw in aliases.items():
+            if not isinstance(name, str) or not isinstance(raw, str):
+                continue
+            resolved = Path(raw).expanduser().resolve()
+            if str(resolved) in seen:
+                continue
+            seen.add(str(resolved))
+            result.append((name, resolved))
+    known = global_config.get("known_kbs", [])
+    if isinstance(known, list):
+        for raw in known:
+            if not isinstance(raw, str):
+                continue
+            resolved = Path(raw).expanduser().resolve()
+            if str(resolved) in seen:
+                continue
+            seen.add(str(resolved))
+            result.append((resolved.name, resolved))
+    return result

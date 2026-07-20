@@ -9,6 +9,7 @@ endpoint) MUST hold the per-KB mutation lock.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import yaml
@@ -245,6 +246,10 @@ def read_global_config() -> GlobalConfigResponse:
         model=gc.get("model", DEFAULT_CONFIG["model"]),
         language=gc.get("language", DEFAULT_CONFIG["language"]),
         pageindex_threshold=gc.get("pageindex_threshold", DEFAULT_CONFIG["pageindex_threshold"]),
+        # Report the EFFECTIVE root (env > global.yaml kb_root > default) via the
+        # module object so a test-monkeypatched GLOBAL_CONFIG_DIR is honored.
+        kb_root=str(_config_module.kb_root_dir()),
+        kb_root_env_pinned=bool(os.environ.get("OPENKB_KB_ROOT")),
         openai_api_base=(env_values.get("OPENAI_API_BASE") or None),
         has_api_key=bool(env_values.get("LLM_API_KEY")),
     )
@@ -269,6 +274,11 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
     (non-reentrant, flock-based) lock internally, which would deadlock if
     invoked from inside a lock we're already holding.
 
+    The optional top-level ``kb_root`` field is merged into the SAME global.yaml
+    write (it is a plain registry-style key, not a scalar in ``config`` and not a
+    credential): a string sets it, an explicit null removes it (revert to the
+    default root), an absent field leaves it unchanged.
+
     Credentials (``api_key`` / ``openai_api_base``) are written to the global
     ``.env`` (``GLOBAL_CONFIG_DIR / ".env"``) with the SAME secure, atomic,
     0o600 read-modify-write ``apply_kb_config_patch`` uses for a KB's ``.env``,
@@ -280,6 +290,7 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
     """
     fields_set = request.model_fields_set
     write_env = "api_key" in fields_set or "openai_api_base" in fields_set
+    write_kb_root = "kb_root" in fields_set
 
     # Reject newline/CR injection in credential VALUES before the lock is touched
     # (a bad value is a 400 that never acquires the lock or writes disk).
@@ -307,17 +318,28 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
             ) from exc
         dumped = validated.model_dump(exclude_unset=True)
 
-    if dumped is None and not write_env:
+    if dumped is None and not write_env and not write_kb_root:
         return
 
     with _with_global_config_lock():
-        if dumped is not None:
+        if dumped is not None or write_kb_root:
             gc = _load_global_config_unlocked()
-            for key, value in dumped.items():
-                if value is None:
-                    gc.pop(key, None)  # RFC 7386 removal -> back to DEFAULT_CONFIG
+            if dumped is not None:
+                for key, value in dumped.items():
+                    if value is None:
+                        gc.pop(key, None)  # RFC 7386 removal -> back to DEFAULT_CONFIG
+                    else:
+                        gc[key] = value
+            if write_kb_root:
+                # kb_root is a plain global.yaml key (like known_kbs), NOT a
+                # scalar in `config` and NOT a credential — it is merged directly
+                # into the loaded dict, never routed to the .env. RFC 7386:
+                # explicit null removes it (revert to the default root), a string
+                # sets it. Env OPENKB_KB_ROOT still overrides it at runtime.
+                if request.kb_root is None:
+                    gc.pop("kb_root", None)
                 else:
-                    gc[key] = value
+                    gc["kb_root"] = request.kb_root
             # GLOBAL_CONFIG_PATH is read through the module object (not imported
             # by name) because tests monkeypatch openkb.config.GLOBAL_CONFIG_PATH
             # per test; a `from openkb.config import GLOBAL_CONFIG_PATH` would
