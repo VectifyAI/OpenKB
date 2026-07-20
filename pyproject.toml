@@ -39,6 +39,11 @@ dependencies = [
     "watchdog==6.0.0",
     "litellm==1.87.2",
     "openai-agents==0.17.3",
+    # openai 2.45.0 added a required `cache_write_tokens` field to
+    # InputTokensDetails that openai-agents 0.17.3 does not set, crashing
+    # usage parsing on every response (issue #187). Pin below 2.45 until
+    # openai-agents catches up.
+    "openai==2.44.0",
     "pyyaml==6.0.3",
     "python-dotenv==1.2.2",
     "json-repair==0.59.10",
