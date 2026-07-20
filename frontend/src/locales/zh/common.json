@@ -40,6 +40,7 @@
     "fr": "Français",
     "es": "Español",
     "ru": "Русский",
+    "ja": "日本語",
     "toggleTitle": "语言：{{label}}",
     "toggleAria": "语言：{{label}}"
   },

@@ -1,0 +1,63 @@
+{
+  "phase": {
+    "generating": "生成中（LLM 呼び出し。数分かかる場合があります）…",
+    "done": "完了",
+    "preparing": "準備中…",
+    "buildingGraph": "概念グラフを構築中…"
+  },
+  "artifact": {
+    "failed": "生成に失敗しました"
+  },
+  "sources": {
+    "heading": "ソース",
+    "pageTip": "クリックしてこの wiki ページを表示",
+    "internalTip": "長文ドキュメントの内部コンテンツ（PageIndex）。開ける独立したページはありません"
+  },
+  "reading": {
+    "page": "<0>{{label}}</0> を読み込み中",
+    "doc": "長文ドキュメント <0>{{label}}</0> を読み込み中",
+    "thinking": "思考中…"
+  },
+  "step": {
+    "read": "<0>{{path}}</0> を読み込みました"
+  },
+  "requestError": "リクエストに失敗しました: {{error}}",
+  "savedTo": "{{path}} に保存しました",
+  "usage": {
+    "deck": "使い方: /deck <名前> <意図>、例:「retrieval-intro エンジニア向けにベクトルなし検索を紹介」",
+    "skill": "使い方: /skill <名前> <意図>、例:「pageindex-expert 長文検索 Q&A のエキスパート」"
+  },
+  "genErrorToast": "生成に失敗しました: {{error}}",
+  "requestErrorToast": "リクエストに失敗しました: {{error}}",
+  "errors": {
+    "noKb": "このセッションがどのナレッジベースに属するか判別できませんでした。ホームページから入り直してください",
+    "loadSession": "セッションの読み込みに失敗しました: {{error}}",
+    "openSource": "ソース {{path}} を開けませんでした: {{error}}"
+  },
+  "newSession": "新しいセッション",
+  "inputPlaceholder": "追加の質問を入力、または / でコマンド…",
+  "commands": {
+    "paletteHeading": "コマンド · ジェネレーター",
+    "deck": {
+      "label": "スライドを生成",
+      "desc": "知識を単一ファイルの HTML スライドにコンパイル"
+    },
+    "skill": {
+      "label": "スキルを抽出",
+      "desc": "インストール可能な Agent Skill を生成"
+    },
+    "visualize": {
+      "label": "ナレッジグラフ",
+      "desc": "インタラクティブな概念グラフを生成"
+    }
+  },
+  "input": {
+    "cmdPlaceholder": "{{label}}: 意図を記述してください…",
+    "defaultPlaceholder": "ナレッジベースに質問、または / でコマンド…",
+    "selectKb": "ナレッジベースを選択",
+    "noKbs": "ナレッジベースがまだありません",
+    "current": "現在",
+    "stop": "停止",
+    "hint": "<0>/</0> でコマンド"
+  }
+}

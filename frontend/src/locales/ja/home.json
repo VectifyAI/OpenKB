@@ -1,0 +1,7 @@
+{
+  "greeting": "何を質問しますか？",
+  "ready": "コンパイル済みの知識 · <0>{{docs}}</0> 件のドキュメント · <1>{{kbs}}</1> 件のベース",
+  "recentSessions": "最近のセッション",
+  "untitledSession": "無題のセッション",
+  "tagline": "Powered by OpenKB · あなたの知識は常にプレーンな Markdown で、常にあなたのものです"
+}

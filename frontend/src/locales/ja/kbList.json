@@ -1,0 +1,22 @@
+{
+  "notCompiled": "未コンパイル",
+  "updatedAt": "更新日 {{date}}",
+  "title": "ナレッジベース",
+  "subtitle": "各ナレッジベースは、複数のデータソースを束ねられる、継続的にコンパイルされる wiki です",
+  "docsLabel": "ドキュメント",
+  "rawReady": "raw/ 準備完了",
+  "rawMissing": "raw/ なし",
+  "create": {
+    "description": "新しいナレッジベースに名前を付けてください。モデルと認証情報はグローバルの既定値を引き継ぎ、後で設定から調整できます。",
+    "nameLabel": "名前",
+    "namePlaceholder": "例: my-kb",
+    "cancel": "キャンセル",
+    "submit": "作成",
+    "submitting": "作成中…",
+    "previewLabel": "{{path}} に作成されます",
+    "advancedToggle": "カスタムパス",
+    "customPathLabel": "カスタムパス",
+    "customPathPlaceholder": "/絶対パス/to/kb",
+    "customPathHint": "空欄の場合は既定のルートを使用します"
+  }
+}

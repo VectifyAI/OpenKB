@@ -2,7 +2,7 @@ import i18n from "i18next"
 import { initReactI18next } from "react-i18next"
 import resourcesToBackend from "i18next-resources-to-backend"
 
-export const SUPPORTED_LANGUAGES = ["zh", "en", "fr", "es", "ru"] as const
+export const SUPPORTED_LANGUAGES = ["zh", "en", "fr", "es", "ru", "ja"] as const
 export type Language = (typeof SUPPORTED_LANGUAGES)[number]
 
 /** All namespaces. Only `common` is preloaded (see `ns` below); every other
