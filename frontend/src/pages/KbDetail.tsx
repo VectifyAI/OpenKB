@@ -14,6 +14,16 @@ import KbSettingsSheet from '@/components/KbSettingsSheet'
 import { useAnimatedSwitch } from '@/hooks/useAnimatedSwitch'
 import { cn } from '@/lib/utils'
 
+/** Strip a leading YAML frontmatter block (`--- … ---`) from a raw wiki page.
+ *  Pages are served verbatim by `GET /api/v1/page`, so the OKF frontmatter
+ *  would otherwise render in the reader as junk metadata lines — and, now that
+ *  MarkdownView renders thematic breaks, its `---` delimiters as horizontal
+ *  rules. No-op when there is no leading frontmatter. Only the reader strips it;
+ *  chat answers (which carry no frontmatter) go through MarkdownView untouched. */
+function stripFrontmatter(md: string): string {
+  return md.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+}
+
 /** One selected wiki page, derived from its `<type>/<name>` path. */
 interface SelectedPage {
   /** Path passed to `/api/v1/page` (relative to `wiki/`). */
@@ -121,7 +131,7 @@ export default function KbDetail() {
     getPage(id, path)
       .then((r) => {
         if (cancelled) return
-        setPage({ path, content: r.content })
+        setPage({ path, content: stripFrontmatter(r.content) })
         setPageError(null)
       })
       .catch((e) => {
