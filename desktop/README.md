@@ -84,12 +84,20 @@ deliberately — they are load-bearing for OpenKB's document formats.
 Full builds need, per platform: Rust + Cargo, Node + npm, a Python 3.10+ env,
 and on **Linux `webkit2gtk`** (`libwebkit2gtk-4.1-dev`) for the WebView.
 
+CI: `.github/workflows/desktop.yml` runs this pipeline on `workflow_dispatch`
+and `desktop-v*` tags (Linux only for now; the matrix has commented Windows /
+macOS entries).
+
 **Status:**
 - **API sidecar** (`packaging/`) — implemented and verified: the frozen slim
-  binary boots uvicorn and serves `GET /api/v1/kbs` → 200.
-- **Web UI** — builds (`npm run build` → `openkb/web/`) and renders end-to-end
-  against the sidecar (verified via headless Chromium screenshot).
-- **Tauri shell** (`src-tauri/`) — **compiles** (`cargo build`, with
-  `libwebkit2gtk-4.1-dev` installed). *Running* the window needs a display, so
-  the end-to-end "double-click → window → sidecar" flow must be exercised on a
-  desktop machine or a display-equipped CI runner (e.g. via `xvfb`).
+  binary boots uvicorn and serves both `GET /api/v1/kbs` and the web UI at `/`.
+- **Web UI** — builds (`npm run build` → `openkb/web/`), is bundled into the
+  sidecar freeze, and renders end-to-end (verified via headless Chromium).
+- **Tauri shell** (`src-tauri/`) — compiles and runs: verified under `xvfb`
+  (WebKitGTK) navigating to the sidecar and rendering the desktop TitleBar
+  (`window.__OPENKB_DESKTOP__` is injected by the shell).
+- **Installers** — `cargo tauri build` produces a Linux `.deb` and `.rpm`
+  (verified locally; each ~175 MB, bundling the app + frozen sidecar). The
+  `.AppImage` target additionally downloads `appimagetool` at build time, so it
+  needs unrestricted network (fine on GitHub runners; blocked in a locked-down
+  sandbox). Windows/macOS installers build once their matrix runners are added.
