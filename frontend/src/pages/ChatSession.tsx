@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate, useParams } from "react-router"
+import { useTranslation, Trans } from "react-i18next"
+import type { TFunction } from "i18next"
 import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText } from "lucide-react"
 import { toast } from "sonner"
 import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatInput"
@@ -58,13 +60,14 @@ function foldArtifactEvent(
   event: SseEvent,
   kind: "deck" | "skill",
   kb: string,
+  t: TFunction,
 ): ArtifactTurn {
   const data = (event?.data ?? {}) as Record<string, unknown>
   switch (event?.event) {
     case "start":
-      return { ...state, phase: "生成中（LLM 调用，可能需要数分钟）…" }
+      return { ...state, phase: t("chat:phase.generating") }
     case "error": {
-      const message = typeof data.message === "string" ? data.message : "生成失败"
+      const message = typeof data.message === "string" ? data.message : t("chat:artifact.failed")
       return { ...state, status: "error", error: message }
     }
     case "final": {
@@ -72,7 +75,7 @@ function foldArtifactEvent(
       const status = typeof data.status === "string" ? data.status : "done"
       const path = typeof data.path === "string" ? data.path : ""
       const artifact: Artifact = { type: kind, kb, name, status, path }
-      return { ...state, status: "done", phase: "完成", artifact }
+      return { ...state, status: "done", phase: t("chat:phase.done"), artifact }
     }
     case "done":
       // Terminal frame. Keep an error already recorded; otherwise settle "done".
@@ -103,17 +106,18 @@ interface PanelState {
 const CLOSED_PANEL: PanelState = { open: false, path: "", content: null, error: null, loading: false }
 
 function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Source) => void }) {
+  const { t } = useTranslation("chat")
   if (sources.length === 0) return null
   return (
     <div className="mt-3">
-      <div className="mb-1.5 text-[11px] font-semibold text-muted-foreground tracking-wide">参考来源</div>
+      <div className="mb-1.5 text-[11px] font-semibold text-muted-foreground tracking-wide">{t("sources.heading")}</div>
       <div className="flex flex-wrap gap-1.5">
         {sources.map((s, i) =>
           s.kind === "page" ? (
             <button
               key={`${s.path}-${i}`}
               onClick={() => onOpen(s)}
-              title="点击查看该 wiki 页面"
+              title={t("sources.pageTip")}
               className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md glass-2 border border-[hsl(var(--glass-border))] text-[11.5px] font-mono2 text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 transition duration-fast ease-out-apple active:scale-[0.97]"
             >
               <FileText className="w-3 h-3" />{s.label}
@@ -121,7 +125,7 @@ function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Sourc
           ) : (
             <span
               key={`${s.docName}-${i}`}
-              title="长文档内部内容（PageIndex），无独立页面可打开"
+              title={t("sources.internalTip")}
               className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md bg-muted/50 border border-[hsl(var(--glass-border))] text-[11.5px] font-mono2 text-muted-foreground"
             >
               <BookText className="w-3 h-3" />{s.label}
@@ -142,6 +146,7 @@ function AssistantMessage({
   onOpen: (s: Source) => void
   onOpenArtifact: (a: Artifact) => void
 }) {
+  const { t } = useTranslation("chat")
   const streaming = !turn.done
   const showThinking = streaming && !turn.answer && !turn.error
   return (
@@ -156,9 +161,9 @@ function AssistantMessage({
             <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-brand" />
             {turn.reading
               ? (turn.reading.kind === "page"
-                  ? <>正在查阅 <span className="font-mono2 text-foreground">{turn.reading.label}</span></>
-                  : <>正在读取长文档 <span className="font-mono2 text-foreground">{turn.reading.label}</span></>)
-              : <>正在思考…</>}
+                  ? <Trans t={t} i18nKey="chat:reading.page" values={{ label: turn.reading.label }} components={[<span className="font-mono2 text-foreground" />]} />
+                  : <Trans t={t} i18nKey="chat:reading.doc" values={{ label: turn.reading.label }} components={[<span className="font-mono2 text-foreground" />]} />)
+              : <>{t("chat:reading.thinking")}</>}
           </div>
         )}
 
@@ -175,7 +180,7 @@ function AssistantMessage({
         {/* 错误 */}
         {turn.error && (
           <div className="mt-1 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
-            请求失败：{turn.error}
+            {t("chat:requestError", { error: turn.error })}
           </div>
         )}
 
@@ -198,7 +203,7 @@ function AssistantMessage({
         {/* 沉淀提示（query 的 saved_path） */}
         {turn.savedPath && (
           <div className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/70 dark:border-emerald-500/25 rounded-lg px-2.5 py-1.5">
-            <FolderInput className="w-3.5 h-3.5" />已保存到 {turn.savedPath}
+            <FolderInput className="w-3.5 h-3.5" />{t("chat:savedTo", { path: turn.savedPath })}
           </div>
         )}
       </div>
@@ -208,6 +213,7 @@ function AssistantMessage({
 
 /** Renders a generator turn: a live status strip, then the finished artifact. */
 function ArtifactMessage({ art, onOpen }: { art: ArtifactTurn; onOpen: (a: Artifact) => void }) {
+  const { t } = useTranslation("chat")
   return (
     <div className="flex gap-3 anim-fade-up">
       <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
@@ -222,7 +228,7 @@ function ArtifactMessage({ art, onOpen }: { art: ArtifactTurn; onOpen: (a: Artif
         )}
         {art.status === "error" && (
           <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
-            {art.error ?? "生成失败"}
+            {art.error ?? t("chat:artifact.failed")}
           </div>
         )}
         {art.artifact && <ArtifactCard artifact={art.artifact} onOpen={onOpen} />}
@@ -232,6 +238,7 @@ function ArtifactMessage({ art, onOpen }: { art: ArtifactTurn; onOpen: (a: Artif
 }
 
 export default function ChatSession() {
+  const { t } = useTranslation(["chat", "common"])
   const { id } = useParams()
   const location = useLocation() as { state?: NavState }
   const navigate = useNavigate()
@@ -289,16 +296,16 @@ export default function ChatSession() {
     const artId = nid()
     setMsgs((m) => [
       ...m,
-      { id: artId, role: "artifact", art: { kind, status: "streaming", phase: "准备中…", error: null, artifact: null } },
+      { id: artId, role: "artifact", art: { kind, status: "streaming", phase: t("chat:phase.preparing"), error: null, artifact: null } },
     ])
     const patch = (fn: (a: ArtifactTurn) => ArtifactTurn) =>
       setMsgs((m) => m.map((x) => (x.id === artId && x.role === "artifact" ? { ...x, art: fn(x.art) } : x)))
 
     try {
       if (kind === "graph") {
-        patch((a) => ({ ...a, phase: "构建概念图谱…" }))
+        patch((a) => ({ ...a, phase: t("chat:phase.buildingGraph") }))
         const graph = await getGraph(activeKb)
-        patch((a) => ({ ...a, status: "done", phase: "完成", artifact: { type: "graph", kb: activeKb, graph } }))
+        patch((a) => ({ ...a, status: "done", phase: t("chat:phase.done"), artifact: { type: "graph", kb: activeKb, graph } }))
         return
       }
       // deck / skill: first token is the artifact name (kebab-case slug), the
@@ -307,10 +314,7 @@ export default function ChatSession() {
       const name = parts[0] ?? ""
       const intent = parts.slice(1).join(" ").trim()
       if (!name || !intent) {
-        const usage =
-          kind === "deck"
-            ? "用法：/deck <名称> <意图>，例如 “retrieval-intro 面向工程师介绍无向量检索”"
-            : "用法：/skill <名称> <意图>，例如 “pageindex-expert 长文档检索问答专家”"
+        const usage = kind === "deck" ? t("chat:usage.deck") : t("chat:usage.skill")
         patch((a) => ({ ...a, status: "error", error: usage }))
         return
       }
@@ -318,12 +322,12 @@ export default function ChatSession() {
         ? runDeckCommand(activeKb, name, intent)
         : runSkillCommand(activeKb, name, intent)
       for await (const event of stream) {
-        patch((a) => foldArtifactEvent(a, event, kind, activeKb))
+        patch((a) => foldArtifactEvent(a, event, kind, activeKb, t))
       }
     } catch (e) {
       const message = errMsg(e)
       patch((a) => ({ ...a, status: a.status === "done" ? a.status : "error", error: a.error ?? message }))
-      toast.error(`生成失败：${message}`)
+      toast.error(t("chat:genErrorToast", { error: message }))
     } finally {
       // A stream that ended without a terminal `final`/`error` still settles.
       patch((a) => (a.status === "streaming" ? { ...a, status: a.error ? "error" : "done" } : a))
@@ -362,8 +366,8 @@ export default function ChatSession() {
       }
     } catch (e) {
       const message = errMsg(e)
-      patch((t) => ({ ...t, reading: null, error: t.error ?? message, done: true }))
-      toast.error(`请求失败：${message}`)
+      patch((prev) => ({ ...prev, reading: null, error: prev.error ?? message, done: true }))
+      toast.error(t("chat:requestErrorToast", { error: message }))
     } finally {
       patch((t) => ({ ...t, reading: null, done: true }))
       setRunning(false)
@@ -413,7 +417,7 @@ export default function ChatSession() {
       }
       if (cancelled) return
       if (!resolvedKb) {
-        toast.error("无法定位该会话所属的知识库，请从首页进入")
+        toast.error(t("chat:errors.noKb"))
         return
       }
       setKb(resolvedKb)
@@ -437,7 +441,7 @@ export default function ChatSession() {
         }
         setMsgs(restored)
       } catch (e) {
-        if (!cancelled) toast.error(`加载会话失败：${errMsg(e)}`)
+        if (!cancelled) toast.error(t("chat:errors.loadSession", { error: errMsg(e) }))
       }
     }
     void restore()
@@ -460,7 +464,7 @@ export default function ChatSession() {
       // tool_result event to confirm it — so a click can 404. Fail gracefully.
       const message = errMsg(e)
       setPanel((p) => ({ ...p, loading: false, error: message }))
-      toast.error(`无法打开来源 ${s.path}：${message}`)
+      toast.error(t("chat:errors.openSource", { path: s.path, error: message }))
     }
   }
 
@@ -472,7 +476,7 @@ export default function ChatSession() {
   }
 
   const firstUser = msgs.find((m) => m.role === "user") as Extract<Msg, { role: "user" }> | undefined
-  const title = firstUser?.text.slice(0, 24) || "新会话"
+  const title = firstUser?.text.slice(0, 24) || t("chat:newSession")
 
   return (
     <div className="h-full flex">
@@ -523,7 +527,7 @@ export default function ChatSession() {
             onKbChange={setKb}
             onSend={send}
             disabled={running}
-            placeholder="继续追问，或输入 / 使用命令…"
+            placeholder={t("chat:inputPlaceholder")}
           />
         </div>
       </div>
@@ -537,12 +541,12 @@ export default function ChatSession() {
           <div className="px-4 pb-8">
             {panel.loading && (
               <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />加载中…
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />{t("common:loading")}
               </div>
             )}
             {panel.error && (
               <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
-                页面加载失败：{panel.error}
+                {t("common:pageLoadError", { error: panel.error })}
               </div>
             )}
             {panel.content !== null && <MarkdownView source={panel.content} />}

@@ -1,0 +1,49 @@
+{
+  "phase": {
+    "generating": "生成中（LLM 调用，可能需要数分钟）…",
+    "done": "完成",
+    "preparing": "准备中…",
+    "buildingGraph": "构建概念图谱…"
+  },
+  "artifact": { "failed": "生成失败" },
+  "sources": {
+    "heading": "参考来源",
+    "pageTip": "点击查看该 wiki 页面",
+    "internalTip": "长文档内部内容（PageIndex），无独立页面可打开"
+  },
+  "reading": {
+    "page": "正在查阅 <0>{{label}}</0>",
+    "doc": "正在读取长文档 <0>{{label}}</0>",
+    "thinking": "正在思考…"
+  },
+  "requestError": "请求失败：{{error}}",
+  "savedTo": "已保存到 {{path}}",
+  "usage": {
+    "deck": "用法：/deck <名称> <意图>，例如 “retrieval-intro 面向工程师介绍无向量检索”",
+    "skill": "用法：/skill <名称> <意图>，例如 “pageindex-expert 长文档检索问答专家”"
+  },
+  "genErrorToast": "生成失败：{{error}}",
+  "requestErrorToast": "请求失败：{{error}}",
+  "errors": {
+    "noKb": "无法定位该会话所属的知识库，请从首页进入",
+    "loadSession": "加载会话失败：{{error}}",
+    "openSource": "无法打开来源 {{path}}：{{error}}"
+  },
+  "newSession": "新会话",
+  "inputPlaceholder": "继续追问，或输入 / 使用命令…",
+  "commands": {
+    "paletteHeading": "命令 · 生成器",
+    "deck": { "label": "生成幻灯片", "desc": "把知识编译成单文件 HTML 演示" },
+    "skill": { "label": "蒸馏技能", "desc": "生成可安装的 Agent Skill" },
+    "visualize": { "label": "知识图谱", "desc": "生成交互式概念图谱" },
+    "compile": { "label": "编译新知识", "desc": "扫描新文档并编译进 wiki" }
+  },
+  "input": {
+    "cmdPlaceholder": "{{label}}：描述你的意图…",
+    "defaultPlaceholder": "向你的知识库提问，或输入 / 使用命令…",
+    "selectKb": "选择知识库",
+    "noKbs": "暂无知识库",
+    "current": "当前",
+    "hint": "输入 <0>/</0> 使用命令"
+  }
+}

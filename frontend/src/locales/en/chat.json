@@ -1,0 +1,49 @@
+{
+  "phase": {
+    "generating": "Generating (LLM call, may take a few minutes)…",
+    "done": "Done",
+    "preparing": "Preparing…",
+    "buildingGraph": "Building the concept graph…"
+  },
+  "artifact": { "failed": "Generation failed" },
+  "sources": {
+    "heading": "Sources",
+    "pageTip": "Click to view this wiki page",
+    "internalTip": "Internal content of a long document (PageIndex); no standalone page to open"
+  },
+  "reading": {
+    "page": "Reading <0>{{label}}</0>",
+    "doc": "Reading long document <0>{{label}}</0>",
+    "thinking": "Thinking…"
+  },
+  "requestError": "Request failed: {{error}}",
+  "savedTo": "Saved to {{path}}",
+  "usage": {
+    "deck": "Usage: /deck <name> <intent>, e.g. “retrieval-intro introduce vectorless retrieval to engineers”",
+    "skill": "Usage: /skill <name> <intent>, e.g. “pageindex-expert long-document retrieval Q&A expert”"
+  },
+  "genErrorToast": "Generation failed: {{error}}",
+  "requestErrorToast": "Request failed: {{error}}",
+  "errors": {
+    "noKb": "Couldn't determine which knowledge base this session belongs to; please enter from the home page",
+    "loadSession": "Failed to load session: {{error}}",
+    "openSource": "Couldn't open source {{path}}: {{error}}"
+  },
+  "newSession": "New session",
+  "inputPlaceholder": "Ask a follow-up, or type / for commands…",
+  "commands": {
+    "paletteHeading": "Commands · generators",
+    "deck": { "label": "Generate slides", "desc": "Compile knowledge into a single-file HTML deck" },
+    "skill": { "label": "Distill a skill", "desc": "Generate an installable Agent Skill" },
+    "visualize": { "label": "Knowledge graph", "desc": "Generate an interactive concept graph" },
+    "compile": { "label": "Compile new knowledge", "desc": "Scan new documents and compile them into the wiki" }
+  },
+  "input": {
+    "cmdPlaceholder": "{{label}}: describe your intent…",
+    "defaultPlaceholder": "Ask your knowledge base, or type / for commands…",
+    "selectKb": "Select a knowledge base",
+    "noKbs": "No knowledge bases yet",
+    "current": "Current",
+    "hint": "Type <0>/</0> for commands"
+  }
+}
