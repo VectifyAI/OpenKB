@@ -1,0 +1,104 @@
+name: Desktop build
+
+# Builds the OpenKB desktop app (Tauri shell + frozen openkb-api sidecar).
+#
+# Neither half cross-compiles — PyInstaller freezes for the host OS/arch and
+# Tauri links the platform WebView — so each target is its own runner. This
+# workflow starts with Linux only; add the Windows / macOS(arm+intel) matrix
+# entries below once the Linux path is proven (see the commented block).
+#
+# Ordering within a job matters: build the web UI FIRST (npm run build →
+# openkb/web), THEN freeze the sidecar (build_sidecar.sh bundles openkb/web),
+# THEN `tauri build` (bundles the sidecar dir as a resource).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux
+          # Added once Linux is proven (each needs its own sidecar freeze):
+          # - os: windows-latest   # -> .msi / .exe (NSIS)
+          #   target: windows
+          # - os: macos-14         # -> .dmg (aarch64, Apple Silicon)
+          #   target: macos-arm64
+          # - os: macos-13         # -> .dmg (x86_64, Intel)
+          #   target: macos-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # v4.1.7
+        with:
+          persist-credentials: false
+
+      # Tauri's Linux WebView + bundler dependencies (webkit2gtk 4.1, appindicator,
+      # rsvg for icon rendering). No-op on non-Linux targets.
+      - name: Install Linux WebView deps
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            build-essential curl wget file libxdo-dev libssl-dev
+
+      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3  # v5.2.0
+        with:
+          python-version: "3.12"
+
+      # openkb.api (the sidecar) + PyInstaller. PyInstaller is a build tool, not
+      # a runtime dep, so it's installed ad-hoc here rather than pinned in
+      # pyproject.
+      - name: Install openkb + build tools
+        run: pip install -e ".[api]" pyinstaller
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: "20"
+
+      # MUST run before the sidecar freeze — build_sidecar.sh bundles openkb/web.
+      - name: Build web UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Freeze API sidecar
+        run: PYTHON="$(which python)" bash desktop/packaging/build_sidecar.sh
+
+      # ubuntu runners ship a stable Rust toolchain, so no toolchain action is
+      # needed. tauri-cli is installed from crates.io (locked) rather than via a
+      # third-party action, to keep the supply chain explicit and pin-friendly.
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Tauri bundle
+        working-directory: desktop/src-tauri
+        run: cargo tauri build
+
+      # TODO: pin to a SHA to match the repo's action-pinning policy.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: openkb-desktop-${{ matrix.target }}
+          path: |
+            desktop/src-tauri/target/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/release/bundle/**/*.deb
+            desktop/src-tauri/target/release/bundle/**/*.rpm
+            desktop/src-tauri/target/release/bundle/**/*.dmg
+            desktop/src-tauri/target/release/bundle/**/*.msi
+            desktop/src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: warn
