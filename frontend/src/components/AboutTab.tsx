@@ -5,7 +5,6 @@ import { getMeta } from '@/api/meta'
 
 // Labels resolve at render time via `t(\`about.links.${id}\`)`; href/icon are code.
 const LINKS: { id: string; href: string; icon: typeof Globe }[] = [
-  { id: 'site', href: 'https://openkb.ai', icon: Globe },
   { id: 'repo', href: 'https://github.com/VectifyAI/OpenKB', icon: Github },
   { id: 'pageindex', href: 'https://github.com/VectifyAI/PageIndex', icon: Github },
   { id: 'docs', href: 'https://docs.pageindex.ai', icon: BookOpen },

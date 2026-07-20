@@ -26,7 +26,6 @@
   },
   "about": {
     "links": {
-      "site": "Website openkb.ai",
       "repo": "GitHub repo",
       "pageindex": "PageIndex (retrieval engine)",
       "docs": "Docs docs.pageindex.ai",

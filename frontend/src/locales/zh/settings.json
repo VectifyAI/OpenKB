@@ -26,7 +26,6 @@
   },
   "about": {
     "links": {
-      "site": "官网 openkb.ai",
       "repo": "GitHub 仓库",
       "pageindex": "PageIndex（底层检索引擎）",
       "docs": "文档 docs.pageindex.ai",
