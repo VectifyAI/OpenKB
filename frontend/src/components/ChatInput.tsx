@@ -40,13 +40,12 @@ interface Props {
   onKbChange?: (id: string) => void
   onSend: (text: string, command: SlashCommand | null) => void
   autoFocus?: boolean
-  large?: boolean
   placeholder?: string
   disabled?: boolean
 }
 
 export default function ChatInput({
-  kbId, onKbChange, onSend, autoFocus, large, placeholder, disabled,
+  kbId, onKbChange, onSend, autoFocus, placeholder, disabled,
 }: Props) {
   const [kbs, setKbs] = useState<KbSummary[]>([])
   const [value, setValue] = useState("")
@@ -158,7 +157,7 @@ export default function ChatInput({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
           disabled={disabled}
-          rows={large ? 3 : 2}
+          rows={2}
           placeholder={placeholder ?? (cmd ? `${cmd.label}：描述你的意图…` : "向你的知识库提问，或输入 / 使用命令…")}
           className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
         />

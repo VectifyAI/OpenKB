@@ -122,8 +122,8 @@ export default function Home() {
 
       {/* 底部：输入框（钉底，斜杠菜单向上弹有干净空间）+ tagline footer */}
       <div className="shrink-0 border-t border-[hsl(var(--glass-border))] glass-2">
-        <div className="max-w-[1100px] mx-auto px-6 lg:px-8 pt-3 pb-2">
-          <ChatInput kbId={kbId} onKbChange={setKbId} onSend={send} autoFocus large />
+        <div className="max-w-[1100px] mx-auto px-6 lg:px-8 pt-2.5 pb-2">
+          <ChatInput kbId={kbId} onKbChange={setKbId} onSend={send} autoFocus />
           <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
             由 OpenKB 驱动 · 你的知识始终是纯 Markdown，归你所有
           </p>
