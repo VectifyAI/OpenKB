@@ -1,0 +1,34 @@
+{
+  "tabs": {
+    "model": "模型",
+    "general": "通用",
+    "conn": "数据源连接",
+    "about": "关于"
+  },
+  "savedToast": "全局默认已保存",
+  "saveChanges": "保存更改",
+  "unsaved": "有未保存的更改",
+  "modelSection": {
+    "title": "模型与阈值",
+    "desc": "全局默认模型与阈值（写入 ~/.config/openkb/global.yaml；各知识库可在其设置中继承或覆盖）"
+  },
+  "general": {
+    "langDesc": "写入编译 prompt 的输出语言，例如 en / 中文 / 日本語",
+    "footer": "OpenKB Studio · 由 PageIndex 提供无向量化检索 · wiki 与你的数据始终留在本地"
+  },
+  "conn": {
+    "note": "云端数据源连接器（OAuth / S3）开发中，尚不可用；当前请在知识库详情页手动上传本地文件。想要某个连接器？点下方卡片去 GitHub 投票，帮我们排优先级。"
+  },
+  "about": {
+    "links": {
+      "site": "官网 openkb.ai",
+      "repo": "GitHub 仓库",
+      "pageindex": "PageIndex（底层检索引擎）",
+      "docs": "文档 docs.pageindex.ai",
+      "company": "Vectify AI（公司）"
+    },
+    "blurb": "把原始文档编译成结构化、互相链接的 wiki 式知识库，由 PageIndex 的无向量、基于推理的长文档检索驱动。",
+    "byline": "由 Vectify AI 打造 · 产品线 PageIndex",
+    "latestRelease": "查看最新版本 →"
+  }
+}

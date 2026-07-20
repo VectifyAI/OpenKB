@@ -1,0 +1,34 @@
+{
+  "tabs": {
+    "model": "Model",
+    "general": "General",
+    "conn": "Data sources",
+    "about": "About"
+  },
+  "savedToast": "Global defaults saved",
+  "saveChanges": "Save changes",
+  "unsaved": "Unsaved changes",
+  "modelSection": {
+    "title": "Model & threshold",
+    "desc": "Global default model & threshold (written to ~/.config/openkb/global.yaml; each KB can inherit or override in its own settings)"
+  },
+  "general": {
+    "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語",
+    "footer": "OpenKB Studio · vectorless retrieval by PageIndex · your wiki and data always stay local"
+  },
+  "conn": {
+    "note": "Cloud data-source connectors (OAuth / S3) are in development and not yet available; for now, upload local files from the KB detail page. Want a connector? Click a card below to vote on GitHub and help us prioritize."
+  },
+  "about": {
+    "links": {
+      "site": "Website openkb.ai",
+      "repo": "GitHub repo",
+      "pageindex": "PageIndex (retrieval engine)",
+      "docs": "Docs docs.pageindex.ai",
+      "company": "Vectify AI (company)"
+    },
+    "blurb": "Compile raw documents into a structured, cross-linked wiki-style knowledge base, powered by PageIndex's vectorless, reasoning-based long-document retrieval.",
+    "byline": "Built by Vectify AI · part of the PageIndex product line",
+    "latestRelease": "See the latest release →"
+  }
+}

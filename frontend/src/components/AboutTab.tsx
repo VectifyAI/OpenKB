@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { BookOpen, ExternalLink, Github, Globe, Rocket } from 'lucide-react'
 import { getMeta } from '@/api/meta'
 
-const LINKS: { label: string; href: string; icon: typeof Globe }[] = [
-  { label: '官网 openkb.ai', href: 'https://openkb.ai', icon: Globe },
-  { label: 'GitHub 仓库', href: 'https://github.com/VectifyAI/OpenKB', icon: Github },
-  { label: 'PageIndex（底层检索引擎）', href: 'https://github.com/VectifyAI/PageIndex', icon: Github },
-  { label: '文档 docs.pageindex.ai', href: 'https://docs.pageindex.ai', icon: BookOpen },
-  { label: 'Vectify AI（公司）', href: 'https://vectify.ai', icon: Globe },
+// Labels resolve at render time via `t(\`about.links.${id}\`)`; href/icon are code.
+const LINKS: { id: string; href: string; icon: typeof Globe }[] = [
+  { id: 'site', href: 'https://openkb.ai', icon: Globe },
+  { id: 'repo', href: 'https://github.com/VectifyAI/OpenKB', icon: Github },
+  { id: 'pageindex', href: 'https://github.com/VectifyAI/PageIndex', icon: Github },
+  { id: 'docs', href: 'https://docs.pageindex.ai', icon: BookOpen },
+  { id: 'company', href: 'https://vectify.ai', icon: Globe },
 ]
 
 export default function AboutTab() {
+  const { t } = useTranslation('settings')
   const [version, setVersion] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -33,9 +36,9 @@ export default function AboutTab() {
       </div>
 
       <p className="text-[13.5px] leading-relaxed text-muted-foreground">
-        把原始文档编译成结构化、互相链接的 wiki 式知识库，由 PageIndex 的无向量、基于推理的长文档检索驱动。
+        {t('about.blurb')}
       </p>
-      <p className="text-[12.5px] text-muted-foreground">由 Vectify AI 打造 · 产品线 PageIndex</p>
+      <p className="text-[12.5px] text-muted-foreground">{t('about.byline')}</p>
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {LINKS.map((l) => (
@@ -47,7 +50,7 @@ export default function AboutTab() {
             className="group inline-flex items-center gap-2 rounded-apple-md border border-[hsl(var(--glass-border))] glass-2 px-3 py-2 text-[13px] text-foreground transition hover:shadow-glass"
           >
             <l.icon className="w-4 h-4 shrink-0 text-muted-foreground transition-colors group-hover:text-accent-brand" />
-            <span className="truncate">{l.label}</span>
+            <span className="truncate">{t(`about.links.${l.id}`)}</span>
             <ExternalLink className="ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
           </a>
         ))}
@@ -59,7 +62,7 @@ export default function AboutTab() {
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-accent-brand hover:underline"
       >
-        <Rocket className="w-4 h-4" /> 查看最新版本 →
+        <Rocket className="w-4 h-4" /> {t('about.latestRelease')}
       </a>
     </div>
   )
