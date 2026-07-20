@@ -1,0 +1,46 @@
+{
+  "settingsButton": "知识库设置",
+  "loadError": "加载失败：{{error}}",
+  "wikiNote": "wiki/ 是本机的纯 Markdown 目录，数据始终归你",
+  "reader": {
+    "empty": "此知识库暂无已编译页面",
+    "selectPage": "选择左侧页面以查看内容"
+  },
+  "upload": {
+    "added": "新增 {{count}}",
+    "skipped": "跳过 {{count}}",
+    "failed": "失败 {{count}}",
+    "errorToast": "上传失败：{{summary}}",
+    "reasonSuffix": "（{{reason}}）",
+    "partialToast": "部分成功：{{summary}}",
+    "successToast": "上传完成：{{summary}}",
+    "existsToast": "文档已存在，未新增：{{summary}}",
+    "note": "上传的文档进入本地 raw/ 并自动编译进知识库；文件仅保存在本机",
+    "inProgress": "正在上传并编译…",
+    "dropzone": "拖放文件到此处，或点击选择",
+    "dropzoneHint": "支持 PDF / Word / Markdown / 文本等，可多选"
+  },
+  "docs": {
+    "heading": "已上传文档 · {{count}}",
+    "empty": "暂无文档 · 上传后会自动编译进知识库",
+    "pages_one": "{{count}} 页",
+    "pages_other": "{{count}} 页"
+  },
+  "remote": {
+    "heading": "远程数据源",
+    "note": "云端连接器开发中，尚不可用 · 想要它？点卡片去 GitHub 投票"
+  },
+  "overview": {
+    "index": { "label": "索引", "caption": "wiki 根" },
+    "concepts": { "label": "概念", "caption": "已互链" },
+    "entities": { "label": "实体", "caption": "人物 · 组织" },
+    "summaries": { "label": "摘要", "caption": "按文档" },
+    "reports": { "label": "报告", "caption": "检查 · 重编译" },
+    "documents": { "label": "文档", "caption": "已编译文档" }
+  },
+  "pageList": {
+    "empty": "此类型暂无页面",
+    "prev": "上一页",
+    "next": "下一页"
+  }
+}

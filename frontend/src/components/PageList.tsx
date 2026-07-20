@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { FileText } from "lucide-react"
 import type { KbInventory } from "@/api/wiki"
 import { cn } from "@/lib/utils"
@@ -30,6 +31,7 @@ export default function PageList({
   activePath: string | null
   onOpen: (path: string) => void
 }) {
+  const { t } = useTranslation("kb")
   const [page, setPage] = useState(0)
 
   const names = useMemo<string[]>(() => (inv ? (inv[type] ?? []) : []), [inv, type])
@@ -43,7 +45,7 @@ export default function PageList({
       <div className="flex-1 min-h-0 overflow-y-auto scroll-edge-top px-2 pt-2 pb-2">
         {slice.length === 0 ? (
           <div className="text-[12px] text-muted-foreground px-2 py-6 text-center">
-            此类型暂无页面
+            {t("pageList.empty")}
           </div>
         ) : (
           slice.map((name) => {
@@ -74,7 +76,7 @@ export default function PageList({
             onClick={() => setPage(clampedPage - 1)}
             className="disabled:opacity-40 hover:text-foreground"
           >
-            上一页
+            {t("pageList.prev")}
           </button>
           <span className="tabular-nums">
             {clampedPage + 1} / {pageCount}
@@ -84,7 +86,7 @@ export default function PageList({
             onClick={() => setPage(clampedPage + 1)}
             className="disabled:opacity-40 hover:text-foreground"
           >
-            下一页
+            {t("pageList.next")}
           </button>
         </div>
       )}

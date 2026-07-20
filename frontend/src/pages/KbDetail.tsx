@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useParams } from 'react-router'
+import { useTranslation } from 'react-i18next'
 import { motion, useReducedMotion } from 'motion/react'
 import { FileText, Loader2, Upload, RefreshCw, Settings2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -46,6 +47,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export default function KbDetail() {
   const { id = '' } = useParams()
+  const { t } = useTranslation(['kb', 'common'])
 
   const [inv, setInv] = useState<KbInventory | null>(null)
   const [invError, setInvError] = useState<string | null>(null)
@@ -150,24 +152,24 @@ export default function KbDetail() {
         // a non-throwing result does NOT mean success — branch on the real
         // added/failed/skipped counts instead of blindly reporting success.
         const res = await uploadDocuments(id, files)
-        const parts = [`新增 ${res.added_count}`]
-        if (res.skipped_count) parts.push(`跳过 ${res.skipped_count}`)
-        if (res.failed_count) parts.push(`失败 ${res.failed_count}`)
+        const parts = [t('kb:upload.added', { count: res.added_count })]
+        if (res.skipped_count) parts.push(t('kb:upload.skipped', { count: res.skipped_count }))
+        if (res.failed_count) parts.push(t('kb:upload.failed', { count: res.failed_count }))
         const summary = parts.join(' · ')
         if (res.added_count === 0 && res.failed_count > 0) {
           // Every file failed — surface the first failure's message so the
           // user learns WHY (e.g. compile error / missing LLM API key).
           const reason = res.files.find((f) => f.status === 'failed')?.message
-          toast.error(`上传失败：${summary}${reason ? `（${reason}）` : ''}`)
+          toast.error(t('kb:upload.errorToast', { summary }) + (reason ? t('kb:upload.reasonSuffix', { reason }) : ''))
         } else if (res.failed_count > 0) {
           // Some added, some failed — not a clean success.
-          toast.warning(`部分成功：${summary}`)
+          toast.warning(t('kb:upload.partialToast', { summary }))
         } else if (res.added_count > 0) {
-          toast.success(`上传完成：${summary}`)
+          toast.success(t('kb:upload.successToast', { summary }))
         } else {
           // Nothing added or failed (all skipped duplicates) — neutral, not
           // an error and not a "新增" success.
-          toast.info(`文档已存在，未新增：${summary}`)
+          toast.info(t('kb:upload.existsToast', { summary }))
         }
         // Refresh regardless of outcome: a failed compile may still have
         // written a raw file, and the user needs to see current state.
@@ -213,8 +215,8 @@ export default function KbDetail() {
           <h1 className="text-[19px] font-extrabold tracking-tight text-foreground">{id}</h1>
           <button
             onClick={() => setSettingsOpen(true)}
-            title="知识库设置"
-            aria-label="知识库设置"
+            title={t('kb:settingsButton')}
+            aria-label={t('kb:settingsButton')}
             className="ml-auto grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Settings2 className="w-4 h-4" />
@@ -258,17 +260,17 @@ export default function KbDetail() {
             <div className="w-[300px] shrink-0 border-r border-[hsl(var(--glass-border))] glass-2 flex flex-col min-h-0">
               {invError ? (
                 <div className="m-2 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12px] text-red-600 dark:text-red-400">
-                  加载失败：{invError}
+                  {t('kb:loadError', { error: invError })}
                 </div>
               ) : !inv ? (
-                <div className="px-4 py-3 text-[12px] text-muted-foreground">加载中…</div>
+                <div className="px-4 py-3 text-[12px] text-muted-foreground">{t('common:loading')}</div>
               ) : (
                 <div className="flex-1 min-h-0">
                   <PageList key={section} inv={inv} type={section} activePath={selected?.path ?? null} onOpen={openPath} />
                 </div>
               )}
               <div className="shrink-0 m-2 mt-1 rounded-lg border border-dashed border-[hsl(var(--glass-border))] px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
-                wiki/ 是本机的纯 Markdown 目录，数据始终归你
+                {t('kb:wikiNote')}
               </div>
             </div>
             <Reader selected={selected} page={page} pageError={pageError} selectedPath={selectedPath} hasPages={hasPages} inv={inv} onWikiLink={onWikiLink} />
@@ -304,13 +306,14 @@ interface ReaderProps {
  *  Shared verbatim by `Reader` (浏览) and `IndexReader` (Index, full width) —
  *  they differ only in their outer scroll container. */
 function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, onWikiLink }: ReaderProps) {
+  const { t } = useTranslation(['kb', 'common'])
   const pageReady = page && page.path === selectedPath
   const pageFailed = pageError && pageError.path === selectedPath
 
   if (!selected) {
     return (
       <div className="h-full grid place-items-center text-[13px] text-muted-foreground">
-        {inv && !hasPages ? '此知识库暂无已编译页面' : '选择左侧页面以查看内容'}
+        {inv && !hasPages ? t('kb:reader.empty') : t('kb:reader.selectPage')}
       </div>
     )
   }
@@ -325,13 +328,13 @@ function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, on
       </div>
       {pageFailed ? (
         <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
-          页面加载失败：{pageError.message}
+          {t('common:pageLoadError', { error: pageError.message })}
         </div>
       ) : pageReady ? (
         <MarkdownView source={page.content} onWikiLink={onWikiLink} />
       ) : (
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />加载中…
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />{t('common:loading')}
         </div>
       )}
     </div>
@@ -377,11 +380,12 @@ function DocumentsPane({
   onUpload: (files: File[]) => void
   onRefresh: () => void
 }) {
+  const { t } = useTranslation(['kb', 'common'])
   return (
     <div className="h-full overflow-y-auto scroll-edge-top">
       <div className="max-w-[1040px] mx-auto px-6 lg:px-8 py-6">
         <p className="text-[13px] text-muted-foreground">
-          上传的文档进入本地 raw/ 并自动编译进知识库；文件仅保存在本机
+          {t('kb:upload.note')}
         </p>
 
         {/* 上传拖放区（真实 /api/v1/add） */}
@@ -417,36 +421,36 @@ function DocumentsPane({
           />
           {uploading ? (
             <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />正在上传并编译…
+              <Loader2 className="w-4 h-4 animate-spin" />{t('kb:upload.inProgress')}
             </div>
           ) : (
             <>
               <Upload className="w-6 h-6 text-muted-foreground" />
-              <div className="mt-2 text-[13.5px] font-medium text-foreground">拖放文件到此处，或点击选择</div>
-              <div className="mt-1 text-[12px] text-muted-foreground">支持 PDF / Word / Markdown / 文本等，可多选</div>
+              <div className="mt-2 text-[13.5px] font-medium text-foreground">{t('kb:upload.dropzone')}</div>
+              <div className="mt-1 text-[12px] text-muted-foreground">{t('kb:upload.dropzoneHint')}</div>
             </>
           )}
         </div>
 
         {/* 已上传文档（真实 /api/v1/list） */}
         <div className="mt-6 flex items-center justify-between">
-          <h2 className="text-[13.5px] font-semibold text-foreground">已上传文档 · {documents.length}</h2>
+          <h2 className="text-[13.5px] font-semibold text-foreground">{t('kb:docs.heading', { count: documents.length })}</h2>
           <button
             onClick={() => onRefresh()}
             className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg border border-[hsl(var(--glass-border))] text-[12px] font-medium text-muted-foreground hover:bg-accent transition-colors"
           >
-            <RefreshCw className="w-3 h-3" />刷新
+            <RefreshCw className="w-3 h-3" />{t('common:actions.refresh')}
           </button>
         </div>
         <div className="mt-3 space-y-2">
           {invError && (
             <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12px] text-red-600 dark:text-red-400">
-              加载失败：{invError}
+              {t('kb:loadError', { error: invError })}
             </div>
           )}
           {!invError && documents.length === 0 && (
             <div className="rounded-2xl border border-dashed border-[hsl(var(--glass-border))] py-10 text-center text-[13px] text-muted-foreground">
-              暂无文档 · 上传后会自动编译进知识库
+              {t('kb:docs.empty')}
             </div>
           )}
           {documents.map((d, i) => (
@@ -464,7 +468,7 @@ function DocumentsPane({
                 <div className="text-[13.5px] font-medium text-foreground truncate">{d.name}</div>
                 <div className="text-[12px] text-muted-foreground mt-0.5">
                   {d.display_type}
-                  {d.pages != null && <> · {d.pages} 页</>}
+                  {d.pages != null && <> · {t('kb:docs.pages', { count: d.pages })}</>}
                 </div>
               </div>
               {d.hash && (
@@ -477,9 +481,9 @@ function DocumentsPane({
         </div>
 
         {/* 远程连接器：无后端。改为 GitHub 需求投票，绝不伪造已连接状态 */}
-        <h2 className="mt-8 text-[13.5px] font-semibold text-foreground">远程数据源</h2>
+        <h2 className="mt-8 text-[13.5px] font-semibold text-foreground">{t('kb:remote.heading')}</h2>
         <p className="mt-1 text-[12px] text-muted-foreground">
-          云端连接器开发中，尚不可用 · 想要它？点卡片去 GitHub 投票
+          {t('kb:remote.note')}
         </p>
         <div className="mt-3">
           <ConnectorCards />
