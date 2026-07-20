@@ -16,6 +16,9 @@
     "doc": "Reading long document <0>{{label}}</0>",
     "thinking": "Thinking…"
   },
+  "step": {
+    "read": "Read <0>{{path}}</0>"
+  },
   "requestError": "Request failed: {{error}}",
   "savedTo": "Saved to {{path}}",
   "usage": {
@@ -35,8 +38,7 @@
     "paletteHeading": "Commands · generators",
     "deck": { "label": "Generate slides", "desc": "Compile knowledge into a single-file HTML deck" },
     "skill": { "label": "Distill a skill", "desc": "Generate an installable Agent Skill" },
-    "visualize": { "label": "Knowledge graph", "desc": "Generate an interactive concept graph" },
-    "compile": { "label": "Compile new knowledge", "desc": "Scan new documents and compile them into the wiki" }
+    "visualize": { "label": "Knowledge graph", "desc": "Generate an interactive concept graph" }
   },
   "input": {
     "cmdPlaceholder": "{{label}}: describe your intent…",

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate, useParams } from "react-router"
 import { useTranslation, Trans } from "react-i18next"
 import type { TFunction } from "i18next"
-import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText } from "lucide-react"
+import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText, CheckCircle2 } from "lucide-react"
 import { toast } from "sonner"
 import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatInput"
 import MarkdownView from "@/components/MarkdownView"
@@ -105,34 +105,51 @@ interface PanelState {
 
 const CLOSED_PANEL: PanelState = { open: false, path: "", content: null, error: null, loading: false }
 
-function SourceChips({ sources, onOpen }: { sources: Source[]; onOpen: (s: Source) => void }) {
+/**
+ * One tool-read step in the interleaved turn trace: a compact status line that
+ * shows a spinner while the read is in flight and a green ✅ once it resolves.
+ * A `page` read is clickable (opens the real wiki page via {@link openSource},
+ * exactly like the old source chip); a `doc` read is a non-clickable label
+ * (its PageIndex-internal content has no standalone page to open).
+ */
+function ToolStep({ source, done, onOpen }: { source: Source; done: boolean; onOpen: (s: Source) => void }) {
   const { t } = useTranslation("chat")
-  if (sources.length === 0) return null
+  const TypeIcon = source.kind === "page" ? FileText : BookText
+  const base =
+    "inline-flex items-center gap-2 max-w-full rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground"
+  const inner = (
+    <>
+      {done ? (
+        <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+      ) : (
+        <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-accent-brand" />
+      )}
+      <TypeIcon className="w-3 h-3 shrink-0 opacity-70" />
+      <span className="min-w-0 break-all">
+        <Trans
+          t={t}
+          i18nKey="chat:step.read"
+          values={{ path: source.label }}
+          components={[<span className="font-mono2 text-foreground" />]}
+        />
+      </span>
+    </>
+  )
+  if (source.kind === "page") {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen(source)}
+        title={t("sources.pageTip")}
+        className={`${base} text-left hover:text-accent-brand hover:border-accent-brand/40 transition duration-fast ease-out-apple active:scale-[0.97]`}
+      >
+        {inner}
+      </button>
+    )
+  }
   return (
-    <div className="mt-3">
-      <div className="mb-1.5 text-[11px] font-semibold text-muted-foreground tracking-wide">{t("sources.heading")}</div>
-      <div className="flex flex-wrap gap-1.5">
-        {sources.map((s, i) =>
-          s.kind === "page" ? (
-            <button
-              key={`${s.path}-${i}`}
-              onClick={() => onOpen(s)}
-              title={t("sources.pageTip")}
-              className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md glass-2 border border-[hsl(var(--glass-border))] text-[11.5px] font-mono2 text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 transition duration-fast ease-out-apple active:scale-[0.97]"
-            >
-              <FileText className="w-3 h-3" />{s.label}
-            </button>
-          ) : (
-            <span
-              key={`${s.docName}-${i}`}
-              title={t("sources.internalTip")}
-              className="inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-md bg-muted/50 border border-[hsl(var(--glass-border))] text-[11.5px] font-mono2 text-muted-foreground"
-            >
-              <BookText className="w-3 h-3" />{s.label}
-            </span>
-          ),
-        )}
-      </div>
+    <div className={base} title={t("sources.internalTip")}>
+      {inner}
     </div>
   )
 }
@@ -148,44 +165,49 @@ function AssistantMessage({
 }) {
   const { t } = useTranslation("chat")
   const streaming = !turn.done
-  const showThinking = streaming && !turn.answer && !turn.error
+  // "Thinking…" only before any trace exists; once steps arrive, the trailing
+  // not-done tool step (or streaming text) carries the in-flight affordance.
+  const showThinking = streaming && turn.steps.length === 0 && !turn.error
   return (
     <div className="flex gap-3 anim-fade-up">
       <span className="w-7 h-7 rounded-lg bg-accent-brand text-white grid place-items-center shrink-0 mt-0.5">
         <Sparkles className="w-3.5 h-3.5" />
       </span>
       <div className="min-w-0 flex-1 max-w-[720px]">
-        {/* 执行状态：正在查阅 X…（来自实时 tool_call 流） */}
-        {streaming && (turn.reading || showThinking) && (
-          <div className="mb-3 inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground">
+        {/* 思考中：尚无任何步骤时的等待态 */}
+        {showThinking && (
+          <div className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-1.5 text-[12.5px] text-muted-foreground">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-brand" />
-            {turn.reading
-              ? (turn.reading.kind === "page"
-                  ? <Trans t={t} i18nKey="chat:reading.page" values={{ label: turn.reading.label }} components={[<span className="font-mono2 text-foreground" />]} />
-                  : <Trans t={t} i18nKey="chat:reading.doc" values={{ label: turn.reading.label }} components={[<span className="font-mono2 text-foreground" />]} />)
-              : <>{t("chat:reading.thinking")}</>}
+            {t("chat:reading.thinking")}
           </div>
         )}
 
-        {/* 正文（随 delta 流式渲染） */}
-        {turn.answer && (
-          <div className="text-[14px]">
-            <MarkdownView
-              source={turn.answer}
-              onWikiLink={(target) => onOpen({ kind: "page", label: target, path: target })}
-            />
-          </div>
-        )}
+        {/* 有序步骤轨迹：叙述文本与工具读取按 SSE 到达顺序交错渲染 */}
+        <div className="space-y-3">
+          {turn.steps.map((step, i) =>
+            step.kind === "text" ? (
+              step.text.trim() ? (
+                <div key={`step-${i}`} className="text-[14px]">
+                  <MarkdownView
+                    source={step.text}
+                    onWikiLink={(target) => onOpen({ kind: "page", label: target, path: target })}
+                  />
+                </div>
+              ) : null
+            ) : (
+              <div key={`step-${i}`}>
+                <ToolStep source={step.source} done={step.done} onOpen={onOpen} />
+              </div>
+            ),
+          )}
+        </div>
 
         {/* 错误 */}
         {turn.error && (
-          <div className="mt-1 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
+          <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
             {t("chat:requestError", { error: turn.error })}
           </div>
         )}
-
-        {/* 参考来源（whitelist 过滤、按轮去重） */}
-        <SourceChips sources={turn.sources} onOpen={onOpen} />
 
         {/* 会话中生成的可查看 HTML 文件（来自 write_file 的 artifact 事件） */}
         {turn.artifacts.length > 0 && (
@@ -431,11 +453,19 @@ export default function ChatSession() {
           if (loaded.user_turns[i] !== undefined)
             restored.push({ id: nid(), role: "user", text: loaded.user_turns[i] })
           if (loaded.assistant_texts[i] !== undefined) {
-            // Restored turns carry no sources (they are live-derived, not stored).
+            // Restored turns carry no sources or tool trace (both are live-derived,
+            // not stored) — just the answer, rendered as one text step.
+            const text = loaded.assistant_texts[i]
             restored.push({
               id: nid(),
               role: "assistant",
-              turn: { ...initialTurnState(), answer: loaded.assistant_texts[i], done: true, sessionId: id ?? null },
+              turn: {
+                ...initialTurnState(),
+                answer: text,
+                steps: [{ kind: "text", text }],
+                done: true,
+                sessionId: id ?? null,
+              },
             })
           }
         }

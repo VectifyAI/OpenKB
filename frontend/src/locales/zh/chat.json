@@ -16,6 +16,9 @@
     "doc": "正在读取长文档 <0>{{label}}</0>",
     "thinking": "正在思考…"
   },
+  "step": {
+    "read": "读取 <0>{{path}}</0>"
+  },
   "requestError": "请求失败：{{error}}",
   "savedTo": "已保存到 {{path}}",
   "usage": {
@@ -35,8 +38,7 @@
     "paletteHeading": "命令 · 生成器",
     "deck": { "label": "生成幻灯片", "desc": "把知识编译成单文件 HTML 演示" },
     "skill": { "label": "蒸馏技能", "desc": "生成可安装的 Agent Skill" },
-    "visualize": { "label": "知识图谱", "desc": "生成交互式概念图谱" },
-    "compile": { "label": "编译新知识", "desc": "扫描新文档并编译进 wiki" }
+    "visualize": { "label": "知识图谱", "desc": "生成交互式概念图谱" }
   },
   "input": {
     "cmdPlaceholder": "{{label}}：描述你的意图…",

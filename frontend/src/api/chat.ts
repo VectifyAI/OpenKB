@@ -30,6 +30,20 @@ export interface Source {
 }
 
 /**
+ * One item in a turn's ORDERED, interleaved trace, preserving SSE arrival
+ * order: a chunk of the model's narration/answer text, or one tool read.
+ *
+ *  - `text`: a contiguous run of `delta` text (one block of narration, or the
+ *    final answer). Consecutive deltas coalesce into the same trailing step.
+ *  - `tool`: one whitelisted read (`toolCallSource`). `done` flips true once a
+ *    LATER tool call arrives (the previous read must have completed) or the
+ *    turn settles (`final`/`done`), driving the ✅-when-resolved affordance.
+ */
+export type TurnStep =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; source: Source; done: boolean }
+
+/**
  * Accumulated state for ONE assistant turn, folded from the SSE event stream.
  *
  * Sources are per-turn: dedupe happens within this object only, never across a
@@ -38,8 +52,12 @@ export interface Source {
  */
 export interface ChatTurnState {
   /** Answer text: accumulated from `delta` events (progressive) and confirmed
-   *  by the `final` event. */
+   *  by the `final` event. Kept flat alongside `steps` for session restore and
+   *  any other consumer that wants the whole answer as one string. */
   answer: string
+  /** Ordered, interleaved trace of narration text and tool reads, in SSE
+   *  arrival order — the source of truth for step-by-step rendering. */
+  steps: TurnStep[]
   /** Whitelisted, per-turn-deduped provenance, in first-seen order. */
   sources: Source[]
   /** Most recent in-progress read, for a live "reading X…" indicator; null once
@@ -67,6 +85,7 @@ export interface ChatTurnState {
 export function initialTurnState(): ChatTurnState {
   return {
     answer: "",
+    steps: [],
     sources: [],
     reading: null,
     sessionId: null,
@@ -141,6 +160,32 @@ function mergeSource(list: Source[], s: Source): Source[] {
   return list.some((x) => sourceKey(x) === key) ? list : [...list, s]
 }
 
+/** Append `delta` text to the CURRENT trailing text step, or start a new text
+ *  step when the last step is a tool step (or the trace is empty). */
+function appendDelta(steps: TurnStep[], text: string): TurnStep[] {
+  const last = steps[steps.length - 1]
+  if (last && last.kind === "text") {
+    return [...steps.slice(0, -1), { kind: "text", text: last.text + text }]
+  }
+  return [...steps, { kind: "text", text }]
+}
+
+/** Flip every still-in-flight tool step to `done` (a fresh copy of any changed
+ *  step; unchanged steps keep their identity). */
+function markToolStepsDone(steps: TurnStep[]): TurnStep[] {
+  return steps.map((s) => (s.kind === "tool" && !s.done ? { ...s, done: true } : s))
+}
+
+/** Reconcile the authoritative `final.answer` into the trace: overwrite the
+ *  trailing text step if there is one, else append it as a new text step. */
+function setTrailingText(steps: TurnStep[], text: string): TurnStep[] {
+  const last = steps[steps.length - 1]
+  if (last && last.kind === "text") {
+    return [...steps.slice(0, -1), { kind: "text", text }]
+  }
+  return [...steps, { kind: "text", text }]
+}
+
 /**
  * Defensively derive sources from a `final.history` array (the Agents SDK
  * `to_input_list()` record), if one is ever present.
@@ -195,20 +240,33 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent, kb: string):
   switch (event?.event) {
     case "delta": {
       const text = typeof data.text === "string" ? data.text : ""
-      return text ? { ...state, answer: state.answer + text } : state
+      if (!text) return state
+      return { ...state, answer: state.answer + text, steps: appendDelta(state.steps, text) }
     }
     case "tool_call": {
       const src = toolCallSource(data)
       if (!src) return state
-      return { ...state, reading: src, sources: mergeSource(state.sources, src) }
+      // A new tool call means the previous read completed: settle prior
+      // in-flight tool steps, then push this read as the new in-flight step.
+      const steps: TurnStep[] = [
+        ...markToolStepsDone(state.steps),
+        { kind: "tool", source: src, done: false },
+      ]
+      return { ...state, reading: src, sources: mergeSource(state.sources, src), steps }
     }
     case "final": {
       const histSources = sourcesFromHistory(data.history)
-      const answer =
-        typeof data.answer === "string" && data.answer ? data.answer : state.answer
+      const authoritative = typeof data.answer === "string" && data.answer ? data.answer : ""
+      const answer = authoritative || state.answer
+      // All reads are done once the turn finalizes. If a definitive answer
+      // arrived, make the trailing text step reflect it (over accumulated
+      // narration); otherwise keep the streamed trace as-is.
+      let steps = markToolStepsDone(state.steps)
+      if (authoritative) steps = setTrailingText(steps, authoritative)
       return {
         ...state,
         answer,
+        steps,
         sources: histSources ?? state.sources,
         reading: null,
         sessionId:
@@ -232,7 +290,7 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent, kb: string):
       return { ...state, artifacts: [...state.artifacts, { path, name, kb }] }
     }
     case "done":
-      return { ...state, reading: null, done: true }
+      return { ...state, reading: null, done: true, steps: markToolStepsDone(state.steps) }
     default:
       // "start" and any unknown event: ignore.
       return state

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation, Trans } from "react-i18next"
 import {
   ArrowUp, BookOpen, ChevronDown, X,
-  Presentation, Sparkles, Waypoints, RefreshCw,
+  Presentation, Sparkles, Waypoints,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -20,7 +20,9 @@ export interface SlashCommand {
 /**
  * Slash commands for generators. Plain text (no command) is a grounded chat turn
  * that answers questions from the wiki — asking IS the default, so there is no
- * separate `/ask` command. `/html` is intentionally absent.
+ * separate `/ask` command. `/html` is intentionally absent. KB-lifecycle actions
+ * (recompile / add documents) deliberately live on the KB's own surface (the
+ * settings gear + Documents pane), NOT here — chat is for Q&A and generation.
  *
  * `id`/`cmd`/`icon` are code; user-facing `label`/`desc` are looked up at render
  * time via `t(\`commands.${id}.label|desc\`)` (i18n `chat` namespace).
@@ -29,7 +31,6 @@ export const slashCommands: SlashCommand[] = [
   { id: "deck", cmd: "/deck", icon: Presentation },
   { id: "skill", cmd: "/skill", icon: Sparkles },
   { id: "visualize", cmd: "/visualize", icon: Waypoints },
-  { id: "compile", cmd: "/compile", icon: RefreshCw },
 ]
 
 /** Decorative accent colors, cycled by position — the API carries no color. */
