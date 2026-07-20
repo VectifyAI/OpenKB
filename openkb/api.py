@@ -28,10 +28,7 @@ from starlette.concurrency import run_in_threadpool
 
 from openkb.agent.chat import build_chat_session_agent, iter_chat_turn_events
 from openkb.agent.chat_session import delete_session, list_sessions, load_session
-from openkb.agent.query import (
-    build_run_config_from_bundle,
-    run_query,
-)
+from openkb.agent.query import build_run_config_from_bundle, run_query
 from openkb.api_config import apply_kb_config_patch, read_kb_config
 from openkb.api_config_router import config_router
 from openkb.api_graph import graph_router
@@ -221,12 +218,7 @@ def create_app() -> FastAPI:
                 api_key=request.api_key,
                 openai_api_base=request.openai_api_base,
             )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(exc),
-            ) from exc
-        except FileExistsError as exc:
+        except (ValueError, FileExistsError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),
@@ -513,13 +505,15 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/recompile", response_model=RecompileResponse)
     async def recompile_endpoint(
         request: RecompileRequest,
+        fastapi_request: Request,
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
         if request.stream:
+            lock = _kb_mutation_lock(request.kb)
             return StreamingResponse(
-                _stream_recompile(request, kb_dir, _kb_mutation_lock(request.kb), bundle=bundle),
+                _stream_recompile(request, kb_dir, lock, fastapi_request, bundle=bundle),
                 media_type="text/event-stream",
             )
         # Aggregate the async generator into a single JSON response. Terminal
@@ -620,13 +614,15 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/deck", response_model=DeckResponse)
     async def deck_endpoint(
         request: DeckRequest,
+        fastapi_request: Request,
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
         if request.stream:
+            lock = _kb_mutation_lock(request.kb)
             return StreamingResponse(
-                _stream_deck(request, kb_dir, _kb_mutation_lock(request.kb), bundle=bundle),
+                _stream_deck(request, kb_dir, lock, fastapi_request, bundle=bundle),
                 media_type="text/event-stream",
             )
         error_code: int | None = None
@@ -686,13 +682,15 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/skill", response_model=SkillResponse)
     async def skill_endpoint(
         request: SkillRequest,
+        fastapi_request: Request,
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
         if request.stream:
+            lock = _kb_mutation_lock(request.kb)
             return StreamingResponse(
-                _stream_skill(request, kb_dir, _kb_mutation_lock(request.kb), bundle=bundle),
+                _stream_skill(request, kb_dir, lock, fastapi_request, bundle=bundle),
                 media_type="text/event-stream",
             )
         error_code: int | None = None

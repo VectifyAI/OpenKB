@@ -539,6 +539,7 @@ async def _stream_recompile(
     request: RecompileRequest,
     kb_dir: Path,
     mutation_lock: asyncio.Lock,
+    fastapi_request: Request,
     *,
     bundle=None,
 ) -> AsyncIterator[str]:
@@ -562,6 +563,12 @@ async def _stream_recompile(
                 refresh_schema=request.refresh_schema,
                 bundle=bundle,
             ):
+                # Cooperative stop: an aborting client (Stop / navigate-away)
+                # must let the generator exit so ``async with mutation_lock``
+                # releases the per-KB lock instead of holding it for the whole
+                # (unwatched) LLM recompile.
+                if await fastapi_request.is_disconnected():
+                    break
                 name = event.get("event")
                 if name == "error":
                     yield _sse(
@@ -633,6 +640,7 @@ async def _stream_deck(
     request: DeckRequest,
     kb_dir: Path,
     mutation_lock: asyncio.Lock,
+    fastapi_request: Request,
     *,
     bundle=None,
 ) -> AsyncIterator[str]:
@@ -643,6 +651,10 @@ async def _stream_deck(
     # streams would race on the same ``output_dir`` bytes.
     async with mutation_lock:
         async for event in _iter_deck(request, kb_dir, bundle=bundle):
+            # Cooperative stop on client abort so the lock is released rather
+            # than held for the whole unwatched generation (see recompile).
+            if await fastapi_request.is_disconnected():
+                break
             name = event.pop("event")
             yield _sse(name, event)
     yield _sse("done", {})
@@ -690,6 +702,7 @@ async def _stream_skill(
     request: SkillRequest,
     kb_dir: Path,
     mutation_lock: asyncio.Lock,
+    fastapi_request: Request,
     *,
     bundle=None,
 ) -> AsyncIterator[str]:
@@ -700,6 +713,10 @@ async def _stream_skill(
     # streams would race on the same ``output_dir`` bytes.
     async with mutation_lock:
         async for event in _iter_skill(request, kb_dir, bundle=bundle):
+            # Cooperative stop on client abort so the lock is released rather
+            # than held for the whole unwatched generation (see recompile).
+            if await fastapi_request.is_disconnected():
+                break
             name = event.pop("event")
             yield _sse(name, event)
     yield _sse("done", {})

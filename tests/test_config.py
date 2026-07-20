@@ -649,3 +649,59 @@ def test_resolve_kb_alias_resolves_known_kbs_by_basename(_isolated_global, tmp_p
     kb.mkdir()
     save_global_config({"known_kbs": [str(kb)]})
     assert resolve_kb_alias("笔记") == kb.resolve()
+
+
+def _make_kb_dir(path: Path) -> Path:
+    """Create the minimal KB shape (`.openkb` + `wiki`) recognized as a KB dir."""
+    (path / ".openkb").mkdir(parents=True)
+    (path / "wiki").mkdir(parents=True)
+    return path
+
+
+def test_resolve_kb_alias_root_child_wins_over_off_root_known_kbs(
+    _isolated_global, monkeypatch, tmp_path
+):
+    from openkb.config import resolve_kb_alias
+
+    # A root-level KB "notes" and an off-root known_kbs KB with the SAME basename.
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    root_notes = _make_kb_dir(root / "notes")
+    off_notes = tmp_path / "x" / "notes"
+    off_notes.mkdir(parents=True)
+    save_global_config({"known_kbs": [str(off_notes)]})
+
+    # The root child WINS — the off-root KB must never shadow it (regression:
+    # the old known_kbs basename loop ran first and returned the off-root path).
+    assert resolve_kb_alias("notes") == root_notes.resolve()
+
+
+def test_registered_kbs_hides_bare_known_kbs_colliding_with_root_child(
+    _isolated_global, monkeypatch, tmp_path, caplog
+):
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    _make_kb_dir(root / "notes")
+    off_notes = tmp_path / "x" / "notes"
+    off_notes.mkdir(parents=True)
+    save_global_config({"known_kbs": [str(off_notes)]})
+
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = registered_kbs()
+
+    # The colliding off-root "notes" is HIDDEN (root child reserves the name),
+    # logged rather than emitted as a duplicate/shadowing entry.
+    assert all(name != "notes" for name, _ in result)
+    assert "hidden" in caplog.text
+
+
+def test_resolve_kb_alias_degrades_on_non_mapping_global_yaml(
+    _isolated_global, monkeypatch, tmp_path
+):
+    from openkb.config import resolve_kb_alias
+
+    # A hand-corrupted global.yaml (bare list) must not 500 resolution: the
+    # loader coerces it to {} so resolve falls back to <kb_root>/<name>.
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    (_isolated_global / "global.yaml").write_text("- a\n- b\n", encoding="utf-8")
+    assert resolve_kb_alias("mykb") == (_isolated_global / "kbs" / "mykb").resolve()

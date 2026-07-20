@@ -46,8 +46,8 @@ export interface WatchStatus {
  * per-file UI signal, so they are collapsed away here.
  */
 export type UploadEvent =
-  | { type: "file_start"; original_name: string }
-  | { type: "file_done"; file: AddFileItem }
+  | { type: "file_start"; index: number; original_name: string }
+  | { type: "file_done"; index: number; file: AddFileItem }
   | { type: "final"; result: AddResult }
   | { type: "error"; message: string }
 
@@ -63,11 +63,22 @@ export type UploadEvent =
  *   `file_done`  → that file's `AddFileItem` (status added/skipped/failed),
  *   `final`      → the summary `AddResponse`,
  *   `error`      → a stream-level failure message.
+ *
+ * The backend emits per-file events strictly in upload order (one `file_start`
+ * then one `file_done` per file, `saved_uploads` order == `files` order), so
+ * `file_start`/`file_done` carry a running `index` the caller uses to correlate
+ * an event to its seeded row by position — robust to duplicate basenames, which
+ * name-matching would collide.
+ *
+ * Pass an optional `signal` to make the upload cancellable — aborting it rejects
+ * the in-flight `fetch`/`reader.read()` with an `AbortError` that propagates out
+ * (mirrors `apiStream`/`runRecompile`), so navigating away mid-upload cancels it.
  */
 export async function streamUpload(
   kb: string,
   files: File[],
   onEvent: (ev: UploadEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const form = new FormData()
   form.append("kb", kb)
@@ -78,6 +89,7 @@ export async function streamUpload(
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
+    signal,
   })
   if (!res.ok || !res.body) {
     let detail = `${res.status} ${res.statusText}`
@@ -93,6 +105,9 @@ export async function streamUpload(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ""
+  // Running cursor over the seeded rows: `file_start` advances it, the matching
+  // `file_done` reuses it. See the ordering note above.
+  let fileCursor = -1
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -105,13 +120,21 @@ export async function streamUpload(
       const dataLine = lines.find((l) => l.startsWith("data: "))
       if (!eventLine || !dataLine) continue
       const event = eventLine.slice("event: ".length)
-      const data = JSON.parse(dataLine.slice("data: ".length))
+      let data: any
+      try {
+        data = JSON.parse(dataLine.slice("data: ".length))
+      } catch {
+        // Malformed / non-JSON data frame — skip it like a robust SSE reader
+        // instead of throwing out of the whole read loop.
+        continue
+      }
       switch (event) {
         case "file_start":
-          onEvent({ type: "file_start", original_name: data.original_name })
+          fileCursor += 1
+          onEvent({ type: "file_start", index: fileCursor, original_name: data.original_name })
           break
         case "file_done":
-          onEvent({ type: "file_done", file: data as AddFileItem })
+          onEvent({ type: "file_done", index: fileCursor, file: data as AddFileItem })
           break
         case "final":
           onEvent({ type: "final", result: data as AddResult })
@@ -125,11 +148,15 @@ export async function streamUpload(
   }
 }
 
-/** `/api/v1/remove` response (`RemoveResponse`) — the subset the UI reads. */
+/** `/api/v1/remove` response (`RemoveResponse`) — the subset the UI reads.
+ *  `status` is `removed` on full success or `partial` when the local wiki files
+ *  were removed but PageIndex cleanup failed (both are HTTP 200); on `partial`,
+ *  `pageindex_error` carries why the remote cleanup failed. */
 export interface RemoveResult {
   status: string
   name?: string | null
   doc_name?: string | null
+  pageindex_error?: string | null
   message?: string | null
 }
 

@@ -15,6 +15,7 @@
     "partialToast": "部分成功：{{summary}}",
     "successToast": "上传完成：{{summary}}",
     "existsToast": "文档已存在，未新增：{{summary}}",
+    "incompleteToast": "上传中断：未收到完成信号，请刷新确认结果",
     "note": "上传的文档进入本地 raw/ 并自动编译进知识库；文件仅保存在本机",
     "inProgress": "正在上传并编译…",
     "dropzone": "拖放文件到此处，或点击选择",
@@ -39,7 +40,10 @@
       "confirm": "删除",
       "cancel": "取消",
       "success": "已删除 {{name}}",
-      "error": "删除失败：{{error}}"
+      "error": "删除失败：{{error}}",
+      "partial": "已删除本地文件，但远程索引清理失败：{{name}}",
+      "reasonSuffix": "（{{reason}}）",
+      "multiple": "删除失败：{{message}}（候选：{{names}}）"
     }
   },
   "remote": {

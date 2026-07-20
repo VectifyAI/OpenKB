@@ -15,6 +15,7 @@
     "partialToast": "Partial success: {{summary}}",
     "successToast": "Upload complete: {{summary}}",
     "existsToast": "Documents already exist, nothing added: {{summary}}",
+    "incompleteToast": "Upload interrupted: no completion signal received; refresh to check results",
     "note": "Uploaded documents go into the local raw/ folder and are compiled into the KB automatically; files stay on this machine",
     "inProgress": "Uploading and compiling…",
     "dropzone": "Drop files here, or click to choose",
@@ -39,7 +40,10 @@
       "confirm": "Delete",
       "cancel": "Cancel",
       "success": "Deleted {{name}}",
-      "error": "Delete failed: {{error}}"
+      "error": "Delete failed: {{error}}",
+      "partial": "Deleted local files, but remote index cleanup failed: {{name}}",
+      "reasonSuffix": " ({{reason}})",
+      "multiple": "Delete failed: {{message}} (candidates: {{names}})"
     }
   },
   "remote": {

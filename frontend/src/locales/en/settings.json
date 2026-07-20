@@ -10,7 +10,8 @@
   "unsaved": "Unsaved changes",
   "modelSection": {
     "title": "Model & threshold",
-    "desc": "Global default model & threshold (written to ~/.config/openkb/global.yaml; each KB can inherit or override in its own settings)"
+    "desc": "Global default model & threshold (written to ~/.config/openkb/global.yaml; each KB can inherit or override in its own settings)",
+    "thresholdInvalid": "Threshold must be a whole number of 1 or more."
   },
   "credSection": {
     "title": "Default credentials",

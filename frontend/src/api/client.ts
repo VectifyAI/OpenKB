@@ -55,6 +55,12 @@ export function onUnauthorized(cb: () => void): void {
 
 export class ApiError extends Error {
   status: number
+  /** Structured `detail` payload when the backend returns an object rather than
+   *  a plain string — e.g. the 409 multiple-match `{ message, candidates }` from
+   *  `POST /api/v1/remove`. `message` is lifted onto `.message`; the whole object
+   *  is kept here so callers can read the structured fields (candidates, etc.).
+   *  `undefined` for string-detail errors (404) and network failures. */
+  detail?: unknown
   constructor(status: number, message: string) {
     super(message)
     this.status = status
@@ -82,13 +88,28 @@ export async function apiFetch<T>(path: string, opts: FetchOpts = {}): Promise<T
   if (res.status === 401) unauthorizedHandler?.()
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`
+    let structured: unknown
     try {
       const j = await res.json()
-      detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j)
+      const d = j.detail
+      if (typeof d === "string") {
+        // Plain-string detail (e.g. 404 "Document not found.") — unchanged path.
+        detail = d
+      } else if (d && typeof d === "object" && typeof (d as { message?: unknown }).message === "string") {
+        // Structured detail (e.g. 409 multiple-match `{ message, candidates }`):
+        // surface the human message, and keep the object so callers can read the
+        // structured fields instead of seeing a raw JSON blob.
+        detail = (d as { message: string }).message
+        structured = d
+      } else {
+        detail = JSON.stringify(d ?? j)
+      }
     } catch {
       // keep default message
     }
-    throw new ApiError(res.status, detail)
+    const err = new ApiError(res.status, detail)
+    err.detail = structured
+    throw err
   }
 
   const ct = res.headers.get("content-type") || ""

@@ -96,14 +96,22 @@ export default function Settings() {
     if (m && m !== config.model) cfg.model = m
     const l = language.trim()
     if (l && l !== config.language) cfg.language = l
+    // Threshold is a positive doc-count cutoff; enforce the input's own min={1}
+    // (a whole number >= 1). Anything else is invalid and simply not emitted —
+    // the inline hint below the field surfaces why (see `thresholdInvalid`).
     const n = Number(threshold)
-    if (threshold.trim() !== '' && Number.isInteger(n) && n >= 0 && n !== config.pageindex_threshold) {
+    if (threshold.trim() !== '' && Number.isInteger(n) && n >= 1 && n !== config.pageindex_threshold) {
       cfg.pageindex_threshold = n
     }
     if (Object.keys(cfg).length > 0) patch.config = cfg
-    const rootTrim = kbRoot.trim()
-    const currentRoot = config.kb_root ?? ''
-    if (rootTrim !== currentRoot) patch.kb_root = rootTrim === '' ? null : rootTrim
+    // When kb_root is env-pinned the field is read-only and the effective value
+    // is the OPENKB_KB_ROOT env root, so never diff/emit it — a Save would
+    // toast success then `applyConfig` would revert the field to the env root.
+    if (!config.kb_root_env_pinned) {
+      const rootTrim = kbRoot.trim()
+      const currentRoot = config.kb_root ?? ''
+      if (rootTrim !== currentRoot) patch.kb_root = rootTrim === '' ? null : rootTrim
+    }
     const baseTrim = apiBase.trim()
     const currentBase = config.openai_api_base ?? ''
     if (baseTrim !== currentBase) patch.openai_api_base = baseTrim === '' ? null : baseTrim
@@ -132,6 +140,17 @@ export default function Settings() {
   }, [buildPatch, applyConfig, t])
 
   const hasKey = !!config?.has_api_key
+  // Env-pinned root is display-only: it shows the effective OPENKB_KB_ROOT and
+  // cannot be edited here (buildPatch also refuses to diff/emit it).
+  const kbRootPinned = !!config?.kb_root_env_pinned
+  // Non-empty threshold that isn't a whole number >= 1 (the input's own min).
+  // Empty means "no change", so it is never flagged as invalid here.
+  const thresholdInvalid = useMemo(() => {
+    const s = threshold.trim()
+    if (s === '') return false
+    const n = Number(s)
+    return !Number.isInteger(n) || n < 1
+  }, [threshold])
 
   return (
     <div className="h-full overflow-y-auto">
@@ -188,12 +207,19 @@ export default function Settings() {
                   <input
                     type="number"
                     min={1}
+                    step={1}
                     value={threshold}
                     disabled={loading || !config}
+                    aria-invalid={thresholdInvalid}
                     onChange={(e) => setThreshold(e.target.value)}
                     placeholder="20"
-                    className={inputCls}
+                    className={cn(inputCls, thresholdInvalid && 'border-red-500 focus:border-red-500 focus-visible:ring-red-500/40')}
                   />
+                  {thresholdInvalid && (
+                    <p className="mt-1.5 text-[11.5px] text-red-600 dark:text-red-400">
+                      {t('settings:modelSection.thresholdInvalid')}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -293,11 +319,17 @@ export default function Settings() {
                 <input
                   value={kbRoot}
                   disabled={loading || !config}
+                  readOnly={kbRootPinned}
+                  aria-readonly={kbRootPinned}
                   onChange={(e) => setKbRoot(e.target.value)}
                   placeholder={t('settings:general.kbRootPlaceholder')}
-                  className={cn(inputCls, 'max-w-[420px]')}
+                  className={cn(
+                    inputCls,
+                    'max-w-[420px]',
+                    kbRootPinned && 'cursor-not-allowed bg-muted/40 text-muted-foreground',
+                  )}
                 />
-                {config?.kb_root_env_pinned && (
+                {kbRootPinned && (
                   <p className="mt-1.5 text-[11.5px] text-muted-foreground">{t('settings:general.kbRootEnvPinned')}</p>
                 )}
               </div>

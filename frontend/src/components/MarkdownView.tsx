@@ -5,8 +5,17 @@ import { useTheme } from '@/lib/theme'
 
 /** Guard for [text](url) links: only render a real anchor for http(s) or
  *  scheme-less (relative) URLs. Anything with another scheme (javascript:,
- *  data:, vbscript:, …) is treated as literal text, never an anchor. */
-const isSafeUrl = (u: string) => /^https?:\/\//i.test(u) || !/^[a-z][\w+.-]*:/i.test(u)
+ *  data:, vbscript:, …) is treated as literal text, never an anchor.
+ *
+ *  Browsers strip leading/embedded control chars & whitespace from a URL before
+ *  resolving it, so ` javascript:x` and `java\tscript:x` both execute. We mirror
+ *  that: collapse ALL whitespace/control chars, then only permit an explicit
+ *  `scheme:` when it is http(s). The caller also trims the raw URL for the href. */
+const isSafeUrl = (u: string) => {
+  const s = u.replace(/[\u0000-\u0020\u007f-\u009f]/g, '')
+  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(s)
+  return scheme ? /^https?:/i.test(scheme[0]) : true
+}
 
 /**
  * Minimal inline Markdown renderer. Tokens (in match-priority order):
@@ -14,12 +23,19 @@ const isSafeUrl = (u: string) => /^https?:\/\//i.test(u) || !/^[a-z][\w+.-]*:/i.
  *   [text](url) · *italic* / _italic_.
  * ORDER IS LOAD-BEARING inside the alternation: wikilink must precede the link
  * pattern (so `[[x]]` is not parsed as a link), and bold must precede italic
- * (so `**x**` is not parsed as `*`-italic-`*`). Every alternative uses a bounded
- * `[^…]+` class (no nested quantifiers) to avoid catastrophic backtracking.
+ * (so `**x**` is not parsed as `*`-italic-`*`). Alternatives use bounded `[^…]+`
+ * classes or a single non-greedy `.+?` (bold/math) — no nested quantifiers — so
+ * there is no catastrophic backtracking. The inner text of bold/italic/strike
+ * and a link's LABEL are re-run through inline() so nested markup resolves; the
+ * recursed slice is always strictly shorter, which bounds the recursion (the
+ * wikilink target is NOT recursed). Single `*`/`_` obey a minimal left/right
+ * flanking rule so intraword runs (`a_b_c`, `2*3*4`) stay literal.
  */
 function inline(text: string, onWikiLink?: (target: string) => void): React.ReactNode[] {
   const parts: React.ReactNode[] = []
-  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
+  // Bold is non-greedy (`.+?`) so it tolerates an inner opposite-emphasis
+  // (`**a *b* c**`); italic keeps a bounded `[^*]+`/`[^_]+` class.
+  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
   let last = 0, m: RegExpExecArray | null, k = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
@@ -68,9 +84,10 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
         ),
       )
     } else if (tok.startsWith('**')) {
-      parts.push(<strong key={k++} className="font-semibold text-foreground">{tok.slice(2, -2)}</strong>)
+      // Recurse so nested markup (e.g. `**[docs](url)**`) resolves. slice is strictly shorter.
+      parts.push(<strong key={k++} className="font-semibold text-foreground">{inline(tok.slice(2, -2), onWikiLink)}</strong>)
     } else if (tok.startsWith('~~')) {
-      parts.push(<del key={k++} className="line-through">{tok.slice(2, -2)}</del>)
+      parts.push(<del key={k++} className="line-through">{inline(tok.slice(2, -2), onWikiLink)}</del>)
     } else if (tok.startsWith('`')) {
       parts.push(<code key={k++} className="font-mono2 text-[12px] bg-muted rounded px-1 py-px">{tok.slice(1, -1)}</code>)
     } else if (tok.startsWith('[')) {
@@ -79,7 +96,10 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
       // passes the scheme guard; otherwise render the raw token as literal text.
       const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)
       const label = lm ? lm[1] : tok
-      const url = lm ? lm[2] : ''
+      // Trim the captured URL BEFORE the guard so ` javascript:x` can't slip
+      // past the scheme test (browsers trim & would run it). Same trimmed
+      // value is used for href. The label is recursed so `[**x**](url)` works.
+      const url = lm ? lm[2].trim() : ''
       parts.push(
         lm && isSafeUrl(url) ? (
           <a
@@ -89,15 +109,33 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
             rel="noopener noreferrer"
             className="text-accent-brand hover:underline"
           >
-            {label}
+            {inline(label, onWikiLink)}
           </a>
         ) : (
           <span key={k++}>{tok}</span>
         ),
       )
     } else {
-      // *italic* or _italic_ (bold `**…**` was consumed above).
-      parts.push(<em key={k++} className="italic">{tok.slice(1, -1)}</em>)
+      // *italic* / _italic_ (bold `**…**` was consumed above). Enforce a
+      // minimal CommonMark-ish flanking rule so intraword runs stay literal:
+      // the delimiter may only OPEN when the preceding char isn't a word char
+      // (and the run doesn't start with whitespace), and only CLOSE when the
+      // following char isn't a word char (and the run doesn't end with
+      // whitespace). This keeps `a_b_c` / `2*3*4` as plain text.
+      const before = m.index > 0 ? text[m.index - 1] : ''
+      const after = text[m.index + tok.length] ?? ''
+      const innerEm = tok.slice(1, -1)
+      const openable = !/\w/.test(before) && !/^\s/.test(innerEm)
+      const closable = !/\w/.test(after) && !/\s$/.test(innerEm)
+      if (!openable || !closable) {
+        // Not a real emphasis run: emit the opening delimiter literally and
+        // resume scanning right after it (inner text may still hold tokens).
+        parts.push(tok[0])
+        last = m.index + 1
+        re.lastIndex = m.index + 1
+        continue
+      }
+      parts.push(<em key={k++} className="italic">{inline(innerEm, onWikiLink)}</em>)
     }
     last = m.index + tok.length
   }
@@ -191,6 +229,8 @@ export default function MarkdownView({
   const out: React.ReactNode[] = []
   let list: string[] = []
   let olist: string[] = []
+  // Source number of the first `<ol>` item, so a list starting at N≠1 keeps it.
+  let olistStart = 1
   let key = 0
 
   const flushList = () => {
@@ -211,7 +251,7 @@ export default function MarkdownView({
   const flushOList = () => {
     if (!olist.length) return
     out.push(
-      <ol key={key++} className="my-2.5 space-y-1.5 pl-6 list-decimal">
+      <ol key={key++} start={olistStart} className="my-2.5 space-y-1.5 pl-6 list-decimal">
         {olist.map((li, i) => (
           <li key={i} className="pl-1 text-[14px] leading-relaxed text-muted-foreground marker:text-muted-foreground">
             <span>{inline(li, onWikiLink)}</span>
@@ -220,6 +260,7 @@ export default function MarkdownView({
       </ol>,
     )
     olist = []
+    olistStart = 1
   }
 
   // Block boundary: any non-list line closes BOTH pending lists.
@@ -279,10 +320,23 @@ export default function MarkdownView({
       /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(tblNext)
     ) {
       flushBlocks()
-      // Split a row into trimmed cells, dropping the empty cell an optional
-      // leading/trailing edge pipe produces (`| a | b |` → ['a','b']).
+      // Split a row into trimmed cells on unescaped, non-code `|`. A naive
+      // `split('|')` tears apart an escaped `\|` or a `|` inside an inline code
+      // span; we walk the string so `` `a|b` `` and `a \| b` survive as one
+      // cell. Drops the empty cell an optional leading/trailing edge pipe makes.
       const cells = (row: string) => {
-        const c = row.trim().split('|').map((s) => s.trim())
+        const t = row.trim()
+        const c: string[] = []
+        let cur = ''
+        let inCode = false
+        for (let j = 0; j < t.length; j++) {
+          const ch = t[j]
+          if (ch === '\\' && t[j + 1] === '|') { cur += '|'; j++; continue }
+          if (ch === '`') { inCode = !inCode; cur += ch; continue }
+          if (ch === '|' && !inCode) { c.push(cur.trim()); cur = ''; continue }
+          cur += ch
+        }
+        c.push(cur.trim())
         if (c.length && c[0] === '') c.shift()
         if (c.length && c[c.length - 1] === '') c.pop()
         return c
@@ -295,10 +349,25 @@ export default function MarkdownView({
         return l && r ? 'text-center' : r ? 'text-right' : l ? 'text-left' : ''
       })
       const alignOf = (col: number) => aligns[col] ?? ''
-      // Consume header + delimiter, then all contiguous non-blank `|` rows.
+      // A continuation line is a body row only when it is table-SHAPED, not
+      // merely a line that happens to contain a `|`. We key off the header's
+      // edge-pipe style: if the header had a leading/trailing `|`, body rows
+      // must match — so a trailing prose/list line with a stray `|` (and no
+      // blank separator) is NOT swallowed as a phantom row.
+      const hTrim = line.trim()
+      const edgeLead = hTrim.startsWith('|')
+      const edgeTrail = hTrim.endsWith('|')
+      const isRow = (l: string) => {
+        const t = l.trim()
+        if (!t.includes('|')) return false
+        if (edgeLead && !t.startsWith('|')) return false
+        if (edgeTrail && !t.endsWith('|')) return false
+        return true
+      }
+      // Consume header + delimiter, then all contiguous non-blank table rows.
       const body: string[][] = []
       i += 2
-      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+      while (i < lines.length && lines[i].trim() && isRow(lines[i])) {
         body.push(cells(lines[i]))
         i++
       }
@@ -341,9 +410,16 @@ export default function MarkdownView({
     // Unordered item: close any open ordered list, keep accumulating the ul.
     if (line.startsWith('- ')) { flushOList(); list.push(line.slice(2)); continue }
     // Ordered item `N. …`: close any open unordered list, strip the marker, and
-    // accumulate into a real <ol> (mirrors the ul buffer/flush pattern).
-    const om = /^\d+\.\s+/.exec(line)
-    if (om) { flushList(); olist.push(line.slice(om[0].length)); continue }
+    // accumulate into a real <ol> (mirrors the ul buffer/flush pattern). The
+    // first item's source number seeds `<ol start>` so a list beginning at N≠1
+    // keeps its numbering (a blank line still ends the list).
+    const om = /^(\d+)\.\s+/.exec(line)
+    if (om) {
+      flushList()
+      if (!olist.length) olistStart = parseInt(om[1], 10)
+      olist.push(line.slice(om[0].length))
+      continue
+    }
     flushBlocks()
     if (!line.trim()) { out.push(<div key={key++} className="h-2" />); continue }
     if (line.startsWith('### ')) out.push(<h3 key={key++} className="mt-4 mb-1.5 text-[14px] font-semibold text-foreground">{inline(line.slice(4), onWikiLink)}</h3>)

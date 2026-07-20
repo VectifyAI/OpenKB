@@ -34,7 +34,15 @@ def _kb_list_item(kb_dir: Path, name: str) -> dict[str, Any]:
     last_compile = None
     summaries_dir = kb_dir / "wiki" / "summaries"
     if summaries_dir.is_dir():
-        mtimes = [p.stat().st_mtime for p in summaries_dir.glob("*.md")]
+        # Guard each stat() (like document_count above): a single unstattable
+        # entry — e.g. a dangling symlink whose target was removed — must not
+        # throw out of the whole /kbs listing and 500 every other KB.
+        mtimes: list[float] = []
+        for p in summaries_dir.glob("*.md"):
+            try:
+                mtimes.append(p.stat().st_mtime)
+            except OSError:
+                continue
         if mtimes:
             last_compile = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(max(mtimes)))
     return {
@@ -59,22 +67,29 @@ def _list_knowledge_bases() -> dict[str, Any]:
     Root children are visited first, so a dual-source KB keeps its directory
     name (which equals the alias for KBs created via ``/init``); a registry-only
     KB keeps its alias name (or, for a bare ``known_kbs`` path, its directory
-    name). Stale/missing registry entries (fail ``_is_kb_dir``) are skipped. The
-    response still carries the top-level ``root``.
+    name). ``registered_kbs()`` already yields collision-resolved UNIQUE names
+    (a bare ``known_kbs`` entry colliding with a root child's basename is hidden
+    there), so names here are unique too; the by-name guard below is a
+    belt-and-suspenders backstop. Stale/missing registry entries (fail
+    ``_is_kb_dir``) are skipped. The response still carries the top-level
+    ``root``.
     """
     root = kb_root_dir()
-    seen: set[str] = set()
+    seen_paths: set[str] = set()
+    seen_names: set[str] = set()
     items: list[dict[str, Any]] = []
     if root.is_dir():
         for child in sorted(root.iterdir()):
             if not child.is_dir() or not _is_kb_dir(child):
                 continue
             resolved = child.resolve()
-            seen.add(str(resolved))
+            seen_paths.add(str(resolved))
+            seen_names.add(child.name)
             items.append(_kb_list_item(resolved, child.name))
     for name, kb_dir in registered_kbs():
-        if str(kb_dir) in seen or not _is_kb_dir(kb_dir):
+        if str(kb_dir) in seen_paths or name in seen_names or not _is_kb_dir(kb_dir):
             continue
-        seen.add(str(kb_dir))
+        seen_paths.add(str(kb_dir))
+        seen_names.add(name)
         items.append(_kb_list_item(kb_dir, name))
     return {"root": str(root), "knowledge_bases": items}

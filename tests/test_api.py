@@ -2866,3 +2866,167 @@ def test_kbs_discovery_skips_stale_registered_entry(monkeypatch, tmp_path):
     ]
     assert "live-kb" in names
     assert "stale-kb" not in names
+
+
+def test_kbs_discovery_root_child_shadows_colliding_off_root_kb(monkeypatch, tmp_path):
+    """A root-level KB and an off-root ``known_kbs`` KB share a basename: the
+    list must show that name EXACTLY ONCE (the root one), never two same-named
+    cards. Regression for the by-path-only dedupe that let a basename collision
+    duplicate the name."""
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    root_notes = root / "notes"
+    _make_kb(root_notes)
+    off_notes = tmp_path / "x" / "notes"
+    _make_kb(off_notes)
+    # Register the off-root KB as a BARE known_kbs entry (no alias).
+    (tmp_path / "global.yaml").write_text(
+        yaml.safe_dump({"known_kbs": [str(off_notes)]}), encoding="utf-8"
+    )
+
+    client = _client(monkeypatch)
+    body = client.get("/api/v1/kbs", headers=_auth()).json()
+
+    names = [k["name"] for k in body["knowledge_bases"]]
+    assert names.count("notes") == 1
+    paths = {k["name"]: k["path"] for k in body["knowledge_bases"]}
+    assert paths["notes"] == str(root_notes.resolve())
+
+
+# ---------------------------------------------------------------------------
+# Credential guard matches the .env parser (splitlines, not just CR/LF)
+# ---------------------------------------------------------------------------
+
+
+def test_kb_config_patch_rejects_splitlines_separator_in_api_key(monkeypatch, kb_dir):
+    """A credential value containing ANY char ``str.splitlines()`` splits on —
+    here a vertical tab ``\\x0b``, not just ``\\r``/``\\n`` — is a 400 BEFORE any
+    write. ``_merge_patch_env`` parses ``.env`` with ``splitlines()``, so such a
+    char would inject a second ``KEY=VALUE`` line; the guard must match the
+    parser exactly. Nothing reaches disk."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=old\n", encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "api_key": "sk-good\x0bEVIL_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "api_key" in response.json()["detail"]
+    env_text = (kb_dir / ".env").read_text()
+    assert "EVIL_KEY" not in env_text
+    assert "LLM_API_KEY=old" in env_text
+
+
+def test_global_config_patch_rejects_splitlines_separator_in_credential(monkeypatch, tmp_path):
+    """The global patch path also rejects a non-CR/LF ``splitlines`` separator
+    (here a file-separator ``\\x1c``) in a credential value — same parser, same
+    guard. The global ``.env`` is untouched."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text("LLM_API_KEY=keep\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/v1/config",
+        json={"openai_api_base": "https://ok/v1\x1cLLM_API_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "openai_api_base" in response.json()["detail"]
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "LLM_API_KEY=keep\n"
+
+
+# ---------------------------------------------------------------------------
+# Global config endpoints degrade on a non-mapping global.yaml (no 500)
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_endpoints_degrade_on_non_mapping_yaml(monkeypatch, tmp_path):
+    """A hand-corrupted global.yaml that parses to a bare list must not 500 the
+    config endpoints: GET reports defaults and PATCH stays operable (the loader
+    coerces the non-mapping to ``{}``)."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    (tmp_path / "global.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    got = client.get("/api/v1/config", headers=_auth())
+    assert got.status_code == 200
+    assert got.json()["model"] == "gpt-5.4"
+
+    patched = client.patch("/api/v1/config", json={"config": {"model": "x"}}, headers=_auth())
+    assert patched.status_code == 200
+    assert patched.json()["model"] == "x"
+
+
+# ---------------------------------------------------------------------------
+# Global kb_root PATCH must reject a relative path
+# ---------------------------------------------------------------------------
+
+
+def test_global_config_patch_rejects_relative_kb_root(monkeypatch, tmp_path):
+    """A relative kb_root is a 400 (mirrors ``/init``'s absolute-path guard); an
+    absolute path is accepted and an explicit null clears it back to default."""
+    gp = tmp_path / "global.yaml"
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gp)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    client = _client(monkeypatch)
+
+    rel = client.patch("/api/v1/config", json={"kb_root": "kbs"}, headers=_auth())
+    assert rel.status_code == 400
+    assert "absolute" in rel.json()["detail"].lower()
+    # Nothing persisted (the 400 is raised before the lock/write).
+    assert not gp.exists() or "kb_root" not in (yaml.safe_load(gp.read_text()) or {})
+
+    absolute = tmp_path / "abs-root"
+    set_resp = client.patch("/api/v1/config", json={"kb_root": str(absolute)}, headers=_auth())
+    assert set_resp.status_code == 200
+    assert set_resp.json()["kb_root"] == str(absolute.resolve())
+
+    clear = client.patch("/api/v1/config", json={"kb_root": None}, headers=_auth())
+    assert clear.status_code == 200
+    assert clear.json()["kb_root"] == str((tmp_path / "kbs").resolve())
+
+
+# ---------------------------------------------------------------------------
+# /kbs survives an unstattable summaries entry (dangling symlink)
+# ---------------------------------------------------------------------------
+
+
+def test_kbs_listing_survives_dangling_summary_symlink(monkeypatch, tmp_path):
+    """One KB with an unstattable summaries entry (a dangling symlink) must not
+    500 the whole listing: that KB still lists (``last_compile`` None) and the
+    other KBs are unaffected."""
+    root = tmp_path / "root"
+    monkeypatch.setenv("OPENKB_KB_ROOT", str(root))
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+
+    bad = root / "bad-kb"
+    _make_kb(bad)
+    bad_summaries = bad / "wiki" / "summaries"
+    bad_summaries.mkdir(parents=True)
+    # A dangling symlink named like a summary: glob() yields it, stat() raises.
+    (bad_summaries / "ghost.md").symlink_to(tmp_path / "nonexistent-target.md")
+
+    good = root / "good-kb"
+    _make_kb(good)
+
+    client = _client(monkeypatch)
+    response = client.get("/api/v1/kbs", headers=_auth())
+
+    assert response.status_code == 200
+    items = {k["name"]: k for k in response.json()["knowledge_bases"]}
+    assert set(items) == {"bad-kb", "good-kb"}
+    # The bad KB lists with no last_compile rather than throwing out of the scan.
+    assert items["bad-kb"]["last_compile"] is None

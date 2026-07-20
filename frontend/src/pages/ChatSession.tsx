@@ -273,6 +273,11 @@ export default function ChatSession() {
 
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [running, setRunning] = useState(false)
+  // Whether the running turn is abortable — i.e. a live AbortController exists.
+  // Chat/query and deck/skill turns set this; the `/visualize` graph turn is a
+  // one-shot `getGraph` with no signal to thread, so it is NOT abortable. The
+  // Stop button gates on this so it never appears as a visible no-op.
+  const [stoppable, setStoppable] = useState(false)
   const [panel, setPanel] = useState<PanelState>(CLOSED_PANEL)
 
   // AbortController for the in-flight chat/query stream — one per turn. The Stop
@@ -308,7 +313,17 @@ export default function ChatSession() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const startedRef = useRef(false)
-  const restoredRef = useRef(false)
+  // The session id whose turns are currently held in `msgs`. Set both when the
+  // restore effect finishes loading a session AND when runTurn adopts a real
+  // session id mid-turn (the new→<sid> self-navigate, which sets this to <sid>
+  // just before navigating). The restore effect reloads ONLY when the route
+  // `id` differs from this — so the self-navigate is recognised as "msgs already
+  // are this session" and does NOT clobber the just-finished turn (including its
+  // turn.artifacts open-cards); a genuine switch to a different session reloads.
+  const msgsSessionIdRef = useRef<string | null>(null)
+  // Pending deferred unmount-abort timer — see the abort-on-unmount effect. Held
+  // so a React 18 StrictMode dev remount can cancel it before it fires.
+  const pendingUnmountAbort = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Run a generator command (`/deck`, `/skill`, `/visualize`) against the real
@@ -328,6 +343,16 @@ export default function ChatSession() {
     const patch = (fn: (a: ArtifactTurn) => ArtifactTurn) =>
       setMsgs((m) => m.map((x) => (x.id === artId && x.role === "artifact" ? { ...x, art: fn(x.art) } : x)))
 
+    // Deck/skill stream a cancellable fetch — give them a controller and expose
+    // it via abortRef (same pattern as chat/query) so the Stop button aborts the
+    // fetch → the backend disconnects. Graph is a one-shot getGraph with no
+    // signal to thread, so it gets none and stays non-abortable (Stop hidden).
+    const controller = kind === "graph" ? null : new AbortController()
+    if (controller) {
+      abortRef.current = controller
+      setStoppable(true)
+    }
+
     try {
       if (kind === "graph") {
         patch((a) => ({ ...a, phase: t("chat:phase.buildingGraph") }))
@@ -346,18 +371,28 @@ export default function ChatSession() {
         return
       }
       const stream = kind === "deck"
-        ? runDeckCommand(activeKb, name, intent)
-        : runSkillCommand(activeKb, name, intent)
+        ? runDeckCommand(activeKb, name, intent, controller!.signal)
+        : runSkillCommand(activeKb, name, intent, controller!.signal)
       for await (const event of stream) {
         patch((a) => foldArtifactEvent(a, event, kind, activeKb, t))
       }
     } catch (e) {
-      const message = errMsg(e)
-      patch((a) => ({ ...a, status: a.status === "done" ? a.status : "error", error: a.error ?? message }))
-      toast.error(t("chat:genErrorToast", { error: message }))
+      // A user-initiated abort (Stop button / session switch) is a CLEAN stop,
+      // not a failure: no error toast — the finally settles the streaming strip.
+      // Everything else surfaces as a real error, same as before.
+      const aborted = controller?.signal.aborted || (e as { name?: string })?.name === "AbortError"
+      if (!aborted) {
+        const message = errMsg(e)
+        patch((a) => ({ ...a, status: a.status === "done" ? a.status : "error", error: a.error ?? message }))
+        toast.error(t("chat:genErrorToast", { error: message }))
+      }
     } finally {
-      // A stream that ended without a terminal `final`/`error` still settles.
+      // A stream that ended without a terminal `final`/`error` (or was aborted)
+      // still settles.
       patch((a) => (a.status === "streaming" ? { ...a, status: a.error ? "error" : "done" } : a))
+      // Relinquish the shared ref only if this turn still owns it.
+      if (controller && abortRef.current === controller) abortRef.current = null
+      setStoppable(false)
       setRunning(false)
     }
   }
@@ -381,6 +416,7 @@ export default function ChatSession() {
     // Fresh controller for this turn — the Stop button / unmount abort it.
     const controller = new AbortController()
     abortRef.current = controller
+    setStoppable(true)
 
     try {
       const stream = streamChat(activeKb, sessionIdRef.current, question, controller.signal)
@@ -390,6 +426,11 @@ export default function ChatSession() {
           const sid = event.data.session_id as string
           if (sid && sid !== sessionIdRef.current) {
             sessionIdRef.current = sid
+            // The live turn (incl. its streamed artifacts) IS this session — tell
+            // the restore effect so its id-change re-run treats <sid> as already
+            // loaded and does NOT reload over the live msgs. Must be set BEFORE
+            // navigate() triggers the id change.
+            msgsSessionIdRef.current = sid
             // Make the session addressable/reloadable without remounting.
             navigate(`/chat/${encodeURIComponent(sid)}`, { replace: true, state: { kbId: activeKb } })
           }
@@ -418,6 +459,7 @@ export default function ChatSession() {
       // may have already replaced it).
       if (abortRef.current === controller) abortRef.current = null
       patch((t) => ({ ...t, reading: null, done: true, steps: markToolStepsDone(t.steps) }))
+      setStoppable(false)
       setRunning(false)
     }
   }
@@ -436,19 +478,41 @@ export default function ChatSession() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  // Existing session (deep link / reload): resolve its KB, then restore turns.
+  // Existing session (deep link / reload), or a genuine switch to a DIFFERENT
+  // session: resolve its KB, then restore turns. Re-runs on every `id` change —
+  // there is no key={id} remount — so navigating between two saved sessions
+  // (/chat/A → /chat/B) reloads the right one, fixing the stale-session bug the
+  // remount used to guard against. But it is a deliberate no-op when `msgs`
+  // already correspond to `id`, which is what lets runTurn's mid-turn
+  // self-navigate (new→<sid>) keep the just-finished turn (incl. turn.artifacts)
+  // instead of reloading over it.
   useEffect(() => {
-    if (restoredRef.current) return
-    restoredRef.current = true
-    // A brand-new session ("new") has nothing to restore — but we still mark
-    // restoration as done here so that runTurn's self-triggered navigate() (which
-    // adopts the real session id mid-conversation, changing `id` without a
-    // remount) can't re-run this effect and clobber the live streamed msgs. A
-    // genuine cold navigation to /chat/<id> remounts with a fresh restoredRef,
-    // so real prior history still restores normally.
-    if (id === "new") return
-    let cancelled = false
+    // A brand-new session ("new") has nothing to restore — the seeded effect
+    // owns it.
+    if (id === "new" || !id) return
+    // msgs already ARE this session (self-navigate adoption, or we just restored
+    // it): reloading would drop the live turn's artifact open-cards and flash
+    // the answer. Skip.
+    if (msgsSessionIdRef.current === id) return
 
+    // A real (re)load of a different session. The key={id} remount used to reset
+    // per-session state for us; without it we reset here:
+    //  - abort any stream still live for the previous session (no unmount fires
+    //    on an in-place id change, so nothing else would stop it);
+    //  - reset the KB (prefer the nav-provided kbId, else clear so the loop
+    //    below resolves the owning KB);
+    //  - clear the previous session's msgs and any open panels.
+    abortRef.current?.abort()
+    abortRef.current = null
+    setRunning(false)
+    setStoppable(false)
+    setKb(location.state?.kbId ?? "")
+    sessionIdRef.current = id
+    setMsgs([])
+    setPanel(CLOSED_PANEL)
+    setPanelArtifact(null)
+
+    let cancelled = false
     const restore = async () => {
       let resolvedKb = kbRef.current
       if (!resolvedKb) {
@@ -469,9 +533,8 @@ export default function ChatSession() {
         return
       }
       setKb(resolvedKb)
-      sessionIdRef.current = id ?? null
       try {
-        const loaded = await loadSession(resolvedKb, id as string)
+        const loaded = await loadSession(resolvedKb, id)
         if (cancelled) return
         const restored: Msg[] = []
         const n = Math.max(loaded.user_turns.length, loaded.assistant_texts.length)
@@ -495,18 +558,24 @@ export default function ChatSession() {
                 answer: text,
                 steps,
                 done: true,
-                sessionId: id ?? null,
+                sessionId: id,
               },
             })
           }
         }
         setMsgs(restored)
+        // msgs now correspond to this id — subsequent effect runs for the same
+        // id (and runTurn) treat it as already-loaded and won't reload over it.
+        msgsSessionIdRef.current = id
       } catch (e) {
         if (!cancelled) toast.error(t("chat:errors.loadSession", { error: errMsg(e) }))
       }
     }
     void restore()
     return () => { cancelled = true }
+    // Keyed on `id` only: KB, location.state, and t are read as "latest at run
+    // time"; listing them would re-restore on unrelated changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
   // Auto-scroll to the newest content.
@@ -514,12 +583,28 @@ export default function ChatSession() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [msgs])
 
-  // Abort the in-flight turn's fetch when the user navigates away (unmount), so
-  // a half-finished stream stops burning tokens and can't fire setMsgs after the
-  // component is gone. A settled turn already cleared the ref, so this is a
-  // no-op unless a stream is actually live.
+  // Abort the in-flight turn's fetch when the user navigates away (real
+  // unmount), so a half-finished stream stops burning tokens and can't fire
+  // setMsgs after the component is gone. A settled turn already cleared the ref,
+  // so this is a no-op unless a stream is actually live.
+  //
+  // The abort is DEFERRED one macrotask: React 18 StrictMode runs this cleanup
+  // and then SYNCHRONOUSLY re-mounts the component in dev, so the re-mount's
+  // setup below cancels the pending timer before it fires — otherwise the dev
+  // double-invoke would abort the Home-seeded first turn, and startedRef (a ref,
+  // it persists) would block its retry, making a new chat look broken in dev. A
+  // real navigation-away has no such re-mount, so the timer fires and aborts —
+  // no uncancelled-stream leak.
   useEffect(() => {
-    return () => abortRef.current?.abort()
+    // Re-mounted (StrictMode dev, or any future remount): we're still here, so
+    // cancel a pending unmount-abort scheduled by the just-run cleanup.
+    if (pendingUnmountAbort.current) {
+      clearTimeout(pendingUnmountAbort.current)
+      pendingUnmountAbort.current = null
+    }
+    return () => {
+      pendingUnmountAbort.current = setTimeout(() => abortRef.current?.abort(), 0)
+    }
   }, [])
 
   const openSource = async (s: Source) => {
@@ -544,9 +629,11 @@ export default function ChatSession() {
     void runTurn(text, command)
   }
 
-  // Stop the in-flight chat/query turn — aborts the SSE fetch; runTurn's catch
-  // treats the abort as a clean stop (no error toast). A no-op during generator
-  // (deck/skill/graph) turns, whose streams don't run through this controller.
+  // Stop the in-flight turn — aborts the SSE fetch; the turn's catch treats the
+  // abort as a clean stop (no error toast). Wired for chat/query AND deck/skill
+  // (all set abortRef). The `/visualize` graph turn has no controller, so the
+  // Stop button is gated on `stoppable` (below) and never shown for it — this is
+  // only ever called when a live controller exists.
   const stopTurn = () => abortRef.current?.abort()
 
   const firstUser = msgs.find((m) => m.role === "user") as Extract<Msg, { role: "user" }> | undefined
@@ -596,8 +683,9 @@ export default function ChatSession() {
       {/* 底部输入 */}
       <div className="shrink-0 px-6 pb-5 pt-2 bg-gradient-to-t from-[hsl(var(--ambient))] via-[hsl(var(--ambient))] to-transparent">
         <div className="max-w-[860px] xl:max-w-[1000px] mx-auto">
-          {/* 停止按钮：仅在生成中显示，中止当前回合的 SSE 流 */}
-          {running && (
+          {/* 停止按钮：仅当当前回合可中止（存在实时 AbortController）时显示，避免
+              对 /visualize 图谱回合成为可见的空操作。中止当前回合的 SSE 流。 */}
+          {running && stoppable && (
             <div className="flex justify-center pb-2">
               <button
                 type="button"

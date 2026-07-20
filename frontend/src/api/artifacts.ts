@@ -6,13 +6,18 @@ import { apiStream, fetchAsBlobUrl } from "./client"
  * event's data is `{ name, status, path }` (see `_iter_deck`/`_iter_skill` in
  * `openkb/api_helpers.py`). NOTE: this `final` shape differs from chat/query's
  * `final` — do not fold these through `mapSseEvent`/`foldSseEvent`.
+ *
+ * Pass an optional `signal` (threaded to the underlying `apiStream` fetch) to
+ * make the stream cancellable: aborting it disconnects the client, which the
+ * backend `_stream_deck`/`_stream_skill` handlers now honor. Backward-compatible
+ * — callers that omit it get an uncancellable stream exactly as before.
  */
-export function runDeckCommand(kb: string, name: string, intent: string) {
-  return apiStream("/api/v1/deck", { kb, name, intent, stream: true })
+export function runDeckCommand(kb: string, name: string, intent: string, signal?: AbortSignal) {
+  return apiStream("/api/v1/deck", { kb, name, intent, stream: true }, signal)
 }
 
-export function runSkillCommand(kb: string, name: string, intent: string) {
-  return apiStream("/api/v1/skill", { kb, name, intent, stream: true })
+export function runSkillCommand(kb: string, name: string, intent: string, signal?: AbortSignal) {
+  return apiStream("/api/v1/skill", { kb, name, intent, stream: true }, signal)
 }
 
 /**

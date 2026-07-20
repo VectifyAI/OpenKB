@@ -41,22 +41,38 @@ from openkb.locks import atomic_write_text
 logger = logging.getLogger(__name__)
 
 
+def _has_line_separator(value: str) -> bool:
+    """Whether ``value`` contains ANY character ``str.splitlines()`` treats as a
+    line boundary — the exact splitter :func:`_merge_patch_env` uses to parse
+    ``.env``.
+
+    This is a strict superset of ``\\r``/``\\n``: ``str.splitlines()`` also
+    breaks on ``\\v \\f \\x1c \\x1d \\x1e \\x85 \\u2028 \\u2029``. Guarding only
+    CR/LF would let one of those smuggle a second ``KEY=VALUE`` line past the
+    guard and into ``.env`` (the parser splits on it even though the naive guard
+    doesn't see it). ``value != "".join(value.splitlines())`` is true iff at
+    least one such separator is present.
+    """
+    return value != "".join(value.splitlines())
+
+
 def _reject_credential_newlines(
     request: KbConfigPatchRequest | GlobalConfigPatchRequest,
 ) -> None:
-    """Reject a newline/CR in a credential value BEFORE it reaches ``.env``.
+    """Reject a line separator in a credential value BEFORE it reaches ``.env``.
 
     ``.env`` is line-oriented (``KEY=VALUE\\n``), so an ``api_key`` or
-    ``openai_api_base`` containing ``\\n``/``\\r`` would inject extra KEY=VALUE
-    lines. Raise a 400 naming the offending field (the value is never logged).
-    Merge-patch semantics: only fields the client actually sent are checked
+    ``openai_api_base`` containing any character the ``.env`` parser splits on
+    (see :func:`_has_line_separator`) would inject extra KEY=VALUE lines. Raise a
+    400 naming the offending field (the value is never logged). Merge-patch
+    semantics: only fields the client actually sent are checked
     (``model_fields_set``); an explicit ``null`` (clear) carries no value.
     """
     fields_set = request.model_fields_set
     if (
         "api_key" in fields_set
         and request.api_key is not None
-        and any(c in request.api_key.get_secret_value() for c in "\r\n")
+        and _has_line_separator(request.api_key.get_secret_value())
     ):
         raise HTTPException(
             status_code=400,
@@ -65,7 +81,7 @@ def _reject_credential_newlines(
     if (
         "openai_api_base" in fields_set
         and request.openai_api_base is not None
-        and any(c in request.openai_api_base for c in "\r\n")
+        and _has_line_separator(request.openai_api_base)
     ):
         raise HTTPException(
             status_code=400,
@@ -297,6 +313,17 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
     if write_env:
         _reject_credential_newlines(request)
 
+    # A non-empty kb_root MUST be absolute — mirrors resolve_init_kb_dir / the
+    # /init `path` guard. A relative root would resolve against the server's cwd
+    # (unstable), so reject it with a 400 before the lock. Empty/whitespace (and
+    # explicit null) still clear it (handled in the write section below).
+    if write_kb_root and request.kb_root is not None and request.kb_root.strip():
+        if not Path(request.kb_root).expanduser().is_absolute():
+            raise HTTPException(
+                status_code=400,
+                detail="kb_root must be an absolute directory",
+            )
+
     # Validate scalar VALUE types before touching disk (a wrong type is a 400,
     # never persisted). Done outside the lock.
     dumped: dict[str, object] | None = None
@@ -334,9 +361,10 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
                 # kb_root is a plain global.yaml key (like known_kbs), NOT a
                 # scalar in `config` and NOT a credential — it is merged directly
                 # into the loaded dict, never routed to the .env. RFC 7386:
-                # explicit null removes it (revert to the default root), a string
-                # sets it. Env OPENKB_KB_ROOT still overrides it at runtime.
-                if request.kb_root is None:
+                # explicit null (or an empty/whitespace string) removes it
+                # (revert to the default root), a non-empty absolute string sets
+                # it. Env OPENKB_KB_ROOT still overrides it at runtime.
+                if request.kb_root is None or not request.kb_root.strip():
                     gc.pop("kb_root", None)
                 else:
                     gc["kb_root"] = request.kb_root

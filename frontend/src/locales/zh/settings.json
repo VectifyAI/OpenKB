@@ -10,7 +10,8 @@
   "unsaved": "有未保存的更改",
   "modelSection": {
     "title": "模型与阈值",
-    "desc": "全局默认模型与阈值（写入 ~/.config/openkb/global.yaml；各知识库可在其设置中继承或覆盖）"
+    "desc": "全局默认模型与阈值（写入 ~/.config/openkb/global.yaml；各知识库可在其设置中继承或覆盖）",
+    "thresholdInvalid": "阈值必须是不小于 1 的整数。"
   },
   "credSection": {
     "title": "默认凭证",

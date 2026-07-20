@@ -6,6 +6,7 @@ import { FileText, Loader2, Upload, RefreshCw, Settings2, Trash2, Circle, CheckC
 import { toast } from 'sonner'
 import { getKbInventory, getPage, type KbInventory, type WikiDocument } from '@/api/wiki'
 import { streamUpload, removeDocument, type AddResult } from '@/api/maintenance'
+import { ApiError } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
 import PageList from '@/components/PageList'
 import ConnectorCards from '@/components/ConnectorCards'
@@ -14,17 +15,45 @@ import KbSettingsSheet from '@/components/KbSettingsSheet'
 import { useAnimatedSwitch } from '@/hooks/useAnimatedSwitch'
 import { cn } from '@/lib/utils'
 
-/** Strip a leading YAML-mapping frontmatter block (`--- … ---`) from a raw wiki
- *  page. Pages are served verbatim by `GET /api/v1/page`, so the OKF frontmatter
+/** True when `line` looks like a line of a YAML frontmatter block: a blank line,
+ *  a `#` comment, a `- ` list item, an indented continuation, or a `key: value`
+ *  mapping entry whose value is YAML-shaped (empty, quoted, a `[`/`{` flow
+ *  collection, or a single bare token). A mapping value that is free prose
+ *  (multiple unquoted words, e.g. `see below`) is NOT YAML-shaped — that is what
+ *  separates real OKF frontmatter (values are always JSON-quoted) from a prose
+ *  line like `Note: see below`. ASCII-only. */
+function looksLikeYamlLine(line: string): boolean {
+  if (line.trim() === '') return true
+  if (/^[ \t]*#/.test(line)) return true // comment
+  if (/^[ \t]*-([ \t]|$)/.test(line)) return true // list item
+  if (/^[ \t]+\S/.test(line)) return true // indented continuation / nested block
+  const m = /^[ \t]*[\w.-]+[ \t]*:([ \t]+(.*))?$/.exec(line)
+  if (!m) return false // no `key:` mapping — a prose line
+  const value = (m[2] ?? '').trim()
+  if (value === '') return true // `key:` with an empty / block value
+  if (/^["'[{]/.test(value)) return true // quoted string or flow collection
+  return !/\s/.test(value) // a single bare scalar (Concept / 42 / true), not prose
+}
+
+/** Strip a leading YAML frontmatter block (`--- ... ---`) from a raw wiki page.
+ *  Pages are served verbatim by `GET /api/v1/page`, so an OKF frontmatter block
  *  would otherwise render in the reader as junk metadata lines — and, now that
  *  MarkdownView renders thematic breaks, its `---` delimiters as horizontal
- *  rules. The lookahead requires the first inner line to be a YAML mapping (it
- *  contains a `:`), so a body that legitimately opens with a `---` thematic
- *  break (e.g. `---\nIntro paragraph\n---`) is left intact. No-op when there is
- *  no leading frontmatter. Only the reader strips it; chat answers (which carry
- *  no frontmatter) go through MarkdownView untouched. */
+ *  rules. The block is stripped ONLY when it genuinely looks like frontmatter:
+ *  it opens at the VERY START of the document, is closed by a line-anchored
+ *  `---`, and EVERY non-blank inner line looks like YAML (see `looksLikeYamlLine`).
+ *  A block containing a prose line is left intact, so a body that legitimately
+ *  opens with a `---` thematic break followed by prose (`---\nIntro paragraph\n---`
+ *  or `---\nNote: see below\n---`) is NOT mistaken for frontmatter. Real OKF
+ *  frontmatter (`title:`/`type:`/`links:`, values JSON-quoted) still strips.
+ *  No-op when there is no leading frontmatter. Only the reader strips it; chat
+ *  answers (which carry no frontmatter) go through MarkdownView untouched.
+ *  ASCII-only. */
 function stripFrontmatter(md: string): string {
-  return md.replace(/^---\r?\n(?=[^\n]*?:)[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(md)
+  if (!m) return md
+  if (!m[1].split(/\r?\n/).every(looksLikeYamlLine)) return md
+  return md.slice(m[0].length)
 }
 
 /** Per-file lifecycle during a streaming upload. `pending` → `processing`
@@ -32,6 +61,10 @@ function stripFrontmatter(md: string): string {
  *  the `AddFileItem.status`). */
 type UploadStatus = 'pending' | 'processing' | 'added' | 'skipped' | 'failed'
 interface UploadFileState {
+  /** Stable generated id, assigned once at seed time — the React key. Rows are
+   *  correlated to backend events by their array index, not this id or the
+   *  basename (two same-basename files from different folders must not collide). */
+  id: string
   name: string
   status: UploadStatus
   message?: string
@@ -97,6 +130,12 @@ export default function KbDetail() {
   const [uploading, setUploading] = useState(false)
   const [uploadFiles, setUploadFiles] = useState<UploadFileState[]>([])
   const [dragActive, setDragActive] = useState(false)
+  // Monotonic counter for per-row ids (React keys), and the AbortController for
+  // the in-flight upload — aborted on unmount so navigating away mid-upload
+  // cancels the request (mirrors the recompile/chat abort discipline).
+  const rowIdSeq = useRef(0)
+  const uploadAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => uploadAbortRef.current?.abort(), [])
 
   const selected = useMemo(() => parseSelected(selectedPath), [selectedPath])
   const openPath = useCallback((path: string) => setSelectedPath(path), [])
@@ -174,30 +213,51 @@ export default function KbDetail() {
       if (files.length === 0 || uploading) return
       setUploading(true)
       // Seed one row per selected file so the UI shows the full set immediately,
-      // then flip each to processing/terminal as SSE events arrive.
-      setUploadFiles(files.map((f) => ({ name: f.name, status: 'pending' as const })))
+      // then flip each to processing/terminal as SSE events arrive. Each row gets
+      // a stable generated id (its React key); rows are correlated to backend
+      // events by array index (event order == files order), NOT by basename, so
+      // two same-basename files from different folders no longer collide.
+      setUploadFiles(files.map((f) => ({ id: String(rowIdSeq.current++), name: f.name, status: 'pending' as const })))
+      // Fresh controller for this upload — aborted on unmount.
+      const controller = new AbortController()
+      uploadAbortRef.current = controller
       let summary: AddResult | null = null
       let streamError: string | null = null
       try {
-        await streamUpload(id, files, (ev) => {
-          if (ev.type === 'file_start') {
-            setUploadFiles((prev) =>
-              prev.map((f) => (f.name === ev.original_name ? { ...f, status: 'processing' } : f)),
-            )
-          } else if (ev.type === 'file_done') {
-            setUploadFiles((prev) =>
-              prev.map((f) =>
-                f.name === ev.file.original_name
-                  ? { ...f, status: ev.file.status as UploadStatus, message: ev.file.message }
-                  : f,
-              ),
-            )
-          } else if (ev.type === 'final') {
-            summary = ev.result
-          } else if (ev.type === 'error') {
-            streamError = ev.message
-          }
-        })
+        await streamUpload(
+          id,
+          files,
+          (ev) => {
+            if (ev.type === 'file_start') {
+              setUploadFiles((prev) =>
+                prev.map((f, i) => (i === ev.index ? { ...f, status: 'processing' } : f)),
+              )
+            } else if (ev.type === 'file_done') {
+              setUploadFiles((prev) =>
+                prev.map((f, i) =>
+                  i === ev.index
+                    ? { ...f, status: ev.file.status as UploadStatus, message: ev.file.message }
+                    : f,
+                ),
+              )
+            } else if (ev.type === 'final') {
+              summary = ev.result
+            } else if (ev.type === 'error') {
+              streamError = ev.message
+            }
+          },
+          controller.signal,
+        )
+        // A stream-level `error` frame, or a stream that ends WITHOUT a `final`
+        // summary, must not leave rows spinning forever — settle any still-
+        // unresolved (pending/processing) rows to failed.
+        if (streamError || !summary) {
+          setUploadFiles((prev) =>
+            prev.map((f) =>
+              f.status === 'pending' || f.status === 'processing' ? { ...f, status: 'failed' as const } : f,
+            ),
+          )
+        }
         // `/api/v1/add` reports HTTP 200 even when per-file compile fails, so a
         // clean stream does NOT mean success — branch on the real
         // added/failed/skipped counts from the `final` summary event.
@@ -224,12 +284,21 @@ export default function KbDetail() {
             // an error and not a "新增" success.
             toast.info(t('kb:upload.existsToast', { summary: line }))
           }
+        } else {
+          // Stream ended cleanly but never delivered a `final` summary and no
+          // explicit `error` frame — treat as an interrupted upload so the user
+          // isn't left with a silent no-op.
+          toast.error(t('kb:upload.incompleteToast'))
         }
         // Refresh regardless of outcome: a failed compile may still have
         // written a raw file, and the user needs to see current state.
         await refreshInventory()
       } catch (e) {
-        toast.error(errMsg(e))
+        // An abort (component unmounted / navigated away mid-upload) is a clean
+        // cancel: no toast, no refresh — the component is gone. Real failures
+        // still surface.
+        const aborted = controller.signal.aborted || (e as { name?: string })?.name === 'AbortError'
+        if (!aborted) toast.error(errMsg(e))
       } finally {
         setUploading(false)
       }
@@ -239,15 +308,43 @@ export default function KbDetail() {
 
   /** Remove one document via `/api/v1/remove`, then refresh + toast. The
    *  identifier is the document's original filename (`WikiDocument.name`),
-   *  which the backend resolves by exact-name match first. */
+   *  which the backend resolves by exact-name match first. `/api/v1/remove`
+   *  returns HTTP 200 for both `removed` (full success) and `partial` (local
+   *  files gone, PageIndex cleanup failed), so success is claimed ONLY on
+   *  `removed`; `partial` warns and surfaces the PageIndex error. A 409
+   *  multiple-match carries a structured `{ message, candidates }` detail — its
+   *  candidate names are shown so the user can disambiguate. */
   const onDeleteDocument = useCallback(
     async (identifier: string) => {
       try {
-        await removeDocument(id, identifier)
-        toast.success(t('kb:docs.delete.success', { name: identifier }))
+        const res = await removeDocument(id, identifier)
+        if (res.status === 'partial') {
+          // HTTP 200, but PageIndex cleanup failed: local wiki files were removed
+          // while the remote index was not. Warn (not success) and say why.
+          const reason = res.pageindex_error || res.message || ''
+          toast.warning(
+            t('kb:docs.delete.partial', { name: res.name || identifier }) +
+              (reason ? t('kb:docs.delete.reasonSuffix', { reason }) : ''),
+          )
+        } else {
+          toast.success(t('kb:docs.delete.success', { name: res.name || identifier }))
+        }
         await refreshInventory()
       } catch (e) {
-        toast.error(t('kb:docs.delete.error', { error: errMsg(e) }))
+        // A 409 multiple-match carries a structured detail `{ message, candidates }`
+        // (see client.ts `ApiError.detail`); show the message + candidate names so
+        // the user can pick a more specific identifier, instead of a raw JSON blob.
+        const detail =
+          e instanceof ApiError
+            ? (e.detail as { message?: string; candidates?: Array<{ name?: string; doc_name?: string }> } | undefined)
+            : undefined
+        const candidates = detail?.candidates
+        if (candidates && candidates.length > 0) {
+          const names = candidates.map((c) => c.name || c.doc_name || '?').join(', ')
+          toast.error(t('kb:docs.delete.multiple', { message: detail?.message || errMsg(e), names }))
+        } else {
+          toast.error(t('kb:docs.delete.error', { error: errMsg(e) }))
+        }
       }
     },
     [id, refreshInventory, t],
@@ -546,7 +643,7 @@ function DocumentsPane({
             <div className="mt-2 space-y-1.5">
               {uploadFiles.map((f) => (
                 <div
-                  key={f.name}
+                  key={f.id}
                   className="rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-2 flex items-center gap-2.5"
                 >
                   <UploadStatusIcon status={f.status} />
