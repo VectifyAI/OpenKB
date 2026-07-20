@@ -44,6 +44,9 @@ export default function CreateKbDialog({ children }: { children: ReactNode }) {
     setError(null)
     try {
       await createKb({ kb: trimmed })
+      // Broadcast so any live KB list (e.g. AppSidebar) re-fetches without a
+      // full reload; mirrors the old app's `openkb:reload-kbs` signal.
+      window.dispatchEvent(new CustomEvent('openkb:reload-kbs'))
       setSubmitting(false)
       setOpen(false)
       setName('')

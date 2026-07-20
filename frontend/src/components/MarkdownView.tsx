@@ -270,6 +270,74 @@ export default function MarkdownView({
       continue
     }
 
+    // GFM table: a header row (has a `|`) IMMEDIATELY followed by a delimiter
+    // row of optional-colon dashes. ONLY this header+delimiter pair triggers a
+    // table — a stray `|` in prose (no delimiter line after it) stays literal.
+    const tblNext = i + 1 < lines.length ? lines[i + 1].trim() : ''
+    if (
+      /^\s*\|?.+\|.+/.test(line) &&
+      /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(tblNext)
+    ) {
+      flushBlocks()
+      // Split a row into trimmed cells, dropping the empty cell an optional
+      // leading/trailing edge pipe produces (`| a | b |` → ['a','b']).
+      const cells = (row: string) => {
+        const c = row.trim().split('|').map((s) => s.trim())
+        if (c.length && c[0] === '') c.shift()
+        if (c.length && c[c.length - 1] === '') c.pop()
+        return c
+      }
+      const headers = cells(line)
+      // Column alignment from the delimiter row: `:---`=left, `:---:`=center,
+      // `---:`=right, plain `---`=unset. Applied to both header and body cells.
+      const aligns = cells(tblNext).map((d) => {
+        const l = d.startsWith(':'), r = d.endsWith(':')
+        return l && r ? 'text-center' : r ? 'text-right' : l ? 'text-left' : ''
+      })
+      const alignOf = (col: number) => aligns[col] ?? ''
+      // Consume header + delimiter, then all contiguous non-blank `|` rows.
+      const body: string[][] = []
+      i += 2
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+        body.push(cells(lines[i]))
+        i++
+      }
+      i-- // step back so the loop's i++ lands on the first post-table line (or EOF)
+      out.push(
+        <div key={key++} className="my-3 overflow-x-auto">
+          <table className="w-full border-collapse text-[13px]">
+            <thead>
+              <tr>
+                {headers.map((h, c) => (
+                  <th
+                    key={c}
+                    className={`border border-[hsl(var(--glass-border))] bg-muted/50 px-3 py-1.5 font-semibold text-foreground ${alignOf(c)}`}
+                  >
+                    {inline(h, onWikiLink)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {body.map((r, ri) => (
+                <tr key={ri}>
+                  {headers.map((_, c) => (
+                    <td
+                      key={c}
+                      className={`border border-[hsl(var(--glass-border))] px-3 py-1.5 text-muted-foreground ${alignOf(c)}`}
+                    >
+                      {inline(r[c] ?? '', onWikiLink)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      )
+      continue
+    }
+
     // Unordered item: close any open ordered list, keep accumulating the ul.
     if (line.startsWith('- ')) { flushOList(); list.push(line.slice(2)); continue }
     // Ordered item `N. …`: close any open unordered list, strip the marker, and

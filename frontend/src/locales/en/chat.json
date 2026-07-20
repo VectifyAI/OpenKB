@@ -46,6 +46,7 @@
     "selectKb": "Select a knowledge base",
     "noKbs": "No knowledge bases yet",
     "current": "Current",
+    "stop": "Stop",
     "hint": "Type <0>/</0> for commands"
   }
 }

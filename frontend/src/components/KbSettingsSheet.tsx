@@ -467,6 +467,14 @@ function KbMaintenanceSection({
   const [lintBusy, setLintBusy] = useState(false)
   const [lintResult, setLintResult] = useState<string | null>(null)
 
+  // AbortController for the in-flight recompile SSE. Aborted when the sheet
+  // closes/unmounts so the stream doesn't keep the (long, LLM-driven) recompile
+  // running with nothing listening. startRecompile owns setting/clearing it.
+  const recompileAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => {
+    return () => recompileAbortRef.current?.abort()
+  }, [])
+
   // Poll watcher status while the sheet is open so counters reflect reality
   // (added/skipped/failed tick up as the watcher ingests files).
   useEffect(() => {
@@ -511,15 +519,24 @@ function KbMaintenanceSection({
     if (recompileRunning) return
     setRecompileRunning(true)
     setRecompile({ status: 'running', docs: [], summary: null, error: null })
+    // Fresh controller for this run — aborted on sheet close/unmount.
+    const controller = new AbortController()
+    recompileAbortRef.current = controller
     try {
-      for await (const ev of runRecompile(kb)) {
+      for await (const ev of runRecompile(kb, undefined, controller.signal)) {
         setRecompile((s) => foldRecompile(s, ev, t))
       }
     } catch (e) {
-      const message = errMsg(e)
-      setRecompile((s) => ({ ...s, status: 'error', error: s.error ?? message }))
-      toast.error(t('kbSettings:recompileErrorToast', { error: message }))
+      // An abort (sheet closed / unmounted) is a clean stop: no error toast, no
+      // error status — the finally settles it to `done`. Real failures surface.
+      const aborted = controller.signal.aborted || (e as { name?: string })?.name === 'AbortError'
+      if (!aborted) {
+        const message = errMsg(e)
+        setRecompile((s) => ({ ...s, status: 'error', error: s.error ?? message }))
+        toast.error(t('kbSettings:recompileErrorToast', { error: message }))
+      }
     } finally {
+      if (recompileAbortRef.current === controller) recompileAbortRef.current = null
       // A stream that ended without a terminal `final`/`error` still settles.
       setRecompile((s) => (s.status === 'running' ? { ...s, status: s.error ? 'error' : 'done' } : s))
       setRecompileRunning(false)

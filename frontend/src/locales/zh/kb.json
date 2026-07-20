@@ -18,13 +18,29 @@
     "note": "上传的文档进入本地 raw/ 并自动编译进知识库；文件仅保存在本机",
     "inProgress": "正在上传并编译…",
     "dropzone": "拖放文件到此处，或点击选择",
-    "dropzoneHint": "支持 PDF / Word / Markdown / 文本等，可多选"
+    "dropzoneHint": "支持 PDF / Word / Markdown / 文本等，可多选",
+    "progressHeading": "上传进度 · {{count}}",
+    "fileStatus": {
+      "pending": "等待中",
+      "processing": "编译中…",
+      "added": "已新增",
+      "skipped": "已跳过",
+      "failed": "失败"
+    }
   },
   "docs": {
     "heading": "已上传文档 · {{count}}",
     "empty": "暂无文档 · 上传后会自动编译进知识库",
     "pages_one": "{{count}} 页",
-    "pages_other": "{{count}} 页"
+    "pages_other": "{{count}} 页",
+    "delete": {
+      "action": "删除文档",
+      "prompt": "确认删除？",
+      "confirm": "删除",
+      "cancel": "取消",
+      "success": "已删除 {{name}}",
+      "error": "删除失败：{{error}}"
+    }
   },
   "remote": {
     "heading": "远程数据源",

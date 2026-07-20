@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { motion, useReducedMotion } from 'motion/react'
-import { FileText, Loader2, Upload, RefreshCw, Settings2 } from 'lucide-react'
+import { FileText, Loader2, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { getKbInventory, getPage, type KbInventory, type WikiDocument } from '@/api/wiki'
-import { uploadDocuments } from '@/api/maintenance'
+import { streamUpload, removeDocument, type AddResult } from '@/api/maintenance'
 import MarkdownView from '@/components/MarkdownView'
 import PageList from '@/components/PageList'
 import ConnectorCards from '@/components/ConnectorCards'
@@ -25,6 +25,16 @@ import { cn } from '@/lib/utils'
  *  no frontmatter) go through MarkdownView untouched. */
 function stripFrontmatter(md: string): string {
   return md.replace(/^---\r?\n(?=[^\n]*?:)[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+}
+
+/** Per-file lifecycle during a streaming upload. `pending` → `processing`
+ *  (backend `file_start`) → terminal `added`/`skipped`/`failed` (`file_done`,
+ *  the `AddFileItem.status`). */
+type UploadStatus = 'pending' | 'processing' | 'added' | 'skipped' | 'failed'
+interface UploadFileState {
+  name: string
+  status: UploadStatus
+  message?: string
 }
 
 /** One selected wiki page, derived from its `<type>/<name>` path. */
@@ -80,9 +90,12 @@ export default function KbDetail() {
   const [page, setPage] = useState<{ path: string; content: string } | null>(null)
   const [pageError, setPageError] = useState<{ path: string; message: string } | null>(null)
 
-  // Documents section: upload state.
+  // Documents section: upload state. `uploadFiles` tracks per-file progress
+  // for the current/most-recent streaming upload; it is reset at the start of
+  // each upload and kept afterwards so final per-file statuses stay visible.
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  const [uploadFiles, setUploadFiles] = useState<UploadFileState[]>([])
   const [dragActive, setDragActive] = useState(false)
 
   const selected = useMemo(() => parseSelected(selectedPath), [selectedPath])
@@ -160,29 +173,57 @@ export default function KbDetail() {
     async (files: File[]) => {
       if (files.length === 0 || uploading) return
       setUploading(true)
+      // Seed one row per selected file so the UI shows the full set immediately,
+      // then flip each to processing/terminal as SSE events arrive.
+      setUploadFiles(files.map((f) => ({ name: f.name, status: 'pending' as const })))
+      let summary: AddResult | null = null
+      let streamError: string | null = null
       try {
-        // `/api/v1/add` returns HTTP 200 even when per-file compile fails, so
-        // a non-throwing result does NOT mean success — branch on the real
-        // added/failed/skipped counts instead of blindly reporting success.
-        const res = await uploadDocuments(id, files)
-        const parts = [t('kb:upload.added', { count: res.added_count })]
-        if (res.skipped_count) parts.push(t('kb:upload.skipped', { count: res.skipped_count }))
-        if (res.failed_count) parts.push(t('kb:upload.failed', { count: res.failed_count }))
-        const summary = parts.join(' · ')
-        if (res.added_count === 0 && res.failed_count > 0) {
-          // Every file failed — surface the first failure's message so the
-          // user learns WHY (e.g. compile error / missing LLM API key).
-          const reason = res.files.find((f) => f.status === 'failed')?.message
-          toast.error(t('kb:upload.errorToast', { summary }) + (reason ? t('kb:upload.reasonSuffix', { reason }) : ''))
-        } else if (res.failed_count > 0) {
-          // Some added, some failed — not a clean success.
-          toast.warning(t('kb:upload.partialToast', { summary }))
-        } else if (res.added_count > 0) {
-          toast.success(t('kb:upload.successToast', { summary }))
-        } else {
-          // Nothing added or failed (all skipped duplicates) — neutral, not
-          // an error and not a "新增" success.
-          toast.info(t('kb:upload.existsToast', { summary }))
+        await streamUpload(id, files, (ev) => {
+          if (ev.type === 'file_start') {
+            setUploadFiles((prev) =>
+              prev.map((f) => (f.name === ev.original_name ? { ...f, status: 'processing' } : f)),
+            )
+          } else if (ev.type === 'file_done') {
+            setUploadFiles((prev) =>
+              prev.map((f) =>
+                f.name === ev.file.original_name
+                  ? { ...f, status: ev.file.status as UploadStatus, message: ev.file.message }
+                  : f,
+              ),
+            )
+          } else if (ev.type === 'final') {
+            summary = ev.result
+          } else if (ev.type === 'error') {
+            streamError = ev.message
+          }
+        })
+        // `/api/v1/add` reports HTTP 200 even when per-file compile fails, so a
+        // clean stream does NOT mean success — branch on the real
+        // added/failed/skipped counts from the `final` summary event.
+        if (streamError) {
+          toast.error(streamError)
+        } else if (summary) {
+          const res: AddResult = summary
+          const parts = [t('kb:upload.added', { count: res.added_count })]
+          if (res.skipped_count) parts.push(t('kb:upload.skipped', { count: res.skipped_count }))
+          if (res.failed_count) parts.push(t('kb:upload.failed', { count: res.failed_count }))
+          const line = parts.join(' · ')
+          if (res.added_count === 0 && res.failed_count > 0) {
+            // Every file failed — surface the first failure's message so the
+            // user learns WHY (e.g. compile error / missing LLM API key).
+            const reason = res.files.find((f) => f.status === 'failed')?.message
+            toast.error(t('kb:upload.errorToast', { summary: line }) + (reason ? t('kb:upload.reasonSuffix', { reason }) : ''))
+          } else if (res.failed_count > 0) {
+            // Some added, some failed — not a clean success.
+            toast.warning(t('kb:upload.partialToast', { summary: line }))
+          } else if (res.added_count > 0) {
+            toast.success(t('kb:upload.successToast', { summary: line }))
+          } else {
+            // Nothing added or failed (all skipped duplicates) — neutral, not
+            // an error and not a "新增" success.
+            toast.info(t('kb:upload.existsToast', { summary: line }))
+          }
         }
         // Refresh regardless of outcome: a failed compile may still have
         // written a raw file, and the user needs to see current state.
@@ -193,7 +234,23 @@ export default function KbDetail() {
         setUploading(false)
       }
     },
-    [id, uploading, refreshInventory],
+    [id, uploading, refreshInventory, t],
+  )
+
+  /** Remove one document via `/api/v1/remove`, then refresh + toast. The
+   *  identifier is the document's original filename (`WikiDocument.name`),
+   *  which the backend resolves by exact-name match first. */
+  const onDeleteDocument = useCallback(
+    async (identifier: string) => {
+      try {
+        await removeDocument(id, identifier)
+        toast.success(t('kb:docs.delete.success', { name: identifier }))
+        await refreshInventory()
+      } catch (e) {
+        toast.error(t('kb:docs.delete.error', { error: errMsg(e) }))
+      }
+    },
+    [id, refreshInventory, t],
   )
 
   // Card selection handler: Index opens index.md, a type card auto-selects
@@ -262,11 +319,13 @@ export default function KbDetail() {
             documents={documents}
             invError={invError}
             uploading={uploading}
+            uploadFiles={uploadFiles}
             dragActive={dragActive}
             fileInputRef={fileInputRef}
             onDragActiveChange={setDragActive}
             onUpload={doUpload}
             onRefresh={refreshInventory}
+            onDelete={onDeleteDocument}
           />
         ) : (
           <div className="h-full flex">
@@ -372,28 +431,61 @@ function IndexReader(props: ReaderProps) {
   )
 }
 
+/** Status glyph for one per-file upload row. */
+function UploadStatusIcon({ status }: { status: UploadStatus }) {
+  switch (status) {
+    case 'processing':
+      return <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+    case 'added':
+      return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+    case 'skipped':
+      return <CircleSlash2 className="w-3.5 h-3.5 text-muted-foreground" />
+    case 'failed':
+      return <XCircle className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />
+    default:
+      return <Circle className="w-3.5 h-3.5 text-muted-foreground/50" />
+  }
+}
+
 /** Documents section: upload dropzone + uploaded-document list + remote
  *  connector cards. Moved verbatim from the old 来源 tab body. */
 function DocumentsPane({
   documents,
   invError,
   uploading,
+  uploadFiles,
   dragActive,
   fileInputRef,
   onDragActiveChange,
   onUpload,
   onRefresh,
+  onDelete,
 }: {
   documents: WikiDocument[]
   invError: string | null
   uploading: boolean
+  uploadFiles: UploadFileState[]
   dragActive: boolean
   fileInputRef: RefObject<HTMLInputElement | null>
   onDragActiveChange: (active: boolean) => void
   onUpload: (files: File[]) => void
   onRefresh: () => void
+  onDelete: (identifier: string) => Promise<void>
 }) {
   const { t } = useTranslation(['kb', 'common'])
+  // Inline delete confirm: `confirmName` is the row awaiting confirmation;
+  // `deletingName` is the row whose remove request is in flight.
+  const [confirmName, setConfirmName] = useState<string | null>(null)
+  const [deletingName, setDeletingName] = useState<string | null>(null)
+  const handleDelete = async (name: string) => {
+    setDeletingName(name)
+    try {
+      await onDelete(name)
+    } finally {
+      setDeletingName(null)
+      setConfirmName(null)
+    }
+  }
   return (
     <div className="h-full overflow-y-auto scroll-edge-top">
       <div className="max-w-[1280px] mx-auto px-8 lg:px-12 py-6">
@@ -445,6 +537,29 @@ function DocumentsPane({
           )}
         </div>
 
+        {/* 每文件上传进度（流式 /api/v1/add?stream=true） */}
+        {uploadFiles.length > 0 && (
+          <div className="mt-4">
+            <h2 className="text-[13.5px] font-semibold text-foreground">
+              {t('kb:upload.progressHeading', { count: uploadFiles.length })}
+            </h2>
+            <div className="mt-2 space-y-1.5">
+              {uploadFiles.map((f) => (
+                <div
+                  key={f.name}
+                  className="rounded-xl border border-[hsl(var(--glass-border))] glass-2 px-3 py-2 flex items-center gap-2.5"
+                >
+                  <UploadStatusIcon status={f.status} />
+                  <span className="text-[13px] text-foreground truncate">{f.name}</span>
+                  <span className="ml-auto text-[11.5px] text-muted-foreground shrink-0">
+                    {t(`kb:upload.fileStatus.${f.status}`)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 已上传文档（真实 /api/v1/list） */}
         <div className="mt-6 flex items-center justify-between">
           <h2 className="text-[13.5px] font-semibold text-foreground">{t('kb:docs.heading', { count: documents.length })}</h2>
@@ -484,11 +599,43 @@ function DocumentsPane({
                   {d.pages != null && <> · {t('kb:docs.pages', { count: d.pages })}</>}
                 </div>
               </div>
-              {d.hash && (
-                <span className="ml-auto font-mono2 text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5 shrink-0">
-                  {d.hash.slice(0, 8)}
-                </span>
-              )}
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                {d.hash && (
+                  <span className="font-mono2 text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+                    {d.hash.slice(0, 8)}
+                  </span>
+                )}
+                {d.name &&
+                  (confirmName === d.name ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11.5px] text-muted-foreground">{t('kb:docs.delete.prompt')}</span>
+                      <button
+                        onClick={() => handleDelete(d.name)}
+                        disabled={deletingName === d.name}
+                        className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
+                      >
+                        {deletingName === d.name && <Loader2 className="w-3 h-3 animate-spin" />}
+                        {t('kb:docs.delete.confirm')}
+                      </button>
+                      <button
+                        onClick={() => setConfirmName(null)}
+                        disabled={deletingName === d.name}
+                        className="inline-flex items-center h-7 px-2 rounded-lg text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-60"
+                      >
+                        {t('kb:docs.delete.cancel')}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmName(d.name)}
+                      title={t('kb:docs.delete.action')}
+                      aria-label={t('kb:docs.delete.action')}
+                      className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  ))}
+              </div>
             </div>
           ))}
         </div>

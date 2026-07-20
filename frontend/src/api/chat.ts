@@ -327,13 +327,18 @@ export async function* streamQuery(
   kb: string,
   question: string,
   opts: { save?: boolean } = {},
+  signal?: AbortSignal,
 ): AsyncGenerator<SseEvent> {
-  yield* apiStream("/api/v1/query", {
-    kb,
-    question,
-    stream: true,
-    save: opts.save ?? false,
-  })
+  yield* apiStream(
+    "/api/v1/query",
+    {
+      kb,
+      question,
+      stream: true,
+      save: opts.save ?? false,
+    },
+    signal,
+  )
 }
 
 /**
@@ -345,13 +350,18 @@ export async function* streamChat(
   kb: string,
   sessionId: string | null,
   message: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<SseEvent> {
-  yield* apiStream("/api/v1/chat", {
-    kb,
-    session_id: sessionId,
-    message,
-    stream: true,
-  })
+  yield* apiStream(
+    "/api/v1/chat",
+    {
+      kb,
+      session_id: sessionId,
+      message,
+      stream: true,
+    },
+    signal,
+  )
 }
 
 // --- Session listing / loading -------------------------------------------

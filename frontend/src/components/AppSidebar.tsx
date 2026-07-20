@@ -51,10 +51,26 @@ export default function AppSidebar() {
   const { t } = useTranslation("common")
   const [kbs, setKbs] = useState<KbSummary[]>([])
 
+  // Fetch on mount, and re-fetch whenever a KB is created elsewhere (the
+  // `openkb:reload-kbs` window event dispatched by CreateKbDialog) so a new KB
+  // shows up without a full reload.
   useEffect(() => {
-    listKbs()
-      .then((r) => setKbs(r.knowledge_bases))
-      .catch(() => setKbs([]))
+    let cancelled = false
+    const load = () => {
+      listKbs()
+        .then((r) => {
+          if (!cancelled) setKbs(r.knowledge_bases)
+        })
+        .catch(() => {
+          if (!cancelled) setKbs([])
+        })
+    }
+    load()
+    window.addEventListener('openkb:reload-kbs', load)
+    return () => {
+      cancelled = true
+      window.removeEventListener('openkb:reload-kbs', load)
+    }
   }, [])
 
   return (

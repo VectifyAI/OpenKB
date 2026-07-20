@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate, useParams } from "react-router"
 import { useTranslation, Trans } from "react-i18next"
 import type { TFunction } from "i18next"
-import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText, CheckCircle2 } from "lucide-react"
+import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText, CheckCircle2, CircleStop } from "lucide-react"
 import { toast } from "sonner"
 import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatInput"
 import MarkdownView from "@/components/MarkdownView"
@@ -275,6 +275,11 @@ export default function ChatSession() {
   const [running, setRunning] = useState(false)
   const [panel, setPanel] = useState<PanelState>(CLOSED_PANEL)
 
+  // AbortController for the in-flight chat/query stream — one per turn. The Stop
+  // button and the unmount cleanup both abort via this ref; runTurn passes its
+  // `.signal` to streamChat and clears the ref once the turn settles.
+  const abortRef = useRef<AbortController | null>(null)
+
   // The docked artifact panel (deck/graph). Distinct from `panel` above, which
   // is the modal source-page Sheet. `panelArtifact` is the currently-open
   // viewable artifact, or null when the panel is closed.
@@ -373,8 +378,12 @@ export default function ChatSession() {
     const patch = (fn: (t: ChatTurnState) => ChatTurnState) =>
       setMsgs((m) => m.map((x) => (x.id === assistantId && x.role === "assistant" ? { ...x, turn: fn(x.turn) } : x)))
 
+    // Fresh controller for this turn — the Stop button / unmount abort it.
+    const controller = new AbortController()
+    abortRef.current = controller
+
     try {
-      const stream = streamChat(activeKb, sessionIdRef.current, question)
+      const stream = streamChat(activeKb, sessionIdRef.current, question, controller.signal)
       for await (const event of stream) {
         patch((t) => foldSseEvent(t, event, activeKb))
         if (event.event === "final" && typeof event.data?.session_id === "string") {
@@ -387,18 +396,27 @@ export default function ChatSession() {
         }
       }
     } catch (e) {
-      const message = errMsg(e)
-      // Settle any tool read still in flight when the stream threw — otherwise
-      // its spinner spins forever (done flips true but the step doesn't).
-      patch((prev) => ({
-        ...prev,
-        reading: null,
-        error: prev.error ?? message,
-        done: true,
-        steps: markToolStepsDone(prev.steps),
-      }))
-      toast.error(t("chat:requestErrorToast", { error: message }))
+      // A user-initiated abort (Stop button or navigate-away unmount) is a CLEAN
+      // stop, not a failure: settle the turn with whatever streamed so far and
+      // NO error toast. Everything else keeps the real error handling below.
+      const aborted = controller.signal.aborted || (e as { name?: string })?.name === "AbortError"
+      if (!aborted) {
+        const message = errMsg(e)
+        // Settle any tool read still in flight when the stream threw — otherwise
+        // its spinner spins forever (done flips true but the step doesn't).
+        patch((prev) => ({
+          ...prev,
+          reading: null,
+          error: prev.error ?? message,
+          done: true,
+          steps: markToolStepsDone(prev.steps),
+        }))
+        toast.error(t("chat:requestErrorToast", { error: message }))
+      }
     } finally {
+      // Only relinquish the shared ref if this turn still owns it (a later turn
+      // may have already replaced it).
+      if (abortRef.current === controller) abortRef.current = null
       patch((t) => ({ ...t, reading: null, done: true, steps: markToolStepsDone(t.steps) }))
       setRunning(false)
     }
@@ -496,6 +514,14 @@ export default function ChatSession() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [msgs])
 
+  // Abort the in-flight turn's fetch when the user navigates away (unmount), so
+  // a half-finished stream stops burning tokens and can't fire setMsgs after the
+  // component is gone. A settled turn already cleared the ref, so this is a
+  // no-op unless a stream is actually live.
+  useEffect(() => {
+    return () => abortRef.current?.abort()
+  }, [])
+
   const openSource = async (s: Source) => {
     if (s.kind !== "page" || !s.path) return
     setPanel({ open: true, path: s.path, content: null, error: null, loading: true })
@@ -517,6 +543,11 @@ export default function ChatSession() {
     setMsgs((m) => [...m, { id: nid(), role: "user", text, command: command?.cmd }])
     void runTurn(text, command)
   }
+
+  // Stop the in-flight chat/query turn — aborts the SSE fetch; runTurn's catch
+  // treats the abort as a clean stop (no error toast). A no-op during generator
+  // (deck/skill/graph) turns, whose streams don't run through this controller.
+  const stopTurn = () => abortRef.current?.abort()
 
   const firstUser = msgs.find((m) => m.role === "user") as Extract<Msg, { role: "user" }> | undefined
   const title = firstUser?.text.slice(0, 24) || t("chat:newSession")
@@ -565,6 +596,19 @@ export default function ChatSession() {
       {/* 底部输入 */}
       <div className="shrink-0 px-6 pb-5 pt-2 bg-gradient-to-t from-[hsl(var(--ambient))] via-[hsl(var(--ambient))] to-transparent">
         <div className="max-w-[860px] xl:max-w-[1000px] mx-auto">
+          {/* 停止按钮：仅在生成中显示，中止当前回合的 SSE 流 */}
+          {running && (
+            <div className="flex justify-center pb-2">
+              <button
+                type="button"
+                onClick={stopTurn}
+                className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full border border-[hsl(var(--glass-border))] glass-2 text-[12.5px] font-medium text-muted-foreground shadow-sm transition duration-fast ease-out-apple hover:text-foreground hover:border-accent-brand/40 active:scale-[0.97]"
+              >
+                <CircleStop className="w-3.5 h-3.5" />
+                {t("chat:input.stop")}
+              </button>
+            </div>
+          )}
           <ChatInput
             kbId={kb}
             onKbChange={setKb}

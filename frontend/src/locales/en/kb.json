@@ -18,13 +18,29 @@
     "note": "Uploaded documents go into the local raw/ folder and are compiled into the KB automatically; files stay on this machine",
     "inProgress": "Uploading and compiling…",
     "dropzone": "Drop files here, or click to choose",
-    "dropzoneHint": "PDF / Word / Markdown / text and more; multi-select supported"
+    "dropzoneHint": "PDF / Word / Markdown / text and more; multi-select supported",
+    "progressHeading": "Upload progress · {{count}}",
+    "fileStatus": {
+      "pending": "Waiting",
+      "processing": "Compiling…",
+      "added": "Added",
+      "skipped": "Skipped",
+      "failed": "Failed"
+    }
   },
   "docs": {
     "heading": "Uploaded documents · {{count}}",
     "empty": "No documents yet · they compile into the KB automatically after upload",
     "pages_one": "{{count}} page",
-    "pages_other": "{{count}} pages"
+    "pages_other": "{{count}} pages",
+    "delete": {
+      "action": "Delete document",
+      "prompt": "Delete?",
+      "confirm": "Delete",
+      "cancel": "Cancel",
+      "success": "Deleted {{name}}",
+      "error": "Delete failed: {{error}}"
+    }
   },
   "remote": {
     "heading": "Remote data sources",

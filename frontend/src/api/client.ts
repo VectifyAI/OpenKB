@@ -12,7 +12,39 @@ export function setConnection(apiBase: string, token: string): void {
   localStorage.setItem(LS_TOKEN, token)
 }
 
+/**
+ * Warn ONCE if the configured API base is cross-origin AND served over plain
+ * `http:` — the bearer token is attached to every request, so such a base would
+ * send it in the clear. Advisory only (console; no UI) and never blocking:
+ * same-origin or a relative base (the production mount at `/`) is always safe
+ * and never warns; a LAN/dev `http://` endpoint still works, just with a
+ * heads-up. The flag flips only once we actually warn, so a base later switched
+ * from safe to unsafe can still surface the warning.
+ */
+let baseSafetyWarned = false
+function checkBaseSafety(): void {
+  if (baseSafetyWarned) return
+  const base = getApiBase()
+  if (!base) return // same-origin
+  try {
+    const url = new URL(base, window.location.origin)
+    if (url.origin !== window.location.origin && url.protocol === "http:") {
+      baseSafetyWarned = true
+      console.warn(
+        `[OpenKB] API base "${base}" is cross-origin and served over http:. ` +
+          "Your API token is sent to this host in the clear on every request. " +
+          "Use https for a remote API, or verify this URL is trusted.",
+      )
+    }
+  } catch {
+    // Not a parseable URL — it fails at fetch time; nothing to warn about here.
+  }
+}
+
 function baseUrl(): string {
+  // Called by every request helper below (JSON, blob, SSE), so this is the one
+  // place the base/token is first used — the right spot for the advisory.
+  checkBaseSafety()
   return getApiBase().replace(/\/$/, "")
 }
 
@@ -86,8 +118,20 @@ export interface SseEvent {
   data: any
 }
 
-/** SSE stream over fetch (EventSource can't set Authorization headers). */
-export async function* apiStream(path: string, body: unknown): AsyncGenerator<SseEvent> {
+/**
+ * SSE stream over fetch (EventSource can't set Authorization headers).
+ *
+ * Pass an optional `signal` to make the stream cancellable: aborting it rejects
+ * the in-flight `fetch`/`reader.read()` with an `AbortError`, which propagates
+ * out of this generator so the consumer's `for await` throws. The consumer can
+ * then distinguish a user-abort (`e.name === "AbortError"` / `signal.aborted`)
+ * from a real error and settle silently — see `ChatSession.runTurn`.
+ */
+export async function* apiStream(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): AsyncGenerator<SseEvent> {
   const token = getToken()
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (token) headers["Authorization"] = `Bearer ${token}`
@@ -96,6 +140,7 @@ export async function* apiStream(path: string, body: unknown): AsyncGenerator<Ss
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal,
   })
   if (res.status === 401) unauthorizedHandler?.()
   if (!res.ok || !res.body) {
