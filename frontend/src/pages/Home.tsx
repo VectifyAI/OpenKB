@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
+import { useTranslation, Trans } from "react-i18next"
 import { ArrowRight, Clock } from "lucide-react"
 import ChatInput, { type SlashCommand } from "@/components/ChatInput"
 import { listKbs, type KbSummary } from "@/api/kb"
@@ -22,6 +23,7 @@ function formatWhen(iso: string): string {
 }
 
 export default function Home() {
+  const { t } = useTranslation("home")
   const navigate = useNavigate()
   const location = useLocation() as { state?: { kbId?: string } }
   const [kbs, setKbs] = useState<KbSummary[]>([])
@@ -73,10 +75,17 @@ export default function Home() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[1100px] mx-auto px-6 lg:px-8 pt-[7vh] pb-6">
           <div className="anim-fade-up">
-            <h1 className="text-[30px] font-bold tracking-[-0.02em]">有什么想问的？</h1>
+            <h1 className="text-[30px] font-bold tracking-[-0.02em]">{t("greeting")}</h1>
             <p className="mt-1.5 text-[14px] text-muted-foreground">
-              知识已编译就绪 · <span className="tabular-nums">{totalDocs}</span> 篇文档 ·{" "}
-              <span className="tabular-nums">{kbs.length}</span> 个知识库
+              <Trans
+                t={t}
+                i18nKey="ready"
+                values={{ docs: totalDocs, kbs: kbs.length }}
+                components={[
+                  <span className="tabular-nums" />,
+                  <span className="tabular-nums" />,
+                ]}
+              />
             </p>
           </div>
 
@@ -84,7 +93,7 @@ export default function Home() {
             <div className="mt-8 anim-fade-up anim-d2">
               <div className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground tracking-wide">
                 <Clock className="w-3.5 h-3.5" />
-                最近会话
+                {t("recentSessions")}
               </div>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                 {recent.map((s, i) => (
@@ -99,7 +108,7 @@ export default function Home() {
                     )}
                   >
                     <div className="text-[14px] font-semibold leading-snug line-clamp-2 min-h-[40px]">
-                      {s.title || "未命名会话"}
+                      {s.title || t("untitledSession")}
                     </div>
                     <div className="mt-3 flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
                       <span className={cn("w-1.5 h-1.5 rounded-full", dotFor(s.kbIndex))} />
@@ -125,7 +134,7 @@ export default function Home() {
         <div className="max-w-[1100px] mx-auto px-6 lg:px-8 pt-2.5 pb-2">
           <ChatInput kbId={kbId} onKbChange={setKbId} onSend={send} autoFocus />
           <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
-            由 OpenKB 驱动 · 你的知识始终是纯 Markdown，归你所有
+            {t("tagline")}
           </p>
         </div>
       </div>
