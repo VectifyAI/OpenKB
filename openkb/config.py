@@ -37,10 +37,12 @@ GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
 GLOBAL_CONFIG_LOCK_PATH = GLOBAL_CONFIG_DIR / "global.lock"
 
-# Portable KB names for the REST API: letters, numbers, underscores, hyphens.
-# Lets clients address a knowledge base by a filesystem-safe short name
-# (``kb``) instead of an absolute path, resolved via kb_aliases/OPENKB_KB_ROOT.
-KB_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+# Portable KB names for the REST API: letters (any script, incl. CJK), numbers,
+# underscores, hyphens — but NO spaces, dots, or path separators. Lets clients
+# address a knowledge base by a filesystem-safe short name (``kb``) instead of an
+# absolute path, resolved via kb_aliases/known_kbs/OPENKB_KB_ROOT. `\w` is Unicode
+# for str patterns in Python 3, so a CJK-named KB (e.g. 笔记) is a valid name.
+KB_NAME_RE = re.compile(r"[\w-]+")
 
 
 @contextlib.contextmanager
@@ -589,7 +591,10 @@ def validate_kb_name(name: str) -> str:
     """Validate and return a portable KB name."""
     normalized = name.strip()
     if not normalized or not KB_NAME_RE.fullmatch(normalized):
-        raise ValueError("KB name must contain only letters, numbers, underscores, and hyphens")
+        raise ValueError(
+            "KB name may contain only letters, numbers, underscores, and hyphens "
+            "(no spaces, dots, or path separators)"
+        )
     return normalized
 
 
@@ -625,8 +630,17 @@ def resolve_kb_alias(name: str) -> Path:
     with _with_global_config_lock():
         gc = _load_global_config_unlocked()
         aliases = gc.get("kb_aliases", {})
+        known = gc.get("known_kbs", [])
     if alias in aliases:
         return Path(aliases[alias]).expanduser().resolve()
+    # A registered KB (known_kbs) that lives OUTSIDE kb_root is addressable by
+    # its directory name — consistent with the KB list, which surfaces such KBs
+    # by basename. Match that before the root fallback so e.g. a KB registered at
+    # ~/Documents/笔记 resolves by the name "笔记".
+    for entry in known:
+        candidate = Path(entry).expanduser().resolve()
+        if candidate.name == alias:
+            return candidate
     return (kb_root_dir() / alias).resolve()
 
 

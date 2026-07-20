@@ -625,3 +625,27 @@ def test_registered_kbs_unions_and_dedupes_by_path(_isolated_global, tmp_path):
     )
     result = dict(registered_kbs())
     assert result == {"alias-a": kb_a.resolve(), "b": kb_b.resolve()}
+
+
+def test_validate_kb_name_accepts_unicode_and_rejects_unsafe():
+    from openkb.config import validate_kb_name
+
+    # Non-ASCII (e.g. CJK) letters are valid so a Chinese-named KB is addressable.
+    assert validate_kb_name("笔记") == "笔记"
+    assert validate_kb_name("my-kb_2") == "my-kb_2"
+    # Path separators, dots, and spaces stay rejected (traversal-safe).
+    for bad in ("a/b", "a.b", "a b", "../x", ""):
+        with pytest.raises(ValueError):
+            validate_kb_name(bad)
+
+
+def test_resolve_kb_alias_resolves_known_kbs_by_basename(_isolated_global, tmp_path):
+    from openkb.config import resolve_kb_alias
+
+    # A KB registered in known_kbs (not an alias) that lives outside kb_root and
+    # has a non-ASCII directory name must resolve by its basename — this is what
+    # the KB list surfaces and what the frontend addresses it by.
+    kb = tmp_path / "笔记"
+    kb.mkdir()
+    save_global_config({"known_kbs": [str(kb)]})
+    assert resolve_kb_alias("笔记") == kb.resolve()
