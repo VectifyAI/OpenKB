@@ -2314,6 +2314,47 @@ def test_kb_config_patch_api_key_rotation_preserves_other_env_lines(monkeypatch,
     assert "new" not in follow_up.text
 
 
+def test_kb_config_patch_rejects_newline_in_api_key(monkeypatch, kb_dir):
+    """An api_key containing a newline is a 400 BEFORE any write: written
+    verbatim as ``LLM_API_KEY=<value>\\n`` it would inject extra KEY=VALUE lines
+    into .env (e.g. a smuggled OPENAI_API_BASE). Nothing must reach disk."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("LLM_API_KEY=old\n", encoding="utf-8")
+
+    response = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "api_key": "sk-good\nEVIL_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "api_key" in response.json()["detail"]
+    # No injection reached disk: the original line is untouched, no smuggled key.
+    env_text = (kb_dir / ".env").read_text()
+    assert "EVIL_KEY" not in env_text
+    assert "LLM_API_KEY=old" in env_text
+
+
+def test_kb_config_patch_clears_export_prefixed_api_key(monkeypatch, kb_dir):
+    """A pre-existing ``export LLM_API_KEY=...`` line (shell-style .env) must be
+    cleared by an explicit-null patch. The parser strips the ``export `` prefix
+    so ``pop("LLM_API_KEY")`` matches; otherwise the key would survive under
+    ``"export LLM_API_KEY"`` while python-dotenv (which strips ``export``) keeps
+    reading it back as a live credential."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / ".env").write_text("export LLM_API_KEY=secret123\n", encoding="utf-8")
+
+    response = client.patch("/api/v1/kb/config", json={"kb": kb, "api_key": None}, headers=_auth())
+
+    assert response.status_code == 200
+    assert response.json()["has_api_key"] is False
+    env_text = (kb_dir / ".env").read_text()
+    assert "LLM_API_KEY" not in env_text
+    assert "secret123" not in env_text
+
+
 def test_kb_config_patch_null_removes_key(monkeypatch, kb_dir):
     """config: {model: null} removes the key from config.yaml (revert to
     inherited), not persist model: None."""
@@ -2622,3 +2663,25 @@ def test_global_config_patch_credential_rotation_preserves_env_and_registry(monk
     saved = yaml.safe_load(gp.read_text())
     assert saved["known_kbs"] == ["/a"]
     assert saved["model"] == "global-model"
+
+
+def test_global_config_patch_rejects_newline_in_credential(monkeypatch, tmp_path):
+    """The global patch path rejects a newline/CR in a credential value (400)
+    BEFORE the global lock is touched — a raw \\r\\n in openai_api_base would
+    otherwise inject extra KEY=VALUE lines into the global .env. Disk untouched."""
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    (tmp_path / ".env").write_text("LLM_API_KEY=keep\n", encoding="utf-8")
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/v1/config",
+        json={"openai_api_base": "https://ok/v1\r\nLLM_API_KEY=pwn"},
+        headers=_auth(),
+    )
+
+    assert response.status_code == 400
+    assert "openai_api_base" in response.json()["detail"]
+    # Nothing was written: the pre-existing key is intact, no injected line.
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert env_text == "LLM_API_KEY=keep\n"

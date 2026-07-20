@@ -493,6 +493,11 @@ def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, st
     sources: dict[str, str] = {key: "default" for key in GLOBAL_SCALAR_KEYS}
 
     global_config = load_global_config()
+    # A malformed global.yaml that parses to a list/scalar (not a mapping) must
+    # not crash every command's hot path with AttributeError — degrade to
+    # defaults, mirroring how empty files are tolerated (`safe_load(...) or {}`).
+    if not isinstance(global_config, dict):
+        global_config = {}
     for key in GLOBAL_SCALAR_KEYS:
         value = global_config.get(key)
         if value is not None:
@@ -503,6 +508,10 @@ def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, st
     if kb_path.exists():
         with kb_path.open("r", encoding="utf-8") as fh:
             kb_config = yaml.safe_load(fh) or {}
+        # Same defensive coercion for a malformed KB config.yaml (list/scalar):
+        # .items() below would otherwise raise and break this single KB.
+        if not isinstance(kb_config, dict):
+            kb_config = {}
         for key, value in kb_config.items():
             # A scalar explicitly nulled in config.yaml means "inherit": don't
             # let it clobber the global/default layer. The gate is on

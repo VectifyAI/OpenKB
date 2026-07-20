@@ -9,6 +9,7 @@ so these endpoints need no create_app closure and extract cleanly.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from fastapi.concurrency import run_in_threadpool
 
 from openkb.api_config import apply_global_config_patch, read_global_config
 from openkb.api_helpers import require_bearer_token
@@ -29,5 +30,9 @@ async def global_config_patch(
     request: GlobalConfigPatchRequest,
     _: None = Depends(require_bearer_token),
 ) -> GlobalConfigResponse:
-    apply_global_config_patch(request)
+    # apply_global_config_patch acquires a blocking portalocker flock; run it in
+    # a threadpool so the async event loop is not frozen under lock contention
+    # (matches the /init endpoint's run_in_threadpool offload in api.py). The
+    # read path below holds no lock, so it stays on the event loop.
+    await run_in_threadpool(apply_global_config_patch, request)
     return read_global_config()

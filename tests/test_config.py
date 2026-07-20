@@ -446,6 +446,24 @@ def test_effective_preserves_non_scalar_kb_keys_including_meaningful_null(
     assert eff["parallel_tool_calls"] is None
 
 
+def test_effective_config_degrades_on_non_dict_yaml(_isolated_global, tmp_path):
+    """A malformed global.yaml OR KB config.yaml that parses to a list/scalar
+    (not a mapping) must degrade to defaults, not raise AttributeError on every
+    command's hot path (the global case is KB-wide). Mirrors the empty-file
+    tolerance (`safe_load(...) or {}`)."""
+    # global.yaml parses to a bare list; KB config.yaml to a bare scalar string.
+    (_isolated_global / "global.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    kb = _kb(tmp_path / "kb")
+    (kb / ".openkb" / "config.yaml").write_text("just-a-string\n", encoding="utf-8")
+
+    eff, src = resolve_effective_config(kb)
+
+    assert eff["model"] == DEFAULT_CONFIG["model"]
+    assert eff["language"] == DEFAULT_CONFIG["language"]
+    assert eff["pageindex_threshold"] == DEFAULT_CONFIG["pageindex_threshold"]
+    assert src == {k: "default" for k in GLOBAL_SCALAR_KEYS}
+
+
 def test_converter_uses_global_threshold(_isolated_global, tmp_path, monkeypatch):
     """A global.yaml pageindex_threshold drives convert_document's long/short
     -doc routing when the KB config is silent on it — exercised through the

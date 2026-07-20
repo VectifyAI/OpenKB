@@ -40,6 +40,83 @@ from openkb.locks import atomic_write_text
 logger = logging.getLogger(__name__)
 
 
+def _reject_credential_newlines(
+    request: KbConfigPatchRequest | GlobalConfigPatchRequest,
+) -> None:
+    """Reject a newline/CR in a credential value BEFORE it reaches ``.env``.
+
+    ``.env`` is line-oriented (``KEY=VALUE\\n``), so an ``api_key`` or
+    ``openai_api_base`` containing ``\\n``/``\\r`` would inject extra KEY=VALUE
+    lines. Raise a 400 naming the offending field (the value is never logged).
+    Merge-patch semantics: only fields the client actually sent are checked
+    (``model_fields_set``); an explicit ``null`` (clear) carries no value.
+    """
+    fields_set = request.model_fields_set
+    if (
+        "api_key" in fields_set
+        and request.api_key is not None
+        and any(c in request.api_key.get_secret_value() for c in "\r\n")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="api_key must not contain newline characters",
+        )
+    if (
+        "openai_api_base" in fields_set
+        and request.openai_api_base is not None
+        and any(c in request.openai_api_base for c in "\r\n")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="openai_api_base must not contain newline characters",
+        )
+
+
+def _merge_patch_env(env_path: Path, updates: dict[str, str | None]) -> None:
+    """Securely merge-patch a ``.env`` credential file (shared KB/global writer).
+
+    Parses existing ``KEY=VALUE`` lines, tolerating a leading ``export `` so the
+    key normalizes: ``export LLM_API_KEY=x`` is stored under ``LLM_API_KEY``,
+    exactly what python-dotenv strips on read-back. Without this an ``export ``-
+    prefixed line would be keyed ``"export LLM_API_KEY"``, so a later
+    ``pop("LLM_API_KEY")`` (RFC 7386 clear) would MISS it and leave a live
+    credential on disk. Applies ``updates`` (a ``None`` value REMOVES the key,
+    else sets it), then writes atomically.
+
+    The file is tightened to 0o600 BEFORE the atomic write so the LLM key is
+    never world-readable — not even briefly: atomic_write_text copies the
+    target's *current* mode onto its private temp file before the rename (see
+    locks._target_mode), so touch(0o600)+chmod(0o600) makes os.replace land a
+    0o600 ``.env`` with no widen-then-chmod gap. Callers MUST hold the relevant
+    write lock (the per-KB mutation lock or the global-config lock): this is a
+    read-modify-write. Credential VALUES are never logged.
+    """
+    env_lines: dict[str, str] = {}
+    if env_path.exists():
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Strip a leading ``export `` (shell-style .env) BEFORE partition so
+            # the key normalizes and a later removal matches; python-dotenv
+            # strips it too when it reads the file back.
+            if line.startswith("export ") or line.startswith("export\t"):
+                line = line[len("export") :].lstrip()
+            if "=" not in line:
+                continue
+            k, _eq, v = line.partition("=")
+            env_lines[k.strip()] = v
+    for key, value in updates.items():
+        if value is None:
+            env_lines.pop(key, None)
+        else:
+            env_lines[key] = value
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.touch(mode=0o600, exist_ok=True)
+    env_path.chmod(0o600)
+    atomic_write_text(env_path, "".join(f"{k}={v}\n" for k, v in env_lines.items()))
+
+
 def read_kb_config(kb_dir: Path) -> KbConfigResponse:
     """Build the config response for a KB.
 
@@ -127,34 +204,18 @@ def apply_kb_config_patch(kb_dir: Path, request: KbConfigPatchRequest) -> None:
         save_config(config_path, config)
 
     if "api_key" in fields_set or "openai_api_base" in fields_set:
-        env_path = kb_dir / ".env"
-        env_lines: dict[str, str] = {}
-        if env_path.exists():
-            for raw in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, _eq, v = line.partition("=")
-                    env_lines[k.strip()] = v
+        # Reject newline/CR injection in credential VALUES before touching disk:
+        # a value with \n/\r would inject extra KEY=VALUE lines into .env (400,
+        # never persisted). The shared writer does the secure atomic 0o600 write.
+        _reject_credential_newlines(request)
+        updates: dict[str, str | None] = {}
         if "api_key" in fields_set:
-            if request.api_key is None:
-                env_lines.pop("LLM_API_KEY", None)
-            else:
-                env_lines["LLM_API_KEY"] = request.api_key.get_secret_value()
+            updates["LLM_API_KEY"] = (
+                None if request.api_key is None else request.api_key.get_secret_value()
+            )
         if "openai_api_base" in fields_set:
-            if request.openai_api_base is None:
-                env_lines.pop("OPENAI_API_BASE", None)
-            else:
-                env_lines["OPENAI_API_BASE"] = request.openai_api_base
-        # .env holds the sensitive LLM_API_KEY, so the write must be atomic
-        # (crash-safe, matching config.yaml) AND the key must never be
-        # world-readable on disk — not even briefly. atomic_write_text copies
-        # the target's *current* mode onto its private temp file before the
-        # rename (see locks._target_mode), so tighten the target to 0o600 first,
-        # creating it restricted when absent: the temp file then inherits 0o600
-        # and os.replace lands a 0o600 .env with no widen-then-chmod gap.
-        env_path.touch(mode=0o600, exist_ok=True)
-        env_path.chmod(0o600)
-        atomic_write_text(env_path, "".join(f"{k}={v}\n" for k, v in env_lines.items()))
+            updates["OPENAI_API_BASE"] = request.openai_api_base
+        _merge_patch_env(kb_dir / ".env", updates)
         logger.info(
             "kb/config credential rotation: kb=%s fields=%s",
             request.kb,
@@ -220,6 +281,11 @@ def apply_global_config_patch(request: GlobalConfigPatchRequest) -> None:
     fields_set = request.model_fields_set
     write_env = "api_key" in fields_set or "openai_api_base" in fields_set
 
+    # Reject newline/CR injection in credential VALUES before the lock is touched
+    # (a bad value is a 400 that never acquires the lock or writes disk).
+    if write_env:
+        _reject_credential_newlines(request)
+
     # Validate scalar VALUE types before touching disk (a wrong type is a 400,
     # never persisted). Done outside the lock.
     dumped: dict[str, object] | None = None
@@ -268,36 +334,19 @@ def _write_global_env(request: GlobalConfigPatchRequest, fields_set: set[str]) -
     MUST be called while holding ``_with_global_config_lock()`` (a
     read-modify-write). RFC 7386: an explicit ``null`` removes the key while an
     absent field is left unchanged (``model_fields_set`` distinguishes them).
-    The write is atomic and the file is tightened to 0o600 BEFORE writing so the
-    LLM key is never world-readable — not even briefly. The key VALUE is never
-    logged.
+    Newline rejection has already happened at the request-validation layer
+    (:func:`_reject_credential_newlines`, before the lock). The shared writer
+    does the secure atomic 0o600 write; the key VALUE is never logged.
     """
-    # Module object, not a by-name import: tests monkeypatch GLOBAL_CONFIG_DIR.
-    env_path = _config_module.GLOBAL_CONFIG_DIR / ".env"
-    env_lines: dict[str, str] = {}
-    if env_path.exists():
-        for raw in env_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _eq, v = line.partition("=")
-                env_lines[k.strip()] = v
+    updates: dict[str, str | None] = {}
     if "api_key" in fields_set:
-        if request.api_key is None:
-            env_lines.pop("LLM_API_KEY", None)
-        else:
-            env_lines["LLM_API_KEY"] = request.api_key.get_secret_value()
+        updates["LLM_API_KEY"] = (
+            None if request.api_key is None else request.api_key.get_secret_value()
+        )
     if "openai_api_base" in fields_set:
-        if request.openai_api_base is None:
-            env_lines.pop("OPENAI_API_BASE", None)
-        else:
-            env_lines["OPENAI_API_BASE"] = request.openai_api_base
-    # See apply_kb_config_patch: touch(0o600)+chmod(0o600) BEFORE the atomic
-    # write so the temp file inherits 0o600 and os.replace lands a 0o600 .env
-    # with no widen-then-chmod gap. The lock's mkdir already created the dir.
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.touch(mode=0o600, exist_ok=True)
-    env_path.chmod(0o600)
-    atomic_write_text(env_path, "".join(f"{k}={v}\n" for k, v in env_lines.items()))
+        updates["OPENAI_API_BASE"] = request.openai_api_base
+    # Module object, not a by-name import: tests monkeypatch GLOBAL_CONFIG_DIR.
+    _merge_patch_env(_config_module.GLOBAL_CONFIG_DIR / ".env", updates)
     logger.info(
         "global/config credential rotation: fields=%s",
         sorted(f for f in ("api_key", "openai_api_base") if f in fields_set),
