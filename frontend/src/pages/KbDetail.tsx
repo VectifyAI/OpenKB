@@ -319,7 +319,7 @@ function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, on
   }
 
   return (
-    <div className="max-w-[760px] xl:max-w-[920px] 2xl:max-w-[1040px] mx-auto px-8 py-7 anim-fade-up" key={selected.path}>
+    <div className="w-full max-w-[1600px] mx-auto px-8 lg:px-12 py-7 anim-fade-up" key={selected.path}>
       <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground mb-4">
         <span className="font-mono2 bg-muted rounded px-1.5 py-0.5">
           wiki/{selected.group}
@@ -383,7 +383,7 @@ function DocumentsPane({
   const { t } = useTranslation(['kb', 'common'])
   return (
     <div className="h-full overflow-y-auto scroll-edge-top">
-      <div className="max-w-[1040px] mx-auto px-6 lg:px-8 py-6">
+      <div className="max-w-[1280px] mx-auto px-8 lg:px-12 py-6">
         <p className="text-[13px] text-muted-foreground">
           {t('kb:upload.note')}
         </p>
