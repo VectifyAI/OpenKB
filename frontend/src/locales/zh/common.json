@@ -50,5 +50,26 @@
   "connector": {
     "tooltip": "云端同步开发中 · 去 GitHub 投票表达需求",
     "vote": "想要它？去投票"
+  },
+  "onboarding": {
+    "welcomeTitle": "欢迎使用 OpenKB",
+    "welcomeBody": "把你的文档编译成互联、自动保持更新的知识库。两步即可开始。",
+    "getStarted": "开始设置",
+    "skip": "暂时跳过",
+    "configTitle": "连接你的模型",
+    "configBody": "OpenKB 用大模型来编译和回答。粘贴一个 API 密钥即可——它只存在本机,不会外传。",
+    "modelLabel": "模型",
+    "apiKeyLabel": "LLM API 密钥",
+    "apiKeyPlaceholder": "粘贴 API 密钥",
+    "baseUrlLabel": "自定义 Base URL（可选）",
+    "baseUrlPlaceholder": "如 http://localhost:11434（Ollama、LM Studio）",
+    "continue": "继续",
+    "back": "上一步",
+    "kbTitle": "创建你的第一个知识库",
+    "kbBody": "知识库存放你的文档和编译出的 wiki。之后可以再建更多。",
+    "kbNameLabel": "知识库名称",
+    "createFinish": "创建并完成",
+    "saving": "保存中…",
+    "createdToast": "已创建 {{name}}"
   }
 }
