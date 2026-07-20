@@ -17,7 +17,7 @@ import { listKbs } from "@/api/kb"
 import { runDeckCommand, runSkillCommand } from "@/api/artifacts"
 import type { SseEvent } from "@/api/client"
 import {
-  foldSseEvent, initialTurnState, listSessions, loadSession,
+  foldSseEvent, initialTurnState, listSessions, loadSession, stepsFromTrace,
   streamChat,
   type ChatTurnState, type Source,
 } from "@/api/chat"
@@ -453,16 +453,21 @@ export default function ChatSession() {
           if (loaded.user_turns[i] !== undefined)
             restored.push({ id: nid(), role: "user", text: loaded.user_turns[i] })
           if (loaded.assistant_texts[i] !== undefined) {
-            // Restored turns carry no sources or tool trace (both are live-derived,
-            // not stored) — just the answer, rendered as one text step.
+            // Prefer the persisted per-turn trace so a restored turn shows the
+            // same interleaved narration + tool reads it did live. Turns saved
+            // before traces existed (or via the CLI) have none — fall back to
+            // the flat answer as one text step. Sources stay live-only.
             const text = loaded.assistant_texts[i]
+            const trace = loaded.assistant_traces?.[i]
+            const steps =
+              trace && trace.length ? stepsFromTrace(trace) : [{ kind: "text" as const, text }]
             restored.push({
               id: nid(),
               role: "assistant",
               turn: {
                 ...initialTurnState(),
                 answer: text,
-                steps: [{ kind: "text", text }],
+                steps,
                 done: true,
                 sessionId: id ?? null,
               },

@@ -932,16 +932,44 @@ async def iter_chat_turn_events(
     """
     new_input = session.history + [{"role": "user", "content": user_input}]
 
+    # Accumulate the ordered, interleaved trace (narration text + tool reads) in
+    # SSE arrival order, mirroring the frontend's live fold, so a RESTORED turn
+    # renders step-by-step identically instead of collapsing to one text block.
+    # Persisted per turn via record_turn(trace=...). Non-read tool calls (e.g.
+    # write_file) are still recorded here; the frontend's read-only whitelist
+    # drops them on restore, exactly as it does live.
+    trace: list[dict[str, Any]] = []
+
     async for event in iter_agent_response_events(
         agent, new_input, max_turns=MAX_TURNS, run_config=run_config
     ):
-        if event["event"] != "final":
+        kind = event["event"]
+        if kind == "delta":
+            text = event["data"].get("text", "")
+            if text:
+                if trace and trace[-1].get("kind") == "text":
+                    trace[-1]["text"] += text
+                else:
+                    trace.append({"kind": "text", "text": text})
+            yield event
+            continue
+        if kind == "tool_call":
+            d = event["data"]
+            trace.append({"kind": "tool", "name": d.get("name"), "arguments": d.get("arguments")})
+            yield event
+            continue
+        if kind != "final":
             yield event
             continue
 
         data = event["data"]
         answer = data["answer"]
-        session.record_turn(user_input, answer, data["history"])
+        # If the model streamed no text at all (answer came from final_output),
+        # ensure the answer still lands in the trace so the restored turn is not
+        # empty.
+        if answer and not any(s.get("kind") == "text" for s in trace):
+            trace.append({"kind": "text", "text": answer})
+        session.record_turn(user_input, answer, data["history"], trace=trace)
         yield {
             "event": "final",
             "data": {

@@ -176,14 +176,22 @@ function markToolStepsDone(steps: TurnStep[]): TurnStep[] {
   return steps.map((s) => (s.kind === "tool" && !s.done ? { ...s, done: true } : s))
 }
 
-/** Reconcile the authoritative `final.answer` into the trace: overwrite the
- *  trailing text step if there is one, else append it as a new text step. */
-function setTrailingText(steps: TurnStep[], text: string): TurnStep[] {
-  const last = steps[steps.length - 1]
-  if (last && last.kind === "text") {
-    return [...steps.slice(0, -1), { kind: "text", text }]
+/** Rebuild a restored turn's TurnStep[] from its persisted trace. Text steps
+ *  map directly; tool steps go through the same read-only whitelist used live
+ *  (`toolCallSource`), so a non-read tool (e.g. write_file) yields null and is
+ *  dropped — restore renders exactly what the live trace showed. Reads are
+ *  already settled (done). */
+export function stepsFromTrace(trace: PersistedTraceStep[]): TurnStep[] {
+  const out: TurnStep[] = []
+  for (const s of trace) {
+    if (s.kind === "text") {
+      if (typeof s.text === "string" && s.text) out.push({ kind: "text", text: s.text })
+    } else if (s.kind === "tool") {
+      const src = toolCallSource({ name: s.name, arguments: s.arguments })
+      if (src) out.push({ kind: "tool", source: src, done: true })
+    }
   }
-  return [...steps, { kind: "text", text }]
+  return out
 }
 
 /**
@@ -262,7 +270,14 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent, kb: string):
       // arrived, make the trailing text step reflect it (over accumulated
       // narration); otherwise keep the streamed trace as-is.
       let steps = markToolStepsDone(state.steps)
-      if (authoritative) steps = setTrailingText(steps, authoritative)
+      // `authoritative` (final.answer) is the FULL concatenation of every
+      // streamed text delta (narration + answer); the streamed trace already
+      // ends with the answer run, so do NOT overwrite the trailing step with it
+      // (that would duplicate narration whenever tool reads split the text).
+      // Only inject it when the model streamed no text at all.
+      if (authoritative && !steps.some((s) => s.kind === "text")) {
+        steps = [...steps, { kind: "text", text: authoritative }]
+      }
       return {
         ...state,
         answer,
@@ -355,12 +370,26 @@ export function listSessions(kb: string): Promise<ChatSessionListResponse> {
   return apiFetch<ChatSessionListResponse>("/api/v1/chat/sessions", { body: { kb } })
 }
 
+/** One persisted trace step from loadSession (parallel to the live TurnStep,
+ *  but a tool step keeps the RAW name/arguments so the read-only whitelist is
+ *  re-applied on restore, exactly as live). */
+export interface PersistedTraceStep {
+  kind: "text" | "tool"
+  text?: string
+  name?: string
+  arguments?: string
+}
+
 export interface ChatSessionLoad {
   session_id: string
   title: string
   turn_count: number
   user_turns: string[]
   assistant_texts: string[]
+  /** Parallel to assistant_texts by index; an empty inner array means "no trace
+   *  for this turn — fall back to the flat assistant_texts entry". Absent from a
+   *  backend too old to send it. */
+  assistant_traces?: PersistedTraceStep[][]
 }
 
 /** Load one session's turns for restore-on-reload (`/api/v1/chat/sessions/load`).

@@ -389,6 +389,7 @@ def create_app() -> FastAPI:
             turn_count=session.turn_count,
             user_turns=session.user_turns,
             assistant_texts=session.assistant_texts,
+            assistant_traces=session.assistant_traces,
         )
 
     @app.post("/api/v1/chat/sessions/delete", response_model=ChatSessionDeleteResponse)

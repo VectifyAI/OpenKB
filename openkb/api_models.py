@@ -45,12 +45,29 @@ class ChatSessionListResponse(BaseModel):
     sessions: list[ChatSessionItem]
 
 
+class ChatTraceStep(BaseModel):
+    """One persisted step of a chat turn's interleaved trace: a run of
+    narration/answer text (``kind="text"``) or one tool call (``kind="tool"``,
+    with the raw ``name``/``arguments`` so the frontend applies on restore the
+    same read-only whitelist it uses live). Turns recorded before traces
+    existed or via the CLI have an empty trace, and the client then falls back
+    to the flat ``assistant_texts`` entry."""
+
+    kind: str
+    text: str | None = None
+    name: str | None = None
+    arguments: str | None = None
+
+
 class ChatSessionLoadResponse(BaseModel):
     session_id: str
     title: str
     turn_count: int
     user_turns: list[str]
     assistant_texts: list[str]
+    # Parallel to assistant_texts (1:1 by index); an empty inner list means
+    # "no trace for this turn — render the flat assistant_texts entry instead".
+    assistant_traces: list[list[ChatTraceStep]] = Field(default_factory=list)
 
 
 class ChatSessionLoadRequest(BaseModel):

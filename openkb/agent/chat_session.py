@@ -116,6 +116,10 @@ class ChatSession:
     history: list[dict[str, Any]]
     user_turns: list[str]
     assistant_texts: list[str]
+    # Per-turn ordered trace (narration text + tool reads), parallel to
+    # assistant_texts. Empty for turns saved before this existed (and for
+    # CLI-recorded turns): the frontend falls back to the flat text for those.
+    assistant_traces: list[list[dict[str, Any]]]
     path: Path
 
     @classmethod
@@ -133,6 +137,7 @@ class ChatSession:
             history=[],
             user_turns=[],
             assistant_texts=[],
+            assistant_traces=[],
             path=chats_dir(kb_dir) / f"{sid}.json",
         )
 
@@ -148,6 +153,7 @@ class ChatSession:
             "history": self.history,
             "user_turns": self.user_turns,
             "assistant_texts": self.assistant_texts,
+            "assistant_traces": self.assistant_traces,
         }
 
     def save(self) -> None:
@@ -164,10 +170,19 @@ class ChatSession:
         user_message: str,
         assistant_text: str,
         new_history: list[dict[str, Any]],
+        trace: list[dict[str, Any]] | None = None,
     ) -> None:
         self.history = sanitize_history(new_history)
         self.user_turns.append(user_message)
         self.assistant_texts.append(assistant_text)
+        # Keep assistant_traces aligned 1:1 with assistant_texts. A session
+        # created before traces existed (or via the CLI, which passes none)
+        # back-fills empty traces for its earlier turns so index i always maps
+        # to the same turn; an empty trace makes the frontend fall back to the
+        # flat assistant_text for that turn.
+        while len(self.assistant_traces) < len(self.assistant_texts) - 1:
+            self.assistant_traces.append([])
+        self.assistant_traces.append(trace or [])
         self.turn_count = len(self.user_turns)
         if not self.title:
             self.title = _title_from(user_message)
@@ -189,6 +204,7 @@ def load_session(kb_dir: Path, session_id: str) -> ChatSession:
         history=sanitize_history(data.get("history", [])),
         user_turns=data.get("user_turns", []),
         assistant_texts=data.get("assistant_texts", []),
+        assistant_traces=data.get("assistant_traces", []),
         path=path,
     )
 
