@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 import { motion, useReducedMotion } from "motion/react"
 import { Presentation, Waypoints, FileCode, ExternalLink, Download, X, Loader2 } from "lucide-react"
 import { toast } from "sonner"
@@ -13,18 +15,18 @@ export function artifactKey(a: Artifact): string {
 }
 
 /** Human label for the header + switcher pill. */
-function artifactLabel(a: Artifact): string {
-  if (a.type === "graph") return "知识图谱"
+function artifactLabel(a: Artifact, t: TFunction): string {
+  if (a.type === "graph") return t("artifacts:graph.label")
   return a.name
 }
 
 /** Fetch the artifact's self-contained HTML as an authenticated blob: URL. */
-function fetchArtifactHtml(a: Artifact): Promise<string> {
+function fetchArtifactHtml(a: Artifact, t: TFunction): Promise<string> {
   if (a.type === "deck") return getDeckBlobUrl(a.kb, a.name)
   if (a.type === "graph") return getGraphBlobUrl(a.kb)
   if (a.type === "file") return getOutputBlobUrl(a.kb, a.path)
   // Skills are archives, not viewable HTML — they never reach the panel.
-  return Promise.reject(new Error("该产物类型不可预览"))
+  return Promise.reject(new Error(t("artifacts:previewUnsupported")))
 }
 
 const MIN_W = 380
@@ -63,6 +65,7 @@ export default function ArtifactPanel({
   onSwitch: (a: Artifact) => void
   onClose: () => void
 }) {
+  const { t } = useTranslation(["artifacts", "common"])
   const reduce = useReducedMotion()
   const [width, setWidth] = useState<number>(loadWidth)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
@@ -89,7 +92,7 @@ export default function ArtifactPanel({
     let cancelled = false
     setLoading(true)
     setBlobUrl(null)
-    fetchArtifactHtml(active)
+    fetchArtifactHtml(active, t)
       .then((url) => {
         if (cancelled) {
           URL.revokeObjectURL(url)
@@ -100,7 +103,7 @@ export default function ArtifactPanel({
         setBlobUrl(url)
       })
       .catch((e) => {
-        if (!cancelled) toast.error(`无法加载产物：${errMsg(e)}`)
+        if (!cancelled) toast.error(t("artifacts:loadError", { error: errMsg(e) }))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -156,7 +159,7 @@ export default function ArtifactPanel({
   // the authenticated blob resolves.
   const openInNewTab = () => {
     const w = window.open("", "_blank")
-    fetchArtifactHtml(active)
+    fetchArtifactHtml(active, t)
       .then((url) => {
         if (w) w.location.href = url
         // The tab owns the URL now; revoke generously once it has loaded.
@@ -164,12 +167,12 @@ export default function ArtifactPanel({
       })
       .catch((e) => {
         if (w) w.close()
-        toast.error(`无法打开：${errMsg(e)}`)
+        toast.error(t("artifacts:openError", { error: errMsg(e) }))
       })
   }
 
   const download = () => {
-    fetchArtifactHtml(active)
+    fetchArtifactHtml(active, t)
       .then((url) => {
         const a = document.createElement("a")
         a.href = url
@@ -184,7 +187,7 @@ export default function ArtifactPanel({
         a.remove()
         window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
       })
-      .catch((e) => toast.error(`下载失败：${errMsg(e)}`))
+      .catch((e) => toast.error(t("artifacts:downloadError", { error: errMsg(e) })))
   }
 
   const HeaderIcon =
@@ -202,7 +205,7 @@ export default function ArtifactPanel({
       {/* left-edge resize handle */}
       <div
         onPointerDown={startResize}
-        title="拖动调整宽度"
+        title={t("artifacts:panel.resize")}
         className="absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize hover:bg-accent-brand/30"
       />
 
@@ -210,7 +213,7 @@ export default function ArtifactPanel({
       <div className="shrink-0 h-12 flex items-center gap-2 px-3 border-b border-[hsl(var(--glass-border))]">
         <HeaderIcon className="w-4 h-4 text-accent-brand shrink-0" />
         <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-          {artifactLabel(active)}
+          {artifactLabel(active, t)}
         </span>
         <span className="shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
           {active.type === "graph" ? "GRAPH" : active.type === "file" ? "FILE" : "DECK"}
@@ -218,21 +221,21 @@ export default function ArtifactPanel({
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
             onClick={openInNewTab}
-            title="在新标签页打开"
+            title={t("artifacts:panel.openTab")}
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <ExternalLink className="w-4 h-4" />
           </button>
           <button
             onClick={download}
-            title="下载"
+            title={t("artifacts:panel.download")}
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Download className="w-4 h-4" />
           </button>
           <button
             onClick={onClose}
-            title="关闭"
+            title={t("common:actions.close")}
             className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="w-4 h-4" />
@@ -264,7 +267,7 @@ export default function ArtifactPanel({
                 ) : (
                   <Presentation className="w-3 h-3" />
                 )}
-                <span className="max-w-[120px] truncate">{artifactLabel(a)}</span>
+                <span className="max-w-[120px] truncate">{artifactLabel(a, t)}</span>
               </button>
             )
           })}

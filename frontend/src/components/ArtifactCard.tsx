@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation, Trans } from "react-i18next"
 import {
   Presentation, Sparkles, Waypoints, Check, Loader2, FileText, FileCode, FileArchive, ArrowUpRight,
   type LucideIcon,
@@ -43,6 +44,7 @@ function triggerBlobDownload(blobUrl: string, filename: string): void {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation("artifacts")
   const ok = status === "done"
   return (
     <span
@@ -53,7 +55,7 @@ function StatusBadge({ status }: { status: string }) {
       }
     >
       {ok && <Check className="w-3 h-3" />}
-      {ok ? "生成完成" : status}
+      {ok ? t("card.done") : status}
     </span>
   )
 }
@@ -72,6 +74,7 @@ function OpenableCard({
   subtitle: string
   onOpen: () => void
 }) {
+  const { t } = useTranslation("artifacts")
   return (
     <button
       onClick={onOpen}
@@ -85,7 +88,7 @@ function OpenableCard({
         <div className="text-[12px] text-muted-foreground truncate">{subtitle}</div>
       </div>
       <span className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-accent-brand">
-        打开
+        {t("card.open")}
         <ArrowUpRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
       </span>
     </button>
@@ -93,42 +96,49 @@ function OpenableCard({
 }
 
 function DeckCard({ a, onOpen }: { a: Extract<Artifact, { type: "deck" }>; onOpen?: (a: Artifact) => void }) {
+  const { t } = useTranslation("artifacts")
   return (
     <OpenableCard
       icon={Presentation}
       tint="bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400"
       label={a.name}
-      subtitle={`HTML 幻灯片 · ${baseName(a.path)}`}
+      subtitle={t("deck.subtitle", { name: baseName(a.path) })}
       onOpen={() => onOpen?.(a)}
     />
   )
 }
 
 function FileCard({ a, onOpen }: { a: Extract<Artifact, { type: "file" }>; onOpen?: (a: Artifact) => void }) {
+  const { t } = useTranslation("artifacts")
   return (
     <OpenableCard
       icon={FileCode}
       tint="bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
       label={a.name}
-      subtitle={`HTML 文件 · ${baseName(a.path)}`}
+      subtitle={t("file.subtitle", { name: baseName(a.path) })}
       onOpen={() => onOpen?.(a)}
     />
   )
 }
 
 function GraphCard({ a, onOpen }: { a: Extract<Artifact, { type: "graph" }>; onOpen?: (a: Artifact) => void }) {
+  const { t } = useTranslation("artifacts")
   const { graph } = a
   const subtitle =
     graph.nodes.length === 0
-      ? "暂无可视化的概念图谱"
-      : `${graph.nodes.length} 概念 · ${graph.edges.length} 关联${
-          graph.types.length > 0 ? ` · ${graph.types.length} 类型` : ""
-        }`
+      ? t("graph.empty")
+      : graph.types.length > 0
+        ? t("graph.subtitleWithTypes", {
+            count: graph.nodes.length,
+            edges: graph.edges.length,
+            types: graph.types.length,
+          })
+        : t("graph.subtitle", { count: graph.nodes.length, edges: graph.edges.length })
   return (
     <OpenableCard
       icon={Waypoints}
       tint="bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
-      label="知识图谱"
+      label={t("graph.label")}
       subtitle={subtitle}
       onOpen={() => onOpen?.(a)}
     />
@@ -136,6 +146,7 @@ function GraphCard({ a, onOpen }: { a: Extract<Artifact, { type: "graph" }>; onO
 }
 
 function SkillCard({ a }: { a: Extract<Artifact, { type: "skill" }> }) {
+  const { t } = useTranslation("artifacts")
   const [downloading, setDownloading] = useState(false)
 
   const download = async () => {
@@ -143,7 +154,7 @@ function SkillCard({ a }: { a: Extract<Artifact, { type: "skill" }> }) {
     try {
       triggerBlobDownload(await getSkillArchiveBlobUrl(a.kb, a.name), `${a.name}.zip`)
     } catch (e) {
-      toast.error(`下载技能包失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(t("skill.downloadError", { error: e instanceof Error ? e.message : String(e) }))
     } finally {
       setDownloading(false)
     }
@@ -165,8 +176,7 @@ function SkillCard({ a }: { a: Extract<Artifact, { type: "skill" }> }) {
       </div>
       <div className="px-5 py-4">
         <p className="text-[12.5px] text-muted-foreground leading-relaxed mb-3">
-          技能已生成为可安装的目录，下载 <span className="font-mono2 text-foreground">.zip</span> 后解压到你的
-          Agent（Claude Code / Codex / Gemini CLI）技能目录即可使用。
+          <Trans t={t} i18nKey="skill.body" components={[<span className="font-mono2 text-foreground" />]} />
         </p>
         <button
           onClick={download}
@@ -174,7 +184,7 @@ function SkillCard({ a }: { a: Extract<Artifact, { type: "skill" }> }) {
           className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-accent-brand text-white text-[12px] font-medium hover:opacity-90 transition-colors disabled:opacity-60"
         >
           {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileArchive className="w-3.5 h-3.5" />}
-          下载技能包（.zip）
+          {t("skill.download")}
         </button>
       </div>
     </div>
@@ -188,6 +198,7 @@ export default function ArtifactCard({
   artifact: Artifact
   onOpen?: (a: Artifact) => void
 }) {
+  const { t } = useTranslation("artifacts")
   switch (artifact.type) {
     case "deck":
       return <DeckCard a={artifact} onOpen={onOpen} />
@@ -201,7 +212,7 @@ export default function ArtifactCard({
       return (
         <div className="rounded-apple-lg border border-[hsl(var(--glass-border))] glass-2 px-5 py-4 flex items-center gap-3">
           <FileText className="w-4 h-4 text-muted-foreground" />
-          <span className="text-[13px] text-foreground">未知产物</span>
+          <span className="text-[13px] text-foreground">{t("unknown")}</span>
         </div>
       )
   }
