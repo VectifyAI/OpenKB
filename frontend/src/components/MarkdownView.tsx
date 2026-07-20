@@ -3,10 +3,23 @@ import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { useTheme } from '@/lib/theme'
 
-/** 极简 Markdown 渲染：标题 / 列表 / 引用 / 粗体 / [[wikilink]] / 行内代码 / 代码块 / mermaid */
+/** Guard for [text](url) links: only render a real anchor for http(s) or
+ *  scheme-less (relative) URLs. Anything with another scheme (javascript:,
+ *  data:, vbscript:, …) is treated as literal text, never an anchor. */
+const isSafeUrl = (u: string) => /^https?:\/\//i.test(u) || !/^[a-z][\w+.-]*:/i.test(u)
+
+/**
+ * Minimal inline Markdown renderer. Tokens (in match-priority order):
+ *   [[wikilink|alias]] · \( math \) · **bold** · ~~strike~~ · `code` ·
+ *   [text](url) · *italic* / _italic_.
+ * ORDER IS LOAD-BEARING inside the alternation: wikilink must precede the link
+ * pattern (so `[[x]]` is not parsed as a link), and bold must precede italic
+ * (so `**x**` is not parsed as `*`-italic-`*`). Every alternative uses a bounded
+ * `[^…]+` class (no nested quantifiers) to avoid catastrophic backtracking.
+ */
 function inline(text: string, onWikiLink?: (target: string) => void): React.ReactNode[] {
   const parts: React.ReactNode[] = []
-  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*[^*]+\*\*|`[^`]+`)/g
+  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
   let last = 0, m: RegExpExecArray | null, k = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
@@ -56,8 +69,35 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
       )
     } else if (tok.startsWith('**')) {
       parts.push(<strong key={k++} className="font-semibold text-foreground">{tok.slice(2, -2)}</strong>)
-    } else {
+    } else if (tok.startsWith('~~')) {
+      parts.push(<del key={k++} className="line-through">{tok.slice(2, -2)}</del>)
+    } else if (tok.startsWith('`')) {
       parts.push(<code key={k++} className="font-mono2 text-[12px] bg-muted rounded px-1 py-px">{tok.slice(1, -1)}</code>)
+    } else if (tok.startsWith('[')) {
+      // Inline link [text](url). `[[…]]` was already consumed above, so any
+      // `[` reaching here is a genuine link. Only emit an anchor when the URL
+      // passes the scheme guard; otherwise render the raw token as literal text.
+      const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)
+      const label = lm ? lm[1] : tok
+      const url = lm ? lm[2] : ''
+      parts.push(
+        lm && isSafeUrl(url) ? (
+          <a
+            key={k++}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent-brand hover:underline"
+          >
+            {label}
+          </a>
+        ) : (
+          <span key={k++}>{tok}</span>
+        ),
+      )
+    } else {
+      // *italic* or _italic_ (bold `**…**` was consumed above).
+      parts.push(<em key={k++} className="italic">{tok.slice(1, -1)}</em>)
     }
     last = m.index + tok.length
   }
@@ -150,6 +190,7 @@ export default function MarkdownView({
   const lines = source.split('\n')
   const out: React.ReactNode[] = []
   let list: string[] = []
+  let olist: string[] = []
   let key = 0
 
   const flushList = () => {
@@ -167,13 +208,30 @@ export default function MarkdownView({
     list = []
   }
 
+  const flushOList = () => {
+    if (!olist.length) return
+    out.push(
+      <ol key={key++} className="my-2.5 space-y-1.5 pl-6 list-decimal">
+        {olist.map((li, i) => (
+          <li key={i} className="pl-1 text-[14px] leading-relaxed text-muted-foreground marker:text-muted-foreground">
+            <span>{inline(li, onWikiLink)}</span>
+          </li>
+        ))}
+      </ol>,
+    )
+    olist = []
+  }
+
+  // Block boundary: any non-list line closes BOTH pending lists.
+  const flushBlocks = () => { flushList(); flushOList() }
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trimEnd()
 
     // Fenced code block: ``` or ```lang … ``` (accumulate until the closing fence)
     const fence = /^```(\w*)\s*$/.exec(line.trim())
     if (fence) {
-      flushList()
+      flushBlocks()
       const lang = fence[1]
       const body: string[] = []
       i++
@@ -192,12 +250,12 @@ export default function MarkdownView({
     // and the model's usual three-line form (\[ alone, body lines, \] alone).
     const oneLineMath = /^\\\[([\s\S]*?)\\\]$/.exec(line.trim())
     if (oneLineMath) {
-      flushList()
+      flushBlocks()
       out.push(<MathBlock key={key++} tex={oneLineMath[1].trim()} />)
       continue
     }
     if (line.trim() === '\\[') {
-      flushList()
+      flushBlocks()
       const body: string[] = []
       i++
       while (i < lines.length && lines[i].trim() !== '\\]') { body.push(lines[i]); i++ }
@@ -207,21 +265,25 @@ export default function MarkdownView({
 
     // Horizontal rule / thematic break: ---, ***, or ___
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
-      flushList()
+      flushBlocks()
       out.push(<hr key={key++} className="my-4 border-0 border-t border-[hsl(var(--glass-border))]" />)
       continue
     }
 
-    if (line.startsWith('- ')) { list.push(line.slice(2)); continue }
-    flushList()
+    // Unordered item: close any open ordered list, keep accumulating the ul.
+    if (line.startsWith('- ')) { flushOList(); list.push(line.slice(2)); continue }
+    // Ordered item `N. …`: close any open unordered list, strip the marker, and
+    // accumulate into a real <ol> (mirrors the ul buffer/flush pattern).
+    const om = /^\d+\.\s+/.exec(line)
+    if (om) { flushList(); olist.push(line.slice(om[0].length)); continue }
+    flushBlocks()
     if (!line.trim()) { out.push(<div key={key++} className="h-2" />); continue }
     if (line.startsWith('### ')) out.push(<h3 key={key++} className="mt-4 mb-1.5 text-[14px] font-semibold text-foreground">{inline(line.slice(4), onWikiLink)}</h3>)
     else if (line.startsWith('## ')) out.push(<h2 key={key++} className="mt-5 mb-2 text-[16px] font-bold text-foreground">{inline(line.slice(3), onWikiLink)}</h2>)
     else if (line.startsWith('# ')) out.push(<h1 key={key++} className="mb-3 text-[22px] font-extrabold tracking-tight text-foreground">{inline(line.slice(2), onWikiLink)}</h1>)
     else if (line.startsWith('> ')) out.push(<div key={key++} className="my-2.5 border-l-2 border-amber-400/70 bg-amber-400/10 rounded-r-lg px-3 py-2 text-[13px] text-muted-foreground">{inline(line.slice(2), onWikiLink)}</div>)
-    else if (/^\d+\.\s/.test(line)) out.push(<p key={key++} className="my-1 text-[14px] leading-relaxed text-muted-foreground pl-1">{inline(line, onWikiLink)}</p>)
     else out.push(<p key={key++} className="my-1.5 text-[14px] leading-relaxed text-muted-foreground">{inline(line, onWikiLink)}</p>)
   }
-  flushList()
+  flushBlocks()
   return <div>{out}</div>
 }
