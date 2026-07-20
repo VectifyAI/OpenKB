@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenKB</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #0b0d10;
+        color: #e6e8eb;
+      }
+      .box { text-align: center; }
+      .dot {
+        width: 10px; height: 10px; border-radius: 50%;
+        background: #4c8bf5; display: inline-block;
+        animation: pulse 1s ease-in-out infinite;
+      }
+      @keyframes pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h1>OpenKB</h1>
+      <p>Starting your knowledge base <span class="dot"></span></p>
+    </div>
+  </body>
+</html>

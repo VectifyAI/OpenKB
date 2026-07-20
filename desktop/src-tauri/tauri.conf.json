@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenKB",
+  "version": "0.1.0",
+  "identifier": "ai.pageindex.openkb",
+  "build": {
+    "frontendDist": "../splash"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OpenKB",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "../packaging/dist/openkb-api-sidecar": "sidecar"
+    }
+  }
+}

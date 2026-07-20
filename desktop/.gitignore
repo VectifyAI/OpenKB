@@ -1,0 +1,8 @@
+# PyInstaller sidecar build artifacts
+packaging/build/
+packaging/dist/
+packaging/*.spec
+
+# Tauri / Rust build artifacts
+src-tauri/target/
+src-tauri/gen/
