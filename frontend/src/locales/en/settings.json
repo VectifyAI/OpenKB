@@ -19,7 +19,11 @@
     "undoClear": "Undo"
   },
   "general": {
-    "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語"
+    "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語",
+    "kbRootLabel": "Knowledge base root",
+    "kbRootDesc": "Default location for new knowledge bases (<root>/<name>); leave empty to restore the built-in default. Individual KBs can set a custom path at creation.",
+    "kbRootPlaceholder": "e.g. ~/openkb",
+    "kbRootEnvPinned": "Pinned by the OPENKB_KB_ROOT environment variable; edits here won't take effect until it's unset."
   },
   "conn": {
     "note": "Cloud data-source connectors (OAuth / S3) are in development and not yet available; for now, upload local files from the KB detail page. Want a connector? Click a card below to vote on GitHub and help us prioritize."

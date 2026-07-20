@@ -12,6 +12,11 @@
     "namePlaceholder": "e.g. my-kb",
     "cancel": "Cancel",
     "submit": "Create",
-    "submitting": "Creating…"
+    "submitting": "Creating…",
+    "previewLabel": "Will be created at {{path}}",
+    "advancedToggle": "Custom path",
+    "customPathLabel": "Custom path",
+    "customPathPlaceholder": "/absolute/path/to/kb",
+    "customPathHint": "Leave empty to use the default root"
   }
 }

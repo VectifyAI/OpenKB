@@ -55,6 +55,14 @@ export default function KbList() {
                 <span className="text-[16px] font-bold text-foreground">{kb.name}</span>
               </div>
 
+              {/* Directory in small muted mono so scattered (custom-path) KBs
+                  stay legible. `title` exposes the full path when truncated. */}
+              {kb.path && (
+                <div className="mt-1.5 text-[11px] text-muted-foreground font-mono2 truncate" title={kb.path}>
+                  {kb.path}
+                </div>
+              )}
+
               <div className="mt-4">
                 <div className="inline-flex items-center gap-3 rounded-xl bg-muted/50 border border-[hsl(var(--glass-border))] px-3.5 py-2.5">
                   <FileText className="w-4 h-4 text-muted-foreground" />

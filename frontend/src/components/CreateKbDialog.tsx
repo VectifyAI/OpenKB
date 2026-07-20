@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Loader2, Plus } from 'lucide-react'
-import { createKb } from '@/api/kb'
+import { ChevronDown, Loader2, Plus } from 'lucide-react'
+import { createKb, listKbs } from '@/api/kb'
+import { cn } from '@/lib/utils'
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -26,36 +27,61 @@ export default function CreateKbDialog({ children }: { children: ReactNode }) {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // Effective KB root, fetched on open, used to render the live target-path
+  // preview (`<root>/<name>`). Null until the fetch lands (or if it fails).
+  const [root, setRoot] = useState<string | null>(null)
+  // Optional advanced override: an absolute directory to create the KB at
+  // instead of `<root>/<name>`. Hidden behind the "Custom path" toggle.
+  const [customPath, setCustomPath] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   // Reset transient form state on every open/close so a reopened dialog is
   // clean and a Radix-initiated close (Escape / scrim) can't strand an error.
+  // On open we (re)fetch the KB root so the preview reflects the current root.
   const onOpenChange = useCallback((next: boolean) => {
     if (submitting) return
     setOpen(next)
     setName('')
     setError(null)
+    setCustomPath('')
+    setShowAdvanced(false)
+    if (next) {
+      setRoot(null)
+      listKbs()
+        .then((r) => setRoot(r.root))
+        .catch(() => setRoot(null))
+    }
   }, [submitting])
 
   const trimmed = name.trim()
+  const customTrimmed = customPath.trim()
+
+  // What the create will actually target: an explicit custom path wins;
+  // otherwise `<root>/<name>` (with an ellipsis stand-in before a name is typed).
+  const previewPath = customTrimmed || (root ? `${root}/${trimmed || '…'}` : '')
 
   const submit = useCallback(async () => {
     if (!trimmed || submitting) return
     setSubmitting(true)
     setError(null)
     try {
-      await createKb({ kb: trimmed })
+      const path = customPath.trim()
+      // Resolution is by name regardless of path, so navigation is unchanged.
+      await createKb(path ? { kb: trimmed, path } : { kb: trimmed })
       // Broadcast so any live KB list (e.g. AppSidebar) re-fetches without a
       // full reload; mirrors the old app's `openkb:reload-kbs` signal.
       window.dispatchEvent(new CustomEvent('openkb:reload-kbs'))
       setSubmitting(false)
       setOpen(false)
       setName('')
+      setCustomPath('')
+      setShowAdvanced(false)
       navigate(`/kb/${encodeURIComponent(trimmed)}`)
     } catch (e) {
       setError(errMsg(e))
       setSubmitting(false)
     }
-  }, [trimmed, submitting, navigate])
+  }, [trimmed, customPath, submitting, navigate])
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -113,6 +139,49 @@ export default function CreateKbDialog({ children }: { children: ReactNode }) {
                       placeholder={t('create.namePlaceholder')}
                       className="mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
                     />
+
+                    {/* Live target-path preview: `<root>/<name>`, or the custom
+                        path when one is set. Only shown once the root is known. */}
+                    {previewPath && (
+                      <p className="mt-1.5 text-[11.5px] text-muted-foreground font-mono2 break-all">
+                        {t('create.previewLabel', { path: previewPath })}
+                      </p>
+                    )}
+
+                    {/* Unobtrusive advanced override: a text toggle that reveals
+                        an absolute custom-path field; empty = use default root. */}
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                      disabled={submitting}
+                      className="mt-2.5 inline-flex items-center gap-1 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60"
+                    >
+                      <ChevronDown
+                        className={cn('w-3.5 h-3.5 transition-transform', showAdvanced && 'rotate-180')}
+                      />
+                      {t('create.advancedToggle')}
+                    </button>
+                    {showAdvanced && (
+                      <div className="mt-2">
+                        <label htmlFor="create-kb-path" className="text-[12px] font-medium text-muted-foreground">
+                          {t('create.customPathLabel')}
+                        </label>
+                        <input
+                          id="create-kb-path"
+                          value={customPath}
+                          disabled={submitting}
+                          onChange={(e) => {
+                            setCustomPath(e.target.value)
+                            if (error) setError(null)
+                          }}
+                          placeholder={t('create.customPathPlaceholder')}
+                          className="mt-1.5 w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand"
+                        />
+                        <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                          {t('create.customPathHint')}
+                        </p>
+                      </div>
+                    )}
 
                     {error && (
                       <div className="mt-2.5 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[12.5px] text-red-600 dark:text-red-400">

@@ -11,6 +11,11 @@ export interface GlobalConfig {
   openai_api_base?: string | null
   /** Presence flag only — the raw key value is NEVER returned by the API. */
   has_api_key?: boolean
+  /** Effective KB root directory — where `<root>/<name>` KBs are created. */
+  kb_root: string
+  /** True when OPENKB_KB_ROOT is set in the environment, which overrides any
+   *  UI-set root; edits here won't take effect until the env var is unset. */
+  kb_root_env_pinned?: boolean
 }
 
 /**
@@ -28,6 +33,9 @@ export interface GlobalConfigPatch {
   }
   api_key?: string | null
   openai_api_base?: string | null
+  /** Effective KB root. A value sets it; `null` (or empty) reverts to the
+   *  built-in default. Placed top-level, mirroring api_key/openai_api_base. */
+  kb_root?: string | null
 }
 
 export function getGlobalConfig(): Promise<GlobalConfig> {

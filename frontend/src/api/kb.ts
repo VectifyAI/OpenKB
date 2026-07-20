@@ -5,6 +5,8 @@ export interface KbSummary {
   document_count: number
   last_compile: string | null
   has_raw: boolean
+  /** Absolute directory of this KB (may sit outside the default root). */
+  path?: string
 }
 
 export interface KbListResponse {
@@ -18,12 +20,14 @@ export function listKbs(): Promise<KbListResponse> {
 
 /** Body for POST /api/v1/init. Only `kb` is required; model/credentials are
  *  omitted here and left to inherit global defaults (set later via the per-KB
- *  gear / KbSettingsSheet). */
+ *  gear / KbSettingsSheet). When `path` is given, the KB is created at that
+ *  absolute directory instead of the default `<root>/<name>`. */
 export interface InitRequest {
   kb: string
   model?: string
   api_key?: string
   openai_api_base?: string
+  path?: string
 }
 
 export interface InitResponse {

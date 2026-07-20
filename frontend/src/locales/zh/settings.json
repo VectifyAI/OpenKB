@@ -19,7 +19,11 @@
     "undoClear": "撤销"
   },
   "general": {
-    "langDesc": "写入编译 prompt 的输出语言，例如 en / 中文 / 日本語"
+    "langDesc": "写入编译 prompt 的输出语言，例如 en / 中文 / 日本語",
+    "kbRootLabel": "知识库根目录",
+    "kbRootDesc": "新建知识库的默认位置（<根目录>/<名称>）；留空则恢复内置默认值。单个知识库可在创建时设置自定义路径。",
+    "kbRootPlaceholder": "例如 ~/openkb",
+    "kbRootEnvPinned": "已由环境变量 OPENKB_KB_ROOT 固定，此处的修改在取消该环境变量前不会生效。"
   },
   "conn": {
     "note": "云端数据源连接器（OAuth / S3）开发中，尚不可用；当前请在知识库详情页手动上传本地文件。想要某个连接器？点下方卡片去 GitHub 投票，帮我们排优先级。"

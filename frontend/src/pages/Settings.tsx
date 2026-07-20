@@ -39,6 +39,9 @@ export default function Settings() {
   const [model, setModel] = useState('')
   const [language, setLanguage] = useState('')
   const [threshold, setThreshold] = useState('')
+  // KB root directory. Emptying a previously-set root clears it (null → default),
+  // mirroring the credential-base's empty→null discipline in buildPatch.
+  const [kbRoot, setKbRoot] = useState('')
   // Global-default credentials (written to ~/.config/openkb/.env). The API key
   // is write-only: its value is never fetched, so the input starts empty and a
   // non-empty value means "rotate". `clearKey` defers an explicit-null removal
@@ -55,6 +58,7 @@ export default function Settings() {
     setModel(c.model)
     setLanguage(c.language)
     setThreshold(String(c.pageindex_threshold))
+    setKbRoot(c.kb_root ?? '')
     setApiBase(c.openai_api_base ?? '')
     setApiKey('')
     setClearKey(false)
@@ -97,13 +101,16 @@ export default function Settings() {
       cfg.pageindex_threshold = n
     }
     if (Object.keys(cfg).length > 0) patch.config = cfg
+    const rootTrim = kbRoot.trim()
+    const currentRoot = config.kb_root ?? ''
+    if (rootTrim !== currentRoot) patch.kb_root = rootTrim === '' ? null : rootTrim
     const baseTrim = apiBase.trim()
     const currentBase = config.openai_api_base ?? ''
     if (baseTrim !== currentBase) patch.openai_api_base = baseTrim === '' ? null : baseTrim
     if (clearKey) patch.api_key = null
     else if (apiKey !== '') patch.api_key = apiKey
     return { patch, dirty: Object.keys(patch).length > 0 }
-  }, [config, model, language, threshold, apiBase, apiKey, clearKey])
+  }, [config, model, language, threshold, kbRoot, apiBase, apiKey, clearKey])
 
   const dirty = useMemo(() => buildPatch().dirty, [buildPatch])
 
@@ -278,6 +285,21 @@ export default function Settings() {
                   className={cn(inputCls, 'max-w-[240px]')}
                 />
                 <UnLanguageDatalist />
+              </div>
+
+              <div>
+                <label className="text-[13px] font-semibold text-foreground">{t('settings:general.kbRootLabel')}</label>
+                <p className="mt-0.5 text-[12px] text-muted-foreground">{t('settings:general.kbRootDesc')}</p>
+                <input
+                  value={kbRoot}
+                  disabled={loading || !config}
+                  onChange={(e) => setKbRoot(e.target.value)}
+                  placeholder={t('settings:general.kbRootPlaceholder')}
+                  className={cn(inputCls, 'max-w-[420px]')}
+                />
+                {config?.kb_root_env_pinned && (
+                  <p className="mt-1.5 text-[11.5px] text-muted-foreground">{t('settings:general.kbRootEnvPinned')}</p>
+                )}
               </div>
             </div>
 

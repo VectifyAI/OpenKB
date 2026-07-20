@@ -12,6 +12,11 @@
     "namePlaceholder": "例如 my-kb",
     "cancel": "取消",
     "submit": "创建",
-    "submitting": "创建中…"
+    "submitting": "创建中…",
+    "previewLabel": "将创建于 {{path}}",
+    "advancedToggle": "自定义路径",
+    "customPathLabel": "自定义路径",
+    "customPathPlaceholder": "/绝对/路径/到/知识库",
+    "customPathHint": "留空则使用默认根目录"
   }
 }
