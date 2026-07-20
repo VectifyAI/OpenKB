@@ -7,16 +7,7 @@
     "frontendDist": "splash"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "OpenKB",
-        "width": 1200,
-        "height": 800,
-        "resizable": true,
-        "url": "index.html"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

@@ -68,6 +68,22 @@ fn main() {
     tauri::Builder::default()
         .manage(Sidecar(Mutex::new(None)))
         .setup(|app| {
+            // Create the main window programmatically so we can inject the
+            // desktop-shell flag the frontend checks (window.__OPENKB_DESKTOP__).
+            // It gates the in-app TitleBar and other desktop-only chrome. An
+            // initialization script runs before page scripts on every
+            // navigation, so the flag is present on the splash AND after we
+            // navigate to the sidecar's served UI.
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("OpenKB")
+            .inner_size(1200.0, 800.0)
+            .initialization_script("window.__OPENKB_DESKTOP__ = true;")
+            .build()?;
+
             // Non-fatal: if the sidecar can't start (missing binary, port in
             // use), keep the window up on the splash rather than crashing the
             // app. In `cargo run` dev the bundled sidecar isn't present, so
