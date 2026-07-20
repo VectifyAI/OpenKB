@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { MessageSquare, Library, Settings2, Plus } from "lucide-react"
 import { listKbs, type KbSummary } from "@/api/kb"
 import { cn } from "@/lib/utils"
+import CreateKbDialog from "@/components/CreateKbDialog"
 
 /** Decorative accent colors, cycled by position — the API carries no color. */
 const DOTS = [
@@ -77,12 +78,14 @@ export default function AppSidebar() {
         <span className="text-[12px] font-semibold text-muted-foreground tracking-wide">
           {t("nav.kbs")}
         </span>
-        <button
-          className="text-muted-foreground hover:text-foreground transition-colors"
-          title={t("actions.newKb")}
-        >
-          <Plus className="w-3.5 h-3.5" />
-        </button>
+        <CreateKbDialog>
+          <button
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            title={t("actions.newKb")}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </CreateKbDialog>
       </div>
       <div className="mt-1 space-y-0.5 overflow-y-auto">
         {kbs.map((kb, i) => (

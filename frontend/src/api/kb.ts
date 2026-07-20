@@ -16,6 +16,27 @@ export function listKbs(): Promise<KbListResponse> {
   return apiFetch<KbListResponse>("/api/v1/kbs")
 }
 
+/** Body for POST /api/v1/init. Only `kb` is required; model/credentials are
+ *  omitted here and left to inherit global defaults (set later via the per-KB
+ *  gear / KbSettingsSheet). */
+export interface InitRequest {
+  kb: string
+  model?: string
+  api_key?: string
+  openai_api_base?: string
+}
+
+export interface InitResponse {
+  kb: string
+  created: boolean
+  env_written: { api_key: boolean; openai_api_base: boolean }
+  message: string
+}
+
+export function createKb(body: InitRequest): Promise<InitResponse> {
+  return apiFetch<InitResponse>("/api/v1/init", { method: "POST", body })
+}
+
 export type ConfigSource = "kb" | "global" | "default"
 
 export interface KbConfig {

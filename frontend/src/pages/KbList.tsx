@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { Plus, FileText } from 'lucide-react'
 import { listKbs, type KbSummary } from '@/api/kb'
+import CreateKbDialog from '@/components/CreateKbDialog'
 import { cn } from '@/lib/utils'
 
 /** Decorative accent colors, cycled by position — the API carries no color. */
@@ -35,9 +36,11 @@ export default function KbList() {
             <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">{t('title')}</h1>
             <p className="mt-1 text-[13px] text-muted-foreground">{t('subtitle')}</p>
           </div>
-          <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:opacity-90 shadow-sm transition duration-fast ease-out-apple active:scale-[0.97]">
-            <Plus className="w-4 h-4" />{t('common:actions.newKb')}
-          </button>
+          <CreateKbDialog>
+            <button className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-accent-brand text-white text-[13px] font-medium hover:opacity-90 shadow-sm transition duration-fast ease-out-apple active:scale-[0.97]">
+              <Plus className="w-4 h-4" />{t('common:actions.newKb')}
+            </button>
+          </CreateKbDialog>
         </div>
 
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
@@ -70,14 +73,6 @@ export default function KbList() {
               </div>
             </button>
           ))}
-
-          {/* 新建虚线卡 */}
-          <button className="anim-fade-up anim-d4 rounded-2xl border-2 border-dashed border-[hsl(var(--glass-border))] p-5 grid place-items-center text-muted-foreground hover:text-accent-brand hover:border-accent-brand/40 hover:bg-accent-brand/5 transition-[color,background-color,border-color,transform] duration-fast ease-out-apple active:scale-[0.97] min-h-[160px]">
-            <span className="flex flex-col items-center gap-2">
-              <Plus className="w-6 h-6" />
-              <span className="text-[13px] font-medium">{t('common:actions.newKb')}</span>
-            </span>
-          </button>
         </div>
       </div>
     </div>
