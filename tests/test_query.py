@@ -82,6 +82,55 @@ def test_query_strategy_mentions_entities():
     assert "entities/" in text
 
 
+class TestResolveToolCallId:
+    """Fix 3: call-side and output-side keys must be derived identically so the
+    ``output/*.html`` artifact card correlates and fires (mirrors the Agents
+    SDK's ToolCallItem/ToolCallOutputItem.call_id: prefer call_id, fall back to
+    id, dict-aware)."""
+
+    def test_object_with_call_id(self):
+        from types import SimpleNamespace
+
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id(SimpleNamespace(call_id="c1", id="i1")) == "c1"
+
+    def test_object_falls_back_to_id(self):
+        from types import SimpleNamespace
+
+        from openkb.agent.query import _resolve_tool_call_id
+
+        # ChatCompletions/LiteLLM path: only ``id`` is present.
+        assert _resolve_tool_call_id(SimpleNamespace(id="i1")) == "i1"
+
+    def test_dict_with_call_id(self):
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id({"call_id": "c1", "id": "i1"}) == "c1"
+
+    def test_dict_falls_back_to_id(self):
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id({"id": "i1"}) == "i1"
+
+    def test_call_and_output_sides_agree_on_litellm_path(self):
+        """The bug: call-side raw_item is an object with only ``id`` while the
+        output-side raw_item is a dict with only ``id`` — both must resolve to
+        the same key or ``pending_calls.pop`` misses."""
+        from types import SimpleNamespace
+
+        from openkb.agent.query import _resolve_tool_call_id
+
+        call_side = _resolve_tool_call_id(SimpleNamespace(id="abc123"))
+        output_side = _resolve_tool_call_id({"id": "abc123"})
+        assert call_side == output_side == "abc123"
+
+    def test_none_when_no_identifier(self):
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id({}) is None
+
+
 class TestFmtFallback:
     """Regression tests for issue #34.
 

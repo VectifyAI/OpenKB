@@ -980,10 +980,13 @@ async def iter_chat_turn_events(
 
         data = event["data"]
         answer = data["answer"]
-        # If the model streamed no text at all (answer came from final_output),
-        # ensure the answer still lands in the trace so the restored turn is not
-        # empty.
-        if answer and not any(s.get("kind") == "text" for s in trace):
+        # If the model streamed no *substantive* text (answer came from
+        # final_output, or the only streamed deltas were whitespace like " " /
+        # "\n"), ensure the answer still lands in the trace so the restored turn
+        # is not empty. A whitespace-only delta creates a text step, so guarding
+        # on mere presence of a text step would wrongly treat that empty step as
+        # the answer; require a text step with non-whitespace content instead.
+        if answer and not any(s.get("kind") == "text" and s.get("text", "").strip() for s in trace):
             trace.append({"kind": "text", "text": answer})
         session.record_turn(user_input, answer, data["history"], trace=trace)
         yield {

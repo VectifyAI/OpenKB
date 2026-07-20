@@ -11,6 +11,8 @@ import contextlib
 import json as _json
 from pathlib import Path, PurePosixPath
 
+from openkb.locks import atomic_write_text
+
 
 def list_wiki_files(directory: str, wiki_root: str) -> str:
     """List all Markdown files in a wiki subdirectory.
@@ -245,7 +247,12 @@ def write_kb_file(path: str, content: str, kb_root: str) -> str:
     if not allowed:
         return "Access denied: path must be a file under wiki/explorations/ or output/."
     full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
+    # Atomic temp-file + os.replace rename (openkb.locks): a crash/interleave
+    # mid-write can never leave a truncated page for a concurrent lint/recompile
+    # scan to read, and this satisfies the AGENTS.md "wiki writes go through
+    # locks.py" invariant. (No per-turn KB mutation lock — that would serialize
+    # every chat turn; atomic rename alone resolves the torn-file hazard.)
+    atomic_write_text(full_path, content)
     return f"Written: {path}"
 
 

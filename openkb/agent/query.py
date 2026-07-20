@@ -123,6 +123,23 @@ def build_query_agent(
     )
 
 
+def _resolve_tool_call_id(raw_item: Any) -> str | None:
+    """Resolve a tool call's correlation id exactly as the Agents SDK's
+    ``ToolCallItem.call_id`` / ``ToolCallOutputItem.call_id`` property does:
+    prefer ``call_id``, fall back to ``id``, dict-aware.
+
+    The ChatCompletions/LiteLLM path emits only ``id`` (no ``call_id``) on the
+    output item, so without the ``id`` fallback the key written on the
+    ``tool_call`` side and the key read on the ``tool_call_output_item`` side
+    disagree, ``pending_calls.pop`` misses, and the ``output/*.html`` artifact
+    card silently never fires. Deriving the key with this one helper on BOTH
+    sides keeps them aligned.
+    """
+    if isinstance(raw_item, dict):
+        return raw_item.get("call_id") or raw_item.get("id")
+    return getattr(raw_item, "call_id", None) or getattr(raw_item, "id", None)
+
+
 async def iter_agent_response_events(
     agent: Agent,
     input_data: str | list[dict[str, Any]],
@@ -163,17 +180,13 @@ async def iter_agent_response_events(
                 raw_item = item.raw_item
                 name = getattr(raw_item, "name", "?")
                 arguments = getattr(raw_item, "arguments", "") or ""
-                call_id = getattr(raw_item, "call_id", None)
+                call_id = _resolve_tool_call_id(raw_item)
                 if call_id:
                     pending_calls[call_id] = (name, arguments)
                 yield {"event": "tool_call", "data": {"name": name, "arguments": arguments}}
             elif item.type == "tool_call_output_item":
                 raw_item = item.raw_item
-                call_id = (
-                    raw_item.get("call_id")
-                    if isinstance(raw_item, dict)
-                    else getattr(raw_item, "call_id", None)
-                )
+                call_id = _resolve_tool_call_id(raw_item)
                 name, arguments = (
                     pending_calls.pop(call_id, ("", "")) if isinstance(call_id, str) else ("", "")
                 )
