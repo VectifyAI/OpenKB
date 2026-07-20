@@ -10,7 +10,14 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
     if (m.index > last) parts.push(text.slice(last, m.index))
     const tok = m[0]
     if (tok.startsWith('[[')) {
-      const target = tok.slice(2, -2)
+      // Obsidian/wiki alias form: [[target|alias]]. Split on the FIRST `|` —
+      // the part before is the nav TARGET, the part after (if any) is the
+      // DISPLAY label. Multiple `|` keep the rest in the label; an empty/absent
+      // alias falls back to the target so we never render a blank link.
+      const inner = tok.slice(2, -2)
+      const pipe = inner.indexOf('|')
+      const target = (pipe === -1 ? inner : inner.slice(0, pipe)).trim()
+      const display = (pipe === -1 ? '' : inner.slice(pipe + 1)).trim() || target
       // Only clickable when a handler is wired — never imply navigation that
       // does nothing (the previous bug: cursor-pointer with no onClick).
       parts.push(
@@ -21,11 +28,11 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
             onClick={() => onWikiLink(target)}
             className="text-accent-brand bg-accent-brand/10 rounded px-1 py-px cursor-pointer hover:bg-accent-brand/20 transition-colors"
           >
-            {target}
+            {display}
           </button>
         ) : (
           <span key={k++} className="text-accent-brand bg-accent-brand/10 rounded px-1 py-px transition-colors">
-            {target}
+            {display}
           </span>
         ),
       )
