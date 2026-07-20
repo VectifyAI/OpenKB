@@ -5,6 +5,8 @@ import { KeyRound, Loader2 } from "lucide-react"
 import AppSidebar from "@/components/AppSidebar"
 import TitleBar from "@/components/TitleBar"
 import { ThemeToggle } from "@/lib/theme"
+import { LanguageToggle } from "@/lib/language"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { Toaster } from "@/components/ui/sonner"
 import {
@@ -45,6 +47,7 @@ function ConnectionDialog({
   open: boolean
   onOpenChange: (v: boolean) => void
 }) {
+  const { t } = useTranslation("common")
   const [base, setBase] = useState("")
   const [token, setToken] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -72,11 +75,9 @@ function ConnectionDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-accent-brand" />
-            需要访问令牌
+            {t("auth.title")}
           </DialogTitle>
-          <DialogDescription>
-            此服务器已配置访问令牌（OPENKB_API_TOKEN）。请输入令牌以继续；令牌仅保存在本浏览器中。
-          </DialogDescription>
+          <DialogDescription>{t("auth.description")}</DialogDescription>
         </DialogHeader>
 
         <form
@@ -87,7 +88,9 @@ function ConnectionDialog({
           className="space-y-3"
         >
           <div>
-            <label className="text-[12px] font-medium text-muted-foreground">访问令牌</label>
+            <label className="text-[12px] font-medium text-muted-foreground">
+              {t("auth.tokenLabel")}
+            </label>
             <input
               autoFocus
               type="password"
@@ -99,7 +102,7 @@ function ConnectionDialog({
           </div>
           <div>
             <label className="text-[12px] font-medium text-muted-foreground">
-              API 地址（可选，留空使用当前源）
+              {t("auth.baseLabel")}
             </label>
             <input
               value={base}
@@ -112,7 +115,7 @@ function ConnectionDialog({
           <DialogFooter>
             <Button type="submit" disabled={submitting}>
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              连接
+              {t("auth.connect")}
             </Button>
           </DialogFooter>
         </form>
@@ -158,8 +161,7 @@ export default function App() {
               )}
             >
               <ThemeToggle className="text-muted-foreground hover:text-foreground transition-colors" />
-              {/* Sub-project H (i18n) language switcher slots in here — the pr-28
-                  chrome lane already reserves room for it, do NOT build it here */}
+              <LanguageToggle className="text-muted-foreground hover:text-foreground transition-colors" />
             </div>
             <Routes>
               <Route path="/" element={<Home />} />

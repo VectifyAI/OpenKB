@@ -1,4 +1,5 @@
 import { apiFetch, apiStream, getToken, getApiBase } from "./client"
+import i18n from "@/lib/i18n"
 
 /** One file's outcome in an `/api/v1/add` response (`AddFileItem`). */
 export interface AddFileItem {
@@ -67,7 +68,7 @@ export async function uploadDocuments(kb: string, files: File[]): Promise<AddRes
     } catch {
       // keep default message
     }
-    throw new Error(`上传失败：${detail}`)
+    throw new Error(i18n.t("common:errors.uploadFailed", { detail }))
   }
   return res.json() as Promise<AddResult>
 }

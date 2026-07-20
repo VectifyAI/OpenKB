@@ -1,0 +1,54 @@
+{
+  "loading": "Loading…",
+  "pageLoadError": "Failed to load page: {{error}}",
+  "noChanges": "No changes to save",
+  "saveError": "Save failed: {{error}}",
+  "configLoadError": "Failed to load config: {{error}}",
+  "actions": {
+    "newKb": "New knowledge base",
+    "close": "Close",
+    "refresh": "Refresh"
+  },
+  "fields": {
+    "model": "Model",
+    "wikiLanguage": "Wiki output language",
+    "threshold": "PageIndex threshold (pages)"
+  },
+  "errors": {
+    "requestFailed": "Request failed",
+    "uploadFailed": "Upload failed: {{detail}}"
+  },
+  "nav": {
+    "home": "Home",
+    "kbs": "Knowledge bases",
+    "settings": "Settings"
+  },
+  "titlebar": {
+    "chat": "Chat",
+    "local": "Local"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "toggleTitle": "Theme: {{label}} (click to switch)",
+    "toggleAria": "Theme: {{label}}"
+  },
+  "language": {
+    "zh": "中文",
+    "en": "English",
+    "toggleTitle": "Language: {{label}} (click to switch)",
+    "toggleAria": "Language: {{label}}"
+  },
+  "auth": {
+    "title": "Access token required",
+    "description": "This server has an access token configured (OPENKB_API_TOKEN). Enter the token to continue; it is stored only in this browser.",
+    "tokenLabel": "Access token",
+    "baseLabel": "API address (optional; leave blank to use the current origin)",
+    "connect": "Connect"
+  },
+  "connector": {
+    "tooltip": "Cloud sync is in development · vote for it on GitHub",
+    "vote": "Want it? Vote"
+  }
+}

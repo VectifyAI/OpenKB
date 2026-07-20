@@ -1,12 +1,7 @@
 import { useLocation } from "react-router"
+import { useTranslation } from "react-i18next"
 import { HardDrive, Cloud } from "lucide-react"
 import { getApiBase } from "@/api/client"
-
-const titles: Record<string, string> = {
-  "/": "首页",
-  "/kb": "知识库",
-  "/settings": "设置",
-}
 
 /**
  * True only when a real desktop shell (Sub-project C: Tauri/Electron) has
@@ -20,25 +15,32 @@ const isDesktopShell =
 
 function useTitle(): string {
   const { pathname } = useLocation()
+  const { t } = useTranslation("common")
+  const titles: Record<string, string> = {
+    "/": t("nav.home"),
+    "/kb": t("nav.kbs"),
+    "/settings": t("nav.settings"),
+  }
   const known = titles[pathname]
   if (known) return known
-  if (pathname.startsWith("/chat/")) return "对话"
+  if (pathname.startsWith("/chat/")) return t("titlebar.chat")
   if (pathname.startsWith("/kb/")) {
     // The route id IS the KB name (encodeURIComponent on the way in).
     const id = pathname.split("/")[2]
-    return id ? decodeURIComponent(id) : "知识库"
+    return id ? decodeURIComponent(id) : t("nav.kbs")
   }
   return ""
 }
 
 /** Honest connection indicator — local (same-origin) vs. a configured remote host. */
 function ConnectionStatus() {
+  const { t } = useTranslation("common")
   const base = getApiBase()
   if (!base) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <HardDrive className="w-3.5 h-3.5 text-emerald-600" />
-        <span className="hidden sm:inline">本地</span>
+        <span className="hidden sm:inline">{t("titlebar.local")}</span>
       </div>
     )
   }

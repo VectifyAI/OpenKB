@@ -1,4 +1,5 @@
 import { apiFetch, apiStream, type SseEvent } from "./client"
+import i18n from "@/lib/i18n"
 
 /**
  * A provenance "source" derived from a `tool_call` the agent made during a
@@ -217,7 +218,7 @@ export function foldSseEvent(state: ChatTurnState, event: SseEvent, kb: string):
       }
     }
     case "error": {
-      const message = typeof data.message === "string" ? data.message : "请求失败"
+      const message = typeof data.message === "string" ? data.message : i18n.t("common:errors.requestFailed")
       return { ...state, reading: null, error: message }
     }
     case "artifact": {

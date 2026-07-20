@@ -1,4 +1,5 @@
 import { Cloud, HardDrive, ThumbsUp, type LucideIcon } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
 /**
  * Remote document-source connectors are NOT implemented (no OAuth/S3/sync
@@ -28,6 +29,7 @@ export const CONNECTORS: Connector[] = [
 
 /** Grid of connector "want this?" cards linking to GitHub demand-vote searches. */
 export default function ConnectorCards() {
+  const { t } = useTranslation("common")
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
       {CONNECTORS.map((c) => (
@@ -36,7 +38,7 @@ export default function ConnectorCards() {
           href={c.voteUrl}
           target="_blank"
           rel="noopener noreferrer"
-          title="云端同步开发中 · 去 GitHub 投票表达需求"
+          title={t("connector.tooltip")}
           className="group rounded-2xl border border-[hsl(var(--glass-border))] glass px-4 py-3.5 flex items-center gap-3 hover:shadow-glass hover:-translate-y-0.5 transition duration-fast ease-out-apple active:scale-[0.99]"
         >
           <span className="w-9 h-9 rounded-xl glass-2 border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
@@ -46,7 +48,7 @@ export default function ConnectorCards() {
             <div className="text-[13px] font-medium text-foreground truncate">{c.label}</div>
             <div className="text-[11.5px] text-muted-foreground mt-0.5 inline-flex items-center gap-1">
               <ThumbsUp className="w-3 h-3" />
-              想要它？去投票
+              {t("connector.vote")}
             </div>
           </div>
         </a>

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { Sun, Moon, Monitor } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
 type Theme = "light" | "dark" | "system"
 type Resolved = "light" | "dark"
@@ -59,14 +60,15 @@ export function useTheme() {
 /** Theme toggle icon button (cycles light → dark → system). */
 export function ThemeToggle({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme()
+  const { t } = useTranslation("common")
   const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"
-  const label = theme === "light" ? "浅色" : theme === "dark" ? "深色" : "跟随系统"
+  const label = theme === "light" ? t("theme.light") : theme === "dark" ? t("theme.dark") : t("theme.system")
   const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor
   return (
     <button
       onClick={() => setTheme(next)}
-      title={`主题：${label}（点击切换）`}
-      aria-label={`主题：${label}`}
+      title={t("theme.toggleTitle", { label })}
+      aria-label={t("theme.toggleAria", { label })}
       className={`grid h-8 w-8 place-items-center rounded-lg ${className ?? ""}`}
     >
       <Icon className="w-4 h-4" />

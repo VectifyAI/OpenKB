@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { NavLink, useNavigate } from "react-router"
+import { useTranslation } from "react-i18next"
 import { MessageSquare, Library, Settings2, Plus } from "lucide-react"
 import { listKbs, type KbSummary } from "@/api/kb"
 import { cn } from "@/lib/utils"
@@ -46,6 +47,7 @@ function NavItem({
 
 export default function AppSidebar() {
   const navigate = useNavigate()
+  const { t } = useTranslation("common")
   const [kbs, setKbs] = useState<KbSummary[]>([])
 
   useEffect(() => {
@@ -66,18 +68,18 @@ export default function AppSidebar() {
 
       {/* 主导航（不含设置，设置已下沉到底部） */}
       <nav className="space-y-0.5">
-        <NavItem to="/" end icon={<MessageSquare className="w-4 h-4" />} label="首页" />
-        <NavItem to="/kb" icon={<Library className="w-4 h-4" />} label="知识库" />
+        <NavItem to="/" end icon={<MessageSquare className="w-4 h-4" />} label={t("nav.home")} />
+        <NavItem to="/kb" icon={<Library className="w-4 h-4" />} label={t("nav.kbs")} />
       </nav>
 
       {/* 知识库列表 */}
       <div className="mt-5 px-3 flex items-center justify-between">
         <span className="text-[12px] font-semibold text-muted-foreground tracking-wide">
-          知识库
+          {t("nav.kbs")}
         </span>
         <button
           className="text-muted-foreground hover:text-foreground transition-colors"
-          title="新建知识库"
+          title={t("actions.newKb")}
         >
           <Plus className="w-3.5 h-3.5" />
         </button>
@@ -102,7 +104,7 @@ export default function AppSidebar() {
 
       {/* 底部：设置（主题切换已上移到全局右上角浮层） */}
       <div className="space-y-1.5">
-        <NavItem to="/settings" icon={<Settings2 className="w-4 h-4" />} label="设置" />
+        <NavItem to="/settings" icon={<Settings2 className="w-4 h-4" />} label={t("nav.settings")} />
       </div>
     </aside>
   )
