@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Cpu, FolderCog, Cloud, Info, KeyRound, Loader2, Save, Trash2 } from 'lucide-react'
+import { Cpu, FolderCog, Cloud, Info, Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  listKbs, getKbConfig, patchKbConfig,
-  type KbSummary, type KbConfig, type KbConfigPatch,
-} from '@/api/kb'
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select'
+import { getGlobalConfig, patchGlobalConfig, type GlobalConfig } from '@/api/config'
 import ConnectorCards from '@/components/ConnectorCards'
 import AboutTab from '@/components/AboutTab'
 import { cn } from '@/lib/utils'
@@ -26,12 +20,10 @@ const inputCls =
 
 export default function Settings() {
   const [tab, setTab] = useState<string>('model')
-  const [kbs, setKbs] = useState<KbSummary[]>([])
-  const [kb, setKb] = useState<string>('')
 
   // Last-fetched baseline. The editable form fields below are diffed against
   // this to build a minimal merge-patch on save.
-  const [config, setConfig] = useState<KbConfig | null>(null)
+  const [config, setConfig] = useState<GlobalConfig | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -39,166 +31,76 @@ export default function Settings() {
   const [model, setModel] = useState('')
   const [language, setLanguage] = useState('')
   const [threshold, setThreshold] = useState('')
-  const [apiBase, setApiBase] = useState('')
-  // The api_key input is WRITE-ONLY: it always starts empty (the GET never
-  // returns a key value, only has_api_key). A non-empty value on save SETS/
-  // rotates the key; leaving it empty leaves the stored key UNCHANGED.
-  const [apiKeyInput, setApiKeyInput] = useState('')
 
   const [saving, setSaving] = useState(false)
-  const [clearing, setClearing] = useState(false)
 
-  // Load the KB list once; default the picker to the first KB.
-  useEffect(() => {
-    listKbs()
-      .then((r) => {
-        setKbs(r.knowledge_bases)
-        setKb((cur) => cur || r.knowledge_bases[0]?.name || '')
-      })
-      .catch(() => setKbs([]))
-  }, [])
-
-  /** Set the baseline and repopulate the form from a fresh config. Always
-   *  resets the api_key input to empty so the raw key value is never shown. */
-  const applyConfig = useCallback((c: KbConfig) => {
+  /** Set the baseline and repopulate the form from a fresh global config. */
+  const applyConfig = useCallback((c: GlobalConfig) => {
     setConfig(c)
     setModel(c.model)
     setLanguage(c.language)
     setThreshold(String(c.pageindex_threshold))
-    setApiBase(c.openai_api_base ?? '')
-    setApiKeyInput('')
   }, [])
 
-  // Fetch the selected KB's config on select/mount.
+  // Fetch the global defaults once on mount.
   useEffect(() => {
-    if (!kb) return
     let cancelled = false
     setLoading(true)
     setLoadError(null)
-    getKbConfig(kb)
-      .then((c) => {
-        if (cancelled) return
-        applyConfig(c)
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setConfig(null)
-        setLoadError(errMsg(e))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    getGlobalConfig()
+      .then((c) => !cancelled && applyConfig(c))
+      .catch((e) => !cancelled && setLoadError(errMsg(e)))
+      .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
-  }, [kb, applyConfig])
+  }, [applyConfig])
 
   /**
-   * Diff the form against the baseline into a minimal merge-patch. The three
-   * credential cases are produced EXACTLY: unchanged → key omitted (undefined,
-   * dropped by JSON.stringify); set/rotate → the typed string; clearing is a
-   * separate explicit action (see `clearApiKey`), never an empty string here.
+   * Diff the form against the baseline into a minimal merge-patch. Only the
+   * three global scalars are editable: an unchanged field is omitted
+   * (undefined → dropped by JSON.stringify), a changed field carries its new
+   * value. These required scalars are never cleared from this page, so `null`
+   * (the RFC 7386 "revert to built-in default" signal) is intentionally never
+   * emitted here — an empty input is treated as "no change", not a clear.
    */
-  const buildPatch = useCallback((): KbConfigPatch => {
-    const patch: KbConfigPatch = {}
-    if (!config) return patch
-
-    const cfg: NonNullable<KbConfigPatch['config']> = {}
-    const modelTrim = model.trim()
-    if (modelTrim && modelTrim !== config.model) cfg.model = modelTrim
-    const langTrim = language.trim()
-    if (langTrim && langTrim !== config.language) cfg.language = langTrim
-    const thrNum = Number(threshold)
-    if (
-      threshold.trim() !== '' &&
-      Number.isInteger(thrNum) &&
-      thrNum !== config.pageindex_threshold
-    ) {
-      cfg.pageindex_threshold = thrNum
+  const buildPatch = useCallback(() => {
+    const cfg: NonNullable<Parameters<typeof patchGlobalConfig>[0]['config']> = {}
+    if (!config) return { cfg, dirty: false }
+    const m = model.trim()
+    if (m && m !== config.model) cfg.model = m
+    const l = language.trim()
+    if (l && l !== config.language) cfg.language = l
+    const n = Number(threshold)
+    if (threshold.trim() !== '' && Number.isInteger(n) && n !== config.pageindex_threshold) {
+      cfg.pageindex_threshold = n
     }
-    if (Object.keys(cfg).length > 0) patch.config = cfg
+    return { cfg, dirty: Object.keys(cfg).length > 0 }
+  }, [config, model, language, threshold])
 
-    // openai_api_base is a plaintext config value: '' clears (null), a value
-    // sets, an unchanged value is omitted.
-    const baseTrim = apiBase.trim()
-    const currentBase = config.openai_api_base ?? ''
-    if (baseTrim !== currentBase) patch.openai_api_base = baseTrim === '' ? null : baseTrim
-
-    // api_key: only SET when the user typed a value. Empty = unchanged (omit).
-    if (apiKeyInput !== '') patch.api_key = apiKeyInput
-
-    return patch
-  }, [config, model, language, threshold, apiBase, apiKeyInput])
-
-  const dirty = useMemo(() => Object.keys(buildPatch()).length > 0, [buildPatch])
+  const dirty = useMemo(() => buildPatch().dirty, [buildPatch])
 
   const save = useCallback(async () => {
-    if (!kb || saving) return
-    const patch = buildPatch()
-    if (Object.keys(patch).length === 0) {
+    const { cfg, dirty } = buildPatch()
+    if (!dirty) {
       toast.info('没有需要保存的更改')
       return
     }
     setSaving(true)
     try {
-      const next = await patchKbConfig(kb, patch)
-      applyConfig(next)
-      toast.success('设置已保存')
+      applyConfig(await patchGlobalConfig({ config: cfg }))
+      toast.success('全局默认已保存')
     } catch (e) {
       toast.error(`保存失败：${errMsg(e)}`)
     } finally {
       setSaving(false)
     }
-  }, [kb, saving, buildPatch, applyConfig])
-
-  // Explicit clear: sends api_key: null (merge-patch clear), distinct from the
-  // "leave unchanged" (omit) case that a save of an empty input produces.
-  const clearApiKey = useCallback(async () => {
-    if (!kb || clearing) return
-    setClearing(true)
-    try {
-      const next = await patchKbConfig(kb, { api_key: null })
-      applyConfig(next)
-      toast.success('已清除 API Key')
-    } catch (e) {
-      toast.error(`清除失败：${errMsg(e)}`)
-    } finally {
-      setClearing(false)
-    }
-  }, [kb, clearing, applyConfig])
-
-  const hasKey = config?.has_api_key === true
+  }, [buildPatch, applyConfig])
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-[1040px] mx-auto px-6 lg:px-8 py-8">
         <h1 className="text-[22px] font-extrabold tracking-tight text-foreground anim-fade-up">设置</h1>
-
-        {/* 知识库选择 — 配置按知识库存储（.openkb/config.yaml + .env）。关于页是全局的，隐藏选择器。 */}
-        {tab !== 'about' && (
-          <div className="mt-4 anim-fade-up">
-            <div className="flex items-center gap-3">
-              <span className="text-[13px] text-muted-foreground">知识库</span>
-              {kbs.length > 0 ? (
-                <Select value={kb} onValueChange={setKb}>
-                  <SelectTrigger className="h-9 w-64 text-[13px]">
-                    <SelectValue placeholder="选择知识库" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {kbs.map((k) => (
-                      <SelectItem key={k.name} value={k.name}>
-                        {k.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <span className="text-[13px] text-muted-foreground">尚无知识库</span>
-              )}
-            </div>
-            <p className="mt-1.5 text-[11.5px] text-muted-foreground">以下为该知识库的配置，写入其 .openkb/config.yaml 与 .env。</p>
-          </div>
-        )}
 
         {/* 子页签 */}
         <div className="mt-5 flex gap-1.5 anim-fade-up anim-d1">
@@ -228,10 +130,10 @@ export default function Settings() {
           <div className="mt-5 space-y-4">
             <div className="anim-fade-up rounded-2xl border border-[hsl(var(--glass-border))] glass-2 p-5">
               <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-                <Cpu className="w-4 h-4 text-accent-brand" />模型与凭证
+                <Cpu className="w-4 h-4 text-accent-brand" />模型与阈值
               </div>
               <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                写入该知识库的 .openkb/config.yaml（model / 阈值）与 .env（API Key / base URL）
+                全局默认模型与阈值（写入 ~/.config/openkb/global.yaml；各知识库可在其设置中继承或覆盖）
               </p>
 
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -257,48 +159,7 @@ export default function Settings() {
                     className={inputCls}
                   />
                 </div>
-                <div className="sm:col-span-2">
-                  <label className="text-[12px] font-medium text-muted-foreground flex items-center gap-1">
-                    <KeyRound className="w-3 h-3" />API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={apiKeyInput}
-                    disabled={loading || !config}
-                    autoComplete="new-password"
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder={hasKey ? '已设置密钥 · 留空则保持不变' : '未设置 · 输入以启用'}
-                    className={inputCls}
-                  />
-                  <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-muted-foreground">
-                    <span className={cn('inline-block w-1.5 h-1.5 rounded-full', hasKey ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
-                    {hasKey ? '已设置密钥（永不回显；输入新值即可轮换）' : '未设置密钥'}
-                    {hasKey && (
-                      <button
-                        onClick={clearApiKey}
-                        disabled={clearing}
-                        className="ml-auto inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-[hsl(var(--glass-border))] text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
-                      >
-                        {clearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                        清除
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-[12px] font-medium text-muted-foreground">API Base URL（可选）</label>
-                  <input
-                    value={apiBase}
-                    disabled={loading || !config}
-                    onChange={(e) => setApiBase(e.target.value)}
-                    placeholder="留空使用 provider 默认；本地/兼容端点时填写"
-                    className={inputCls}
-                  />
-                </div>
               </div>
-              <p className="mt-3 text-[12px] text-muted-foreground">
-                经 LiteLLM 路由，支持任意 provider/model 格式；本地运行时需填写 base URL。
-              </p>
             </div>
 
             <SaveBar dirty={dirty} saving={saving} onSave={save} disabled={loading || !config} />
