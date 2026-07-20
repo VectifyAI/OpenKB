@@ -2,7 +2,7 @@
 
 This guide covers the OpenKB REST API (FastAPI) and the bundled Knowledge Workbench web UI.
 
-> The interactive API reference is served live at [`/docs`](http://127.0.0.1:8000/docs) (OpenAPI/Swagger) once the server is running — you can import `/openapi.json` directly into Postman.
+> The interactive API reference is served live at [`/docs`](http://127.0.0.1:7566/docs) (OpenAPI/Swagger) once the server is running — you can import `/openapi.json` directly into Postman.
 
 ## Knowledge Workbench (Web UI)
 
@@ -11,10 +11,10 @@ OpenKB ships a bundled web single-page app — the **Knowledge Workbench** — s
 
 ```bash
 # 1. Install with the API extra (the built UI ships inside the package)
-pip install "openkb[api]"
+pip install "openkb[web]"
 
 # 2. Start the server — no config needed for local use
-openkb-api --host 127.0.0.1 --port 8000   # serves the API + Workbench at http://127.0.0.1:8000/
+openkb-web --host 127.0.0.1 --port 7566   # serves the API + Workbench at http://127.0.0.1:7566/
 ```
 
 Optional environment variables:
@@ -22,9 +22,9 @@ Optional environment variables:
 - `OPENKB_KB_ROOT` — where REST-created knowledge bases are stored (default `~/.config/openkb/kbs`).
 - `OPENKB_API_TOKEN` — set it to require bearer auth (see [Authentication](#authentication-and-common-behavior)); leave unset for open local use.
 
-> **From a source checkout?** The built bundle (`openkb/web/`) is git-ignored, so an editable install (`pip install -e ".[api]"`) has no UI until you build it once: `cd frontend && npm install && npm run build` (outputs to `openkb/web/`). Or run the Vite dev server with `npm run dev` (it proxies `/api` to a running `openkb-api`). Without the bundle, `openkb-api` serves only the REST API under `/api/v1` and `/` returns a 404.
+> **From a source checkout?** The built bundle (`openkb/web/`) is git-ignored, so an editable install (`pip install -e ".[web]"`) has no UI until you build it once: `cd frontend && npm install && npm run build` (outputs to `openkb/web/`). Or run the Vite dev server with `npm run dev` (it proxies `/api` to a running `openkb-web`). Without the bundle, `openkb-web` serves only the REST API under `/api/v1` and `/` returns a 404.
 
-Open `http://127.0.0.1:8000/` in your browser. With no `OPENKB_API_TOKEN` set it connects to the local API immediately — no prompt. (If a token is configured, a **Connection** dialog asks for it once and caches it in the browser; you can also open it manually to point the UI at a remote API base.) The Workbench then provides:
+Open `http://127.0.0.1:7566/` in your browser. With no `OPENKB_API_TOKEN` set it connects to the local API immediately — no prompt. (If a token is configured, a **Connection** dialog asks for it once and caches it in the browser; you can also open it manually to point the UI at a remote API base.) The Workbench then provides:
 
 - **Overview** — index/concept/summary/report stat cards, clickable concept chips, recent documents, and last-compile/lint activity.
 - **Documents** — drag-and-drop multi-file upload with per-file SSE progress, hash table, and delete with confirmation.
@@ -44,7 +44,7 @@ frontends, or other HTTP clients.
 Install the API dependencies if needed:
 
 ```bash
-pip install -e ".[api]"
+pip install -e ".[web]"
 ```
 
 Start the API server:
@@ -52,7 +52,7 @@ Start the API server:
 ```powershell
 $env:OPENKB_API_TOKEN="test-token"
 $env:OPENKB_KB_ROOT="D:\project\OpenKB\kbs"
-.\.venv\Scripts\python.exe -m openkb.api --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m openkb.api --host 127.0.0.1 --port 7566
 ```
 
 ### Authentication and common behavior
@@ -61,7 +61,7 @@ Auth is **opt-in**, controlled by the `OPENKB_API_TOKEN` server environment
 variable:
 
 - **Unset (default)** — the API is unauthenticated. This is the local-first
-  default, so `openkb-api` and the Workbench work with no configuration.
+  default, so `openkb-web` and the Workbench work with no configuration.
 - **Set** — every request must carry the token, and the Workbench prompts for
   it once (cached in the browser):
 
@@ -73,7 +73,7 @@ variable:
 
 > **Exposing the server?** Always set `OPENKB_API_TOKEN` when binding to a
 > non-loopback host (e.g. `--host 0.0.0.0`) — otherwise the API, and every KB
-> it can reach, is world-open. `openkb-api` prints a warning in that case.
+> it can reach, is world-open. `openkb-web` prints a warning in that case.
 
 `OPENKB_KB_ROOT` is optional. It controls where REST-created knowledge bases
 are stored. If unset, OpenKB uses `~/.config/openkb/kbs`.
@@ -419,4 +419,4 @@ no watcher is active for that KB.
 stop after this many seconds). Stream events: `start`, the watcher's own events
 (e.g. `added`, `updated`, `failed`, `final`), `error`, `done`.
 
-The full OpenAPI schema is at [`/openapi.json`](http://127.0.0.1:8000/openapi.json) — importable into Postman or any OpenAPI-compatible client.
+The full OpenAPI schema is at [`/openapi.json`](http://127.0.0.1:7566/openapi.json) — importable into Postman or any OpenAPI-compatible client.

@@ -69,8 +69,8 @@ def _configure_cors(app: FastAPI) -> None:
         origins = [o.strip() for o in raw.split(",") if o.strip()] or [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
+            "http://localhost:7566",
+            "http://127.0.0.1:7566",
         ]
     # A wildcard origin with credentials is insecure: any site can issue
     # credentialed cross-origin requests. Reject this combination by forcing
