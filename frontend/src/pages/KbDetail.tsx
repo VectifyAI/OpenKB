@@ -281,7 +281,7 @@ export default function KbDetail() {
             toast.success(t('kb:upload.successToast', { summary: line }))
           } else {
             // Nothing added or failed (all skipped duplicates) — neutral, not
-            // an error and not a "新增" success.
+            // an error and not a "added" success.
             toast.info(t('kb:upload.existsToast', { summary: line }))
           }
         } else {
@@ -371,7 +371,7 @@ export default function KbDetail() {
 
   return (
     <div className="h-full flex flex-col">
-      {/* 头部 */}
+      {/* Header */}
       <div className="shrink-0 px-6 pt-5 pb-3 glass-2 relative">
         {/* pr-28 reserves the global top-right chrome lane (theme pill + future
             i18n switcher, see App.tsx) so the ml-auto gear clears the pill with
@@ -472,7 +472,7 @@ interface ReaderProps {
 }
 
 /** The actual page body: breadcrumb + Markdown, or an empty/loading state.
- *  Shared verbatim by `Reader` (浏览) and `IndexReader` (Index, full width) —
+ *  Shared verbatim by `Reader` (Browse) and `IndexReader` (Index, full width) —
  *  they differ only in their outer scroll container. */
 function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, onWikiLink }: ReaderProps) {
   const { t } = useTranslation(['kb', 'common'])
@@ -545,7 +545,7 @@ function UploadStatusIcon({ status }: { status: UploadStatus }) {
 }
 
 /** Documents section: upload dropzone + uploaded-document list + remote
- *  connector cards. Moved verbatim from the old 来源 tab body. */
+ *  connector cards. Moved verbatim from the old Sources tab body. */
 function DocumentsPane({
   documents,
   invError,
@@ -590,7 +590,7 @@ function DocumentsPane({
           {t('kb:upload.note')}
         </p>
 
-        {/* 上传拖放区（真实 /api/v1/add） */}
+        {/* Upload dropzone (real /api/v1/add) */}
         <div
           onDragOver={(e) => {
             e.preventDefault()
@@ -634,7 +634,7 @@ function DocumentsPane({
           )}
         </div>
 
-        {/* 每文件上传进度（流式 /api/v1/add?stream=true） */}
+        {/* Per-file upload progress (streaming /api/v1/add?stream=true) */}
         {uploadFiles.length > 0 && (
           <div className="mt-4">
             <h2 className="text-[13.5px] font-semibold text-foreground">
@@ -657,7 +657,7 @@ function DocumentsPane({
           </div>
         )}
 
-        {/* 已上传文档（真实 /api/v1/list） */}
+        {/* Uploaded documents (real /api/v1/list) */}
         <div className="mt-6 flex items-center justify-between">
           <h2 className="text-[13.5px] font-semibold text-foreground">{t('kb:docs.heading', { count: documents.length })}</h2>
           <button
@@ -737,7 +737,7 @@ function DocumentsPane({
           ))}
         </div>
 
-        {/* 远程连接器：无后端。改为 GitHub 需求投票，绝不伪造已连接状态 */}
+        {/* Remote connectors: no backend. Reframed as GitHub feature-request voting; never fake a connected state. */}
         <h2 className="mt-8 text-[13.5px] font-semibold text-foreground">{t('kb:remote.heading')}</h2>
         <p className="mt-1 text-[12px] text-muted-foreground">
           {t('kb:remote.note')}
