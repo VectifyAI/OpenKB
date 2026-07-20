@@ -1,0 +1,63 @@
+{
+  "phase": {
+    "generating": "Génération (appel LLM, peut prendre quelques minutes)…",
+    "done": "Terminé",
+    "preparing": "Préparation…",
+    "buildingGraph": "Construction du graphe de concepts…"
+  },
+  "artifact": {
+    "failed": "Échec de la génération"
+  },
+  "sources": {
+    "heading": "Sources",
+    "pageTip": "Cliquer pour afficher cette page du wiki",
+    "internalTip": "Contenu interne d'un long document (PageIndex) ; pas de page autonome à ouvrir"
+  },
+  "reading": {
+    "page": "Lecture de <0>{{label}}</0>",
+    "doc": "Lecture du long document <0>{{label}}</0>",
+    "thinking": "Réflexion…"
+  },
+  "step": {
+    "read": "Lu <0>{{path}}</0>"
+  },
+  "requestError": "Échec de la requête : {{error}}",
+  "savedTo": "Enregistré dans {{path}}",
+  "usage": {
+    "deck": "Utilisation : /deck <nom> <intention>, ex. « retrieval-intro présenter la recherche sans vecteurs aux ingénieurs »",
+    "skill": "Utilisation : /skill <nom> <intention>, ex. « pageindex-expert expert Q&R sur la recherche de longs documents »"
+  },
+  "genErrorToast": "Échec de la génération : {{error}}",
+  "requestErrorToast": "Échec de la requête : {{error}}",
+  "errors": {
+    "noKb": "Impossible de déterminer à quelle base appartient cette session ; veuillez entrer depuis la page d'accueil",
+    "loadSession": "Échec du chargement de la session : {{error}}",
+    "openSource": "Impossible d'ouvrir la source {{path}} : {{error}}"
+  },
+  "newSession": "Nouvelle session",
+  "inputPlaceholder": "Posez une question de suivi, ou tapez / pour les commandes…",
+  "commands": {
+    "paletteHeading": "Commandes · générateurs",
+    "deck": {
+      "label": "Générer des diapositives",
+      "desc": "Compiler les connaissances en un deck HTML d'un seul fichier"
+    },
+    "skill": {
+      "label": "Distiller une compétence",
+      "desc": "Générer une Agent Skill installable"
+    },
+    "visualize": {
+      "label": "Graphe de connaissances",
+      "desc": "Générer un graphe de concepts interactif"
+    }
+  },
+  "input": {
+    "cmdPlaceholder": "{{label}} : décrivez votre intention…",
+    "defaultPlaceholder": "Interrogez votre base de connaissances, ou tapez / pour les commandes…",
+    "selectKb": "Sélectionner une base de connaissances",
+    "noKbs": "Aucune base de connaissances",
+    "current": "Actuelle",
+    "stop": "Arrêter",
+    "hint": "Tapez <0>/</0> pour les commandes"
+  }
+}

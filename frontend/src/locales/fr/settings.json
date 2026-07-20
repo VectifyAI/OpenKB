@@ -1,0 +1,43 @@
+{
+  "tabs": {
+    "model": "Modèle",
+    "general": "Général",
+    "conn": "Sources de données",
+    "about": "À propos"
+  },
+  "savedToast": "Valeurs globales par défaut enregistrées",
+  "saveChanges": "Enregistrer les modifications",
+  "unsaved": "Modifications non enregistrées",
+  "modelSection": {
+    "title": "Modèle et seuil",
+    "desc": "Modèle et seuil globaux par défaut (écrits dans ~/.config/openkb/global.yaml ; chaque base peut hériter ou remplacer dans ses propres paramètres)",
+    "thresholdInvalid": "Le seuil doit être un entier supérieur ou égal à 1."
+  },
+  "credSection": {
+    "title": "Identifiants par défaut",
+    "desc": "Identifiants API globaux par défaut (écrits dans ~/.config/openkb/.env ; le .env d'une base et les variables d'environnement du processus ont la priorité)",
+    "clearPending": "Marqué pour suppression ; prend effet à l'enregistrement",
+    "undoClear": "Annuler"
+  },
+  "general": {
+    "langDesc": "La langue de sortie écrite dans le prompt de compilation, ex. en / 中文 / 日本語",
+    "kbRootLabel": "Racine des bases de connaissances",
+    "kbRootDesc": "Emplacement par défaut des nouvelles bases (<root>/<name>) ; laisser vide pour restaurer la valeur par défaut intégrée. Chaque base peut définir un chemin personnalisé à la création.",
+    "kbRootPlaceholder": "ex. ~/openkb",
+    "kbRootEnvPinned": "Fixé par la variable d'environnement OPENKB_KB_ROOT ; les modifications ici ne prendront pas effet tant qu'elle n'est pas retirée."
+  },
+  "conn": {
+    "note": "Les connecteurs de sources de données cloud (OAuth / S3) sont en développement et pas encore disponibles ; pour l'instant, téléversez des fichiers locaux depuis la page de détail de la base. Vous voulez un connecteur ? Cliquez sur une carte ci-dessous pour voter sur GitHub et nous aider à prioriser."
+  },
+  "about": {
+    "links": {
+      "repo": "Dépôt GitHub",
+      "pageindex": "PageIndex (moteur de recherche)",
+      "docs": "Docs docs.pageindex.ai",
+      "company": "Vectify AI (entreprise)"
+    },
+    "blurb": "Compilez des documents bruts en une base de connaissances structurée et interconnectée de type wiki, propulsée par la recherche de documents longs de PageIndex, sans vecteurs et fondée sur le raisonnement.",
+    "byline": "Conçu par Vectify AI · fait partie de la gamme PageIndex",
+    "latestRelease": "Voir la dernière version →"
+  }
+}

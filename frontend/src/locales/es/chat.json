@@ -1,0 +1,63 @@
+{
+  "phase": {
+    "generating": "Generando (llamada al LLM, puede tardar unos minutos)…",
+    "done": "Listo",
+    "preparing": "Preparando…",
+    "buildingGraph": "Construyendo el grafo de conceptos…"
+  },
+  "artifact": {
+    "failed": "Error en la generación"
+  },
+  "sources": {
+    "heading": "Fuentes",
+    "pageTip": "Haz clic para ver esta página del wiki",
+    "internalTip": "Contenido interno de un documento largo (PageIndex); no hay página independiente que abrir"
+  },
+  "reading": {
+    "page": "Leyendo <0>{{label}}</0>",
+    "doc": "Leyendo el documento largo <0>{{label}}</0>",
+    "thinking": "Pensando…"
+  },
+  "step": {
+    "read": "Leído <0>{{path}}</0>"
+  },
+  "requestError": "La solicitud falló: {{error}}",
+  "savedTo": "Guardado en {{path}}",
+  "usage": {
+    "deck": "Uso: /deck <nombre> <intención>, p. ej. «retrieval-intro presentar la recuperación sin vectores a ingenieros»",
+    "skill": "Uso: /skill <nombre> <intención>, p. ej. «pageindex-expert experto en preguntas y respuestas sobre recuperación de documentos largos»"
+  },
+  "genErrorToast": "Error en la generación: {{error}}",
+  "requestErrorToast": "La solicitud falló: {{error}}",
+  "errors": {
+    "noKb": "No se pudo determinar a qué base de conocimiento pertenece esta sesión; entra desde la página de inicio",
+    "loadSession": "No se pudo cargar la sesión: {{error}}",
+    "openSource": "No se pudo abrir la fuente {{path}}: {{error}}"
+  },
+  "newSession": "Nueva sesión",
+  "inputPlaceholder": "Haz una pregunta de seguimiento, o escribe / para ver comandos…",
+  "commands": {
+    "paletteHeading": "Comandos · generadores",
+    "deck": {
+      "label": "Generar diapositivas",
+      "desc": "Compilar el conocimiento en un deck HTML de un solo archivo"
+    },
+    "skill": {
+      "label": "Destilar una habilidad",
+      "desc": "Generar una Agent Skill instalable"
+    },
+    "visualize": {
+      "label": "Grafo de conocimiento",
+      "desc": "Generar un grafo de conceptos interactivo"
+    }
+  },
+  "input": {
+    "cmdPlaceholder": "{{label}}: describe tu intención…",
+    "defaultPlaceholder": "Pregunta a tu base de conocimiento, o escribe / para ver comandos…",
+    "selectKb": "Selecciona una base de conocimiento",
+    "noKbs": "Aún no hay bases de conocimiento",
+    "current": "Actual",
+    "stop": "Detener",
+    "hint": "Escribe <0>/</0> para ver comandos"
+  }
+}

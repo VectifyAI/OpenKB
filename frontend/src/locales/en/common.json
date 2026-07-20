@@ -37,7 +37,10 @@
   "language": {
     "zh": "中文",
     "en": "English",
-    "toggleTitle": "Language: {{label}} (click to switch)",
+    "fr": "Français",
+    "es": "Español",
+    "ru": "Русский",
+    "toggleTitle": "Language: {{label}}",
     "toggleAria": "Language: {{label}}"
   },
   "auth": {

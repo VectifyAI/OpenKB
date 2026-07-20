@@ -1,0 +1,84 @@
+{
+  "settingsButton": "Paramètres de la base de connaissances",
+  "loadError": "Échec du chargement : {{error}}",
+  "wikiNote": "wiki/ est un dossier Markdown pur sur cette machine — vos données restent les vôtres",
+  "reader": {
+    "empty": "Cette base de connaissances n'a pas encore de pages compilées",
+    "selectPage": "Sélectionnez une page à gauche pour afficher son contenu"
+  },
+  "upload": {
+    "added": "{{count}} ajouté(s)",
+    "skipped": "{{count}} ignoré(s)",
+    "failed": "{{count}} échoué(s)",
+    "errorToast": "Échec du téléversement : {{summary}}",
+    "reasonSuffix": " ({{reason}})",
+    "partialToast": "Succès partiel : {{summary}}",
+    "successToast": "Téléversement terminé : {{summary}}",
+    "existsToast": "Les documents existent déjà, rien d'ajouté : {{summary}}",
+    "incompleteToast": "Téléversement interrompu : aucun signal de fin reçu ; actualisez pour vérifier les résultats",
+    "note": "Les documents téléversés vont dans le dossier local raw/ et sont compilés automatiquement dans la base ; les fichiers restent sur cette machine",
+    "inProgress": "Téléversement et compilation…",
+    "dropzone": "Déposez des fichiers ici, ou cliquez pour choisir",
+    "dropzoneHint": "PDF / Word / Markdown / texte et plus ; sélection multiple prise en charge",
+    "progressHeading": "Progression du téléversement · {{count}}",
+    "fileStatus": {
+      "pending": "En attente",
+      "processing": "Compilation…",
+      "added": "Ajouté",
+      "skipped": "Ignoré",
+      "failed": "Échoué"
+    }
+  },
+  "docs": {
+    "heading": "Documents téléversés · {{count}}",
+    "empty": "Aucun document · ils sont compilés automatiquement dans la base après le téléversement",
+    "pages_one": "{{count}} page",
+    "pages_other": "{{count}} pages",
+    "delete": {
+      "action": "Supprimer le document",
+      "prompt": "Supprimer ?",
+      "confirm": "Supprimer",
+      "cancel": "Annuler",
+      "success": "{{name}} supprimé",
+      "error": "Échec de la suppression : {{error}}",
+      "partial": "Fichiers locaux supprimés, mais le nettoyage de l'index distant a échoué : {{name}}",
+      "reasonSuffix": " ({{reason}})",
+      "multiple": "Échec de la suppression : {{message}} (candidats : {{names}})"
+    }
+  },
+  "remote": {
+    "heading": "Sources de données distantes",
+    "note": "Les connecteurs cloud sont en développement et pas encore disponibles · vous en voulez un ? Cliquez sur une carte pour voter sur GitHub"
+  },
+  "overview": {
+    "index": {
+      "label": "Index",
+      "caption": "racine du wiki"
+    },
+    "concepts": {
+      "label": "Concepts",
+      "caption": "reliés entre eux"
+    },
+    "entities": {
+      "label": "Entités",
+      "caption": "personnes · orgs"
+    },
+    "summaries": {
+      "label": "Résumés",
+      "caption": "par document"
+    },
+    "reports": {
+      "label": "Rapports",
+      "caption": "lint · recompilation"
+    },
+    "documents": {
+      "label": "Documents",
+      "caption": "docs compilés"
+    }
+  },
+  "pageList": {
+    "empty": "Aucune page de ce type",
+    "prev": "Précédent",
+    "next": "Suivant"
+  }
+}

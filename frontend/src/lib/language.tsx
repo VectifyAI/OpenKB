@@ -1,7 +1,14 @@
 import { createContext, useContext, useState, type ReactNode } from "react"
 import { Languages } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import i18n, { type Language } from "@/lib/i18n"
+import i18n, { type Language, SUPPORTED_LANGUAGES } from "@/lib/i18n"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 const KEY = "openkb_lang"
 
@@ -14,11 +21,14 @@ const LanguageCtx = createContext<{
  * "zh" → zh, else en — `en` is the only non-Chinese bucket for the 2-locale
  * scope); else the zh fallback. Detection only picks the INITIAL value. */
 function detectInitial(): Language {
+  const supported = SUPPORTED_LANGUAGES as readonly string[]
   const stored = localStorage.getItem(KEY)
-  if (stored === "zh" || stored === "en") return stored
+  if (stored && supported.includes(stored)) return stored as Language
+  // Match the browser/OS language by its base subtag ("fr-CA" → "fr").
   const nav = (navigator.languages?.[0] ?? navigator.language ?? "").toLowerCase()
-  if (nav.startsWith("zh")) return "zh"
-  return nav ? "en" : "zh"
+  const code = nav.split("-")[0]
+  if (supported.includes(code)) return code as Language
+  return "en"
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
@@ -43,21 +53,36 @@ export function useLanguage() {
   return ctx
 }
 
-/** Language toggle icon button (toggles between zh and en). Same `h-8 w-8`
- * shape as ThemeToggle; slots into App.tsx's top-right chrome pill next to it. */
+/** Language menu button. A dropdown of every supported language (shown by its
+ * own autonym); same `h-8 w-8` shape as ThemeToggle, slots into App.tsx's
+ * top-right chrome pill next to it. */
 export function LanguageToggle({ className }: { className?: string }) {
   const { language, setLanguage } = useLanguage()
   const { t } = useTranslation("common")
-  const next: Language = language === "zh" ? "en" : "zh"
-  const label = language === "zh" ? t("language.zh") : t("language.en")
+  const label = t(`language.${language}`)
   return (
-    <button
-      onClick={() => setLanguage(next)}
-      title={t("language.toggleTitle", { label })}
-      aria-label={t("language.toggleAria", { label })}
-      className={`grid h-8 w-8 place-items-center rounded-lg ${className ?? ""}`}
-    >
-      <Languages className="w-4 h-4" />
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          title={t("language.toggleTitle", { label })}
+          aria-label={t("language.toggleAria", { label })}
+          className={`grid h-8 w-8 place-items-center rounded-lg ${className ?? ""}`}
+        >
+          <Languages className="w-4 h-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup
+          value={language}
+          onValueChange={(v) => setLanguage(v as Language)}
+        >
+          {SUPPORTED_LANGUAGES.map((lng) => (
+            <DropdownMenuRadioItem key={lng} value={lng}>
+              {t(`language.${lng}`)}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

@@ -1,0 +1,7 @@
+{
+  "greeting": "Que souhaitez-vous demander ?",
+  "ready": "Connaissances compilées · <0>{{docs}}</0> docs · <1>{{kbs}}</1> bases",
+  "recentSessions": "Sessions récentes",
+  "untitledSession": "Session sans titre",
+  "tagline": "Propulsé par OpenKB · vos connaissances sont toujours en Markdown pur, et toujours à vous"
+}
