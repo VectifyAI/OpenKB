@@ -26,7 +26,10 @@ export default function KbList() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-screen-xl mx-auto px-6 lg:px-8 py-8">
-        <div className="flex items-end justify-between anim-fade-up">
+        {/* pr-28 reserves the global top-right chrome lane (theme pill + future
+            i18n switcher, see App.tsx) so 新建知识库 never sits under the pill.
+            Only this control row reserves — the card grid below keeps full width. */}
+        <div className="flex items-end justify-between anim-fade-up pr-28">
           <div>
             <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">知识库</h1>
             <p className="mt-1 text-[13px] text-muted-foreground">每个知识库是一个持续编译的 wiki，可绑定多个数据源</p>

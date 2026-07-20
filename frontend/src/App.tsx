@@ -145,8 +145,12 @@ export default function App() {
           <AppSidebar />
           <main className="relative flex-1 min-w-0 overflow-hidden">
             {/* Global floating chrome cluster: overlays content on every route
-                (not the sidebar). Owns top-right; KbDetail's gear reserves pr-16
-                and sits to its left. Clears the desktop TitleBar via a top offset. */}
+                (not the sidebar). It owns a reserved top-right "chrome lane"
+                (~112px from main's right edge) sized for the theme toggle NOW
+                plus Sub-project H's future i18n switcher + gaps. Page-level
+                right-anchored controls reserve that lane with `pr-28` so they
+                always clear the pill — see KbList's header row and KbDetail's
+                gear row. Clears the desktop TitleBar via a top offset. */}
             <div
               className={cn(
                 "absolute right-3 z-40 flex items-center gap-1 rounded-full glass px-1 py-1",
@@ -154,7 +158,8 @@ export default function App() {
               )}
             >
               <ThemeToggle className="text-muted-foreground hover:text-foreground transition-colors" />
-              {/* Sub-project H (i18n) language switcher slots in here — leave room, do NOT build */}
+              {/* Sub-project H (i18n) language switcher slots in here — the pr-28
+                  chrome lane already reserves room for it, do NOT build it here */}
             </div>
             <Routes>
               <Route path="/" element={<Home />} />

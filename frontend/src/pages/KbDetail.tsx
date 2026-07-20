@@ -203,8 +203,12 @@ export default function KbDetail() {
   return (
     <div className="h-full flex flex-col">
       {/* 头部 */}
-      <div className="shrink-0 px-6 pt-5 pb-3 pr-16 glass-2 relative">
-        <div className="flex items-center gap-3">
+      <div className="shrink-0 px-6 pt-5 pb-3 glass-2 relative">
+        {/* pr-28 reserves the global top-right chrome lane (theme pill + future
+            i18n switcher, see App.tsx) so the ml-auto gear clears the pill with
+            room to spare. The reserve lives on this control row (not the header
+            div) so the overview cards below keep symmetric px-6 width. */}
+        <div className="flex items-center gap-3 pr-28">
           <span className="w-3 h-3 rounded-full bg-accent-brand" />
           <h1 className="text-[19px] font-extrabold tracking-tight text-foreground">{id}</h1>
           <button
