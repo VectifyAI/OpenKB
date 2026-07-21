@@ -42,4 +42,10 @@ async def delete_kb_endpoint(
         await run_in_threadpool(delete_kb, kb_dir)
     except ValueError as exc:  # resolved to an existing path that is not a KB
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError:
+        pass  # a concurrent delete already removed it — idempotent success
+    except OSError as exc:  # rmtree failed (permission/disk; a still-open file on Windows)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete the knowledge base: {exc}"
+        ) from exc
     return KbDeleteResponse(deleted=True, kb=request.kb, path=str(kb_dir))

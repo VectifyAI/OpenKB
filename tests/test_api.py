@@ -3316,3 +3316,45 @@ def test_summary_page_is_editable_but_not_deletable(monkeypatch, kb_dir):
         "/api/v1/page/delete", json={"kb": kb, "path": "summaries/doc"}, headers=_auth()
     )
     assert r.status_code == 400
+
+
+def test_delete_kb_maps_oserror_to_clean_500(monkeypatch, tmp_path):
+    # An rmtree failure (permission/disk, or a still-open lock file on Windows)
+    # surfaces as a clean 500 with a message, not an uncaught stack trace.
+    from openkb.config import register_kb_alias
+
+    _isolate_global(monkeypatch, tmp_path)
+    kb = _make_kb(tmp_path / "mykb")
+    register_kb_alias("boom-kb", kb)
+
+    def boom(_):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr("openkb.api_kbs_router.delete_kb", boom)
+    client = _client(monkeypatch)
+    r = client.post(
+        "/api/v1/kb/delete", json={"kb": "boom-kb", "confirm_name": "boom-kb"}, headers=_auth()
+    )
+    assert r.status_code == 500
+    assert "Failed to delete" in r.json()["detail"]
+
+
+def test_delete_kb_filenotfound_is_idempotent(monkeypatch, tmp_path):
+    # A concurrent delete that already removed the tree (FileNotFoundError) is a
+    # success, not a 500 — deleting an already-gone KB is idempotent.
+    from openkb.config import register_kb_alias
+
+    _isolate_global(monkeypatch, tmp_path)
+    kb = _make_kb(tmp_path / "mykb")
+    register_kb_alias("gone-kb", kb)
+
+    def already_gone(_):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr("openkb.api_kbs_router.delete_kb", already_gone)
+    client = _client(monkeypatch)
+    r = client.post(
+        "/api/v1/kb/delete", json={"kb": "gone-kb", "confirm_name": "gone-kb"}, headers=_auth()
+    )
+    assert r.status_code == 200
+    assert r.json()["deleted"] is True

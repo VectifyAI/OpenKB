@@ -56,9 +56,14 @@ def delete_kb(kb_dir: Path) -> None:
     if kb_dir.exists():
         if not config._is_kb_dir(kb_dir):
             raise ValueError(f"Refusing to delete: not a knowledge base directory: {kb_dir}")
-        # Serialize against in-flight ingest/recompile on this KB (like `openkb
-        # remove`). POSIX: rmtree unlinks the held lock file, but the open fd
-        # stays valid, so the funlock on context-exit is safe.
+        # Serialize against in-flight ingest/recompile by acquiring the ingest
+        # lock as a BARRIER (it drains pending journals and waits out any active
+        # mutation), then RELEASING it before rmtree. The lock file lives INSIDE
+        # kb_dir and Windows cannot delete a still-open file, so it must not be
+        # held during rmtree. Re-check existence in case a concurrent delete won
+        # the race while we waited on the barrier.
         with kb_ingest_lock(kb_dir / ".openkb"):
+            pass
+        if kb_dir.exists():
             shutil.rmtree(kb_dir)
     unregister_kb(kb_dir)
