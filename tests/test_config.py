@@ -711,7 +711,8 @@ def test_resolve_kb_alias_degrades_on_non_mapping_global_yaml(
 
 
 def test_delete_kb_physical_removal_and_unregister(_isolated_global, tmp_path):
-    from openkb.config import delete_kb, register_kb_alias, registered_kbs
+    from openkb.config import register_kb_alias, registered_kbs
+    from openkb.kb_admin import delete_kb
 
     kb = _make_kb_dir(tmp_path / "doomed")
     register_kb_alias("doomed", kb)
@@ -723,7 +724,7 @@ def test_delete_kb_physical_removal_and_unregister(_isolated_global, tmp_path):
 
 
 def test_delete_kb_refuses_non_kb_directory(_isolated_global, tmp_path):
-    from openkb.config import delete_kb
+    from openkb.kb_admin import delete_kb
 
     plain = tmp_path / "not-a-kb"
     plain.mkdir()
@@ -734,7 +735,8 @@ def test_delete_kb_refuses_non_kb_directory(_isolated_global, tmp_path):
 
 
 def test_delete_kb_tolerates_ghost_registry_entry(_isolated_global, tmp_path):
-    from openkb.config import delete_kb, register_kb_alias, registered_kbs
+    from openkb.config import register_kb_alias, registered_kbs
+    from openkb.kb_admin import delete_kb
 
     ghost = tmp_path / "ghost"  # registered but its directory never existed
     register_kb_alias("ghost", ghost)

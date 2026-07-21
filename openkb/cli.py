@@ -1831,14 +1831,18 @@ def delete_kb_cmd(name, yes):
     entire KB directory (raw docs + wiki) and unregisters it from the global
     config. There is no undo.
     """
-    from openkb.config import _is_kb_dir, delete_kb, resolve_kb_alias
+    from openkb.config import _is_kb_dir, registered_kbs, resolve_kb_alias
+    from openkb.kb_admin import delete_kb
 
     try:
         kb_dir = resolve_kb_alias(name)
     except ValueError as exc:
         click.echo(f"Invalid KB name: {exc}")
         return
-    if not _is_kb_dir(kb_dir):
+    # Accept a live KB dir OR a registered ghost (directory already removed by
+    # hand) so the stuck registry entry has a cleanup path; reject anything else.
+    registered = any(p == kb_dir for _, p in registered_kbs())
+    if not _is_kb_dir(kb_dir) and not registered:
         click.echo(f"No knowledge base named '{name}' found.")
         return
     click.echo(f"About to PERMANENTLY delete knowledge base '{name}':")

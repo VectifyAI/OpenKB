@@ -5,7 +5,6 @@ import logging
 import math
 import os
 import re
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -749,46 +748,3 @@ def registered_kbs() -> list[tuple[str, Path]]:
             seen_paths.add(str(resolved))
             result.append((name, resolved))
     return result
-
-
-def unregister_kb(kb_path: Path) -> None:
-    """Remove ``kb_path`` from the global registry: its ``known_kbs`` entry, any
-    ``kb_aliases`` pointing at it, and ``default_kb`` if it referenced it. Held
-    under the global-config lock; a no-op for a never-registered path.
-    """
-    resolved = str(kb_path.resolve())
-    with _with_global_config_lock():
-        gc = _load_global_config_unlocked()
-        changed = False
-        known = gc.get("known_kbs")
-        if isinstance(known, list):
-            pruned = [k for k in known if k != resolved]
-            if len(pruned) != len(known):
-                gc["known_kbs"] = pruned
-                changed = True
-        aliases = gc.get("kb_aliases")
-        if isinstance(aliases, dict):
-            pruned_aliases = {a: p for a, p in aliases.items() if p != resolved}
-            if len(pruned_aliases) != len(aliases):
-                gc["kb_aliases"] = pruned_aliases
-                changed = True
-        if gc.get("default_kb") == resolved:
-            del gc["default_kb"]
-            changed = True
-        if changed:
-            _atomic_yaml_dump(GLOBAL_CONFIG_PATH, gc)
-
-
-def delete_kb(kb_dir: Path) -> None:
-    """Physically delete a KB directory and unregister it (irreversible; the
-    CALLER confirms). Guards against deleting an arbitrary path: an existing
-    ``kb_dir`` MUST be a KB (``.openkb`` + ``wiki``) or :class:`ValueError` is
-    raised and nothing is removed. A ghost entry (directory already gone) is
-    tolerated — no ``rmtree``, just unregistered.
-    """
-    kb_dir = kb_dir.resolve()
-    if kb_dir.exists():
-        if not _is_kb_dir(kb_dir):
-            raise ValueError(f"Refusing to delete: not a knowledge base directory: {kb_dir}")
-        shutil.rmtree(kb_dir)
-    unregister_kb(kb_dir)

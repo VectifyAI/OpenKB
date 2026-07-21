@@ -123,9 +123,6 @@ export default function KbDetail() {
   // response never renders under a newly selected page.
   const [page, setPage] = useState<{ path: string; content: string } | null>(null)
   const [pageError, setPageError] = useState<{ path: string; message: string } | null>(null)
-  // Bumped to re-run the page-load effect for the SAME path (used after a page
-  // edit when the backend did not return the saved content).
-  const [pageReloadSeq, setPageReloadSeq] = useState(0)
 
   // Documents section: upload state. `uploadFiles` tracks per-file progress
   // for the current/most-recent streaming upload; it is reset at the start of
@@ -182,8 +179,7 @@ export default function KbDetail() {
     }
   }, [id])
 
-  // Fetch the selected page's Markdown from the real endpoint. `pageReloadSeq`
-  // re-runs it for the same path after a save that returned no content.
+  // Fetch the selected page's Markdown from the real endpoint.
   useEffect(() => {
     if (!selectedPath) return
     const path = selectedPath
@@ -200,7 +196,7 @@ export default function KbDetail() {
     return () => {
       cancelled = true
     }
-  }, [id, selectedPath, pageReloadSeq])
+  }, [id, selectedPath])
 
   /** Re-fetch the inventory (after an upload / recompile that changed docs). */
   const refreshInventory = useCallback(async () => {
@@ -228,10 +224,12 @@ export default function KbDetail() {
    *  DIFFERENT selection while the save was in flight. */
   const onPageSaved = useCallback(
     (path: string, content: string | null) => {
+      // editPage always returns the saved content on 200 (PageEditResponse), so
+      // adopt it directly — frontmatter stripped exactly like the load effect.
+      // The functional set never clobbers a page loaded for a DIFFERENT
+      // selection while the save was in flight.
       if (content != null) {
         setPage((prev) => (prev && prev.path !== path ? prev : { path, content: stripFrontmatter(content) }))
-      } else {
-        setPageReloadSeq((n) => n + 1)
       }
       void refreshInventory()
     },
@@ -499,6 +497,9 @@ export default function KbDetail() {
         onChanged={refreshInventory}
         onDeleted={() => {
           setSettingsOpen(false)
+          // Refresh the sidebar's KB list (same event CreateKbDialog fires) so
+          // the just-deleted KB disappears without a manual reload.
+          window.dispatchEvent(new CustomEvent('openkb:reload-kbs'))
           navigate('/kb')
         }}
       />

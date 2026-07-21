@@ -3084,12 +3084,18 @@ def test_delete_kb_confirm_name_mismatch_is_rejected(monkeypatch, tmp_path):
 
 
 def test_delete_kb_rejects_non_kb_target(monkeypatch, tmp_path):
+    # A registered name pointing at a real dir that is NOT a KB: it passes the
+    # endpoint's "registered" gate, but delete_kb refuses to rmtree a non-KB
+    # directory -> 400 (never deletes an arbitrary path).
+    from openkb.config import register_kb_alias
+
+    _isolate_global(monkeypatch, tmp_path)
     plain = tmp_path / "plain"
     plain.mkdir()  # a real directory, but not a KB (no .openkb/wiki)
+    register_kb_alias("ghost-kb", plain)
     client = _client(monkeypatch)
-    name = _use_named_kb(monkeypatch, plain, name="ghost-kb")
     resp = client.post(
-        "/api/v1/kb/delete", json={"kb": name, "confirm_name": name}, headers=_auth()
+        "/api/v1/kb/delete", json={"kb": "ghost-kb", "confirm_name": "ghost-kb"}, headers=_auth()
     )
     assert resp.status_code == 400
     assert plain.exists()
@@ -3211,3 +3217,73 @@ def test_page_links_reports_out_and_backlinks(monkeypatch, kb_dir):
     body = r.json()
     assert body["outlinks"] == ["concepts/leaf"]  # hub -> leaf
     assert body["backlinks"] == ["concepts/ref"]  # ref -> hub
+
+
+# --- review-fix regressions --------------------------------------------------
+
+
+def test_delete_page_leaves_excluded_docs_untouched(monkeypatch, kb_dir):
+    # A concept referenced by a generated doc (AGENTS.md, in lint's _EXCLUDED_FILES)
+    # must be neither listed as a backlink nor rewritten — deleting it leaves
+    # AGENTS.md byte-for-byte, while a real concept backlink is still demoted.
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "attention.md").write_text("# Attention\n", encoding="utf-8")
+    (wiki / "concepts" / "bar.md").write_text("see [[concepts/attention]]\n", encoding="utf-8")
+    agents = wiki / "AGENTS.md"
+    agents.write_text("Use [[wikilink]] e.g. [[concepts/attention]].\n", encoding="utf-8")
+    agents_before = agents.read_text(encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    r = client.post(
+        "/api/v1/page/delete",
+        json={"kb": kb, "path": "concepts/attention", "dry_run": True},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    assert "concepts/bar" in r.json()["backlinks"]
+    assert all("AGENTS" not in b for b in r.json()["backlinks"])  # excluded doc absent
+
+    r = client.post(
+        "/api/v1/page/delete", json={"kb": kb, "path": "concepts/attention"}, headers=_auth()
+    )
+    assert r.status_code == 200
+    assert agents.read_text(encoding="utf-8") == agents_before  # generated doc untouched
+    assert "[[concepts/attention]]" not in (wiki / "concepts" / "bar.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_edit_page_keeps_body_starting_with_dashes(monkeypatch, kb_dir):
+    # A body that legitimately opens with a '---' block must NOT be mistaken for
+    # frontmatter and dropped; the code-managed frontmatter is still preserved.
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "foo.md").write_text("---\ntype: Concept\n---\n# Foo\n", encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = "---\nkey: value\n---\nReal content below the fence.\n"
+    r = client.put(
+        "/api/v1/page", json={"kb": kb, "path": "concepts/foo", "content": body}, headers=_auth()
+    )
+    assert r.status_code == 200, r.text
+    saved = (wiki / "concepts" / "foo.md").read_text(encoding="utf-8")
+    assert "type: Concept" in saved  # managed frontmatter preserved
+    assert "key: value" in saved  # the user's leading '---' block was NOT eaten
+    assert "Real content below the fence." in saved
+
+
+def test_delete_kb_ghost_entry_unregisters_via_endpoint(monkeypatch, tmp_path):
+    # A registered name whose directory was removed by hand (a ghost) must be
+    # cleanable via the endpoint (config.delete_kb tolerates it).
+    from openkb.config import register_kb_alias, registered_kbs
+
+    _isolate_global(monkeypatch, tmp_path)
+    ghost = tmp_path / "ghost-kb"  # registered but never created on disk
+    register_kb_alias("ghost-kb", ghost)
+    assert any(n == "ghost-kb" for n, _ in registered_kbs())
+    client = _client(monkeypatch)
+    r = client.post(
+        "/api/v1/kb/delete", json={"kb": "ghost-kb", "confirm_name": "ghost-kb"}, headers=_auth()
+    )
+    assert r.status_code == 200, r.text
+    assert all(n != "ghost-kb" for n, _ in registered_kbs())  # registry cleaned up
