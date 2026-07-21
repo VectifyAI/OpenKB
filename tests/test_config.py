@@ -705,3 +705,40 @@ def test_resolve_kb_alias_degrades_on_non_mapping_global_yaml(
     monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
     (_isolated_global / "global.yaml").write_text("- a\n- b\n", encoding="utf-8")
     assert resolve_kb_alias("mykb") == (_isolated_global / "kbs" / "mykb").resolve()
+
+
+# --- delete_kb / unregister_kb -----------------------------------------------
+
+
+def test_delete_kb_physical_removal_and_unregister(_isolated_global, tmp_path):
+    from openkb.config import delete_kb, register_kb_alias, registered_kbs
+
+    kb = _make_kb_dir(tmp_path / "doomed")
+    register_kb_alias("doomed", kb)
+    assert any(n == "doomed" for n, _ in registered_kbs())
+
+    delete_kb(kb)
+    assert not kb.exists()  # directory physically removed
+    assert all(n != "doomed" for n, _ in registered_kbs())  # unregistered
+
+
+def test_delete_kb_refuses_non_kb_directory(_isolated_global, tmp_path):
+    from openkb.config import delete_kb
+
+    plain = tmp_path / "not-a-kb"
+    plain.mkdir()
+    (plain / "important.txt").write_text("keep me", encoding="utf-8")
+    with pytest.raises(ValueError, match="not a knowledge base"):
+        delete_kb(plain)
+    assert (plain / "important.txt").exists()  # refused — nothing removed
+
+
+def test_delete_kb_tolerates_ghost_registry_entry(_isolated_global, tmp_path):
+    from openkb.config import delete_kb, register_kb_alias, registered_kbs
+
+    ghost = tmp_path / "ghost"  # registered but its directory never existed
+    register_kb_alias("ghost", ghost)
+    assert any(n == "ghost" for n, _ in registered_kbs())
+
+    delete_kb(ghost)  # no dir to rmtree → just unregister, no error
+    assert all(n != "ghost" for n, _ in registered_kbs())

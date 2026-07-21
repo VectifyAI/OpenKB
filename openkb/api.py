@@ -56,6 +56,7 @@ from openkb.api_helpers import (
     require_bearer_token,
 )
 from openkb.api_kbs import _list_knowledge_bases
+from openkb.api_kbs_router import kbs_router
 from openkb.api_models import (
     AddResponse,
     ChatRequest,
@@ -165,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(graph_router)
     app.include_router(output_router)
     app.include_router(config_router)
+    app.include_router(kbs_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(

@@ -322,6 +322,19 @@ class KbListResponse(BaseModel):
     knowledge_bases: list[KbSummaryItem]
 
 
+class KbDeleteRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    # Must equal `kb`: a type-the-name confirmation, re-checked server-side so
+    # this irreversible delete never fires from a client that skipped the guard.
+    confirm_name: str = Field(..., min_length=1)
+
+
+class KbDeleteResponse(BaseModel):
+    deleted: bool
+    kb: str
+    path: str
+
+
 class MetaResponse(BaseModel):
     version: str
 

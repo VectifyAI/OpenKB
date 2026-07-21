@@ -3030,3 +3030,66 @@ def test_kbs_listing_survives_dangling_summary_symlink(monkeypatch, tmp_path):
     assert set(items) == {"bad-kb", "good-kb"}
     # The bad KB lists with no last_compile rather than throwing out of the scan.
     assert items["bad-kb"]["last_compile"] is None
+
+
+# --- DELETE /api/v1/kb/delete ------------------------------------------------
+
+
+def _isolate_global(monkeypatch, tmp_path: Path) -> Path:
+    """Point the global registry at an isolated dir kept OUTSIDE any KB dir, so
+    physically deleting a KB never removes the test's own global.yaml."""
+    gdir = tmp_path / "gconf"
+    gdir.mkdir()
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+    return gdir
+
+
+def _make_kb(root: Path) -> Path:
+    (root / ".openkb").mkdir(parents=True)
+    (root / "wiki").mkdir(parents=True)
+    return root
+
+
+def test_delete_kb_removes_dir_and_unregisters(monkeypatch, tmp_path):
+    from openkb.config import register_kb_alias, registered_kbs
+
+    _isolate_global(monkeypatch, tmp_path)
+    kb = _make_kb(tmp_path / "mykb")
+    register_kb_alias("gone-kb", kb)
+    assert any(n == "gone-kb" for n, _ in registered_kbs())
+
+    client = _client(monkeypatch)
+    name = _use_named_kb(monkeypatch, kb, name="gone-kb")
+    resp = client.post(
+        "/api/v1/kb/delete", json={"kb": name, "confirm_name": name}, headers=_auth()
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["deleted"] is True
+    assert body["kb"] == "gone-kb"
+    assert not kb.exists()  # physically removed
+    assert all(n != "gone-kb" for n, _ in registered_kbs())  # unregistered
+
+
+def test_delete_kb_confirm_name_mismatch_is_rejected(monkeypatch, tmp_path):
+    kb = _make_kb(tmp_path / "mykb")
+    client = _client(monkeypatch)
+    name = _use_named_kb(monkeypatch, kb, name="keep-kb")
+    resp = client.post(
+        "/api/v1/kb/delete", json={"kb": name, "confirm_name": "WRONG"}, headers=_auth()
+    )
+    assert resp.status_code == 400
+    assert kb.exists()  # guard fires before resolve — nothing deleted
+
+
+def test_delete_kb_rejects_non_kb_target(monkeypatch, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()  # a real directory, but not a KB (no .openkb/wiki)
+    client = _client(monkeypatch)
+    name = _use_named_kb(monkeypatch, plain, name="ghost-kb")
+    resp = client.post(
+        "/api/v1/kb/delete", json={"kb": name, "confirm_name": name}, headers=_auth()
+    )
+    assert resp.status_code == 400
+    assert plain.exists()
