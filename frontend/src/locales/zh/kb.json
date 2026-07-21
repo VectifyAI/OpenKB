@@ -46,6 +46,30 @@
       "multiple": "删除失败：{{message}}（候选：{{names}}）"
     }
   },
+  "pageOps": {
+    "edit": "编辑",
+    "delete": "删除",
+    "editorAria": "页面源码（Markdown）",
+    "deletePrompt": "确认删除 {{title}}？",
+    "deleteImpact_one": "{{count}} 个页面链接到此页 — 删除后这些链接将变为纯文本",
+    "deleteImpact_other": "{{count}} 个页面链接到此页 — 删除后这些链接将变为纯文本",
+    "deleteNoBacklinks": "没有其他页面链接到此页",
+    "deleteConfirm": "删除页面",
+    "deleteSuccess": "已删除 {{title}}",
+    "deleteError": "删除失败：{{error}}",
+    "save": "保存",
+    "saveSuccess": "页面已保存",
+    "saveError": "保存失败：{{error}}",
+    "ghostsDemoted": "以下链接无法解析，已变为纯文本：{{links}}",
+    "editRecompileNote": "手动修改在下次重新编译该库时可能被覆盖。",
+    "links": {
+      "heading": "页面链接",
+      "outlinks": "此页链接到",
+      "backlinks": "链接到此页的页面",
+      "none": "无",
+      "error": "链接加载失败：{{error}}"
+    }
+  },
   "remote": {
     "heading": "远程数据源",
     "note": "云端连接器开发中，尚不可用 · 想要它？点卡片去 GitHub 投票"
