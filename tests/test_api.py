@@ -2204,6 +2204,60 @@ def test_kb_config_patch_updates_model_only(monkeypatch, kb_dir):
     assert saved["model"] == "claude-opus"
 
 
+def test_kb_config_patch_sets_and_reverts_entity_types(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # Set a custom vocabulary: stored raw, read back cleaned (lowercased, unsafe
+    # chars stripped, deduped, "other" ensured) with source 'kb'.
+    r = client.patch(
+        "/api/v1/kb/config",
+        json={"kb": kb, "config": {"entity_types": ["Person", "Team!"]}},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["entity_types"] == ["person", "team", "other"]
+    assert body["sources"]["entity_types"] == "kb"
+    saved = yaml.safe_load((kb_dir / ".openkb" / "config.yaml").read_text())
+    assert saved["entity_types"] == ["Person", "Team!"]  # raw value persisted
+
+    # Revert (explicit null) -> inherit; with no global set, falls to default.
+    r = client.patch(
+        "/api/v1/kb/config", json={"kb": kb, "config": {"entity_types": None}}, headers=_auth()
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["sources"]["entity_types"] == "default"
+    assert body["entity_types"][-1] == "other"
+
+
+def test_global_config_patch_entity_types(monkeypatch, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    monkeypatch.delenv("OPENKB_KB_ROOT", raising=False)
+    client = _client(monkeypatch)
+    r = client.patch(
+        "/api/v1/config", json={"config": {"entity_types": ["Org", "Law!"]}}, headers=_auth()
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["entity_types"] == ["org", "law", "other"]  # cleaned effective list
+
+
+def test_kb_config_get_reports_global_source_for_entity_types(monkeypatch, kb_dir, tmp_path):
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", tmp_path / "global.yaml")
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path)
+    from openkb.config import save_global_config
+
+    save_global_config({"entity_types": ["team", "org"]})
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = client.get("/api/v1/kb/config", params={"kb": kb}, headers=_auth()).json()
+    assert body["sources"]["entity_types"] == "global"  # inherited from global.yaml
+    assert body["entity_types"] == ["team", "org", "other"]
+    assert body["global_values"]["entity_types"] == ["team", "org"]  # raw global for the badge
+
+
 def test_kb_config_patch_unknown_field_is_400(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
@@ -2477,6 +2531,8 @@ def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
         "model": "gpt-5.4",
         "language": "en",
         "pageindex_threshold": 20,
+        # Default entity-type vocabulary when global.yaml sets none.
+        "entity_types": ["person", "organization", "place", "product", "work", "event", "other"],
         # kb_root reports the EFFECTIVE root; with no env/global override it is
         # the default <GLOBAL_CONFIG_DIR>/kbs, and env_pinned is False.
         "kb_root": str((tmp_path / "kbs").resolve()),

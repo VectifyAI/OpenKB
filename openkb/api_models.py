@@ -401,6 +401,10 @@ class _KbConfigWritable(BaseModel):
     model: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
+    # Entity-type vocabulary for extraction. A list REPLACES the layer below; an
+    # explicit null reverts to inherited. Values are cleaned/deduped and "other"
+    # is always ensured at read time (config.resolve_entity_types).
+    entity_types: list[str] | None = None
 
 
 # Single source of truth for the writable config keys (derived from the model
@@ -409,17 +413,20 @@ _KB_CONFIG_WRITABLE_KEYS = set(_KbConfigWritable.model_fields)
 
 
 class GlobalConfigValues(BaseModel):
-    """Raw global-layer scalar values (null where global.yaml is silent)."""
+    """Raw global-layer values (null where global.yaml is silent)."""
 
     model: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
+    entity_types: list[str] | None = None
 
 
 class GlobalConfigResponse(BaseModel):
     model: str
     language: str
     pageindex_threshold: int
+    # Effective global entity-type vocabulary (cleaned; always includes "other").
+    entity_types: list[str]
     # Effective KB root that kb_root_dir() would return (env OPENKB_KB_ROOT >
     # global.yaml kb_root > default <config>/kbs). kb_root_env_pinned is True
     # when OPENKB_KB_ROOT is set — a global.yaml kb_root is then ineffective, so
@@ -453,6 +460,8 @@ class KbConfigResponse(BaseModel):
     model: str
     language: str
     pageindex_threshold: int
+    # Effective entity-type vocabulary (cleaned; always includes "other").
+    entity_types: list[str]
     openai_api_base: str | None
     has_api_key: bool
     # Additive (non-breaking): which layer supplied each scalar's effective

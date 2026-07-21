@@ -483,7 +483,16 @@ def load_global_config() -> dict[str, Any]:
 # Whitelisted scalar keys that global.yaml may provide as shared defaults for
 # every KB. Non-scalar global keys (known_kbs, kb_aliases, default_kb) are NOT
 # config and must never leak into a KB's effective runtime config.
-GLOBAL_SCALAR_KEYS: tuple[str, ...] = ("model", "language", "pageindex_threshold")
+# Config keys that layer global.yaml -> KB config.yaml with per-key `sources`
+# tracking (a KB explicit null = inherit). Mostly scalars; `entity_types` is the
+# one list-valued member — the layering rule (a non-null value wins over the
+# layer below) is type-agnostic, so a KB list overrides the global list wholesale.
+GLOBAL_SCALAR_KEYS: tuple[str, ...] = (
+    "model",
+    "language",
+    "pageindex_threshold",
+    "entity_types",
+)
 
 
 def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, str]]:
