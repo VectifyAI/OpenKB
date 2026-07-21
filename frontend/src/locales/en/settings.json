@@ -21,6 +21,8 @@
   },
   "general": {
     "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語",
+    "entityTypesDesc": "The vocabulary used to classify entities extracted at compile time; each KB can inherit or override it in its own settings.",
+    "entityTypesNote": "Changes apply to future recompiles only; existing entity pages keep their current type.",
     "kbRootLabel": "Knowledge base root",
     "kbRootDesc": "Default location for new knowledge bases (<root>/<name>); leave empty to restore the built-in default. Individual KBs can set a custom path at creation.",
     "kbRootPlaceholder": "e.g. ~/openkb",

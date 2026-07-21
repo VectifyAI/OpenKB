@@ -13,7 +13,13 @@
   "fields": {
     "model": "Model",
     "wikiLanguage": "Wiki output language",
-    "threshold": "PageIndex threshold (pages)"
+    "threshold": "PageIndex threshold (pages)",
+    "entityTypes": "Entity types"
+  },
+  "entityTypes": {
+    "placeholder": "Add a type, press Enter",
+    "removeAria": "Remove type {{type}}",
+    "always": "always included"
   },
   "errors": {
     "requestFailed": "Request failed",

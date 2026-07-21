@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { getGlobalConfig, patchGlobalConfig, type GlobalConfig, type GlobalConfigPatch } from '@/api/config'
 import ConnectorCards from '@/components/ConnectorCards'
 import AboutTab from '@/components/AboutTab'
+import EntityTypesEditor from '@/components/EntityTypesEditor'
 import { cn } from '@/lib/utils'
 import { UnLanguageDatalist, UN_LANG_LIST_ID } from '@/components/UnLanguageDatalist'
 
@@ -39,6 +40,10 @@ export default function Settings() {
   const [model, setModel] = useState('')
   const [language, setLanguage] = useState('')
   const [threshold, setThreshold] = useState('')
+  // Entity-extraction vocabulary, edited as chips. Seeded from the CLEANED
+  // effective list (always includes "other"); diffed order-sensitively in
+  // buildPatch. Server re-cleans on save, so client edits stay lightweight.
+  const [entityTypes, setEntityTypes] = useState<string[]>([])
   // KB root directory. Emptying a previously-set root clears it (null → default),
   // mirroring the credential-base's empty→null discipline in buildPatch.
   const [kbRoot, setKbRoot] = useState('')
@@ -58,6 +63,7 @@ export default function Settings() {
     setModel(c.model)
     setLanguage(c.language)
     setThreshold(String(c.pageindex_threshold))
+    setEntityTypes(c.entity_types)
     setKbRoot(c.kb_root ?? '')
     setApiBase(c.openai_api_base ?? '')
     setApiKey('')
@@ -103,6 +109,13 @@ export default function Settings() {
     if (threshold.trim() !== '' && Number.isInteger(n) && n >= 1 && n !== config.pageindex_threshold) {
       cfg.pageindex_threshold = n
     }
+    // Order-sensitive compare against the last-fetched cleaned list. The
+    // editor only appends/removes, so equal content ⇒ equal order; a reorder
+    // never happens client-side.
+    const baseTypes = config.entity_types
+    if (entityTypes.length !== baseTypes.length || entityTypes.some((v, i) => v !== baseTypes[i])) {
+      cfg.entity_types = entityTypes
+    }
     if (Object.keys(cfg).length > 0) patch.config = cfg
     // When kb_root is env-pinned the field is read-only and the effective value
     // is the OPENKB_KB_ROOT env root, so never diff/emit it — a Save would
@@ -118,7 +131,7 @@ export default function Settings() {
     if (clearKey) patch.api_key = null
     else if (apiKey !== '') patch.api_key = apiKey
     return { patch, dirty: Object.keys(patch).length > 0 }
-  }, [config, model, language, threshold, kbRoot, apiBase, apiKey, clearKey])
+  }, [config, model, language, threshold, entityTypes, kbRoot, apiBase, apiKey, clearKey])
 
   const dirty = useMemo(() => buildPatch().dirty, [buildPatch])
 
@@ -311,6 +324,19 @@ export default function Settings() {
                   className={cn(inputCls, 'max-w-[240px]')}
                 />
                 <UnLanguageDatalist />
+              </div>
+
+              <div>
+                <label className="text-[13px] font-semibold text-foreground">{t('common:fields.entityTypes')}</label>
+                <p className="mt-0.5 text-[12px] text-muted-foreground">{t('settings:general.entityTypesDesc')}</p>
+                <div className="mt-1.5 max-w-[560px]">
+                  <EntityTypesEditor
+                    value={entityTypes}
+                    disabled={loading || !config}
+                    onChange={setEntityTypes}
+                  />
+                </div>
+                <p className="mt-1.5 text-[11.5px] text-muted-foreground">{t('settings:general.entityTypesNote')}</p>
               </div>
 
               <div>

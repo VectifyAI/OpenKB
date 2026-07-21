@@ -18,6 +18,7 @@
   "inheritDefault": "继承 · 默认({{value}})",
   "override": "为本库覆盖",
   "overrideAria": "{{label}} 为本库覆盖",
+  "entityTypesNote": "改动仅影响之后的重新编译；已有实体页会保留其当前类型。",
   "unnamed": "(未命名)",
   "recompileFailed": "重新编译失败",
   "watchStarted": "已启动文件监听",
