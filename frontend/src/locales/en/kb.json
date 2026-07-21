@@ -34,6 +34,16 @@
     "empty": "No documents yet · they compile into the KB automatically after upload",
     "pages_one": "{{count}} page",
     "pages_other": "{{count}} pages",
+    "reader": {
+      "open": "Read document",
+      "title": "Document",
+      "readonly": "Read-only",
+      "close": "Close",
+      "loading": "Loading document…",
+      "error": "Couldn't load document: {{error}}",
+      "retry": "Retry",
+      "emptyDoc": "This document has no extracted text."
+    },
     "delete": {
       "action": "Delete document",
       "prompt": "Delete?",

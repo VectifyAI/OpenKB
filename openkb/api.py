@@ -31,6 +31,7 @@ from openkb.agent.chat_session import delete_session, list_sessions, load_sessio
 from openkb.agent.query import build_run_config_from_bundle, run_query
 from openkb.api_config import apply_kb_config_patch, read_kb_config
 from openkb.api_config_router import config_router
+from openkb.api_documents_router import documents_router
 from openkb.api_graph import graph_router
 from openkb.api_helpers import (
     _configure_cors,
@@ -167,6 +168,7 @@ def create_app() -> FastAPI:
     app.include_router(config_router)
     app.include_router(kbs_router)
     app.include_router(pages_router)
+    app.include_router(documents_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(

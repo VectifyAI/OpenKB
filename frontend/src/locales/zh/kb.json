@@ -34,6 +34,16 @@
     "empty": "暂无文档 · 上传后会自动编译进知识库",
     "pages_one": "{{count}} 页",
     "pages_other": "{{count}} 页",
+    "reader": {
+      "open": "查看文档",
+      "title": "文档",
+      "readonly": "只读",
+      "close": "关闭",
+      "loading": "正在加载文档…",
+      "error": "加载文档失败：{{error}}",
+      "retry": "重试",
+      "emptyDoc": "该文档没有可显示的正文。"
+    },
     "delete": {
       "action": "删除文档",
       "prompt": "确认删除？",

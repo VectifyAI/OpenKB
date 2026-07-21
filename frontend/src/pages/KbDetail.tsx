@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { motion, useReducedMotion } from 'motion/react'
-import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react'
+import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle, X, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
-import { deletePage, editPage, getKbInventory, getPage, getPageLinks, type KbInventory, type WikiDocument } from '@/api/wiki'
+import { deletePage, editPage, getDocumentSource, getKbInventory, getPage, getPageLinks, type DocumentSource, type KbInventory, type WikiDocument } from '@/api/wiki'
 import { streamUpload, removeDocument, type AddResult } from '@/api/maintenance'
 import { ApiError } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
@@ -444,6 +444,7 @@ export default function KbDetail() {
           />
         ) : section === 'documents' ? (
           <DocumentsPane
+            kb={id}
             documents={documents}
             invError={invError}
             uploading={uploading}
@@ -846,7 +847,177 @@ function UploadStatusIcon({ status }: { status: UploadStatus }) {
 
 /** Documents section: upload dropzone + uploaded-document list + remote
  *  connector cards. Moved verbatim from the old Sources tab body. */
+/** Read-only slide-out drawer showing a document's converted full text.
+ *
+ * Documents are ingestion artifacts ("Do not modify directly"), so this is a
+ * viewer only — no edit affordance (unlike the wiki-page Reader). Content is
+ * fetched by hash and cached; the memoized body means re-opening a document is
+ * instant and the parsed Markdown is not recomputed. A wide panel + narrow
+ * measure keeps long docs (many pages concatenated) readable; the body scrolls
+ * independently and native find-in-page works because the whole document is
+ * rendered (not virtualized). */
+function DocumentReaderDrawer({
+  kb,
+  doc,
+  onClose,
+}: {
+  kb: string
+  doc: WikiDocument | null
+  onClose: () => void
+}) {
+  const { t } = useTranslation(['kb', 'common'])
+  const [source, setSource] = useState<DocumentSource | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [reloadSeq, setReloadSeq] = useState(0)
+  // Per-hash cache returns the SAME DocumentSource object on re-open, so the
+  // memoized body below is not re-parsed.
+  const cacheRef = useRef<Map<string, DocumentSource>>(new Map())
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const open = doc !== null
+  const hash = doc?.hash ?? null
+
+  useEffect(() => {
+    if (!hash) return
+    const cached = cacheRef.current.get(hash)
+    if (cached) {
+      setSource(cached)
+      setError(null)
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setSource(null)
+    setError(null)
+    getDocumentSource(kb, hash)
+      .then((r) => {
+        if (cancelled) return
+        cacheRef.current.set(hash, r)
+        setSource(r)
+      })
+      .catch((e) => {
+        if (!cancelled) setError(errMsg(e))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kb, hash, reloadSeq])
+
+  // ESC closes; listener attached only while open.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  // Reset scroll to top when switching documents.
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, 0)
+  }, [hash])
+
+  // Parse Markdown once per fetched source (cache yields a stable object ref).
+  const body = useMemo(
+    () => (source ? <MarkdownView source={source.content} /> : null),
+    [source],
+  )
+  const hasContent = source != null && source.content.trim().length > 0
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        aria-hidden
+        className={cn(
+          'fixed inset-0 z-40 bg-black/30 transition-opacity duration-200',
+          open ? 'opacity-100' : 'pointer-events-none opacity-0',
+        )}
+      />
+      <aside
+        role="dialog"
+        aria-modal={open}
+        aria-label={doc?.name ?? t('kb:docs.reader.title')}
+        // Closed = off-screen but still in the DOM (for the slide transition);
+        // `inert` drops it from the a11y tree and tab order so the hidden panel
+        // is never focusable/announced.
+        inert={!open}
+        className={cn(
+          'fixed inset-y-0 right-0 z-50 flex h-full w-[min(70vw,900px)] max-w-full flex-col',
+          'glass border-l border-[hsl(var(--glass-border))] shadow-glass-lg rounded-l-apple-lg',
+          'transition-transform duration-300 ease-out',
+          open ? 'translate-x-0' : 'translate-x-full',
+        )}
+      >
+        <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--glass-border))] px-5 py-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[hsl(var(--glass-border))] bg-muted">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[13.5px] font-medium text-foreground">{doc?.name}</div>
+            <div className="mt-0.5 flex items-center gap-2 text-[12px] text-muted-foreground">
+              {doc?.display_type && <span>{doc.display_type}</span>}
+              {doc?.pages != null && <span>· {t('kb:docs.pages', { count: doc.pages })}</span>}
+              <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-px text-[11px]">
+                <BookOpen className="h-3 w-3" />
+                {t('kb:docs.reader.readonly')}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            title={t('kb:docs.reader.close')}
+            aria-label={t('kb:docs.reader.close')}
+            className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+          <div className="mx-auto max-w-[72ch] px-6 py-6">
+            {loading && (
+              <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {t('kb:docs.reader.loading')}
+              </div>
+            )}
+            {error && (
+              <div className="py-16 text-center">
+                <p className="text-[13px] text-red-600 dark:text-red-400">
+                  {t('kb:docs.reader.error', { error })}
+                </p>
+                <button
+                  onClick={() => setReloadSeq((s) => s + 1)}
+                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[hsl(var(--glass-border))] px-3 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  {t('kb:docs.reader.retry')}
+                </button>
+              </div>
+            )}
+            {!loading && !error && !hasContent && source != null && (
+              <div className="py-16 text-center text-[13px] text-muted-foreground">
+                {t('kb:docs.reader.emptyDoc')}
+              </div>
+            )}
+            {!loading && !error && hasContent && (
+              <div className="text-[14px] leading-relaxed text-foreground">{body}</div>
+            )}
+          </div>
+        </div>
+      </aside>
+    </>
+  )
+}
+
 function DocumentsPane({
+  kb,
   documents,
   invError,
   uploading,
@@ -858,6 +1029,7 @@ function DocumentsPane({
   onRefresh,
   onDelete,
 }: {
+  kb: string
   documents: WikiDocument[]
   invError: string | null
   uploading: boolean
@@ -874,6 +1046,8 @@ function DocumentsPane({
   // `deletingName` is the row whose remove request is in flight.
   const [confirmName, setConfirmName] = useState<string | null>(null)
   const [deletingName, setDeletingName] = useState<string | null>(null)
+  // The document whose read-only source drawer is open (null = closed).
+  const [openDoc, setOpenDoc] = useState<WikiDocument | null>(null)
   const handleDelete = async (name: string) => {
     setDeletingName(name)
     try {
@@ -884,6 +1058,7 @@ function DocumentsPane({
     }
   }
   return (
+    <>
     <div className="h-full overflow-y-auto scroll-edge-top">
       <div className="max-w-[1280px] mx-auto px-8 lg:px-12 py-6">
         <p className="text-[13px] text-muted-foreground">
@@ -981,8 +1156,20 @@ function DocumentsPane({
           {documents.map((d, i) => (
             <div
               key={d.hash || d.name || i}
+              role="button"
+              tabIndex={0}
+              onClick={() => setOpenDoc(d)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setOpenDoc(d)
+                }
+              }}
+              title={t('kb:docs.reader.open')}
               className={cn(
                 'anim-fade-up rounded-2xl border border-[hsl(var(--glass-border))] glass-2 px-4 py-3 flex items-center gap-3',
+                'cursor-pointer transition-colors hover:border-foreground/20 hover:bg-accent/40',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand/50',
                 `anim-d${Math.min(i + 1, 4)}`,
               )}
             >
@@ -996,7 +1183,12 @@ function DocumentsPane({
                   {d.pages != null && <> · {t('kb:docs.pages', { count: d.pages })}</>}
                 </div>
               </div>
-              <div className="ml-auto flex items-center gap-2 shrink-0">
+              {/* Trailing controls (hash chip + delete). stopPropagation so a
+                  click here never opens the reader drawer. */}
+              <div
+                className="ml-auto flex items-center gap-2 shrink-0"
+                onClick={(e) => e.stopPropagation()}
+              >
                 {d.hash && (
                   <span className="font-mono2 text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
                     {d.hash.slice(0, 8)}
@@ -1047,5 +1239,7 @@ function DocumentsPane({
         </div>
       </div>
     </div>
+    <DocumentReaderDrawer kb={kb} doc={openDoc} onClose={() => setOpenDoc(null)} />
+    </>
   )
 }
