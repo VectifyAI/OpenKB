@@ -3093,3 +3093,62 @@ def test_delete_kb_rejects_non_kb_target(monkeypatch, tmp_path):
     )
     assert resp.status_code == 400
     assert plain.exists()
+
+
+# --- POST /api/v1/page/delete ------------------------------------------------
+
+
+def test_delete_page_demotes_inbound_links_and_removes_index_entry(monkeypatch, kb_dir):
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "foo.md").write_text("# Foo\n\nAbout foo.\n", encoding="utf-8")
+    (wiki / "concepts" / "bar.md").write_text(
+        "# Bar\n\nSee [[concepts/foo]] for context.\n", encoding="utf-8"
+    )
+    (wiki / "index.md").write_text(
+        "# Index\n\n## Concepts\n- [[concepts/foo]] — foo\n- [[concepts/bar]] — bar\n",
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # dry-run reports the impacted backlink page and deletes nothing.
+    r = client.post(
+        "/api/v1/page/delete",
+        json={"kb": kb, "path": "concepts/foo", "dry_run": True},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "dry_run"
+    assert "concepts/bar" in r.json()["backlinks"]
+    assert (wiki / "concepts" / "foo.md").exists()
+
+    # execute
+    r = client.post("/api/v1/page/delete", json={"kb": kb, "path": "concepts/foo"}, headers=_auth())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "deleted"
+    assert body["files_changed"] == 1  # bar.md rewritten
+    assert not (wiki / "concepts" / "foo.md").exists()  # page removed
+    bar = (wiki / "concepts" / "bar.md").read_text(encoding="utf-8")
+    assert "[[concepts/foo]]" not in bar  # inbound link demoted...
+    assert "foo" in bar  # ...to plain text, sentence kept
+    idx = (wiki / "index.md").read_text(encoding="utf-8")
+    assert "[[concepts/foo]]" not in idx  # index entry removed outright
+    assert "[[concepts/bar]]" in idx  # sibling entry untouched
+
+
+def test_delete_page_not_found_returns_404(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    r = client.post(
+        "/api/v1/page/delete", json={"kb": kb, "path": "concepts/nope"}, headers=_auth()
+    )
+    assert r.status_code == 404
+
+
+def test_delete_page_rejects_unsafe_or_non_editable_ref(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    for bad in ["summaries/x", "index", "concepts/a/b", "concepts/..", "reports/health"]:
+        r = client.post("/api/v1/page/delete", json={"kb": kb, "path": bad}, headers=_auth())
+        assert r.status_code == 400, bad

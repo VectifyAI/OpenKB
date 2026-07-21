@@ -285,6 +285,26 @@ class PageResponse(BaseModel):
     content: str
 
 
+class PageDeleteRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    # A '<section>/<name>' wiki-page ref, e.g. "concepts/attention". Only
+    # concepts/ and entities/ pages are user-deletable (validated server-side).
+    path: str = Field(..., min_length=1)
+    # dry_run reports the impacted backlink pages without deleting anything, so
+    # the UI can show "these N pages will have their links demoted" + confirm.
+    dry_run: bool = False
+
+
+class PageDeleteResponse(BaseModel):
+    status: str
+    target: str
+    # Content pages whose inbound [[links]] to the target will be / were demoted
+    # to plain text (the deletion's blast radius).
+    backlinks: list[str] = []
+    files_changed: int | None = None
+    ghosts_stripped: int | None = None
+
+
 class WatchStartRequest(BaseModel):
     kb: str = Field(..., min_length=1)
     debounce: float = Field(default=2.0, gt=0)
