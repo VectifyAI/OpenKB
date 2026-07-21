@@ -574,9 +574,15 @@ function ReaderBody({ kb, selected, page, pageError, selectedPath, hasPages, inv
     )
   }
 
-  // Only compiled concept/entity pages are user-editable; summaries, reports
-  // and index.md are generated artifacts the backend refuses to mutate.
-  const editable = selected.group === 'concepts/' || selected.group === 'entities/'
+  // Editable: concept/entity synthesis + per-document summaries (all compiled
+  // markdown a recompile can regenerate). Deletable is narrower — a summary is
+  // removed by deleting its source document, never on its own. reports/index.md
+  // are generated artifacts the backend refuses to mutate either way.
+  const canEdit =
+    selected.group === 'concepts/' ||
+    selected.group === 'entities/' ||
+    selected.group === 'summaries/'
+  const canDelete = selected.group === 'concepts/' || selected.group === 'entities/'
   const confirmActive = deleteImpact !== null && deleteImpact.path === selected.path
   const linksReady = links && links.path === selected.path
   const linksFailed = linksError && linksError.path === selected.path
@@ -650,23 +656,27 @@ function ReaderBody({ kb, selected, page, pageError, selectedPath, hasPages, inv
           wiki/{selected.group}
           {selected.title}
         </span>
-        {editable && pageReady && !editing && !confirmActive && (
+        {(canEdit || canDelete) && pageReady && !editing && !confirmActive && (
           <div className="ml-auto flex items-center gap-1.5">
-            <button
-              onClick={startEdit}
-              className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-            >
-              <Pencil className="w-3 h-3" />
-              {t('kb:pageOps.edit')}
-            </button>
-            <button
-              onClick={startDelete}
-              disabled={checkingDelete}
-              className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
-            >
-              {checkingDelete ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-              {t('kb:pageOps.delete')}
-            </button>
+            {canEdit && (
+              <button
+                onClick={startEdit}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              >
+                <Pencil className="w-3 h-3" />
+                {t('kb:pageOps.edit')}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={startDelete}
+                disabled={checkingDelete}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
+              >
+                {checkingDelete ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                {t('kb:pageOps.delete')}
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -3287,3 +3287,32 @@ def test_delete_kb_ghost_entry_unregisters_via_endpoint(monkeypatch, tmp_path):
     )
     assert r.status_code == 200, r.text
     assert all(n != "ghost-kb" for n, _ in registered_kbs())  # registry cleaned up
+
+
+def test_summary_page_is_editable_but_not_deletable(monkeypatch, kb_dir):
+    # A summary is compiled markdown like a concept, so it is EDITABLE (recompile
+    # can still regenerate it), but NOT independently deletable — it is removed by
+    # deleting its source document.
+    wiki = kb_dir / "wiki"
+    (wiki / "summaries" / "doc.md").write_text(
+        "---\ntype: Summary\n---\n# Doc\n\nold body\n", encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # edit is allowed, frontmatter preserved
+    r = client.put(
+        "/api/v1/page",
+        json={"kb": kb, "path": "summaries/doc", "content": "# Doc\n\nnew body\n"},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    saved = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
+    assert "type: Summary" in saved
+    assert "new body" in saved and "old body" not in saved
+
+    # delete is refused for a summary (400, not deletable on its own)
+    r = client.post(
+        "/api/v1/page/delete", json={"kb": kb, "path": "summaries/doc"}, headers=_auth()
+    )
+    assert r.status_code == 400

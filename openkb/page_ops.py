@@ -28,24 +28,32 @@ from openkb.lint import (
 )
 from openkb.locks import atomic_write_text, kb_ingest_lock
 
-# Only these compiled page types are user-deletable/editable. summaries are
-# per-source-document (managed by add/remove); index/log/reports are generated.
-EDITABLE_SECTIONS = ("concepts", "entities")
+# Compiled page types the user may EDIT (a recompile can still regenerate them):
+# concept/entity synthesis PLUS per-document summaries. index/log/reports are
+# generated artifacts and stay read-only.
+EDITABLE_SECTIONS = ("concepts", "entities", "summaries")
+# DELETABLE is narrower: a summary is bound to its source document, so it is
+# removed by deleting the DOCUMENT (/api/v1/remove), never on its own — deleting
+# it alone would leave a doc with no summary.
+DELETABLE_SECTIONS = ("concepts", "entities")
 
 
-def validate_page_ref(path: str) -> tuple[str, str]:
+def validate_page_ref(
+    path: str, *, allowed: tuple[str, ...] = EDITABLE_SECTIONS
+) -> tuple[str, str]:
     """Split a ``'<section>/<name>'`` page ref into ``(section, stem)``.
 
-    Guards against path traversal: ``section`` must be an editable section and
-    ``stem`` a single safe filename segment (no separators, ``..``, or leading
-    dot). Raises :class:`ValueError` otherwise.
+    ``allowed`` is the permitted-section allowlist — defaults to the editable
+    set; delete passes the narrower :data:`DELETABLE_SECTIONS`. Guards against
+    path traversal: ``section`` must be in ``allowed`` and ``stem`` a single safe
+    filename segment (no separators, ``..``, or leading dot). Raises ValueError.
     """
     parts = path.strip().strip("/").split("/")
     if len(parts) != 2:
         raise ValueError("page ref must be '<section>/<name>' (e.g. concepts/attention)")
     section, stem = parts
-    if section not in EDITABLE_SECTIONS:
-        raise ValueError(f"section must be one of {EDITABLE_SECTIONS}, got {section!r}")
+    if section not in allowed:
+        raise ValueError(f"section must be one of {allowed}, got {section!r}")
     if not stem or stem in (".", "..") or stem.startswith(".") or "\\" in stem:
         raise ValueError(f"invalid page name: {stem!r}")
     return section, stem
@@ -101,9 +109,10 @@ def delete_wiki_page(kb_dir: Path, path: str, *, dry_run: bool = False) -> dict:
     ``path`` is a ``'section/stem'`` ref (e.g. ``'concepts/attention'``). With
     ``dry_run`` it only reports the impacted backlink pages (whose inbound links
     WOULD be demoted). Returns a dict whose ``status`` is one of ``not_found``,
-    ``dry_run``, ``deleted``.
+    ``dry_run``, ``deleted``. Only concept/entity pages are deletable (a summary
+    is removed by deleting its source document, not on its own).
     """
-    section, stem = validate_page_ref(path)
+    section, stem = validate_page_ref(path, allowed=DELETABLE_SECTIONS)
     wiki = kb_dir / "wiki"
     page = wiki / section / f"{stem}.md"
     target = f"{section}/{stem}"
