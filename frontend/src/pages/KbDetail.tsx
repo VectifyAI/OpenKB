@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { motion, useReducedMotion } from 'motion/react'
 import { FileText, Loader2, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react'
@@ -103,6 +103,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export default function KbDetail() {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const { t } = useTranslation(['kb', 'common'])
 
   const [inv, setInv] = useState<KbInventory | null>(null)
@@ -453,6 +454,10 @@ export default function KbDetail() {
         onClose={() => setSettingsOpen(false)}
         docCount={docCount}
         onChanged={refreshInventory}
+        onDeleted={() => {
+          setSettingsOpen(false)
+          navigate('/kb')
+        }}
       />
     </div>
   )

@@ -38,5 +38,12 @@
   "lint": "Structure check",
   "recompileHeading": "Recompile",
   "recompileSummary": "· {{total}} total · {{recompiled}} compiled · {{skipped}} skipped",
-  "preparing": "Preparing…"
+  "preparing": "Preparing…",
+  "dangerHeading": "Danger zone",
+  "dangerDesc": "Permanently delete this knowledge base — its raw documents and compiled wiki. This cannot be undone.",
+  "dangerDeleteButton": "Delete this knowledge base",
+  "dangerConfirmPrompt": "Type the KB name ({{kb}}) to confirm",
+  "dangerConfirmDelete": "Delete permanently",
+  "dangerDeletedToast": "Deleted knowledge base “{{kb}}”",
+  "dangerDeleteError": "Delete failed: {{error}}"
 }

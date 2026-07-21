@@ -38,5 +38,12 @@
   "lint": "结构检查",
   "recompileHeading": "重新编译",
   "recompileSummary": "· 共 {{total}} · 编译 {{recompiled}} · 跳过 {{skipped}}",
-  "preparing": "正在准备…"
+  "preparing": "正在准备…",
+  "dangerHeading": "危险操作",
+  "dangerDesc": "永久删除这个知识库(原始文档 + 已编译的 wiki),不可撤销。",
+  "dangerDeleteButton": "删除此知识库",
+  "dangerConfirmPrompt": "输入知识库名称({{kb}})以确认",
+  "dangerConfirmDelete": "永久删除",
+  "dangerDeletedToast": "已删除知识库「{{kb}}」",
+  "dangerDeleteError": "删除失败:{{error}}"
 }

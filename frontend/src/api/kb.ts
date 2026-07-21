@@ -41,6 +41,13 @@ export function createKb(body: InitRequest): Promise<InitResponse> {
   return apiFetch<InitResponse>("/api/v1/init", { method: "POST", body })
 }
 
+/** Permanently delete a knowledge base (physical removal + unregister).
+ *  `confirmName` must equal `kb` (re-checked server-side); the caller collects
+ *  the type-the-name confirmation. */
+export function deleteKb(kb: string, confirmName: string): Promise<{ deleted: boolean; kb: string; path: string }> {
+  return apiFetch("/api/v1/kb/delete", { body: { kb, confirm_name: confirmName } })
+}
+
 export type ConfigSource = "kb" | "global" | "default"
 
 export interface KbConfig {
