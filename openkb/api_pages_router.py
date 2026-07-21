@@ -16,10 +16,14 @@ from openkb.api_helpers import _resolve_kb, require_bearer_token
 from openkb.api_models import (
     PageDeleteRequest,
     PageDeleteResponse,
+    PageEditRequest,
+    PageEditResponse,
+    PageLinksRequest,
+    PageLinksResponse,
     PageRequest,
     PageResponse,
 )
-from openkb.page_ops import delete_wiki_page
+from openkb.page_ops import delete_wiki_page, edit_wiki_page, page_link_context
 
 pages_router = APIRouter()
 
@@ -56,3 +60,33 @@ async def delete_page_endpoint(
     if result["status"] == "not_found":
         raise HTTPException(status_code=404, detail=f"Page not found: {request.path}")
     return PageDeleteResponse(**result)
+
+
+@pages_router.post("/api/v1/page/links", response_model=PageLinksResponse)
+async def page_links_endpoint(
+    request: PageLinksRequest,
+    _: None = Depends(require_bearer_token),
+) -> PageLinksResponse:
+    kb_dir = _resolve_kb(request.kb)
+    try:
+        result = await run_in_threadpool(page_link_context, kb_dir, request.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail=f"Page not found: {request.path}")
+    return PageLinksResponse(**result)
+
+
+@pages_router.put("/api/v1/page", response_model=PageEditResponse)
+async def edit_page_endpoint(
+    request: PageEditRequest,
+    _: None = Depends(require_bearer_token),
+) -> PageEditResponse:
+    kb_dir = _resolve_kb(request.kb)
+    try:
+        result = await run_in_threadpool(edit_wiki_page, kb_dir, request.path, request.content)
+    except ValueError as exc:  # invalid/traversal-unsafe page ref
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail=f"Page not found: {request.path}")
+    return PageEditResponse(**result)

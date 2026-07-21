@@ -3152,3 +3152,62 @@ def test_delete_page_rejects_unsafe_or_non_editable_ref(monkeypatch, kb_dir):
     for bad in ["summaries/x", "index", "concepts/a/b", "concepts/..", "reports/health"]:
         r = client.post("/api/v1/page/delete", json={"kb": kb, "path": bad}, headers=_auth())
         assert r.status_code == 400, bad
+
+
+# --- PUT /api/v1/page (edit) + POST /api/v1/page/links -----------------------
+
+
+def test_edit_page_preserves_frontmatter_and_demotes_dead_links(monkeypatch, kb_dir):
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "bar.md").write_text("# Bar\n\nbar body\n", encoding="utf-8")
+    (wiki / "concepts" / "foo.md").write_text(
+        "---\ntype: Concept\ndescription: about foo\n---\n# Foo\n\nOriginal body.\n",
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    new_body = "# Foo\n\nEdited, links [[concepts/bar]] and [[concepts/ghost]].\n"
+    r = client.put(
+        "/api/v1/page",
+        json={"kb": kb, "path": "concepts/foo", "content": new_body},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "saved"
+    assert body["ghosts_stripped"] == ["concepts/ghost"]
+
+    saved = (wiki / "concepts" / "foo.md").read_text(encoding="utf-8")
+    assert "type: Concept" in saved  # frontmatter preserved
+    assert "description: about foo" in saved
+    assert "Edited, links [[concepts/bar]]" in saved  # good link kept
+    assert "[[concepts/ghost]]" not in saved  # dead link demoted to text
+    assert "Original body." not in saved  # body replaced
+
+
+def test_edit_page_not_found_returns_404(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    r = client.put(
+        "/api/v1/page",
+        json={"kb": kb, "path": "concepts/nope", "content": "x"},
+        headers=_auth(),
+    )
+    assert r.status_code == 404
+
+
+def test_page_links_reports_out_and_backlinks(monkeypatch, kb_dir):
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "hub.md").write_text(
+        "# Hub\n\nlinks [[concepts/leaf]]\n", encoding="utf-8"
+    )
+    (wiki / "concepts" / "leaf.md").write_text("# Leaf\n\nleaf\n", encoding="utf-8")
+    (wiki / "concepts" / "ref.md").write_text("# Ref\n\nsee [[concepts/hub]]\n", encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    r = client.post("/api/v1/page/links", json={"kb": kb, "path": "concepts/hub"}, headers=_auth())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["outlinks"] == ["concepts/leaf"]  # hub -> leaf
+    assert body["backlinks"] == ["concepts/ref"]  # ref -> hub

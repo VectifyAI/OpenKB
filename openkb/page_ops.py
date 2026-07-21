@@ -16,8 +16,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openkb.lint import _extract_wikilinks, _normalize_target, _read_md, fix_broken_links
-from openkb.locks import kb_ingest_lock
+from openkb import frontmatter
+from openkb.lint import (
+    _extract_wikilinks,
+    _normalize_target,
+    _read_md,
+    fix_broken_links,
+    list_existing_wiki_targets,
+    strip_ghost_wikilinks,
+)
+from openkb.locks import atomic_write_text, kb_ingest_lock
 
 # Only these compiled page types are user-deletable/editable. summaries are
 # per-source-document (managed by add/remove); index/log/reports are generated.
@@ -110,4 +118,66 @@ def delete_wiki_page(kb_dir: Path, path: str, *, dry_run: bool = False) -> dict:
         "backlinks": backlinks,
         "files_changed": files_changed,
         "ghosts_stripped": ghosts_stripped,
+    }
+
+
+def page_link_context(kb_dir: Path, path: str) -> dict:
+    """Outbound + inbound links for a page — the edit-impact panel.
+
+    ``outlinks`` are the distinct pages this page links to (resolvable
+    ``[[wikilinks]]``); ``backlinks`` are the pages that link to it. Editing the
+    BODY does not break either (links are path-based), so this is context, not a
+    blocker. Returns ``status`` ``not_found`` when the page is absent.
+    """
+    section, stem = validate_page_ref(path)
+    wiki = kb_dir / "wiki"
+    page = wiki / section / f"{stem}.md"
+    target = f"{section}/{stem}"
+    if not page.is_file():
+        return {"status": "not_found", "target": target, "outlinks": [], "backlinks": []}
+
+    target_norm = _normalize_target(target)
+    norm_known = {_normalize_target(t): t for t in list_existing_wiki_targets(wiki)}
+    out: set[str] = set()
+    for raw in _extract_wikilinks(_read_md(page)):
+        canon = norm_known.get(_normalize_target(raw))
+        if canon and _normalize_target(canon) != target_norm:
+            out.add(canon)
+    backlinks = pages_linking_to(wiki, target_norm, exclude=page)
+    return {"status": "ok", "target": target, "outlinks": sorted(out), "backlinks": backlinks}
+
+
+def edit_wiki_page(kb_dir: Path, path: str, content: str) -> dict:
+    """Replace a concept/entity page's BODY, preserving its OKF frontmatter.
+
+    The ``type:``/``description:``/``sources:`` frontmatter is code-managed, so
+    any frontmatter in the incoming ``content`` is discarded and the existing
+    block is re-attached verbatim. Dead ``[[wikilinks]]`` the user typed are
+    demoted to plain text on save (OpenKB keeps the wiki free of broken links);
+    the demoted targets are returned so the UI can warn. Write is atomic, under
+    the KB ingest lock. Returns ``status`` ``not_found`` when the page is absent.
+    """
+    section, stem = validate_page_ref(path)
+    wiki = kb_dir / "wiki"
+    page = wiki / section / f"{stem}.md"
+    target = f"{section}/{stem}"
+    if not page.is_file():
+        return {"status": "not_found", "target": target, "ghosts_stripped": []}
+
+    existing = frontmatter.split(_read_md(page))
+    fm_block = existing[0] if existing else ""
+    # Strip any frontmatter the client sent back (it is code-managed); keep only
+    # the edited body.
+    incoming = frontmatter.split(content)
+    body = incoming[1] if incoming else content
+    cleaned_body, ghosts = strip_ghost_wikilinks(body, list_existing_wiki_targets(wiki))
+
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        atomic_write_text(page, fm_block + cleaned_body)
+
+    return {
+        "status": "saved",
+        "target": target,
+        "ghosts_stripped": sorted(set(ghosts)),
+        "content": fm_block + cleaned_body,
     }
