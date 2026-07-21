@@ -186,3 +186,77 @@ def test_document_source_requires_auth(monkeypatch, kb_dir):
     resp = client.post("/api/v1/document/source", json={"kb": "test-kb", "hash": "h1"})
 
     assert resp.status_code == 401
+
+
+def test_document_image_serves_extracted_image(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    img_dir = kb_dir / "wiki" / "sources" / "images" / "doc"
+    img_dir.mkdir(parents=True)
+    (img_dir / "p1_img1.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-bytes")
+
+    resp = client.get(
+        "/api/v1/document/image",
+        params={"kb": kb, "path": "sources/images/doc/p1_img1.png"},
+        headers=_auth(),
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/")
+    assert resp.content == b"\x89PNG\r\n\x1a\nfake-bytes"
+
+
+def test_document_image_rejects_traversal(monkeypatch, kb_dir):
+    """A path escaping wiki/sources/images (even to another .png) is rejected by
+    the containment guard before the suffix check."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    (kb_dir / "wiki" / "sources" / "evil.png").write_bytes(b"x")  # inside sources/, outside images/
+
+    resp = client.get(
+        "/api/v1/document/image",
+        params={"kb": kb, "path": "sources/images/../evil.png"},
+        headers=_auth(),
+    )
+
+    assert resp.status_code == 400
+
+
+def test_document_image_rejects_non_image_suffix(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    d = kb_dir / "wiki" / "sources" / "images" / "doc"
+    d.mkdir(parents=True)
+    (d / "notes.md").write_text("secret", encoding="utf-8")
+
+    resp = client.get(
+        "/api/v1/document/image",
+        params={"kb": kb, "path": "sources/images/doc/notes.md"},
+        headers=_auth(),
+    )
+
+    assert resp.status_code == 400
+
+
+def test_document_image_missing_404(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    resp = client.get(
+        "/api/v1/document/image",
+        params={"kb": kb, "path": "sources/images/doc/nope.png"},
+        headers=_auth(),
+    )
+
+    assert resp.status_code == 404
+
+
+def test_document_image_requires_auth(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    _use_named_kb(monkeypatch, kb_dir)
+
+    resp = client.get(
+        "/api/v1/document/image", params={"kb": "test-kb", "path": "sources/images/doc/p.png"}
+    )
+
+    assert resp.status_code == 401
