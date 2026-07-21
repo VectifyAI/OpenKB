@@ -46,6 +46,30 @@
       "multiple": "Delete failed: {{message}} (candidates: {{names}})"
     }
   },
+  "pageOps": {
+    "edit": "Edit",
+    "delete": "Delete",
+    "editorAria": "Page source (Markdown)",
+    "deletePrompt": "Delete {{title}}?",
+    "deleteImpact_one": "{{count}} page links here — its link will become plain text",
+    "deleteImpact_other": "{{count}} pages link here — their links will become plain text",
+    "deleteNoBacklinks": "No other pages link here",
+    "deleteConfirm": "Delete page",
+    "deleteSuccess": "Deleted {{title}}",
+    "deleteError": "Delete failed: {{error}}",
+    "save": "Save",
+    "saveSuccess": "Page saved",
+    "saveError": "Save failed: {{error}}",
+    "ghostsDemoted": "These links didn't resolve and became plain text: {{links}}",
+    "editRecompileNote": "Manual edits may be overwritten the next time this KB is recompiled.",
+    "links": {
+      "heading": "Page links",
+      "outlinks": "This page links to",
+      "backlinks": "Pages linking here",
+      "none": "None",
+      "error": "Failed to load links: {{error}}"
+    }
+  },
   "remote": {
     "heading": "Remote data sources",
     "note": "Cloud connectors are in development and not yet available · want one? Click a card to vote on GitHub"

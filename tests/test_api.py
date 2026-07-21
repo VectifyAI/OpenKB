@@ -3030,3 +3030,331 @@ def test_kbs_listing_survives_dangling_summary_symlink(monkeypatch, tmp_path):
     assert set(items) == {"bad-kb", "good-kb"}
     # The bad KB lists with no last_compile rather than throwing out of the scan.
     assert items["bad-kb"]["last_compile"] is None
+
+
+# --- DELETE /api/v1/kb/delete ------------------------------------------------
+
+
+def _isolate_global(monkeypatch, tmp_path: Path) -> Path:
+    """Point the global registry at an isolated dir kept OUTSIDE any KB dir, so
+    physically deleting a KB never removes the test's own global.yaml."""
+    gdir = tmp_path / "gconf"
+    gdir.mkdir()
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+    return gdir
+
+
+def _make_kb(root: Path) -> Path:
+    (root / ".openkb").mkdir(parents=True)
+    (root / "wiki").mkdir(parents=True)
+    return root
+
+
+def test_delete_kb_removes_dir_and_unregisters(monkeypatch, tmp_path):
+    from openkb.config import register_kb_alias, registered_kbs
+
+    _isolate_global(monkeypatch, tmp_path)
+    kb = _make_kb(tmp_path / "mykb")
+    register_kb_alias("gone-kb", kb)
+    assert any(n == "gone-kb" for n, _ in registered_kbs())
+
+    client = _client(monkeypatch)
+    name = _use_named_kb(monkeypatch, kb, name="gone-kb")
+    resp = client.post(
+        "/api/v1/kb/delete", json={"kb": name, "confirm_name": name}, headers=_auth()
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["deleted"] is True
+    assert body["kb"] == "gone-kb"
+    assert not kb.exists()  # physically removed
+    assert all(n != "gone-kb" for n, _ in registered_kbs())  # unregistered
+
+
+def test_delete_kb_confirm_name_mismatch_is_rejected(monkeypatch, tmp_path):
+    kb = _make_kb(tmp_path / "mykb")
+    client = _client(monkeypatch)
+    name = _use_named_kb(monkeypatch, kb, name="keep-kb")
+    resp = client.post(
+        "/api/v1/kb/delete", json={"kb": name, "confirm_name": "WRONG"}, headers=_auth()
+    )
+    assert resp.status_code == 400
+    assert kb.exists()  # guard fires before resolve — nothing deleted
+
+
+def test_delete_kb_rejects_non_kb_target(monkeypatch, tmp_path):
+    # A registered name pointing at a real dir that is NOT a KB: it passes the
+    # endpoint's "registered" gate, but delete_kb refuses to rmtree a non-KB
+    # directory -> 400 (never deletes an arbitrary path).
+    from openkb.config import register_kb_alias
+
+    _isolate_global(monkeypatch, tmp_path)
+    plain = tmp_path / "plain"
+    plain.mkdir()  # a real directory, but not a KB (no .openkb/wiki)
+    register_kb_alias("ghost-kb", plain)
+    client = _client(monkeypatch)
+    resp = client.post(
+        "/api/v1/kb/delete", json={"kb": "ghost-kb", "confirm_name": "ghost-kb"}, headers=_auth()
+    )
+    assert resp.status_code == 400
+    assert plain.exists()
+
+
+# --- POST /api/v1/page/delete ------------------------------------------------
+
+
+def test_delete_page_demotes_inbound_links_and_removes_index_entry(monkeypatch, kb_dir):
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "foo.md").write_text("# Foo\n\nAbout foo.\n", encoding="utf-8")
+    (wiki / "concepts" / "bar.md").write_text(
+        "# Bar\n\nSee [[concepts/foo]] for context.\n", encoding="utf-8"
+    )
+    (wiki / "index.md").write_text(
+        "# Index\n\n## Concepts\n- [[concepts/foo]] — foo\n- [[concepts/bar]] — bar\n",
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # dry-run reports the impacted backlink page and deletes nothing.
+    r = client.post(
+        "/api/v1/page/delete",
+        json={"kb": kb, "path": "concepts/foo", "dry_run": True},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "dry_run"
+    assert "concepts/bar" in r.json()["backlinks"]
+    assert (wiki / "concepts" / "foo.md").exists()
+
+    # execute
+    r = client.post("/api/v1/page/delete", json={"kb": kb, "path": "concepts/foo"}, headers=_auth())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "deleted"
+    assert body["files_changed"] == 1  # bar.md rewritten
+    assert not (wiki / "concepts" / "foo.md").exists()  # page removed
+    bar = (wiki / "concepts" / "bar.md").read_text(encoding="utf-8")
+    assert "[[concepts/foo]]" not in bar  # inbound link demoted...
+    assert "foo" in bar  # ...to plain text, sentence kept
+    idx = (wiki / "index.md").read_text(encoding="utf-8")
+    assert "[[concepts/foo]]" not in idx  # index entry removed outright
+    assert "[[concepts/bar]]" in idx  # sibling entry untouched
+
+
+def test_delete_page_not_found_returns_404(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    r = client.post(
+        "/api/v1/page/delete", json={"kb": kb, "path": "concepts/nope"}, headers=_auth()
+    )
+    assert r.status_code == 404
+
+
+def test_delete_page_rejects_unsafe_or_non_editable_ref(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    for bad in ["summaries/x", "index", "concepts/a/b", "concepts/..", "reports/health"]:
+        r = client.post("/api/v1/page/delete", json={"kb": kb, "path": bad}, headers=_auth())
+        assert r.status_code == 400, bad
+
+
+# --- PUT /api/v1/page (edit) + POST /api/v1/page/links -----------------------
+
+
+def test_edit_page_preserves_frontmatter_and_demotes_dead_links(monkeypatch, kb_dir):
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "bar.md").write_text("# Bar\n\nbar body\n", encoding="utf-8")
+    (wiki / "concepts" / "foo.md").write_text(
+        "---\ntype: Concept\ndescription: about foo\n---\n# Foo\n\nOriginal body.\n",
+        encoding="utf-8",
+    )
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    new_body = "# Foo\n\nEdited, links [[concepts/bar]] and [[concepts/ghost]].\n"
+    r = client.put(
+        "/api/v1/page",
+        json={"kb": kb, "path": "concepts/foo", "content": new_body},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "saved"
+    assert body["ghosts_stripped"] == ["concepts/ghost"]
+
+    saved = (wiki / "concepts" / "foo.md").read_text(encoding="utf-8")
+    assert "type: Concept" in saved  # frontmatter preserved
+    assert "description: about foo" in saved
+    assert "Edited, links [[concepts/bar]]" in saved  # good link kept
+    assert "[[concepts/ghost]]" not in saved  # dead link demoted to text
+    assert "Original body." not in saved  # body replaced
+
+
+def test_edit_page_not_found_returns_404(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    r = client.put(
+        "/api/v1/page",
+        json={"kb": kb, "path": "concepts/nope", "content": "x"},
+        headers=_auth(),
+    )
+    assert r.status_code == 404
+
+
+def test_page_links_reports_out_and_backlinks(monkeypatch, kb_dir):
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "hub.md").write_text(
+        "# Hub\n\nlinks [[concepts/leaf]]\n", encoding="utf-8"
+    )
+    (wiki / "concepts" / "leaf.md").write_text("# Leaf\n\nleaf\n", encoding="utf-8")
+    (wiki / "concepts" / "ref.md").write_text("# Ref\n\nsee [[concepts/hub]]\n", encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    r = client.post("/api/v1/page/links", json={"kb": kb, "path": "concepts/hub"}, headers=_auth())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["outlinks"] == ["concepts/leaf"]  # hub -> leaf
+    assert body["backlinks"] == ["concepts/ref"]  # ref -> hub
+
+
+# --- review-fix regressions --------------------------------------------------
+
+
+def test_delete_page_leaves_excluded_docs_untouched(monkeypatch, kb_dir):
+    # A concept referenced by a generated doc (AGENTS.md, in lint's _EXCLUDED_FILES)
+    # must be neither listed as a backlink nor rewritten — deleting it leaves
+    # AGENTS.md byte-for-byte, while a real concept backlink is still demoted.
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "attention.md").write_text("# Attention\n", encoding="utf-8")
+    (wiki / "concepts" / "bar.md").write_text("see [[concepts/attention]]\n", encoding="utf-8")
+    agents = wiki / "AGENTS.md"
+    agents.write_text("Use [[wikilink]] e.g. [[concepts/attention]].\n", encoding="utf-8")
+    agents_before = agents.read_text(encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    r = client.post(
+        "/api/v1/page/delete",
+        json={"kb": kb, "path": "concepts/attention", "dry_run": True},
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    assert "concepts/bar" in r.json()["backlinks"]
+    assert all("AGENTS" not in b for b in r.json()["backlinks"])  # excluded doc absent
+
+    r = client.post(
+        "/api/v1/page/delete", json={"kb": kb, "path": "concepts/attention"}, headers=_auth()
+    )
+    assert r.status_code == 200
+    assert agents.read_text(encoding="utf-8") == agents_before  # generated doc untouched
+    assert "[[concepts/attention]]" not in (wiki / "concepts" / "bar.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_edit_page_keeps_body_starting_with_dashes(monkeypatch, kb_dir):
+    # A body that legitimately opens with a '---' block must NOT be mistaken for
+    # frontmatter and dropped; the code-managed frontmatter is still preserved.
+    wiki = kb_dir / "wiki"
+    (wiki / "concepts" / "foo.md").write_text("---\ntype: Concept\n---\n# Foo\n", encoding="utf-8")
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    body = "---\nkey: value\n---\nReal content below the fence.\n"
+    r = client.put(
+        "/api/v1/page", json={"kb": kb, "path": "concepts/foo", "content": body}, headers=_auth()
+    )
+    assert r.status_code == 200, r.text
+    saved = (wiki / "concepts" / "foo.md").read_text(encoding="utf-8")
+    assert "type: Concept" in saved  # managed frontmatter preserved
+    assert "key: value" in saved  # the user's leading '---' block was NOT eaten
+    assert "Real content below the fence." in saved
+
+
+def test_delete_kb_ghost_entry_unregisters_via_endpoint(monkeypatch, tmp_path):
+    # A registered name whose directory was removed by hand (a ghost) must be
+    # cleanable via the endpoint (config.delete_kb tolerates it).
+    from openkb.config import register_kb_alias, registered_kbs
+
+    _isolate_global(monkeypatch, tmp_path)
+    ghost = tmp_path / "ghost-kb"  # registered but never created on disk
+    register_kb_alias("ghost-kb", ghost)
+    assert any(n == "ghost-kb" for n, _ in registered_kbs())
+    client = _client(monkeypatch)
+    r = client.post(
+        "/api/v1/kb/delete", json={"kb": "ghost-kb", "confirm_name": "ghost-kb"}, headers=_auth()
+    )
+    assert r.status_code == 200, r.text
+    assert all(n != "ghost-kb" for n, _ in registered_kbs())  # registry cleaned up
+
+
+def test_summary_page_is_editable_but_not_deletable(monkeypatch, kb_dir):
+    # A summary is compiled markdown like a concept, so it is EDITABLE (recompile
+    # can still regenerate it), but NOT independently deletable — it is removed by
+    # deleting its source document.
+    wiki = kb_dir / "wiki"
+    (wiki / "summaries" / "doc.md").write_text(
+        "---\ntype: Summary\n---\n# Doc\n\nold body\n", encoding="utf-8"
+    )
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    # edit is allowed, frontmatter preserved
+    r = client.put(
+        "/api/v1/page",
+        json={"kb": kb, "path": "summaries/doc", "content": "# Doc\n\nnew body\n"},
+        headers=_auth(),
+    )
+    assert r.status_code == 200, r.text
+    saved = (wiki / "summaries" / "doc.md").read_text(encoding="utf-8")
+    assert "type: Summary" in saved
+    assert "new body" in saved and "old body" not in saved
+
+    # delete is refused for a summary (400, not deletable on its own)
+    r = client.post(
+        "/api/v1/page/delete", json={"kb": kb, "path": "summaries/doc"}, headers=_auth()
+    )
+    assert r.status_code == 400
+
+
+def test_delete_kb_maps_oserror_to_clean_500(monkeypatch, tmp_path):
+    # An rmtree failure (permission/disk, or a still-open lock file on Windows)
+    # surfaces as a clean 500 with a message, not an uncaught stack trace.
+    from openkb.config import register_kb_alias
+
+    _isolate_global(monkeypatch, tmp_path)
+    kb = _make_kb(tmp_path / "mykb")
+    register_kb_alias("boom-kb", kb)
+
+    def boom(_):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr("openkb.api_kbs_router.delete_kb", boom)
+    client = _client(monkeypatch)
+    r = client.post(
+        "/api/v1/kb/delete", json={"kb": "boom-kb", "confirm_name": "boom-kb"}, headers=_auth()
+    )
+    assert r.status_code == 500
+    assert "Failed to delete" in r.json()["detail"]
+
+
+def test_delete_kb_filenotfound_is_idempotent(monkeypatch, tmp_path):
+    # A concurrent delete that already removed the tree (FileNotFoundError) is a
+    # success, not a 500 — deleting an already-gone KB is idempotent.
+    from openkb.config import register_kb_alias
+
+    _isolate_global(monkeypatch, tmp_path)
+    kb = _make_kb(tmp_path / "mykb")
+    register_kb_alias("gone-kb", kb)
+
+    def already_gone(_):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr("openkb.api_kbs_router.delete_kb", already_gone)
+    client = _client(monkeypatch)
+    r = client.post(
+        "/api/v1/kb/delete", json={"kb": "gone-kb", "confirm_name": "gone-kb"}, headers=_auth()
+    )
+    assert r.status_code == 200
+    assert r.json()["deleted"] is True

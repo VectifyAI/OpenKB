@@ -7,7 +7,8 @@
   "actions": {
     "newKb": "新建知识库",
     "close": "关闭",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "cancel": "取消"
   },
   "fields": {
     "model": "模型",

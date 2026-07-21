@@ -52,3 +52,45 @@ export function getPage(kb: string, path: string): Promise<{ path: string; conte
 export function getKbInventory(kb: string): Promise<KbInventory> {
   return apiFetch<KbInventory>("/api/v1/list", { body: { kb } })
 }
+
+/** Result of `/api/v1/page/delete`. `backlinks` are 'section/stem' refs whose
+ *  inbound [[links]] will be / were demoted to plain text. */
+export interface PageDeleteResult {
+  status: string
+  target: string
+  backlinks: string[]
+  files_changed?: number | null
+  ghosts_stripped?: number | null
+}
+
+/** Delete a concept/entity page. With `dryRun`, only reports the impact
+ *  (backlinks) without changing anything — used for the confirm preview. */
+export function deletePage(kb: string, path: string, dryRun = false): Promise<PageDeleteResult> {
+  return apiFetch<PageDeleteResult>("/api/v1/page/delete", { body: { kb, path, dry_run: dryRun } })
+}
+
+/** Outbound + inbound links for a page (`/api/v1/page/links`) — the edit panel. */
+export interface PageLinks {
+  status: string
+  target: string
+  outlinks: string[]
+  backlinks: string[]
+}
+
+export function getPageLinks(kb: string, path: string): Promise<PageLinks> {
+  return apiFetch<PageLinks>("/api/v1/page/links", { body: { kb, path } })
+}
+
+/** Result of editing a page (`PUT /api/v1/page`). `ghosts_stripped` are the
+ *  dead [[links]] demoted to plain text on save. */
+export interface PageEditResult {
+  status: string
+  target: string
+  ghosts_stripped: string[]
+  content: string | null
+}
+
+/** Save new BODY for a concept/entity page (frontmatter preserved server-side). */
+export function editPage(kb: string, path: string, content: string): Promise<PageEditResult> {
+  return apiFetch<PageEditResult>("/api/v1/page", { method: "PUT", body: { kb, path, content } })
+}

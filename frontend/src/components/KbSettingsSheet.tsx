@@ -8,7 +8,7 @@ import {
   ShieldCheck, Clock, Radio,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getKbConfig, patchKbConfig, type KbConfig, type ConfigSource } from '@/api/kb'
+import { deleteKb, getKbConfig, patchKbConfig, type KbConfig, type ConfigSource } from '@/api/kb'
 import {
   watchStart, watchStop, watchStatus, runRecompile, runLint, type WatchStatus,
 } from '@/api/maintenance'
@@ -28,12 +28,14 @@ export default function KbSettingsSheet({
   onClose,
   docCount,
   onChanged,
+  onDeleted,
 }: {
   kb: string
   open: boolean
   onClose: () => void
   docCount: number
   onChanged?: () => void
+  onDeleted?: () => void
 }) {
   const { t } = useTranslation(['kbSettings', 'common'])
   const reduce = useReducedMotion()
@@ -114,6 +116,7 @@ export default function KbSettingsSheet({
                 <div className="flex-1 min-h-0 overflow-y-auto scroll-edge-top px-4 py-4 space-y-6">
                   <KbConfigSection kb={kb} />
                   <KbMaintenanceSection kb={kb} open={open} docCount={docCount} onChanged={onChanged} />
+                  <KbDangerSection kb={kb} onDeleted={onDeleted} />
                 </div>
               </motion.aside>
             </Dialog.Content>
@@ -729,6 +732,87 @@ function KbMaintenanceSection({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+/** Danger zone: permanently delete this KB. A type-the-name confirmation gates
+ *  POST /api/v1/kb/delete; on success the parent (KbDetail) navigates away. */
+function KbDangerSection({ kb, onDeleted }: { kb: string; onDeleted?: () => void }) {
+  const { t } = useTranslation(['kbSettings', 'common'])
+  const [confirming, setConfirming] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const matches = typed.trim() === kb
+
+  const doDelete = useCallback(async () => {
+    if (!matches || busy) return
+    setBusy(true)
+    try {
+      await deleteKb(kb, kb)
+      toast.success(t('kbSettings:dangerDeletedToast', { kb }))
+      onDeleted?.()
+    } catch (e) {
+      toast.error(t('kbSettings:dangerDeleteError', { error: errMsg(e) }))
+      setBusy(false)
+    }
+  }, [kb, matches, busy, onDeleted, t])
+
+  return (
+    <div className="space-y-3 pt-2">
+      <h3 className="text-[12px] font-semibold text-red-600 dark:text-red-400 tracking-wide">
+        {t('kbSettings:dangerHeading')}
+      </h3>
+      <div className="rounded-2xl border border-red-200/70 dark:border-red-500/25 bg-red-50/50 dark:bg-red-500/5 px-4 py-3.5 space-y-3">
+        <p className="text-[12.5px] text-muted-foreground">{t('kbSettings:dangerDesc')}</p>
+        {!confirming ? (
+          <button
+            onClick={() => setConfirming(true)}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-red-300 dark:border-red-500/40 text-[12.5px] font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/10 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {t('kbSettings:dangerDeleteButton')}
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <label className="block text-[12px] text-muted-foreground">
+              {t('kbSettings:dangerConfirmPrompt', { kb })}
+            </label>
+            <input
+              autoFocus
+              value={typed}
+              disabled={busy}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={kb}
+              className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-[13px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-red-400"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={doDelete}
+                disabled={busy || !matches}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-red-600 text-white text-[12.5px] font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {busy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                {t('kbSettings:dangerConfirmDelete')}
+              </button>
+              <button
+                onClick={() => {
+                  setConfirming(false)
+                  setTyped('')
+                }}
+                disabled={busy}
+                className="inline-flex items-center h-8 px-3 rounded-lg border border-[hsl(var(--glass-border))] text-[12.5px] font-medium text-muted-foreground hover:bg-accent transition-colors disabled:opacity-60"
+              >
+                {t('common:actions.cancel')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

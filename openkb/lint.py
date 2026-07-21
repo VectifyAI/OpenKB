@@ -236,6 +236,8 @@ def fix_broken_links(
         for raw in restrict_to:
             if not raw.is_file():
                 continue
+            if raw.name in _EXCLUDED_FILES:
+                continue  # never rewrite generated docs (AGENTS/SCHEMA/log.md)
             try:
                 raw.resolve().relative_to(wiki_resolved)
             except ValueError:

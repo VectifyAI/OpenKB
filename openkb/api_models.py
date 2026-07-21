@@ -285,6 +285,55 @@ class PageResponse(BaseModel):
     content: str
 
 
+class PageDeleteRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    # A '<section>/<name>' wiki-page ref, e.g. "concepts/attention". Only
+    # concepts/ and entities/ pages are user-deletable (validated server-side).
+    path: str = Field(..., min_length=1)
+    # dry_run reports the impacted backlink pages without deleting anything, so
+    # the UI can show "these N pages will have their links demoted" + confirm.
+    dry_run: bool = False
+
+
+class PageDeleteResponse(BaseModel):
+    status: str
+    target: str
+    # Content pages whose inbound [[links]] to the target will be / were demoted
+    # to plain text (the deletion's blast radius).
+    backlinks: list[str] = []
+    files_changed: int | None = None
+    ghosts_stripped: int | None = None
+
+
+class PageLinksRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    path: str = Field(..., min_length=1)
+
+
+class PageLinksResponse(BaseModel):
+    status: str
+    target: str
+    outlinks: list[str] = []  # pages this page links to
+    backlinks: list[str] = []  # pages that link to this page
+
+
+class PageEditRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    path: str = Field(..., min_length=1)
+    # New page BODY. The OKF frontmatter (type/description/sources) is
+    # code-managed and preserved server-side; any frontmatter here is dropped.
+    content: str
+
+
+class PageEditResponse(BaseModel):
+    status: str
+    target: str
+    # Dead [[links]] the edit introduced, demoted to plain text on save (so the
+    # UI can tell the user which links didn't resolve).
+    ghosts_stripped: list[str] = []
+    content: str | None = None  # the saved full page (frontmatter + body)
+
+
 class WatchStartRequest(BaseModel):
     kb: str = Field(..., min_length=1)
     debounce: float = Field(default=2.0, gt=0)
@@ -320,6 +369,19 @@ class KbSummaryItem(BaseModel):
 class KbListResponse(BaseModel):
     root: str
     knowledge_bases: list[KbSummaryItem]
+
+
+class KbDeleteRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    # Must equal `kb`: a type-the-name confirmation, re-checked server-side so
+    # this irreversible delete never fires from a client that skipped the guard.
+    confirm_name: str = Field(..., min_length=1)
+
+
+class KbDeleteResponse(BaseModel):
+    deleted: bool
+    kb: str
+    path: str
 
 
 class MetaResponse(BaseModel):

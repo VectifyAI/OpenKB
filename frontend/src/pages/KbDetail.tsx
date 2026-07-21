@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { motion, useReducedMotion } from 'motion/react'
-import { FileText, Loader2, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react'
+import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { getKbInventory, getPage, type KbInventory, type WikiDocument } from '@/api/wiki'
+import { deletePage, editPage, getKbInventory, getPage, getPageLinks, type KbInventory, type WikiDocument } from '@/api/wiki'
 import { streamUpload, removeDocument, type AddResult } from '@/api/maintenance'
 import { ApiError } from '@/api/client'
 import MarkdownView from '@/components/MarkdownView'
@@ -103,6 +103,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export default function KbDetail() {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const { t } = useTranslation(['kb', 'common'])
 
   const [inv, setInv] = useState<KbInventory | null>(null)
@@ -207,6 +208,33 @@ export default function KbDetail() {
       setInvError(errMsg(e))
     }
   }, [id])
+
+  /** The open page was deleted (F2): close the now-gone page and refresh the
+   *  inventory — backlink pages changed on disk too (their [[links]] were
+   *  demoted to plain text). */
+  const onPageDeleted = useCallback(() => {
+    setSelectedPath(null)
+    void refreshInventory()
+  }, [refreshInventory])
+
+  /** The open page was saved (F3): adopt the returned file content (stripping
+   *  frontmatter exactly like the load effect) or re-fetch when the backend
+   *  didn't return it, then refresh the inventory (edits can change the link
+   *  graph). The functional set never clobbers a page that loaded for a
+   *  DIFFERENT selection while the save was in flight. */
+  const onPageSaved = useCallback(
+    (path: string, content: string | null) => {
+      // editPage always returns the saved content on 200 (PageEditResponse), so
+      // adopt it directly — frontmatter stripped exactly like the load effect.
+      // The functional set never clobbers a page loaded for a DIFFERENT
+      // selection while the save was in flight.
+      if (content != null) {
+        setPage((prev) => (prev && prev.path !== path ? prev : { path, content: stripFrontmatter(content) }))
+      }
+      void refreshInventory()
+    },
+    [refreshInventory],
+  )
 
   const doUpload = useCallback(
     async (files: File[]) => {
@@ -403,6 +431,7 @@ export default function KbDetail() {
       >
         {section === 'index' ? (
           <IndexReader
+            kb={id}
             selected={selected}
             page={page}
             pageError={pageError}
@@ -410,6 +439,8 @@ export default function KbDetail() {
             hasPages={hasPages}
             inv={inv}
             onWikiLink={onWikiLink}
+            onDeleted={onPageDeleted}
+            onSaved={onPageSaved}
           />
         ) : section === 'documents' ? (
           <DocumentsPane
@@ -442,7 +473,18 @@ export default function KbDetail() {
                 {t('kb:wikiNote')}
               </div>
             </div>
-            <Reader selected={selected} page={page} pageError={pageError} selectedPath={selectedPath} hasPages={hasPages} inv={inv} onWikiLink={onWikiLink} />
+            <Reader
+              kb={id}
+              selected={selected}
+              page={page}
+              pageError={pageError}
+              selectedPath={selectedPath}
+              hasPages={hasPages}
+              inv={inv}
+              onWikiLink={onWikiLink}
+              onDeleted={onPageDeleted}
+              onSaved={onPageSaved}
+            />
           </div>
         )}
       </motion.section>
@@ -453,6 +495,13 @@ export default function KbDetail() {
         onClose={() => setSettingsOpen(false)}
         docCount={docCount}
         onChanged={refreshInventory}
+        onDeleted={() => {
+          setSettingsOpen(false)
+          // Refresh the sidebar's KB list (same event CreateKbDialog fires) so
+          // the just-deleted KB disappears without a manual reload.
+          window.dispatchEvent(new CustomEvent('openkb:reload-kbs'))
+          navigate('/kb')
+        }}
       />
     </div>
   )
@@ -461,6 +510,8 @@ export default function KbDetail() {
 /** Shared props for the page-content column, whether it renders full-width
  *  (Index) or beside the 300px `PageList` sidebar (a type card). */
 interface ReaderProps {
+  /** KB name — the `kb` param for the page edit/delete/links endpoints. */
+  kb: string
   selected: SelectedPage | null
   page: { path: string; content: string } | null
   pageError: { path: string; message: string } | null
@@ -469,13 +520,49 @@ interface ReaderProps {
   inv: KbInventory | null
   /** Navigate to a `[[wikilink]]` target clicked inside the rendered page. */
   onWikiLink: (target: string) => void
+  /** The open page was deleted: close it and refresh the inventory. */
+  onDeleted: () => void
+  /** The open page was saved: adopt `content` (the saved file, frontmatter and
+   *  all) or re-fetch when null, then refresh the inventory. */
+  onSaved: (path: string, content: string | null) => void
 }
 
 /** The actual page body: breadcrumb + Markdown, or an empty/loading state.
  *  Shared verbatim by `Reader` (Browse) and `IndexReader` (Index, full width) —
- *  they differ only in their outer scroll container. */
-function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, onWikiLink }: ReaderProps) {
+ *  they differ only in their outer scroll container. Concept/entity pages also
+ *  carry inline Edit/Delete controls (F2/F3): delete previews its backlink
+ *  impact via a dry-run before the destructive call; edit swaps the rendered
+ *  Markdown for a body-only textarea plus a read-only outlink/backlink panel. */
+function ReaderBody({ kb, selected, page, pageError, selectedPath, hasPages, inv, onWikiLink, onDeleted, onSaved }: ReaderProps) {
   const { t } = useTranslation(['kb', 'common'])
+
+  // Edit mode (F3). `links`/`linksError` are tagged with the path they belong
+  // to (same discipline as `page`/`pageError` in KbDetail) so a slow response
+  // never renders under a different page.
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [links, setLinks] = useState<{ path: string; outlinks: string[]; backlinks: string[] } | null>(null)
+  const [linksError, setLinksError] = useState<{ path: string; message: string } | null>(null)
+
+  // Delete confirm (F2): `deleteImpact` holds the dry-run backlink preview for
+  // the page awaiting confirmation (path-tagged like the edit state above).
+  const [checkingDelete, setCheckingDelete] = useState(false)
+  const [deleteImpact, setDeleteImpact] = useState<{ path: string; backlinks: string[] } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  // Switching pages must never leak edit/confirm state into the next page.
+  useEffect(() => {
+    setEditing(false)
+    setDraft('')
+    setSaving(false)
+    setLinks(null)
+    setLinksError(null)
+    setCheckingDelete(false)
+    setDeleteImpact(null)
+    setDeleting(false)
+  }, [selectedPath])
+
   const pageReady = page && page.path === selectedPath
   const pageFailed = pageError && pageError.path === selectedPath
 
@@ -487,6 +574,81 @@ function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, on
     )
   }
 
+  // Editable: concept/entity synthesis + per-document summaries (all compiled
+  // markdown a recompile can regenerate). Deletable is narrower — a summary is
+  // removed by deleting its source document, never on its own. reports/index.md
+  // are generated artifacts the backend refuses to mutate either way.
+  const canEdit =
+    selected.group === 'concepts/' ||
+    selected.group === 'entities/' ||
+    selected.group === 'summaries/'
+  const canDelete = selected.group === 'concepts/' || selected.group === 'entities/'
+  const confirmActive = deleteImpact !== null && deleteImpact.path === selected.path
+  const linksReady = links && links.path === selected.path
+  const linksFailed = linksError && linksError.path === selected.path
+
+  const startEdit = () => {
+    if (!page || page.path !== selected.path) return
+    setDraft(page.content)
+    setEditing(true)
+    const path = selected.path
+    setLinks(null)
+    setLinksError(null)
+    getPageLinks(kb, path)
+      .then((r) => setLinks({ path, outlinks: r.outlinks, backlinks: r.backlinks }))
+      .catch((e) => setLinksError({ path, message: errMsg(e) }))
+  }
+
+  const doSave = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const res = await editPage(kb, selected.path, draft)
+      const ghosts = res.ghosts_stripped ?? []
+      if (ghosts.length > 0) {
+        toast.warning(t('kb:pageOps.ghostsDemoted', { links: ghosts.join(', ') }))
+      } else {
+        toast.success(t('kb:pageOps.saveSuccess'))
+      }
+      onSaved(selected.path, res.content)
+      setEditing(false)
+      setDraft('')
+    } catch (e) {
+      // Keep edit mode (and the draft) so a transient failure loses nothing.
+      toast.error(t('kb:pageOps.saveError', { error: errMsg(e) }))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const startDelete = async () => {
+    if (checkingDelete) return
+    setCheckingDelete(true)
+    const path = selected.path
+    try {
+      const res = await deletePage(kb, path, true)
+      setDeleteImpact({ path, backlinks: res.backlinks ?? [] })
+    } catch (e) {
+      toast.error(t('kb:pageOps.deleteError', { error: errMsg(e) }))
+    } finally {
+      setCheckingDelete(false)
+    }
+  }
+
+  const doDelete = async () => {
+    if (deleting) return
+    setDeleting(true)
+    try {
+      await deletePage(kb, selected.path)
+      toast.success(t('kb:pageOps.deleteSuccess', { title: selected.title }))
+      onDeleted()
+    } catch (e) {
+      toast.error(t('kb:pageOps.deleteError', { error: errMsg(e) }))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="w-full max-w-[1600px] mx-auto px-8 lg:px-12 py-7 anim-fade-up" key={selected.path}>
       <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground mb-4">
@@ -494,16 +656,154 @@ function ReaderBody({ selected, page, pageError, selectedPath, hasPages, inv, on
           wiki/{selected.group}
           {selected.title}
         </span>
+        {(canEdit || canDelete) && pageReady && !editing && !confirmActive && (
+          <div className="ml-auto flex items-center gap-1.5">
+            {canEdit && (
+              <button
+                onClick={startEdit}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              >
+                <Pencil className="w-3 h-3" />
+                {t('kb:pageOps.edit')}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={startDelete}
+                disabled={checkingDelete}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-60"
+              >
+                {checkingDelete ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                {t('kb:pageOps.delete')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Delete confirm (F2): dry-run impact preview + Confirm/Cancel. */}
+      {confirmActive && (
+        <div className="mb-4 rounded-2xl border border-red-200/70 dark:border-red-500/25 bg-red-50/50 dark:bg-red-500/5 px-4 py-3.5 space-y-2">
+          <p className="text-[13px] font-medium text-foreground">{t('kb:pageOps.deletePrompt', { title: selected.title })}</p>
+          <p className="text-[12px] text-muted-foreground">
+            {deleteImpact.backlinks.length > 0
+              ? t('kb:pageOps.deleteImpact', { count: deleteImpact.backlinks.length })
+              : t('kb:pageOps.deleteNoBacklinks')}
+          </p>
+          {deleteImpact.backlinks.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {deleteImpact.backlinks.map((b) => (
+                <span key={b} className="font-mono2 text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+                  {b}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              onClick={doDelete}
+              disabled={deleting}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-red-600 text-white text-[12.5px] font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+            >
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {t('kb:pageOps.deleteConfirm')}
+            </button>
+            <button
+              onClick={() => setDeleteImpact(null)}
+              disabled={deleting}
+              className="inline-flex items-center h-8 px-3 rounded-lg border border-[hsl(var(--glass-border))] text-[12.5px] font-medium text-muted-foreground hover:bg-accent transition-colors disabled:opacity-60"
+            >
+              {t('common:actions.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {pageFailed ? (
         <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200/70 dark:border-red-500/25 px-3 py-2 text-[13px] text-red-600 dark:text-red-400">
           {t('common:pageLoadError', { error: pageError.message })}
+        </div>
+      ) : editing && pageReady ? (
+        /* Edit mode (F3): body-only textarea + save/cancel + links panel. */
+        <div className="space-y-3">
+          <textarea
+            value={draft}
+            disabled={saving}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label={t('kb:pageOps.editorAria')}
+            className="w-full min-h-[420px] rounded-xl border border-input bg-transparent px-4 py-3 text-[13px] leading-relaxed font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus:border-accent-brand resize-y"
+          />
+          <p className="text-[11.5px] text-muted-foreground">{t('kb:pageOps.editRecompileNote')}</p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={doSave}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-accent-brand text-white text-[12.5px] font-medium hover:bg-accent-brand/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              {t('kb:pageOps.save')}
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false)
+                setDraft('')
+              }}
+              disabled={saving}
+              className="inline-flex items-center h-8 px-3 rounded-lg border border-[hsl(var(--glass-border))] text-[12.5px] font-medium text-muted-foreground hover:bg-accent transition-colors disabled:opacity-60"
+            >
+              {t('common:actions.cancel')}
+            </button>
+          </div>
+          <div className="rounded-2xl border border-[hsl(var(--glass-border))] glass-2 px-4 py-3.5">
+            <h3 className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground tracking-wide">
+              <Link2 className="w-3.5 h-3.5" />
+              {t('kb:pageOps.links.heading')}
+            </h3>
+            {linksFailed ? (
+              <div className="mt-2 text-[12px] text-red-600 dark:text-red-400">
+                {t('kb:pageOps.links.error', { error: linksError.message })}
+              </div>
+            ) : linksReady ? (
+              <div className="mt-2.5 grid gap-3 sm:grid-cols-2">
+                <LinkRefList label={t('kb:pageOps.links.outlinks')} refs={links.outlinks} />
+                <LinkRefList label={t('kb:pageOps.links.backlinks')} refs={links.backlinks} />
+              </div>
+            ) : (
+              <div className="mt-2 flex items-center gap-2 text-[12px] text-muted-foreground">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {t('common:loading')}
+              </div>
+            )}
+          </div>
         </div>
       ) : pageReady ? (
         <MarkdownView source={page.content} onWikiLink={onWikiLink} />
       ) : (
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />{t('common:loading')}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** One read-only column of `section/stem` page refs (outlinks or backlinks)
+ *  in the edit-mode links panel. */
+function LinkRefList({ label, refs }: { label: string; refs: string[] }) {
+  const { t } = useTranslation(['kb'])
+  return (
+    <div>
+      <div className="text-[11.5px] font-medium text-muted-foreground">{label}</div>
+      {refs.length === 0 ? (
+        <div className="mt-1 text-[12px] text-muted-foreground/70">{t('kb:pageOps.links.none')}</div>
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {refs.map((r) => (
+            <span key={r} className="font-mono2 text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+              {r}
+            </span>
+          ))}
         </div>
       )}
     </div>

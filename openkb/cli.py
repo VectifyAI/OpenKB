@@ -1819,6 +1819,44 @@ def _refresh_schema(wiki_dir: Path) -> bool:
     return True
 
 
+@cli.command(name="delete-kb")
+@click.argument("name")
+@click.option(
+    "--yes", "-y", is_flag=True, default=False, help="Skip the type-the-name confirmation."
+)
+def delete_kb_cmd(name, yes):
+    """Permanently delete a knowledge base (physical removal, irreversible).
+
+    NAME is the KB name as addressed by the web UI / registry. Removes the
+    entire KB directory (raw docs + wiki) and unregisters it from the global
+    config. There is no undo.
+    """
+    from openkb.config import _is_kb_dir, registered_kbs, resolve_kb_alias
+    from openkb.kb_admin import delete_kb
+
+    try:
+        kb_dir = resolve_kb_alias(name)
+    except ValueError as exc:
+        click.echo(f"Invalid KB name: {exc}")
+        return
+    # Accept a live KB dir OR a registered ghost (directory already removed by
+    # hand) so the stuck registry entry has a cleanup path; reject anything else.
+    registered = any(p == kb_dir for _, p in registered_kbs())
+    if not _is_kb_dir(kb_dir) and not registered:
+        click.echo(f"No knowledge base named '{name}' found.")
+        return
+    click.echo(f"About to PERMANENTLY delete knowledge base '{name}':")
+    click.echo(f"  {kb_dir}")
+    click.echo("This removes the entire directory (raw docs + wiki) and cannot be undone.")
+    if not yes:
+        typed = click.prompt("Type the KB name to confirm", default="", show_default=False)
+        if typed.strip() != name:
+            click.echo("Name did not match — aborted.")
+            return
+    delete_kb(kb_dir)
+    click.echo(f"Deleted knowledge base '{name}'.")
+
+
 @cli.command()
 @click.argument("doc_name", required=False)
 @click.option(
