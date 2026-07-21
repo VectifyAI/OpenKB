@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from openkb.cli import _LONG_DOC_TYPES
 from openkb.state import HashRegistry
 
 
@@ -20,9 +21,9 @@ def _render_pages(pages: list[dict[str, Any]]) -> str:
     """Join a long doc's per-page ``content`` into one Markdown string.
 
     Pages are separated by a thematic break (``---``) so the reader keeps
-    page boundaries; blank/missing page content is skipped.
+    page boundaries; blank/missing content and non-dict entries are skipped.
     """
-    parts = [str(page.get("content", "")).strip() for page in pages]
+    parts = [str(page.get("content", "")).strip() for page in pages if isinstance(page, dict)]
     return "\n\n---\n\n".join(part for part in parts if part)
 
 
@@ -39,8 +40,12 @@ def _resolve_source_file(kb_dir: Path, meta: dict, doc_name: str) -> Path | None
     stored = meta.get("source_path")
     if stored:
         candidates.append(kb_dir / stored)
-    candidates.append(sources_dir / f"{doc_name}.md")
-    candidates.append(sources_dir / f"{doc_name}.json")
+    # Long docs are stored as ``<doc_name>.json`` (per-page), short docs as
+    # ``<doc_name>.md``. Order the by-convention fallbacks by THIS doc's type so
+    # two docs sharing a doc_name (one short, one long) each resolve to their
+    # own file rather than whichever extension is tried first.
+    exts = (".json", ".md") if meta.get("type") in _LONG_DOC_TYPES else (".md", ".json")
+    candidates.extend(sources_dir / f"{doc_name}{ext}" for ext in exts)
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
@@ -71,6 +76,8 @@ def read_document_source(kb_dir: Path, file_hash: str) -> dict[str, Any] | None:
 
     if source.suffix == ".json":
         pages = json.loads(source.read_text(encoding="utf-8"))
+        if not isinstance(pages, list):
+            raise ValueError(f"source JSON is not a page list: {source.name}")
         content = _render_pages(pages)
         page_count: int | None = len(pages)
     else:

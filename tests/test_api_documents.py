@@ -121,6 +121,64 @@ def test_document_source_missing_file_404(monkeypatch, kb_dir):
     assert resp.status_code == 404
 
 
+def test_document_source_doc_name_collision_resolves_by_type(monkeypatch, kb_dir):
+    """Two docs share a doc_name (short .md + long .json), and the long entry has
+    no source_path. Each hash must resolve to its OWN file via the type ordering,
+    not whichever extension is tried first."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    _write_hashes(
+        kb_dir,
+        {
+            "short": {"name": "dup.md", "doc_name": "dup", "type": "md"},
+            "long": {"name": "dup.pdf", "doc_name": "dup", "type": "long_pdf"},
+        },
+    )
+    (kb_dir / "wiki" / "sources" / "dup.md").write_text("SHORT content", encoding="utf-8")
+    (kb_dir / "wiki" / "sources" / "dup.json").write_text(
+        json.dumps([{"page": 1, "content": "LONG page one", "images": []}]), encoding="utf-8"
+    )
+
+    long_resp = client.post(
+        "/api/v1/document/source", json={"kb": kb, "hash": "long"}, headers=_auth()
+    )
+    assert long_resp.status_code == 200
+    assert "LONG page one" in long_resp.json()["content"]
+    assert "SHORT content" not in long_resp.json()["content"]
+    assert long_resp.json()["pages"] == 1
+
+    short_resp = client.post(
+        "/api/v1/document/source", json={"kb": kb, "hash": "short"}, headers=_auth()
+    )
+    assert short_resp.json()["content"] == "SHORT content"
+
+
+def test_document_source_malformed_json_is_controlled_500(monkeypatch, kb_dir):
+    """A corrupt/unexpected source JSON returns a controlled 500 with a clean
+    message, not an unhandled exception."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    _write_hashes(kb_dir, {"h": {"name": "broken.pdf", "doc_name": "broken", "type": "long_pdf"}})
+    (kb_dir / "wiki" / "sources" / "broken.json").write_text("{not valid json", encoding="utf-8")
+
+    resp = client.post("/api/v1/document/source", json={"kb": kb, "hash": "h"}, headers=_auth())
+
+    assert resp.status_code == 500
+    assert "Could not read" in resp.json()["detail"]
+
+
+def test_document_source_non_list_json_is_controlled_500(monkeypatch, kb_dir):
+    """A source JSON that parses but is not a page list is rejected cleanly."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    _write_hashes(kb_dir, {"h": {"name": "odd.pdf", "doc_name": "odd", "type": "long_pdf"}})
+    (kb_dir / "wiki" / "sources" / "odd.json").write_text('{"pages": 3}', encoding="utf-8")
+
+    resp = client.post("/api/v1/document/source", json={"kb": kb, "hash": "h"}, headers=_auth())
+
+    assert resp.status_code == 500
+
+
 def test_document_source_requires_auth(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     _use_named_kb(monkeypatch, kb_dir)

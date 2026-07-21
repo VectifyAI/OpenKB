@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { motion, useReducedMotion } from 'motion/react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle, X, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import { deletePage, editPage, getDocumentSource, getKbInventory, getPage, getPageLinks, type DocumentSource, type KbInventory, type WikiDocument } from '@/api/wiki'
@@ -845,176 +846,160 @@ function UploadStatusIcon({ status }: { status: UploadStatus }) {
   }
 }
 
-/** Documents section: upload dropzone + uploaded-document list + remote
- *  connector cards. Moved verbatim from the old Sources tab body. */
-/** Read-only slide-out drawer showing a document's converted full text.
+/** Read-only slide-out reader for a document's converted source text.
  *
- * Documents are ingestion artifacts ("Do not modify directly"), so this is a
- * viewer only — no edit affordance (unlike the wiki-page Reader). Content is
- * fetched by hash and cached; the memoized body means re-opening a document is
- * instant and the parsed Markdown is not recomputed. A wide panel + narrow
- * measure keeps long docs (many pages concatenated) readable; the body scrolls
- * independently and native find-in-page works because the whole document is
- * rendered (not virtualized). */
+ * Presentational: the parent (DocumentsPane) owns the fetch, per-hash cache,
+ * and memoized body, so this can unmount on close (Radix Dialog) yet re-open
+ * instantly with un-reparsed Markdown. Radix Dialog supplies the modal a11y —
+ * focus trap, initial + return focus, Escape, and background inert — and
+ * `shown` keeps the last doc rendered through the exit animation (doc goes null
+ * on close). The body scrolls independently and native find-in-page works (the
+ * whole document is rendered, not virtualized). Documents are read-only
+ * ingestion artifacts, so there is no edit affordance. */
 function DocumentReaderDrawer({
-  kb,
   doc,
+  body,
+  loading,
+  error,
+  isEmpty,
+  onRetry,
   onClose,
 }: {
-  kb: string
   doc: WikiDocument | null
+  body: ReactNode
+  loading: boolean
+  error: string | null
+  isEmpty: boolean
+  onRetry: () => void
   onClose: () => void
 }) {
   const { t } = useTranslation(['kb', 'common'])
-  const [source, setSource] = useState<DocumentSource | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [reloadSeq, setReloadSeq] = useState(0)
-  // Per-hash cache returns the SAME DocumentSource object on re-open, so the
-  // memoized body below is not re-parsed.
-  const cacheRef = useRef<Map<string, DocumentSource>>(new Map())
+  const reduce = useReducedMotion()
+  // The control that opened the drawer, captured before Radix moves focus in,
+  // so focus returns to it on close (mirrors KbSettingsSheet).
+  const openerRef = useRef<HTMLElement | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const open = doc !== null
-  const hash = doc?.hash ?? null
-
+  // Keep the last doc visible during the exit animation (doc is null once closed).
+  const [shown, setShown] = useState<WikiDocument | null>(doc)
   useEffect(() => {
-    if (!hash) return
-    const cached = cacheRef.current.get(hash)
-    if (cached) {
-      setSource(cached)
-      setError(null)
-      setLoading(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
-    setSource(null)
-    setError(null)
-    getDocumentSource(kb, hash)
-      .then((r) => {
-        if (cancelled) return
-        cacheRef.current.set(hash, r)
-        setSource(r)
-      })
-      .catch((e) => {
-        if (!cancelled) setError(errMsg(e))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [kb, hash, reloadSeq])
-
-  // ESC closes; listener attached only while open.
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
+    if (doc) setShown(doc)
+  }, [doc])
   // Reset scroll to top when switching documents.
   useEffect(() => {
-    scrollRef.current?.scrollTo(0, 0)
-  }, [hash])
-
-  // Parse Markdown once per fetched source (cache yields a stable object ref).
-  const body = useMemo(
-    () => (source ? <MarkdownView source={source.content} /> : null),
-    [source],
-  )
-  const hasContent = source != null && source.content.trim().length > 0
+    if (doc) scrollRef.current?.scrollTo(0, 0)
+  }, [doc])
 
   return (
-    <>
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={cn(
-          'fixed inset-0 z-40 bg-black/30 transition-opacity duration-200',
-          open ? 'opacity-100' : 'pointer-events-none opacity-0',
-        )}
-      />
-      <aside
-        role="dialog"
-        aria-modal={open}
-        aria-label={doc?.name ?? t('kb:docs.reader.title')}
-        // Closed = off-screen but still in the DOM (for the slide transition);
-        // `inert` drops it from the a11y tree and tab order so the hidden panel
-        // is never focusable/announced.
-        inert={!open}
-        className={cn(
-          'fixed inset-y-0 right-0 z-50 flex h-full w-[min(70vw,900px)] max-w-full flex-col',
-          'glass border-l border-[hsl(var(--glass-border))] shadow-glass-lg rounded-l-apple-lg',
-          'transition-transform duration-300 ease-out',
-          open ? 'translate-x-0' : 'translate-x-full',
-        )}
-      >
-        <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--glass-border))] px-5 py-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[hsl(var(--glass-border))] bg-muted">
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-[13.5px] font-medium text-foreground">{doc?.name}</div>
-            <div className="mt-0.5 flex items-center gap-2 text-[12px] text-muted-foreground">
-              {doc?.display_type && <span>{doc.display_type}</span>}
-              {doc?.pages != null && <span>· {t('kb:docs.pages', { count: doc.pages })}</span>}
-              <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-px text-[11px]">
-                <BookOpen className="h-3 w-3" />
-                {t('kb:docs.reader.readonly')}
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            title={t('kb:docs.reader.close')}
-            aria-label={t('kb:docs.reader.close')}
-            className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose()
+      }}
+    >
+      <AnimatePresence>
+        {open && (
+          <Dialog.Portal forceMount>
+            <Dialog.Overlay asChild forceMount>
+              <motion.div
+                className="fixed inset-0 z-40 bg-black/30"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={reduce ? { duration: 0.12 } : { duration: 0.2 }}
+                onClick={onClose}
+              />
+            </Dialog.Overlay>
+            <Dialog.Content
+              asChild
+              forceMount
+              aria-modal="true"
+              aria-describedby={undefined}
+              onOpenAutoFocus={() => {
+                openerRef.current = document.activeElement as HTMLElement | null
+              }}
+              onCloseAutoFocus={(e) => {
+                e.preventDefault()
+                openerRef.current?.focus()
+              }}
+            >
+              <motion.aside
+                className="fixed inset-y-0 right-0 z-50 flex w-[min(70vw,900px)] max-w-full flex-col glass border-l border-[hsl(var(--glass-border))] shadow-glass-lg rounded-l-apple-lg"
+                initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24 }}
+                animate={reduce ? { opacity: 1 } : { opacity: 1, x: 0 }}
+                exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24 }}
+                transition={reduce ? { duration: 0.12 } : { type: 'spring', bounce: 0, duration: 0.3 }}
+              >
+                <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--glass-border))] px-5 py-3">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[hsl(var(--glass-border))] bg-muted">
+                    <FileText className="h-4 w-4 text-muted-foreground" />
+                  </span>
+                  <div className="min-w-0">
+                    <Dialog.Title asChild>
+                      <div className="truncate text-[13.5px] font-medium text-foreground">{shown?.name}</div>
+                    </Dialog.Title>
+                    <div className="mt-0.5 flex items-center gap-2 text-[12px] text-muted-foreground">
+                      {shown?.display_type && <span>{shown.display_type}</span>}
+                      {shown?.pages != null && <span>· {t('kb:docs.pages', { count: shown.pages })}</span>}
+                      <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-px text-[11px]">
+                        <BookOpen className="h-3 w-3" />
+                        {t('kb:docs.reader.readonly')}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={onClose}
+                    title={t('kb:docs.reader.close')}
+                    aria-label={t('kb:docs.reader.close')}
+                    className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
-          <div className="mx-auto max-w-[72ch] px-6 py-6">
-            {loading && (
-              <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t('kb:docs.reader.loading')}
-              </div>
-            )}
-            {error && (
-              <div className="py-16 text-center">
-                <p className="text-[13px] text-red-600 dark:text-red-400">
-                  {t('kb:docs.reader.error', { error })}
-                </p>
-                <button
-                  onClick={() => setReloadSeq((s) => s + 1)}
-                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[hsl(var(--glass-border))] px-3 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent"
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  {t('kb:docs.reader.retry')}
-                </button>
-              </div>
-            )}
-            {!loading && !error && !hasContent && source != null && (
-              <div className="py-16 text-center text-[13px] text-muted-foreground">
-                {t('kb:docs.reader.emptyDoc')}
-              </div>
-            )}
-            {!loading && !error && hasContent && (
-              <div className="text-[14px] leading-relaxed text-foreground">{body}</div>
-            )}
-          </div>
-        </div>
-      </aside>
-    </>
+                <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                  <div className="mx-auto max-w-[72ch] px-6 py-6">
+                    {loading && (
+                      <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t('kb:docs.reader.loading')}
+                      </div>
+                    )}
+                    {error && (
+                      <div className="py-16 text-center">
+                        <p className="text-[13px] text-red-600 dark:text-red-400">
+                          {t('kb:docs.reader.error', { error })}
+                        </p>
+                        <button
+                          onClick={onRetry}
+                          className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[hsl(var(--glass-border))] px-3 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          {t('kb:docs.reader.retry')}
+                        </button>
+                      </div>
+                    )}
+                    {!loading && !error && isEmpty && (
+                      <div className="py-16 text-center text-[13px] text-muted-foreground">
+                        {t('kb:docs.reader.emptyDoc')}
+                      </div>
+                    )}
+                    {!loading && !error && !isEmpty && (
+                      <div className="text-[14px] leading-relaxed text-foreground">{body}</div>
+                    )}
+                  </div>
+                </div>
+              </motion.aside>
+            </Dialog.Content>
+          </Dialog.Portal>
+        )}
+      </AnimatePresence>
+    </Dialog.Root>
   )
 }
+
+/** Documents section: upload dropzone + uploaded-document list + remote
+ *  connector cards. Moved verbatim from the old Sources tab body. */
 
 function DocumentsPane({
   kb,
@@ -1046,8 +1031,64 @@ function DocumentsPane({
   // `deletingName` is the row whose remove request is in flight.
   const [confirmName, setConfirmName] = useState<string | null>(null)
   const [deletingName, setDeletingName] = useState<string | null>(null)
-  // The document whose read-only source drawer is open (null = closed).
+  // Document reader drawer. State lives HERE (not in the drawer, which unmounts
+  // on close via Radix) so the per-hash cache and memoized body survive
+  // open/close and re-opening is instant without re-parsing Markdown.
   const [openDoc, setOpenDoc] = useState<WikiDocument | null>(null)
+  const [docSource, setDocSource] = useState<DocumentSource | null>(null)
+  const [docLoading, setDocLoading] = useState(false)
+  const [docError, setDocError] = useState<string | null>(null)
+  const [docReloadSeq, setDocReloadSeq] = useState(0)
+  const sourceCache = useRef<Map<string, DocumentSource>>(new Map())
+  const closeDrawer = useCallback(() => setOpenDoc(null), [])
+  const openHash = openDoc?.hash ?? null
+
+  // Drop cached content when the inventory changes (a recompile can rewrite a
+  // document's converted text under the same raw hash), so the next open
+  // refetches instead of serving stale text.
+  useEffect(() => {
+    sourceCache.current.clear()
+  }, [documents])
+
+  // Fetch the open document's source (per-hash cache; retry via docReloadSeq).
+  useEffect(() => {
+    if (!openHash) return
+    const cached = sourceCache.current.get(openHash)
+    if (cached) {
+      setDocSource(cached)
+      setDocError(null)
+      setDocLoading(false)
+      return
+    }
+    let cancelled = false
+    setDocLoading(true)
+    setDocSource(null)
+    setDocError(null)
+    getDocumentSource(kb, openHash)
+      .then((r) => {
+        if (cancelled) return
+        sourceCache.current.set(openHash, r)
+        setDocSource(r)
+      })
+      .catch((e) => {
+        if (!cancelled) setDocError(errMsg(e))
+      })
+      .finally(() => {
+        if (!cancelled) setDocLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kb, openHash, docReloadSeq])
+
+  // Parse Markdown once per fetched source (stable cache ref → no re-parse).
+  const readerBody = useMemo(
+    () =>
+      docSource && docSource.content.trim() ? <MarkdownView source={docSource.content} /> : null,
+    [docSource],
+  )
+  const readerEmpty = docSource != null && docSource.content.trim().length === 0
+
   const handleDelete = async (name: string) => {
     setDeletingName(name)
     try {
@@ -1156,39 +1197,35 @@ function DocumentsPane({
           {documents.map((d, i) => (
             <div
               key={d.hash || d.name || i}
-              role="button"
-              tabIndex={0}
-              onClick={() => setOpenDoc(d)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  setOpenDoc(d)
-                }
-              }}
-              title={t('kb:docs.reader.open')}
               className={cn(
                 'anim-fade-up rounded-2xl border border-[hsl(var(--glass-border))] glass-2 px-4 py-3 flex items-center gap-3',
-                'cursor-pointer transition-colors hover:border-foreground/20 hover:bg-accent/40',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand/50',
+                'transition-colors hover:border-foreground/20',
                 `anim-d${Math.min(i + 1, 4)}`,
               )}
             >
-              <span className="w-9 h-9 rounded-xl bg-muted border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
-                <FileText className="w-4 h-4 text-muted-foreground" />
-              </span>
-              <div className="min-w-0">
-                <div className="text-[13.5px] font-medium text-foreground truncate">{d.name}</div>
-                <div className="text-[12px] text-muted-foreground mt-0.5">
-                  {d.display_type}
-                  {d.pages != null && <> · {t('kb:docs.pages', { count: d.pages })}</>}
-                </div>
-              </div>
-              {/* Trailing controls (hash chip + delete). stopPropagation so a
-                  click here never opens the reader drawer. */}
-              <div
-                className="ml-auto flex items-center gap-2 shrink-0"
-                onClick={(e) => e.stopPropagation()}
+              {/* The open-reader target is a real <button> covering the icon +
+                  title; the delete control is a SIBLING (not nested), so keyboard
+                  activation of delete never bubbles into opening the reader and
+                  no event-propagation guard is needed. */}
+              <button
+                type="button"
+                onClick={() => setOpenDoc(d)}
+                title={t('kb:docs.reader.open')}
+                className="flex min-w-0 flex-1 items-center gap-3 text-left rounded-xl cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand/50"
               >
+                <span className="w-9 h-9 rounded-xl bg-muted border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[13.5px] font-medium text-foreground truncate">{d.name}</div>
+                  <div className="text-[12px] text-muted-foreground mt-0.5">
+                    {d.display_type}
+                    {d.pages != null && <> · {t('kb:docs.pages', { count: d.pages })}</>}
+                  </div>
+                </div>
+              </button>
+              {/* Trailing controls: hash chip + delete, siblings of the open button. */}
+              <div className="flex items-center gap-2 shrink-0">
                 {d.hash && (
                   <span className="font-mono2 text-[11px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
                     {d.hash.slice(0, 8)}
@@ -1239,7 +1276,15 @@ function DocumentsPane({
         </div>
       </div>
     </div>
-    <DocumentReaderDrawer kb={kb} doc={openDoc} onClose={() => setOpenDoc(null)} />
+    <DocumentReaderDrawer
+      doc={openDoc}
+      body={readerBody}
+      loading={docLoading}
+      error={docError}
+      isEmpty={readerEmpty}
+      onRetry={() => setDocReloadSeq((s) => s + 1)}
+      onClose={closeDrawer}
+    />
     </>
   )
 }

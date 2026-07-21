@@ -24,7 +24,12 @@ async def document_source_endpoint(
     _: None = Depends(require_bearer_token),
 ) -> DocumentSourceResponse:
     kb_dir = _resolve_kb(request.kb)
-    result = await run_in_threadpool(read_document_source, kb_dir, request.hash)
+    try:
+        result = await run_in_threadpool(read_document_source, kb_dir, request.hash)
+    except (OSError, ValueError) as exc:
+        # Corrupt/unreadable source file (bad JSON, unexpected shape, I/O error):
+        # a controlled 500 with a clean message beats an unhandled stack trace.
+        raise HTTPException(status_code=500, detail="Could not read document source.") from exc
     if result is None:
         raise HTTPException(status_code=404, detail="Document source not found.")
     return DocumentSourceResponse(**result)
