@@ -1081,11 +1081,27 @@ function DocumentsPane({
     }
   }, [kb, openHash, docReloadSeq])
 
+  // Map a source image ref to the authed image endpoint. Long-doc JSON stores
+  // wiki-root-relative `sources/images/...`; short-doc MD uses note-relative
+  // `images/...` — normalize both to a wiki-relative path. Non-matching refs
+  // (external / data URLs) return null and render as plain text.
+  const resolveDocImageSrc = useCallback(
+    (rawSrc: string): string | null => {
+      let rel: string | null = null
+      if (rawSrc.startsWith('sources/images/')) rel = rawSrc
+      else if (rawSrc.startsWith('images/')) rel = `sources/${rawSrc}`
+      if (!rel) return null
+      return `/api/v1/document/image?kb=${encodeURIComponent(kb)}&path=${encodeURIComponent(rel)}`
+    },
+    [kb],
+  )
   // Parse Markdown once per fetched source (stable cache ref → no re-parse).
   const readerBody = useMemo(
     () =>
-      docSource && docSource.content.trim() ? <MarkdownView source={docSource.content} /> : null,
-    [docSource],
+      docSource && docSource.content.trim() ? (
+        <MarkdownView source={docSource.content} resolveImageSrc={resolveDocImageSrc} />
+      ) : null,
+    [docSource, resolveDocImageSrc],
   )
   const readerEmpty = docSource != null && docSource.content.trim().length === 0
 

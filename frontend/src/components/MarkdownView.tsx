@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { fetchAsBlobUrl } from '@/api/client'
 import { useTheme } from '@/lib/theme'
 
 /** Guard for [text](url) links: only render a real anchor for http(s) or
@@ -31,11 +32,19 @@ const isSafeUrl = (u: string) => {
  * wikilink target is NOT recursed). Single `*`/`_` obey a minimal left/right
  * flanking rule so intraword runs (`a_b_c`, `2*3*4`) stay literal.
  */
-function inline(text: string, onWikiLink?: (target: string) => void): React.ReactNode[] {
+function inline(
+  text: string,
+  onWikiLink?: (target: string) => void,
+  resolveImageSrc?: (rawSrc: string) => string | null,
+): React.ReactNode[] {
   const parts: React.ReactNode[] = []
   // Bold is non-greedy (`.+?`) so it tolerates an inner opposite-emphasis
-  // (`**a *b* c**`); italic keeps a bounded `[^*]+`/`[^_]+` class.
-  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
+  // (`**a *b* c**`); italic keeps a bounded `[^*]+`/`[^_]+` class. The image
+  // alternative `![alt](url)` is included ONLY when a resolveImageSrc is given
+  // (the document reader), so chat/wiki rendering stays byte-for-byte unchanged.
+  const re = resolveImageSrc
+    ? /(\[\[[^\]]+\]\]|!\[[^\]]*\]\((?:[^()]|\([^()]*\))*\)|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
+    : /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
   let last = 0, m: RegExpExecArray | null, k = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
@@ -85,11 +94,28 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
       )
     } else if (tok.startsWith('**')) {
       // Recurse so nested markup (e.g. `**[docs](url)**`) resolves. slice is strictly shorter.
-      parts.push(<strong key={k++} className="font-semibold text-foreground">{inline(tok.slice(2, -2), onWikiLink)}</strong>)
+      parts.push(<strong key={k++} className="font-semibold text-foreground">{inline(tok.slice(2, -2), onWikiLink, resolveImageSrc)}</strong>)
     } else if (tok.startsWith('~~')) {
-      parts.push(<del key={k++} className="line-through">{inline(tok.slice(2, -2), onWikiLink)}</del>)
+      parts.push(<del key={k++} className="line-through">{inline(tok.slice(2, -2), onWikiLink, resolveImageSrc)}</del>)
     } else if (tok.startsWith('`')) {
       parts.push(<code key={k++} className="font-mono2 text-[12px] bg-muted rounded px-1 py-px">{tok.slice(1, -1)}</code>)
+    } else if (tok.startsWith('![')) {
+      // Markdown image — only reached when resolveImageSrc is provided (the
+      // regex omits this token otherwise). resolveImageSrc maps a KB-relative
+      // source path to an authed API path, or null for external/data URLs
+      // (left as literal text). Cannot collide with the link/wikilink branches:
+      // those match tokens starting with '[', this one starts with '!['.
+      const im = /^!\[([^\]]*)\]\(((?:[^()]|\([^()]*\))*)\)$/.exec(tok)
+      const alt = im ? im[1] : ''
+      const raw = im ? im[2].trim() : ''
+      const apiPath = raw ? (resolveImageSrc?.(raw) ?? null) : null
+      parts.push(
+        apiPath ? (
+          <AuthedImage key={k++} apiPath={apiPath} alt={alt} />
+        ) : (
+          <span key={k++}>{tok}</span>
+        ),
+      )
     } else if (tok.startsWith('[')) {
       // Inline link [text](url). `[[…]]` was already consumed above, so any
       // `[` reaching here is a genuine link. Only emit an anchor when the URL
@@ -109,7 +135,7 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
             rel="noopener noreferrer"
             className="text-accent-brand hover:underline"
           >
-            {inline(label, onWikiLink)}
+            {inline(label, onWikiLink, resolveImageSrc)}
           </a>
         ) : (
           <span key={k++}>{tok}</span>
@@ -135,7 +161,7 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
         re.lastIndex = m.index + 1
         continue
       }
-      parts.push(<em key={k++} className="italic">{inline(innerEm, onWikiLink)}</em>)
+      parts.push(<em key={k++} className="italic">{inline(innerEm, onWikiLink, resolveImageSrc)}</em>)
     }
     last = m.index + tok.length
   }
@@ -216,14 +242,67 @@ function MermaidBlock({ code }: { code: string }) {
   )
 }
 
+/** Render a bearer-authed KB image. The API token can't ride on `<img src>`,
+ *  so we fetch the API path as a blob (mirrors `artifacts.ts`), show it, and
+ *  revoke the object URL on unmount / src change. While loading it shows a muted
+ *  placeholder; on failure it shows a small dashed chip (the alt) so a missing
+ *  image is visible, not silently dropped. */
+function AuthedImage({ apiPath, alt }: { apiPath: string; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+    setUrl(null)
+    setFailed(false)
+    fetchAsBlobUrl(apiPath)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u)
+          return
+        }
+        objectUrl = u
+        setUrl(u)
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true)
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [apiPath])
+  // Surface a failed load (missing file, network, expired token) with a muted
+  // dashed placeholder showing the alt, rather than silently rendering nothing.
+  if (failed)
+    return (
+      <span className="my-3 inline-block rounded-lg border border-dashed border-[hsl(var(--glass-border))] px-2.5 py-1 text-[12px] text-muted-foreground">
+        {alt}
+      </span>
+    )
+  if (!url) return <span className="my-3 block h-32 animate-pulse rounded-lg bg-muted" aria-hidden />
+  return (
+    <img
+      src={url}
+      alt={alt}
+      className="my-3 max-w-full rounded-lg border border-[hsl(var(--glass-border))]"
+    />
+  )
+}
+
 export default function MarkdownView({
   source,
   onWikiLink,
+  resolveImageSrc,
 }: {
   source: string
   /** Navigate to a `[[target]]` wikilink's page. Omit to render plain,
    *  non-interactive tokens (no `cursor-pointer` implying a dead click). */
   onWikiLink?: (target: string) => void
+  /** Map a Markdown image's raw src to an authed API path (or null to leave it
+   *  as text). Only the document reader passes this; without it, `![](…)` is
+   *  not tokenized as an image, so chat/wiki rendering is unchanged. */
+  resolveImageSrc?: (rawSrc: string) => string | null
 }) {
   const lines = source.split('\n')
   const out: React.ReactNode[] = []
@@ -240,7 +319,7 @@ export default function MarkdownView({
         {list.map((li, i) => (
           <li key={i} className="flex gap-2 text-[14px] leading-relaxed text-muted-foreground">
             <span className="mt-[9px] w-1 h-1 rounded-full bg-muted-foreground shrink-0" />
-            <span>{inline(li, onWikiLink)}</span>
+            <span>{inline(li, onWikiLink, resolveImageSrc)}</span>
           </li>
         ))}
       </ul>,
@@ -254,7 +333,7 @@ export default function MarkdownView({
       <ol key={key++} start={olistStart} className="my-2.5 space-y-1.5 pl-6 list-decimal">
         {olist.map((li, i) => (
           <li key={i} className="pl-1 text-[14px] leading-relaxed text-muted-foreground marker:text-muted-foreground">
-            <span>{inline(li, onWikiLink)}</span>
+            <span>{inline(li, onWikiLink, resolveImageSrc)}</span>
           </li>
         ))}
       </ol>,
@@ -382,7 +461,7 @@ export default function MarkdownView({
                     key={c}
                     className={`border border-[hsl(var(--glass-border))] bg-muted/50 px-3 py-1.5 font-semibold text-foreground ${alignOf(c)}`}
                   >
-                    {inline(h, onWikiLink)}
+                    {inline(h, onWikiLink, resolveImageSrc)}
                   </th>
                 ))}
               </tr>
@@ -395,7 +474,7 @@ export default function MarkdownView({
                       key={c}
                       className={`border border-[hsl(var(--glass-border))] px-3 py-1.5 text-muted-foreground ${alignOf(c)}`}
                     >
-                      {inline(r[c] ?? '', onWikiLink)}
+                      {inline(r[c] ?? '', onWikiLink, resolveImageSrc)}
                     </td>
                   ))}
                 </tr>
@@ -422,11 +501,11 @@ export default function MarkdownView({
     }
     flushBlocks()
     if (!line.trim()) { out.push(<div key={key++} className="h-2" />); continue }
-    if (line.startsWith('### ')) out.push(<h3 key={key++} className="mt-4 mb-1.5 text-[14px] font-semibold text-foreground">{inline(line.slice(4), onWikiLink)}</h3>)
-    else if (line.startsWith('## ')) out.push(<h2 key={key++} className="mt-5 mb-2 text-[16px] font-bold text-foreground">{inline(line.slice(3), onWikiLink)}</h2>)
-    else if (line.startsWith('# ')) out.push(<h1 key={key++} className="mb-3 text-[22px] font-extrabold tracking-tight text-foreground">{inline(line.slice(2), onWikiLink)}</h1>)
-    else if (line.startsWith('> ')) out.push(<div key={key++} className="my-2.5 border-l-2 border-amber-400/70 bg-amber-400/10 rounded-r-lg px-3 py-2 text-[13px] text-muted-foreground">{inline(line.slice(2), onWikiLink)}</div>)
-    else out.push(<p key={key++} className="my-1.5 text-[14px] leading-relaxed text-muted-foreground">{inline(line, onWikiLink)}</p>)
+    if (line.startsWith('### ')) out.push(<h3 key={key++} className="mt-4 mb-1.5 text-[14px] font-semibold text-foreground">{inline(line.slice(4), onWikiLink, resolveImageSrc)}</h3>)
+    else if (line.startsWith('## ')) out.push(<h2 key={key++} className="mt-5 mb-2 text-[16px] font-bold text-foreground">{inline(line.slice(3), onWikiLink, resolveImageSrc)}</h2>)
+    else if (line.startsWith('# ')) out.push(<h1 key={key++} className="mb-3 text-[22px] font-extrabold tracking-tight text-foreground">{inline(line.slice(2), onWikiLink, resolveImageSrc)}</h1>)
+    else if (line.startsWith('> ')) out.push(<div key={key++} className="my-2.5 border-l-2 border-amber-400/70 bg-amber-400/10 rounded-r-lg px-3 py-2 text-[13px] text-muted-foreground">{inline(line.slice(2), onWikiLink, resolveImageSrc)}</div>)
+    else out.push(<p key={key++} className="my-1.5 text-[14px] leading-relaxed text-muted-foreground">{inline(line, onWikiLink, resolveImageSrc)}</p>)
   }
   flushBlocks()
   return <div>{out}</div>
