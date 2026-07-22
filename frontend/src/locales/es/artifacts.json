@@ -1,0 +1,35 @@
+{
+  "card": {
+    "done": "Generado",
+    "open": "Abrir"
+  },
+  "deck": {
+    "subtitle": "Deck HTML · {{name}}"
+  },
+  "file": {
+    "subtitle": "Archivo HTML · {{name}}"
+  },
+  "graph": {
+    "label": "Grafo de conocimiento",
+    "empty": "Aún no hay grafo de conceptos que visualizar",
+    "subtitle_one": "{{count}} concepto · {{edges}} enlaces",
+    "subtitle_other": "{{count}} conceptos · {{edges}} enlaces",
+    "subtitleWithTypes_one": "{{count}} concepto · {{edges}} enlaces · {{types}} tipos",
+    "subtitleWithTypes_other": "{{count}} conceptos · {{edges}} enlaces · {{types}} tipos"
+  },
+  "skill": {
+    "downloadError": "No se pudo descargar el paquete de la habilidad: {{error}}",
+    "body": "La habilidad se ha generado como un directorio instalable. Descarga el <0>.zip</0>, descomprímelo en la carpeta de habilidades de tu agente (Claude Code / Codex / Gemini CLI) y estará lista para usar.",
+    "download": "Descargar paquete de habilidad (.zip)"
+  },
+  "unknown": "Artefacto desconocido",
+  "previewUnsupported": "Este tipo de artefacto no se puede previsualizar",
+  "loadError": "No se pudo cargar el artefacto: {{error}}",
+  "openError": "Error al abrir: {{error}}",
+  "downloadError": "Error al descargar: {{error}}",
+  "panel": {
+    "resize": "Arrastra para cambiar el ancho",
+    "openTab": "Abrir en una pestaña nueva",
+    "download": "Descargar"
+  }
+}

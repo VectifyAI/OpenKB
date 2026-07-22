@@ -1,0 +1,43 @@
+{
+  "tabs": {
+    "model": "モデル",
+    "general": "一般",
+    "conn": "データソース",
+    "about": "情報"
+  },
+  "savedToast": "グローバルの既定値を保存しました",
+  "saveChanges": "変更を保存",
+  "unsaved": "未保存の変更",
+  "modelSection": {
+    "title": "モデルとしきい値",
+    "desc": "グローバルの既定モデルとしきい値（~/.config/openkb/global.yaml に書き込まれます。各ベースは自身の設定で継承または上書きできます）",
+    "thresholdInvalid": "しきい値は 1 以上の整数である必要があります。"
+  },
+  "credSection": {
+    "title": "既定の認証情報",
+    "desc": "グローバルの既定 API 認証情報（~/.config/openkb/.env に書き込まれます。ベース自身の .env とプロセスの環境変数が優先されます）",
+    "clearPending": "削除対象としてマーク。保存時に反映されます",
+    "undoClear": "元に戻す"
+  },
+  "general": {
+    "langDesc": "コンパイルのプロンプトに書き込まれる出力言語。例: en / 中文 / 日本語",
+    "kbRootLabel": "ナレッジベースのルート",
+    "kbRootDesc": "新しいベースの既定の場所（<root>/<name>）。空欄にすると組み込みの既定値に戻ります。各ベースは作成時にカスタムパスを設定できます。",
+    "kbRootPlaceholder": "例: ~/openkb",
+    "kbRootEnvPinned": "環境変数 OPENKB_KB_ROOT で固定されています。解除するまでここでの編集は反映されません。"
+  },
+  "conn": {
+    "note": "クラウドのデータソースコネクタ（OAuth / S3）は開発中でまだ利用できません。今のところ、ベース詳細ページからローカルファイルをアップロードしてください。コネクタが欲しいですか？ 下のカードをクリックして GitHub で投票し、優先順位付けにご協力ください。"
+  },
+  "about": {
+    "links": {
+      "repo": "GitHub リポジトリ",
+      "pageindex": "PageIndex（検索エンジン）",
+      "docs": "ドキュメント docs.pageindex.ai",
+      "company": "Vectify AI（企業）"
+    },
+    "blurb": "PageIndex のベクトルを使わない推論ベースの長文検索を活用し、生のドキュメントを構造化された相互リンク型の wiki 風ナレッジベースにコンパイルします。",
+    "byline": "Vectify AI 製 · PageIndex 製品ラインの一部",
+    "latestRelease": "最新リリースを見る →"
+  }
+}

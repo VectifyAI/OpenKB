@@ -1,0 +1,80 @@
+{
+  "loading": "読み込み中…",
+  "pageLoadError": "ページの読み込みに失敗しました: {{error}}",
+  "noChanges": "保存する変更はありません",
+  "saveError": "保存に失敗しました: {{error}}",
+  "configLoadError": "設定の読み込みに失敗しました: {{error}}",
+  "actions": {
+    "newKb": "新しいナレッジベース",
+    "close": "閉じる",
+    "refresh": "更新"
+  },
+  "fields": {
+    "model": "モデル",
+    "wikiLanguage": "wiki の出力言語",
+    "threshold": "PageIndex のしきい値（ページ）"
+  },
+  "errors": {
+    "requestFailed": "リクエストに失敗しました",
+    "uploadFailed": "アップロードに失敗しました: {{detail}}"
+  },
+  "nav": {
+    "home": "ホーム",
+    "kbs": "ナレッジベース",
+    "settings": "設定"
+  },
+  "titlebar": {
+    "chat": "チャット",
+    "local": "ローカル"
+  },
+  "theme": {
+    "light": "ライト",
+    "dark": "ダーク",
+    "system": "システム",
+    "toggleTitle": "テーマ: {{label}}（クリックで切り替え）",
+    "toggleAria": "テーマ: {{label}}"
+  },
+  "language": {
+    "zh": "中文",
+    "en": "English",
+    "fr": "Français",
+    "es": "Español",
+    "ru": "Русский",
+    "ja": "日本語",
+    "toggleTitle": "言語: {{label}}",
+    "toggleAria": "言語: {{label}}"
+  },
+  "auth": {
+    "title": "アクセストークンが必要です",
+    "description": "このサーバーにはアクセストークン（OPENKB_API_TOKEN）が設定されています。続行するにはトークンを入力してください。トークンはこのブラウザーにのみ保存されます。",
+    "tokenLabel": "アクセストークン",
+    "baseLabel": "API アドレス（任意。空欄の場合は現在のオリジンを使用）",
+    "connect": "接続"
+  },
+  "connector": {
+    "tooltip": "クラウド同期は開発中です · GitHub で投票してください",
+    "vote": "欲しいですか？ 投票する"
+  },
+  "onboarding": {
+    "welcomeTitle": "OpenKB へようこそ",
+    "welcomeBody": "あなたのドキュメントを、相互にリンクされ常に最新のナレッジベースに変えましょう。2 つの簡単なステップで準備完了です。",
+    "getStarted": "はじめる",
+    "skip": "今はスキップ",
+    "configTitle": "モデルを接続",
+    "configBody": "OpenKB はコンパイルと回答に LLM を使用します。API キーを貼り付けてください — キーはローカルに保存され、この端末から外部に出ることはありません。",
+    "modelLabel": "LLM モデル",
+    "langLabel": "wiki の言語",
+    "apiKeyLabel": "LLM の API キー",
+    "apiKeyPlaceholder": "API キーを貼り付け",
+    "baseUrlLabel": "カスタム Base URL（任意）",
+    "baseUrlPlaceholder": "例: http://localhost:11434（Ollama、LM Studio）",
+    "continue": "続行",
+    "back": "戻る",
+    "kbTitle": "最初のナレッジベースを作成",
+    "kbBody": "ナレッジベースにはドキュメントとコンパイル済みの wiki が含まれます。後で追加できます。",
+    "kbNameLabel": "ナレッジベース名",
+    "createFinish": "作成して完了",
+    "saving": "保存中…",
+    "createdToast": "「{{name}}」を作成しました"
+  }
+}

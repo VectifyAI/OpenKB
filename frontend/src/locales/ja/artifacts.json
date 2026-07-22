@@ -1,0 +1,35 @@
+{
+  "card": {
+    "done": "生成済み",
+    "open": "開く"
+  },
+  "deck": {
+    "subtitle": "HTML スライド · {{name}}"
+  },
+  "file": {
+    "subtitle": "HTML ファイル · {{name}}"
+  },
+  "graph": {
+    "label": "ナレッジグラフ",
+    "empty": "可視化できる概念グラフはまだありません",
+    "subtitle_one": "{{count}} 概念 · {{edges}} リンク",
+    "subtitle_other": "{{count}} 概念 · {{edges}} リンク",
+    "subtitleWithTypes_one": "{{count}} 概念 · {{edges}} リンク · {{types}} 種類",
+    "subtitleWithTypes_other": "{{count}} 概念 · {{edges}} リンク · {{types}} 種類"
+  },
+  "skill": {
+    "downloadError": "スキルパッケージのダウンロードに失敗しました: {{error}}",
+    "body": "スキルはインストール可能なディレクトリとして生成されました。<0>.zip</0> をダウンロードし、エージェント（Claude Code / Codex / Gemini CLI）のスキルフォルダーに展開すればすぐに使えます。",
+    "download": "スキルパッケージをダウンロード（.zip）"
+  },
+  "unknown": "不明なアーティファクト",
+  "previewUnsupported": "この種類のアーティファクトはプレビューできません",
+  "loadError": "アーティファクトの読み込みに失敗しました: {{error}}",
+  "openError": "オープンに失敗しました: {{error}}",
+  "downloadError": "ダウンロードに失敗しました: {{error}}",
+  "panel": {
+    "resize": "ドラッグして幅を変更",
+    "openTab": "新しいタブで開く",
+    "download": "ダウンロード"
+  }
+}

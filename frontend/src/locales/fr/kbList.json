@@ -1,0 +1,22 @@
+{
+  "notCompiled": "Pas encore compilée",
+  "updatedAt": "Mise à jour {{date}}",
+  "title": "Bases de connaissances",
+  "subtitle": "Chaque base de connaissances est un wiki compilé en continu qui peut relier plusieurs sources de données",
+  "docsLabel": "Docs",
+  "rawReady": "raw/ prêt",
+  "rawMissing": "Pas de raw/",
+  "create": {
+    "description": "Donnez un nom à votre nouvelle base de connaissances. Le modèle et les identifiants héritent des valeurs globales par défaut et pourront être ajustés plus tard dans ses paramètres.",
+    "nameLabel": "Nom",
+    "namePlaceholder": "ex. my-kb",
+    "cancel": "Annuler",
+    "submit": "Créer",
+    "submitting": "Création…",
+    "previewLabel": "Sera créée dans {{path}}",
+    "advancedToggle": "Chemin personnalisé",
+    "customPathLabel": "Chemin personnalisé",
+    "customPathPlaceholder": "/chemin/absolu/vers/la/base",
+    "customPathHint": "Laisser vide pour utiliser la racine par défaut"
+  }
+}

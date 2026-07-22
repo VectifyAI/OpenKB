@@ -1,0 +1,79 @@
+{
+  "loading": "Chargement…",
+  "pageLoadError": "Échec du chargement de la page : {{error}}",
+  "noChanges": "Aucune modification à enregistrer",
+  "saveError": "Échec de l'enregistrement : {{error}}",
+  "configLoadError": "Échec du chargement de la configuration : {{error}}",
+  "actions": {
+    "newKb": "Nouvelle base de connaissances",
+    "close": "Fermer",
+    "refresh": "Actualiser"
+  },
+  "fields": {
+    "model": "Modèle",
+    "wikiLanguage": "Langue de sortie du wiki",
+    "threshold": "Seuil PageIndex (pages)"
+  },
+  "errors": {
+    "requestFailed": "Échec de la requête",
+    "uploadFailed": "Échec du téléversement : {{detail}}"
+  },
+  "nav": {
+    "home": "Accueil",
+    "kbs": "Bases de connaissances",
+    "settings": "Paramètres"
+  },
+  "titlebar": {
+    "chat": "Discussion",
+    "local": "Local"
+  },
+  "theme": {
+    "light": "Clair",
+    "dark": "Sombre",
+    "system": "Système",
+    "toggleTitle": "Thème : {{label}} (cliquer pour changer)",
+    "toggleAria": "Thème : {{label}}"
+  },
+  "language": {
+    "zh": "中文",
+    "en": "English",
+    "fr": "Français",
+    "es": "Español",
+    "ru": "Русский",
+    "toggleTitle": "Langue : {{label}}",
+    "toggleAria": "Langue : {{label}}"
+  },
+  "auth": {
+    "title": "Jeton d'accès requis",
+    "description": "Ce serveur a un jeton d'accès configuré (OPENKB_API_TOKEN). Saisissez le jeton pour continuer ; il est stocké uniquement dans ce navigateur.",
+    "tokenLabel": "Jeton d'accès",
+    "baseLabel": "Adresse de l'API (facultatif ; laisser vide pour utiliser l'origine actuelle)",
+    "connect": "Se connecter"
+  },
+  "connector": {
+    "tooltip": "La synchronisation cloud est en développement · votez pour elle sur GitHub",
+    "vote": "Vous la voulez ? Votez"
+  },
+  "onboarding": {
+    "welcomeTitle": "Bienvenue sur OpenKB",
+    "welcomeBody": "Transformez vos documents en une base de connaissances interconnectée et toujours à jour. Deux étapes rapides et vous êtes prêt.",
+    "getStarted": "Commencer",
+    "skip": "Ignorer pour l'instant",
+    "configTitle": "Connectez votre modèle",
+    "configBody": "OpenKB utilise un LLM pour compiler et répondre. Collez une clé API — elle est stockée localement et ne quitte jamais votre machine.",
+    "modelLabel": "Modèle LLM",
+    "langLabel": "Langue du wiki",
+    "apiKeyLabel": "Clé API du LLM",
+    "apiKeyPlaceholder": "Collez votre clé API",
+    "baseUrlLabel": "URL de base personnalisée (facultatif)",
+    "baseUrlPlaceholder": "ex. http://localhost:11434 (Ollama, LM Studio)",
+    "continue": "Continuer",
+    "back": "Retour",
+    "kbTitle": "Créez votre première base de connaissances",
+    "kbBody": "Une base de connaissances contient vos documents et le wiki compilé. Vous pourrez en ajouter d'autres plus tard.",
+    "kbNameLabel": "Nom de la base de connaissances",
+    "createFinish": "Créer et terminer",
+    "saving": "Enregistrement…",
+    "createdToast": "{{name}} créée"
+  }
+}

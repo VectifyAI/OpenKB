@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { getApiBase, getToken, onUnauthorized, setConnection } from "@/api/client"
+import { getGlobalConfig } from "@/api/config"
+import Onboarding from "@/components/Onboarding"
 import Home from "@/pages/Home"
 import ChatSession from "@/pages/ChatSession"
 import KbList from "@/pages/KbList"
@@ -126,6 +128,7 @@ function ConnectionDialog({
 
 export default function App() {
   const [authOpen, setAuthOpen] = useState(false)
+  const [onboardOpen, setOnboardOpen] = useState(false)
 
   const isDesktopShell =
     typeof (window as { __OPENKB_DESKTOP__?: unknown }).__OPENKB_DESKTOP__ !== "undefined"
@@ -134,6 +137,14 @@ export default function App() {
   // connection prompt (idempotent — repeated 401s just keep it open).
   useEffect(() => {
     onUnauthorized(() => setAuthOpen(true))
+  }, [])
+
+  // First-launch onboarding: open the setup wizard when no LLM key is
+  // configured yet. Silent on failure (e.g. a 401 handles its own prompt).
+  useEffect(() => {
+    getGlobalConfig()
+      .then((c) => setOnboardOpen(!c.has_api_key))
+      .catch(() => {})
   }, [])
 
   return (
@@ -180,6 +191,7 @@ export default function App() {
           </main>
         </div>
         <ConnectionDialog open={authOpen} onOpenChange={setAuthOpen} />
+        <Onboarding open={onboardOpen} onClose={() => setOnboardOpen(false)} />
         <Toaster />
       </div>
     </MotionConfig>

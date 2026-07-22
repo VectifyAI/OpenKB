@@ -1,0 +1,84 @@
+{
+  "settingsButton": "ナレッジベースの設定",
+  "loadError": "読み込みに失敗しました: {{error}}",
+  "wikiNote": "wiki/ はこの端末上のプレーンな Markdown フォルダーです — あなたのデータは常にあなたのものです",
+  "reader": {
+    "empty": "このナレッジベースにはまだコンパイル済みのページがありません",
+    "selectPage": "左のページを選択すると内容が表示されます"
+  },
+  "upload": {
+    "added": "{{count}} 件追加",
+    "skipped": "{{count}} 件スキップ",
+    "failed": "{{count}} 件失敗",
+    "errorToast": "アップロードに失敗しました: {{summary}}",
+    "reasonSuffix": "（{{reason}}）",
+    "partialToast": "一部成功: {{summary}}",
+    "successToast": "アップロード完了: {{summary}}",
+    "existsToast": "ドキュメントは既に存在します。追加はありません: {{summary}}",
+    "incompleteToast": "アップロードが中断されました。完了信号を受信していません。結果を確認するには更新してください",
+    "note": "アップロードしたドキュメントはローカルの raw/ フォルダーに入り、自動的にナレッジベースへコンパイルされます。ファイルはこの端末に残ります",
+    "inProgress": "アップロードとコンパイル中…",
+    "dropzone": "ここにファイルをドロップ、またはクリックして選択",
+    "dropzoneHint": "PDF / Word / Markdown / テキストなど。複数選択に対応",
+    "progressHeading": "アップロードの進捗 · {{count}}",
+    "fileStatus": {
+      "pending": "待機中",
+      "processing": "コンパイル中…",
+      "added": "追加済み",
+      "skipped": "スキップ",
+      "failed": "失敗"
+    }
+  },
+  "docs": {
+    "heading": "アップロード済みドキュメント · {{count}}",
+    "empty": "ドキュメントはまだありません · アップロード後、自動的にナレッジベースへコンパイルされます",
+    "pages_one": "{{count}} ページ",
+    "pages_other": "{{count}} ページ",
+    "delete": {
+      "action": "ドキュメントを削除",
+      "prompt": "削除しますか？",
+      "confirm": "削除",
+      "cancel": "キャンセル",
+      "success": "「{{name}}」を削除しました",
+      "error": "削除に失敗しました: {{error}}",
+      "partial": "ローカルファイルは削除しましたが、リモートインデックスのクリーンアップに失敗しました: {{name}}",
+      "reasonSuffix": "（{{reason}}）",
+      "multiple": "削除に失敗しました: {{message}}（候補: {{names}}）"
+    }
+  },
+  "remote": {
+    "heading": "リモートデータソース",
+    "note": "クラウドコネクタは開発中でまだ利用できません · 欲しいですか？ カードをクリックして GitHub で投票してください"
+  },
+  "overview": {
+    "index": {
+      "label": "インデックス",
+      "caption": "wiki ルート"
+    },
+    "concepts": {
+      "label": "概念",
+      "caption": "相互リンク"
+    },
+    "entities": {
+      "label": "エンティティ",
+      "caption": "人物 · 組織"
+    },
+    "summaries": {
+      "label": "要約",
+      "caption": "ドキュメント別"
+    },
+    "reports": {
+      "label": "レポート",
+      "caption": "lint · 再コンパイル"
+    },
+    "documents": {
+      "label": "ドキュメント",
+      "caption": "コンパイル済み"
+    }
+  },
+  "pageList": {
+    "empty": "この種類のページはまだありません",
+    "prev": "前へ",
+    "next": "次へ"
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "settingsButton": "Ajustes de la base de conocimiento",
+  "loadError": "Error al cargar: {{error}}",
+  "wikiNote": "wiki/ es una carpeta de Markdown puro en este equipo — tus datos siempre son tuyos",
+  "reader": {
+    "empty": "Esta base de conocimiento aún no tiene páginas compiladas",
+    "selectPage": "Selecciona una página a la izquierda para ver su contenido"
+  },
+  "upload": {
+    "added": "{{count}} añadido(s)",
+    "skipped": "{{count}} omitido(s)",
+    "failed": "{{count}} con error",
+    "errorToast": "Error al subir: {{summary}}",
+    "reasonSuffix": " ({{reason}})",
+    "partialToast": "Éxito parcial: {{summary}}",
+    "successToast": "Subida completada: {{summary}}",
+    "existsToast": "Los documentos ya existen, no se añadió nada: {{summary}}",
+    "incompleteToast": "Subida interrumpida: no se recibió señal de finalización; actualiza para comprobar los resultados",
+    "note": "Los documentos subidos van a la carpeta local raw/ y se compilan automáticamente en la base; los archivos permanecen en este equipo",
+    "inProgress": "Subiendo y compilando…",
+    "dropzone": "Suelta archivos aquí, o haz clic para elegir",
+    "dropzoneHint": "PDF / Word / Markdown / texto y más; se admite selección múltiple",
+    "progressHeading": "Progreso de la subida · {{count}}",
+    "fileStatus": {
+      "pending": "En espera",
+      "processing": "Compilando…",
+      "added": "Añadido",
+      "skipped": "Omitido",
+      "failed": "Con error"
+    }
+  },
+  "docs": {
+    "heading": "Documentos subidos · {{count}}",
+    "empty": "Aún no hay documentos · se compilan automáticamente en la base tras subirlos",
+    "pages_one": "{{count}} página",
+    "pages_other": "{{count}} páginas",
+    "delete": {
+      "action": "Eliminar documento",
+      "prompt": "¿Eliminar?",
+      "confirm": "Eliminar",
+      "cancel": "Cancelar",
+      "success": "{{name}} eliminado",
+      "error": "Error al eliminar: {{error}}",
+      "partial": "Se eliminaron los archivos locales, pero falló la limpieza del índice remoto: {{name}}",
+      "reasonSuffix": " ({{reason}})",
+      "multiple": "Error al eliminar: {{message}} (candidatos: {{names}})"
+    }
+  },
+  "remote": {
+    "heading": "Fuentes de datos remotas",
+    "note": "Los conectores en la nube están en desarrollo y aún no disponibles · ¿quieres uno? Haz clic en una tarjeta para votar en GitHub"
+  },
+  "overview": {
+    "index": {
+      "label": "Índice",
+      "caption": "raíz del wiki"
+    },
+    "concepts": {
+      "label": "Conceptos",
+      "caption": "interconectados"
+    },
+    "entities": {
+      "label": "Entidades",
+      "caption": "personas · orgs"
+    },
+    "summaries": {
+      "label": "Resúmenes",
+      "caption": "por documento"
+    },
+    "reports": {
+      "label": "Informes",
+      "caption": "lint · recompilar"
+    },
+    "documents": {
+      "label": "Documentos",
+      "caption": "docs compilados"
+    }
+  },
+  "pageList": {
+    "empty": "Aún no hay páginas de este tipo",
+    "prev": "Anterior",
+    "next": "Siguiente"
+  }
+}

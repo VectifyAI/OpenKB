@@ -1,0 +1,35 @@
+{
+  "card": {
+    "done": "Généré",
+    "open": "Ouvrir"
+  },
+  "deck": {
+    "subtitle": "Deck HTML · {{name}}"
+  },
+  "file": {
+    "subtitle": "Fichier HTML · {{name}}"
+  },
+  "graph": {
+    "label": "Graphe de connaissances",
+    "empty": "Aucun graphe de concepts à visualiser",
+    "subtitle_one": "{{count}} concept · {{edges}} liens",
+    "subtitle_other": "{{count}} concepts · {{edges}} liens",
+    "subtitleWithTypes_one": "{{count}} concept · {{edges}} liens · {{types}} types",
+    "subtitleWithTypes_other": "{{count}} concepts · {{edges}} liens · {{types}} types"
+  },
+  "skill": {
+    "downloadError": "Échec du téléchargement du package de compétence : {{error}}",
+    "body": "La compétence a été générée sous forme de dossier installable. Téléchargez le <0>.zip</0>, décompressez-le dans le dossier de compétences de votre agent (Claude Code / Codex / Gemini CLI), et elle est prête à l'emploi.",
+    "download": "Télécharger le package de compétence (.zip)"
+  },
+  "unknown": "Artefact inconnu",
+  "previewUnsupported": "Ce type d'artefact ne peut pas être prévisualisé",
+  "loadError": "Échec du chargement de l'artefact : {{error}}",
+  "openError": "Échec de l'ouverture : {{error}}",
+  "downloadError": "Échec du téléchargement : {{error}}",
+  "panel": {
+    "resize": "Glisser pour redimensionner la largeur",
+    "openTab": "Ouvrir dans un nouvel onglet",
+    "download": "Télécharger"
+  }
+}

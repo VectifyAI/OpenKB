@@ -1,0 +1,22 @@
+{
+  "notCompiled": "Aún sin compilar",
+  "updatedAt": "Actualizada {{date}}",
+  "title": "Bases de conocimiento",
+  "subtitle": "Cada base de conocimiento es un wiki compilado de forma continua que puede vincular varias fuentes de datos",
+  "docsLabel": "Docs",
+  "rawReady": "raw/ listo",
+  "rawMissing": "Sin raw/",
+  "create": {
+    "description": "Ponle un nombre a tu nueva base de conocimiento. El modelo y las credenciales heredan los valores globales por defecto y podrás ajustarlos después en sus ajustes.",
+    "nameLabel": "Nombre",
+    "namePlaceholder": "p. ej. my-kb",
+    "cancel": "Cancelar",
+    "submit": "Crear",
+    "submitting": "Creando…",
+    "previewLabel": "Se creará en {{path}}",
+    "advancedToggle": "Ruta personalizada",
+    "customPathLabel": "Ruta personalizada",
+    "customPathPlaceholder": "/ruta/absoluta/a/la/base",
+    "customPathHint": "Déjalo vacío para usar la raíz por defecto"
+  }
+}

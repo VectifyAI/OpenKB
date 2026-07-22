@@ -1,0 +1,39 @@
+{
+  "card": {
+    "done": "Сгенерировано",
+    "open": "Открыть"
+  },
+  "deck": {
+    "subtitle": "HTML-презентация · {{name}}"
+  },
+  "file": {
+    "subtitle": "HTML-файл · {{name}}"
+  },
+  "graph": {
+    "label": "Граф знаний",
+    "empty": "Графа концептов для визуализации пока нет",
+    "subtitle_one": "{{count}} концепт · {{edges}} связей",
+    "subtitle_few": "{{count}} концепта · {{edges}} связей",
+    "subtitle_many": "{{count}} концептов · {{edges}} связей",
+    "subtitle_other": "{{count}} концепта · {{edges}} связей",
+    "subtitleWithTypes_one": "{{count}} концепт · {{edges}} связей · {{types}} типов",
+    "subtitleWithTypes_few": "{{count}} концепта · {{edges}} связей · {{types}} типов",
+    "subtitleWithTypes_many": "{{count}} концептов · {{edges}} связей · {{types}} типов",
+    "subtitleWithTypes_other": "{{count}} концепта · {{edges}} связей · {{types}} типов"
+  },
+  "skill": {
+    "downloadError": "Не удалось скачать пакет навыка: {{error}}",
+    "body": "Навык сгенерирован в виде устанавливаемого каталога. Скачайте <0>.zip</0>, распакуйте его в папку навыков вашего агента (Claude Code / Codex / Gemini CLI), и он готов к использованию.",
+    "download": "Скачать пакет навыка (.zip)"
+  },
+  "unknown": "Неизвестный артефакт",
+  "previewUnsupported": "Этот тип артефакта нельзя предпросмотреть",
+  "loadError": "Не удалось загрузить артефакт: {{error}}",
+  "openError": "Ошибка открытия: {{error}}",
+  "downloadError": "Ошибка скачивания: {{error}}",
+  "panel": {
+    "resize": "Потяните, чтобы изменить ширину",
+    "openTab": "Открыть в новой вкладке",
+    "download": "Скачать"
+  }
+}

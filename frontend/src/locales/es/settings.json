@@ -1,0 +1,43 @@
+{
+  "tabs": {
+    "model": "Modelo",
+    "general": "General",
+    "conn": "Fuentes de datos",
+    "about": "Acerca de"
+  },
+  "savedToast": "Valores globales por defecto guardados",
+  "saveChanges": "Guardar cambios",
+  "unsaved": "Cambios sin guardar",
+  "modelSection": {
+    "title": "Modelo y umbral",
+    "desc": "Modelo y umbral globales por defecto (se escriben en ~/.config/openkb/global.yaml; cada base puede heredar o anular en sus propios ajustes)",
+    "thresholdInvalid": "El umbral debe ser un número entero de 1 o más."
+  },
+  "credSection": {
+    "title": "Credenciales por defecto",
+    "desc": "Credenciales de API globales por defecto (se escriben en ~/.config/openkb/.env; el .env propio de una base y las variables de entorno del proceso tienen prioridad)",
+    "clearPending": "Marcada para eliminar; se aplica al guardar",
+    "undoClear": "Deshacer"
+  },
+  "general": {
+    "langDesc": "El idioma de salida escrito en el prompt de compilación, p. ej. en / 中文 / 日本語",
+    "kbRootLabel": "Raíz de las bases de conocimiento",
+    "kbRootDesc": "Ubicación por defecto de las nuevas bases (<root>/<name>); déjalo vacío para restaurar el valor por defecto integrado. Cada base puede definir una ruta personalizada al crearse.",
+    "kbRootPlaceholder": "p. ej. ~/openkb",
+    "kbRootEnvPinned": "Fijado por la variable de entorno OPENKB_KB_ROOT; los cambios aquí no surtirán efecto hasta que se elimine."
+  },
+  "conn": {
+    "note": "Los conectores de fuentes de datos en la nube (OAuth / S3) están en desarrollo y aún no disponibles; por ahora, sube archivos locales desde la página de detalle de la base. ¿Quieres un conector? Haz clic en una tarjeta de abajo para votar en GitHub y ayudarnos a priorizar."
+  },
+  "about": {
+    "links": {
+      "repo": "Repositorio de GitHub",
+      "pageindex": "PageIndex (motor de recuperación)",
+      "docs": "Docs docs.pageindex.ai",
+      "company": "Vectify AI (empresa)"
+    },
+    "blurb": "Compila documentos en bruto en una base de conocimiento estructurada e interconectada de tipo wiki, con la tecnología de recuperación de documentos largos de PageIndex, sin vectores y basada en el razonamiento.",
+    "byline": "Creado por Vectify AI · parte de la línea de productos PageIndex",
+    "latestRelease": "Ver la última versión →"
+  }
+}

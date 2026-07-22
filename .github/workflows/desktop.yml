@@ -1,0 +1,131 @@
+name: Desktop build
+
+# Builds the OpenKB desktop app (Tauri shell + frozen openkb-api sidecar) for
+# every platform, and — on a `desktop-v*` tag — attaches the installers to a
+# GitHub Release.
+#
+# Neither half cross-compiles — PyInstaller freezes for the host OS/arch and
+# Tauri links the platform WebView — so each target is its own runner. macOS
+# arm64/x86_64 are separate runners (native builds; no --target needed).
+#
+# Ordering within a job matters: build the web UI FIRST (npm run build →
+# openkb/web), THEN freeze the sidecar (build_sidecar.sh bundles openkb/web),
+# THEN `tauri build` (bundles the sidecar dir as a resource).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux
+          - os: windows-latest
+            target: windows
+          - os: macos-14 # Apple Silicon
+            target: macos-arm64
+          - os: macos-13 # Intel
+            target: macos-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      # Tauri's Linux WebView + bundler dependencies. Windows (WebView2) and
+      # macOS (WebKit) ship theirs with the OS, so this is Linux-only.
+      - name: Install Linux WebView deps
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            build-essential curl wget file libxdo-dev libssl-dev
+
+      - uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # v5.2.0
+        with:
+          python-version: "3.12"
+
+      # openkb.api (the sidecar) + PyInstaller. PyInstaller is a build tool, not
+      # a runtime dep, so it's installed ad-hoc rather than pinned in pyproject.
+      - name: Install openkb + build tools
+        run: pip install -e ".[api]" pyinstaller
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+
+      # MUST run before the sidecar freeze — build_sidecar.sh bundles openkb/web.
+      - name: Build web UI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # `shell: bash` so the same script runs on Windows (git-bash) too.
+      # PyInstaller emits openkb-api-sidecar(.exe) for the host OS/arch.
+      - name: Freeze API sidecar
+        shell: bash
+        run: PYTHON=python bash desktop/packaging/build_sidecar.sh
+
+      # ubuntu/macos/windows runners ship a stable Rust toolchain. tauri-cli is
+      # installed from crates.io (locked) rather than via a third-party action,
+      # to keep the supply chain explicit.
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Tauri bundle
+        working-directory: desktop/src-tauri
+        run: cargo tauri build
+
+      # TODO: pin actions/upload-artifact to a SHA to match the repo policy.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: openkb-desktop-${{ matrix.target }}
+          path: |
+            desktop/src-tauri/target/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/release/bundle/**/*.deb
+            desktop/src-tauri/target/release/bundle/**/*.rpm
+            desktop/src-tauri/target/release/bundle/**/*.dmg
+            desktop/src-tauri/target/release/bundle/**/*.msi
+            desktop/src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: warn
+
+  # Attach every platform's installers to a GitHub Release, but only for a
+  # `desktop-v*` tag. Signing/notarization (macOS Gatekeeper, Windows
+  # SmartScreen) is not configured yet — these are unsigned artifacts.
+  release:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # TODO: pin actions/download-artifact to a SHA to match the repo policy.
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Create / update the release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: installers/**/*

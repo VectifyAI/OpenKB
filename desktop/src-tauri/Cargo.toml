@@ -1,0 +1,15 @@
+[package]
+name = "openkb-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "OpenKB desktop shell (Tauri) — wraps the frozen openkb-api sidecar"
+license = "Apache-2.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# ureq is a tiny blocking HTTP client used only to poll the sidecar's health
+# endpoint during startup. Swap for anything you prefer.
+ureq = "2"

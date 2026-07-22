@@ -44,7 +44,11 @@
   "language": {
     "zh": "中文",
     "en": "English",
-    "toggleTitle": "Language: {{label}} (click to switch)",
+    "fr": "Français",
+    "es": "Español",
+    "ru": "Русский",
+    "ja": "日本語",
+    "toggleTitle": "Language: {{label}}",
     "toggleAria": "Language: {{label}}"
   },
   "auth": {
@@ -57,5 +61,27 @@
   "connector": {
     "tooltip": "Cloud sync is in development · vote for it on GitHub",
     "vote": "Want it? Vote"
+  },
+  "onboarding": {
+    "welcomeTitle": "Welcome to OpenKB",
+    "welcomeBody": "Turn your documents into an interlinked, always-current knowledge base. Two quick steps and you're ready.",
+    "getStarted": "Get started",
+    "skip": "Skip for now",
+    "configTitle": "Connect your model",
+    "configBody": "OpenKB uses an LLM to compile and answer. Paste an API key — it is stored locally and never leaves your machine.",
+    "modelLabel": "LLM model",
+    "langLabel": "Wiki language",
+    "apiKeyLabel": "LLM API key",
+    "apiKeyPlaceholder": "Paste your API key",
+    "baseUrlLabel": "Custom base URL (optional)",
+    "baseUrlPlaceholder": "e.g. http://localhost:11434 (Ollama, LM Studio)",
+    "continue": "Continue",
+    "back": "Back",
+    "kbTitle": "Create your first knowledge base",
+    "kbBody": "A knowledge base holds your documents and the compiled wiki. You can add more later.",
+    "kbNameLabel": "Knowledge base name",
+    "createFinish": "Create & finish",
+    "saving": "Saving…",
+    "createdToast": "Created {{name}}"
   }
 }
