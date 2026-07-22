@@ -398,16 +398,25 @@ class TruncatedResponseError(Exception):
 
 
 def _llm_call(
-    model: str, messages: list[dict], step_name: str, raise_on_truncation: bool = False, **kwargs
+    model: str,
+    messages: list[dict],
+    step_name: str,
+    raise_on_truncation: bool = False,
+    *,
+    bundle=None,
+    **kwargs,
 ) -> str:
     """Single LLM call with animated progress and debug logging."""
     messages = _prepare_messages(model, messages)
-    extra_headers = get_extra_headers()
+    extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
-    timeout = get_timeout()
+    timeout = bundle.timeout if bundle is not None else get_timeout()
     if timeout is not None:
         kwargs.setdefault("timeout", timeout)
+    if bundle is not None:
+        kwargs.setdefault("api_key", bundle.api_key)
+        kwargs.setdefault("base_url", bundle.base_url)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -432,16 +441,25 @@ def _llm_call(
 
 
 async def _llm_call_async(
-    model: str, messages: list[dict], step_name: str, raise_on_truncation: bool = False, **kwargs
+    model: str,
+    messages: list[dict],
+    step_name: str,
+    raise_on_truncation: bool = False,
+    *,
+    bundle=None,
+    **kwargs,
 ) -> str:
     """Async LLM call with timing output and debug logging."""
     messages = _prepare_messages(model, messages)
-    extra_headers = get_extra_headers()
+    extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
         kwargs.setdefault("extra_headers", extra_headers)
-    timeout = get_timeout()
+    timeout = bundle.timeout if bundle is not None else get_timeout()
     if timeout is not None:
         kwargs.setdefault("timeout", timeout)
+    if bundle is not None:
+        kwargs.setdefault("api_key", bundle.api_key)
+        kwargs.setdefault("base_url", bundle.base_url)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -465,7 +483,9 @@ async def _llm_call_async(
     return content.strip()
 
 
-async def _llm_call_page_async(model: str, messages: list[dict], step_name: str, **kwargs) -> str:
+async def _llm_call_page_async(
+    model: str, messages: list[dict], step_name: str, *, bundle=None, **kwargs
+) -> str:
     """``_llm_call_async`` for a step that writes a wiki page from the response.
 
     Hard-codes ``raise_on_truncation=True`` so a truncated response skips the
@@ -473,7 +493,9 @@ async def _llm_call_page_async(model: str, messages: list[dict], step_name: str,
     every page-generating call so the guarantee can't be forgotten at a new
     call site.
     """
-    return await _llm_call_async(model, messages, step_name, raise_on_truncation=True, **kwargs)
+    return await _llm_call_async(
+        model, messages, step_name, raise_on_truncation=True, bundle=bundle, **kwargs
+    )
 
 
 async def _close_async_llm_clients() -> None:
@@ -1581,6 +1603,7 @@ async def _compile_concepts(
     doc_type: str = "short",
     rewrite_summary: bool = False,
     entity_types: list[str] | None = None,
+    bundle=None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1624,6 +1647,7 @@ async def _compile_concepts(
         ],
         "concepts-plan",
         response_format=_JSON_RESPONSE_FORMAT,
+        bundle=bundle,
     )
 
     def _write_v1_summary_stripped() -> None:
@@ -1830,6 +1854,7 @@ async def _compile_concepts(
                 ],
                 f"concept: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                bundle=bundle,
             )
         brief, content, _ = _page_fields(raw)
         _require_nonempty_content(content, name)
@@ -1864,6 +1889,7 @@ async def _compile_concepts(
                 ],
                 f"update: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                bundle=bundle,
             )
         brief, content, _ = _page_fields(raw)
         _require_nonempty_content(content, name)
@@ -1892,6 +1918,7 @@ async def _compile_concepts(
                 ],
                 f"entity: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                bundle=bundle,
             )
         brief, content, obj = _page_fields(raw)
         etype_out = obj.get("type") if obj and obj.get("type") in valid_types else etype
@@ -1929,6 +1956,7 @@ async def _compile_concepts(
                 ],
                 f"entity-update: {name}",
                 response_format=_JSON_RESPONSE_FORMAT,
+                bundle=bundle,
             )
         brief, content, obj = _page_fields(raw)
         etype_out = obj.get("type") if obj and obj.get("type") in valid_types else etype
@@ -2075,6 +2103,7 @@ async def _compile_concepts(
                     {"role": "user", "content": _SUMMARY_REWRITE_USER},
                 ],
                 "summary-rewrite",
+                bundle=bundle,
             )
             candidate = rewrite_raw.strip()
             # Strip frontmatter if the model added one anyway.
@@ -2179,16 +2208,16 @@ async def compile_short_doc(
     kb_dir: Path,
     model: str,
     max_concurrency: int = DEFAULT_COMPILE_CONCURRENCY,
+    bundle=None,
 ) -> None:
     """Compile a short document using a multi-step LLM pipeline with caching.
 
     Step 1: Build base context A (schema + doc content), generate summary.
     Steps 2-4: Delegated to ``_compile_concepts``.
     """
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
 
@@ -2222,7 +2251,11 @@ async def compile_short_doc(
     # v2 (with a whitelist of known wikilink targets) inside
     # _compile_concepts before being written to disk.
     summary_raw = _llm_call(
-        model, [system_msg, doc_msg], "summary", response_format=_JSON_RESPONSE_FORMAT
+        model,
+        [system_msg, doc_msg],
+        "summary",
+        response_format=_JSON_RESPONSE_FORMAT,
+        bundle=bundle,
     )
     try:
         summary_parsed = _parse_json(summary_raw)
@@ -2247,6 +2280,7 @@ async def compile_short_doc(
             doc_type="short",
             rewrite_summary=True,
             entity_types=entity_types,
+            bundle=bundle,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this
@@ -2262,16 +2296,16 @@ async def compile_long_doc(
     model: str,
     doc_description: str = "",
     max_concurrency: int = DEFAULT_COMPILE_CONCURRENCY,
+    bundle=None,
 ) -> None:
     """Compile a long (PageIndex) document's concepts and index.
 
     The summary page is already written by the indexer. This function
     generates concept pages and updates the index.
     """
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
 
@@ -2314,7 +2348,7 @@ async def compile_long_doc(
     }
 
     # --- Step 1: Generate overview ---
-    overview = _llm_call(model, [system_msg, doc_msg], "overview")
+    overview = _llm_call(model, [system_msg, doc_msg], "overview", bundle=bundle)
 
     # --- Steps 2-4: Concept plan → generate/update → index ---
     try:
@@ -2330,6 +2364,7 @@ async def compile_long_doc(
             doc_brief=doc_description,
             doc_type="pageindex",
             entity_types=entity_types,
+            bundle=bundle,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this

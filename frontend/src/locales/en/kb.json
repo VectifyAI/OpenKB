@@ -1,0 +1,100 @@
+{
+  "settingsButton": "Knowledge base settings",
+  "loadError": "Failed to load: {{error}}",
+  "wikiNote": "wiki/ is a plain Markdown folder on this machine — your data is always yours",
+  "reader": {
+    "empty": "This knowledge base has no compiled pages yet",
+    "selectPage": "Select a page on the left to view its content"
+  },
+  "upload": {
+    "added": "{{count}} added",
+    "skipped": "{{count}} skipped",
+    "failed": "{{count}} failed",
+    "errorToast": "Upload failed: {{summary}}",
+    "reasonSuffix": " ({{reason}})",
+    "partialToast": "Partial success: {{summary}}",
+    "successToast": "Upload complete: {{summary}}",
+    "existsToast": "Documents already exist, nothing added: {{summary}}",
+    "incompleteToast": "Upload interrupted: no completion signal received; refresh to check results",
+    "note": "Uploaded documents go into the local raw/ folder and are compiled into the KB automatically; files stay on this machine",
+    "inProgress": "Uploading and compiling…",
+    "dropzone": "Drop files here, or click to choose",
+    "dropzoneHint": "PDF / Word / Markdown / text and more; multi-select supported",
+    "progressHeading": "Upload progress · {{count}}",
+    "fileStatus": {
+      "pending": "Waiting",
+      "processing": "Compiling…",
+      "added": "Added",
+      "skipped": "Skipped",
+      "failed": "Failed"
+    }
+  },
+  "docs": {
+    "heading": "Uploaded documents · {{count}}",
+    "empty": "No documents yet · they compile into the KB automatically after upload",
+    "pages_one": "{{count}} page",
+    "pages_other": "{{count}} pages",
+    "reader": {
+      "open": "Read document",
+      "title": "Document",
+      "readonly": "Read-only",
+      "close": "Close",
+      "loading": "Loading document…",
+      "error": "Couldn't load document: {{error}}",
+      "retry": "Retry",
+      "emptyDoc": "This document has no extracted text."
+    },
+    "delete": {
+      "action": "Delete document",
+      "prompt": "Delete?",
+      "confirm": "Delete",
+      "cancel": "Cancel",
+      "success": "Deleted {{name}}",
+      "error": "Delete failed: {{error}}",
+      "partial": "Deleted local files, but remote index cleanup failed: {{name}}",
+      "reasonSuffix": " ({{reason}})",
+      "multiple": "Delete failed: {{message}} (candidates: {{names}})"
+    }
+  },
+  "pageOps": {
+    "edit": "Edit",
+    "delete": "Delete",
+    "editorAria": "Page source (Markdown)",
+    "deletePrompt": "Delete {{title}}?",
+    "deleteImpact_one": "{{count}} page links here — its link will become plain text",
+    "deleteImpact_other": "{{count}} pages link here — their links will become plain text",
+    "deleteNoBacklinks": "No other pages link here",
+    "deleteConfirm": "Delete page",
+    "deleteSuccess": "Deleted {{title}}",
+    "deleteError": "Delete failed: {{error}}",
+    "save": "Save",
+    "saveSuccess": "Page saved",
+    "saveError": "Save failed: {{error}}",
+    "ghostsDemoted": "These links didn't resolve and became plain text: {{links}}",
+    "editRecompileNote": "Manual edits may be overwritten the next time this KB is recompiled.",
+    "links": {
+      "heading": "Page links",
+      "outlinks": "This page links to",
+      "backlinks": "Pages linking here",
+      "none": "None",
+      "error": "Failed to load links: {{error}}"
+    }
+  },
+  "remote": {
+    "heading": "Remote data sources",
+    "note": "Cloud connectors are in development and not yet available · want one? Click a card to vote on GitHub"
+  },
+  "overview": {
+    "index": { "label": "Index", "caption": "wiki root" },
+    "concepts": { "label": "Concepts", "caption": "cross-linked" },
+    "entities": { "label": "Entities", "caption": "people · orgs" },
+    "summaries": { "label": "Summaries", "caption": "per-document" },
+    "reports": { "label": "Reports", "caption": "lint · recompile" },
+    "documents": { "label": "Documents", "caption": "compiled docs" }
+  },
+  "pageList": {
+    "empty": "No pages of this type yet",
+    "prev": "Previous",
+    "next": "Next"
+  }
+}

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
 from openkb.agent.tools import (
+    artifact_event_from_write,
     get_wiki_page_content,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
 )
-from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -37,8 +39,11 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-6. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
-   Use the get_image tool to view them when needed.
+6. Source content may reference images. Short-doc .md pages link them
+   note-relative (e.g. ![image](images/doc/file.png), resolved from
+   wiki/sources/); long-doc JSON page metadata lists them wiki-root-relative
+   (e.g. sources/images/doc/file.png). Pass either form as seen to the
+   get_image tool — it accepts both.
 7. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
@@ -48,7 +53,12 @@ If you cannot find relevant information, say so clearly.
 """
 
 
-def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent:
+def build_query_agent(
+    wiki_root: str,
+    model: str,
+    language: str = "en",
+    bundle: "LlmCredentialBundle | None" = None,
+) -> Agent:
     """Build and return the Q&A agent."""
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
@@ -81,7 +91,10 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
         you'd need to see to answer accurately.
 
         Args:
-            image_path: Image path relative to wiki root (e.g. 'sources/images/doc/p1_img1.png').
+            image_path: Image path as it appears in the content — either
+                wiki-root-relative ('sources/images/doc/p1_img1.png') or
+                note-relative as used in sources/ .md pages
+                ('images/doc/p1_img1.png').
         """
         result = read_wiki_image(image_path, wiki_root)
         if result["type"] == "image":
@@ -90,23 +103,116 @@ def build_query_agent(wiki_root: str, model: str, language: str = "en") -> Agent
 
     from agents.model_settings import ModelSettings
 
+    if bundle is not None:
+        model_settings = {
+            "parallel_tool_calls": (
+                bundle.parallel_tool_calls if bundle.parallel_tool_calls_explicit else False
+            ),
+            "extra_headers": bundle.extra_headers or None,
+            "extra_args": {"timeout": bundle.timeout} if bundle.timeout is not None else None,
+        }
+    else:
+        model_settings = resolve_model_settings()
+
     return Agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
         model=f"litellm/{model}",
-        model_settings=ModelSettings(
-            parallel_tool_calls=False,
-            extra_headers=get_extra_headers() or None,
-            extra_args=get_timeout_extra_args(),
-        ),
+        model_settings=ModelSettings(**model_settings),
     )
+
+
+def _resolve_tool_call_id(raw_item: Any) -> str | None:
+    """Resolve a tool call's correlation id exactly as the Agents SDK's
+    ``ToolCallItem.call_id`` / ``ToolCallOutputItem.call_id`` property does:
+    prefer ``call_id``, fall back to ``id``, dict-aware.
+
+    The ChatCompletions/LiteLLM path emits only ``id`` (no ``call_id``) on the
+    output item, so without the ``id`` fallback the key written on the
+    ``tool_call`` side and the key read on the ``tool_call_output_item`` side
+    disagree, ``pending_calls.pop`` misses, and the ``output/*.html`` artifact
+    card silently never fires. Deriving the key with this one helper on BOTH
+    sides keeps them aligned.
+    """
+    if isinstance(raw_item, dict):
+        return raw_item.get("call_id") or raw_item.get("id")
+    return getattr(raw_item, "call_id", None) or getattr(raw_item, "id", None)
+
+
+async def iter_agent_response_events(
+    agent: Agent,
+    input_data: str | list[dict[str, Any]],
+    *,
+    max_turns: int = MAX_TURNS,
+    run_config: Any = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield non-TTY events for a streamed agent response.
+
+    The CLI renders these events to stdout; the REST API serializes the same
+    events as SSE. Events: ``{"event": "delta", "data": {"text": ...}}`` for
+    each response-text delta, ``{"event": "tool_call", "data": {...}}`` for
+    tool invocations, and a final ``{"event": "final", "data": {"answer": ...,
+    "history": [...]}}`` carrying the complete answer and reusable Agents SDK
+    history.
+    """
+    from agents import RawResponsesStreamEvent, RunItemStreamEvent
+    from openai.types.responses import ResponseTextDeltaEvent
+
+    result = (
+        Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config)
+        if run_config
+        else Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    )
+    collected: list[str] = []
+    pending_calls: dict[str, tuple[str, str]] = {}
+
+    async for event in result.stream_events():
+        if isinstance(event, RawResponsesStreamEvent):
+            if isinstance(event.data, ResponseTextDeltaEvent):
+                text = event.data.delta
+                if text:
+                    collected.append(text)
+                    yield {"event": "delta", "data": {"text": text}}
+        elif isinstance(event, RunItemStreamEvent):
+            item = event.item
+            if item.type == "tool_call_item":
+                raw_item = item.raw_item
+                name = getattr(raw_item, "name", "?")
+                arguments = getattr(raw_item, "arguments", "") or ""
+                call_id = _resolve_tool_call_id(raw_item)
+                if call_id:
+                    pending_calls[call_id] = (name, arguments)
+                yield {"event": "tool_call", "data": {"name": name, "arguments": arguments}}
+            elif item.type == "tool_call_output_item":
+                raw_item = item.raw_item
+                call_id = _resolve_tool_call_id(raw_item)
+                name, arguments = (
+                    pending_calls.pop(call_id, ("", "")) if isinstance(call_id, str) else ("", "")
+                )
+                payload = artifact_event_from_write(
+                    name, arguments, str(getattr(item, "output", "") or "")
+                )
+                if payload is not None:
+                    yield {"event": "artifact", "data": payload}
+
+    answer = "".join(collected).strip()
+    if not answer:
+        answer = (result.final_output or "").strip()
+    yield {
+        "event": "final",
+        "data": {
+            "answer": answer,
+            "history": result.to_input_list(),
+        },
+    }
 
 
 def build_chat_agent(
     kb_dir: Path,
     model: str,
     language: str = "en",
+    bundle: "LlmCredentialBundle | None" = None,
 ) -> Agent:
     """Build the chat agent: query agent + a write tool restricted to
     ``<kb>/wiki/explorations/**`` and ``<kb>/output/**`` + a ``ShellTool``
@@ -125,7 +231,7 @@ def build_chat_agent(
     """
     wiki_root = str(kb_dir / "wiki")
     kb_root = str(kb_dir)
-    base = build_query_agent(wiki_root, model, language=language)
+    base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     @function_tool
     def write_file(path: str, content: str) -> str:
@@ -250,6 +356,8 @@ async def run_query(
     stream: bool = False,
     *,
     raw: bool = False,
+    run_config: Any = None,
+    bundle: LlmCredentialBundle | None = None,
 ) -> str:
     """Run a Q&A query against the knowledge base.
 
@@ -269,18 +377,21 @@ async def run_query(
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
-    openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
 
     wiki_root = str(kb_dir / "wiki")
 
-    agent = build_query_agent(wiki_root, model, language=language)
+    agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     if not stream:
-        result = await Runner.run(agent, question, max_turns=MAX_TURNS)
+        result = (
+            await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+            if run_config
+            else await Runner.run(agent, question, max_turns=MAX_TURNS)
+        )
         return result.final_output or ""
 
     import os
@@ -314,7 +425,11 @@ async def run_query(
     live: Live | None = None
     last_was_text = False
     need_blank_before_text = False
-    result = Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    result = (
+        Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+        if run_config
+        else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    )
     collected: list[str] = []
     segment: list[str] = []
     try:
@@ -374,3 +489,31 @@ async def run_query(
             live.stop()
         print()
     return "".join(collected) if collected else result.final_output or ""
+
+
+def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None") -> Any:
+    """Build an Agents-SDK `RunConfig` from a credential bundle.
+
+    When *bundle* is `None` (CLI path), returns `None` so the runner falls
+    back to the default provider (process-wide `litellm.api_key` / env vars).
+    When a bundle is supplied, a dedicated `LitellmModel` instance is created
+    with the per-KB `api_key` and `base_url` so concurrent requests on the
+    shared event-loop thread never read each other's credentials.
+
+    The model is passed to `LitellmModel` *verbatim* (e.g. ``openai/gpt-4o``)
+    because `LitellmModel` feeds it straight to ``litellm.acompletion``. The
+    ``litellm/`` prefix is an Agent-layer convention to select the backend and
+    must NOT be added here -- doing so yields ``litellm/openai/...`` which
+    litellm rejects as an unknown provider.
+    """
+    if bundle is None:
+        return None
+    from agents import RunConfig
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    litellm_model = LitellmModel(
+        model=model,
+        base_url=bundle.base_url,
+        api_key=bundle.api_key,
+    )
+    return RunConfig(model=litellm_model)

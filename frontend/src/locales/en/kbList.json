@@ -1,0 +1,22 @@
+{
+  "notCompiled": "Not compiled yet",
+  "updatedAt": "Updated {{date}}",
+  "title": "Knowledge bases",
+  "subtitle": "Each knowledge base is a continuously-compiled wiki that can bind multiple data sources",
+  "docsLabel": "Docs",
+  "rawReady": "raw/ ready",
+  "rawMissing": "No raw/",
+  "create": {
+    "description": "Give your new knowledge base a name. Model and credentials inherit the global defaults and can be adjusted later in its settings.",
+    "nameLabel": "Name",
+    "namePlaceholder": "e.g. my-kb",
+    "cancel": "Cancel",
+    "submit": "Create",
+    "submitting": "Creating…",
+    "previewLabel": "Will be created at {{path}}",
+    "advancedToggle": "Custom path",
+    "customPathLabel": "Custom path",
+    "customPathPlaceholder": "/absolute/path/to/kb",
+    "customPathHint": "Leave empty to use the default root"
+  }
+}

@@ -604,6 +604,22 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.139.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/af/a5f50ccfa659ec1802cb4ca842c23f06d906a8cc9aef6016a2caeea3d4ed/fastapi-0.139.0.tar.gz", hash = "sha256:99ab7b2d92223c76d6cf10757ab3f89d45b38267fc20b2a136cf02f6beac3145", size = 423016, upload-time = "2026-07-01T16:35:33.436Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/7c/8e3c6ad324ea5cb36604fc3f968554887891c316d9dfde57761611d907ad/fastapi-0.139.0-py3-none-any.whl", hash = "sha256:cf15e1e9e667ddb0ad63811e60bd11390d1aac838ca4a7a23f421807b2308189", size = 130339, upload-time = "2026-07-01T16:35:32.19Z" },
+]
+
+[[package]]
 name = "fastuuid"
 version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1903,7 +1919,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.37.0"
+version = "2.44.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1915,9 +1931,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/50/5901f01ef14e6c27788beb91e54fef5d6204fb5fb9e97402fc8a14de2e32/openai-2.37.0.tar.gz", hash = "sha256:f4bc562cc5f3a43d40d678105572d9d44765f6e0f50c125f63055419b72f4bd9", size = 754706, upload-time = "2026-05-15T22:30:35.428Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/49/f5/7c7cb955305cb41f7f3c5fd7e0e38bf6bbf2658468863d4b7b868a5cb8df/openai-2.44.0.tar.gz", hash = "sha256:68a5a5ffad82b8ff7d451c437529fb64f7c3b8123aaf0c021966a882d9e3947d", size = 988753, upload-time = "2026-06-24T20:56:02.293Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/4c/bce61680d0699a78a405fd9a67989b175ba020590428831aab2ab1d2be7c/openai-2.37.0-py3-none-any.whl", hash = "sha256:814633888b8f3b1ffd6615697c6e4ef93632d08b7c2e28c8c5ef3556e5a10107", size = 1303238, upload-time = "2026-05-15T22:30:32.767Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/f4/561ed79fd94876160018a5e75254cfcb9b0e62d4dded9dcb20072e86d623/openai-2.44.0-py3-none-any.whl", hash = "sha256:0a2a3ab2e29aeda368700f662ff9ba0f9df17ba4c54577a64e08b8115a3cc0ad", size = 1366216, upload-time = "2026-06-24T20:55:58.882Z" },
 ]
 
 [[package]]
@@ -1947,6 +1963,7 @@ dependencies = [
     { name = "json-repair" },
     { name = "litellm" },
     { name = "markitdown", extra = ["docx", "pptx", "xls", "xlsx"] },
+    { name = "openai" },
     { name = "openai-agents" },
     { name = "pageindex" },
     { name = "portalocker" },
@@ -1959,36 +1976,55 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+api = [
+    { name = "fastapi" },
+    { name = "python-multipart" },
+    { name = "uvicorn" },
+]
 dev = [
+    { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
     { name = "types-pyyaml" },
 ]
+web = [
+    { name = "fastapi" },
+    { name = "python-multipart" },
+    { name = "uvicorn" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = "==8.4.0" },
+    { name = "fastapi", marker = "extra == 'api'" },
+    { name = "fastapi", marker = "extra == 'web'" },
+    { name = "httpx", marker = "extra == 'dev'" },
     { name = "json-repair", specifier = "==0.59.10" },
     { name = "litellm", specifier = "==1.87.2" },
     { name = "markitdown", extras = ["docx", "pptx", "xls", "xlsx"], specifier = "==0.1.5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.15.0" },
+    { name = "openai", specifier = "==2.44.0" },
     { name = "openai-agents", specifier = "==0.17.3" },
-    { name = "pageindex", specifier = "==0.3.0.dev1" },
+    { name = "pageindex", specifier = "==0.3.0.dev3" },
     { name = "portalocker", specifier = "==3.2.0" },
     { name = "prompt-toolkit", specifier = "==3.0.52" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.3.0" },
     { name = "python-dotenv", specifier = "==1.2.2" },
+    { name = "python-multipart", marker = "extra == 'api'" },
+    { name = "python-multipart", marker = "extra == 'web'" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "rich", specifier = "==15.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.9.7" },
     { name = "trafilatura", specifier = "==2.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = "==6.0.12.20260518" },
+    { name = "uvicorn", marker = "extra == 'api'" },
+    { name = "uvicorn", marker = "extra == 'web'" },
     { name = "watchdog", specifier = "==6.0.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["api", "dev", "web"]
 
 [[package]]
 name = "openpyxl"
@@ -2013,21 +2049,24 @@ wheels = [
 
 [[package]]
 name = "pageindex"
-version = "0.3.0.dev1"
+version = "0.3.0.dev3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx", extra = ["socks"] },
     { name = "litellm" },
+    { name = "openai" },
     { name = "openai-agents" },
+    { name = "pydantic" },
     { name = "pymupdf" },
     { name = "pypdf2" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/27/318e73fe1ed2194b19abeb53f57f30b022c9ea4a3ebfe8c2b293f239d537/pageindex-0.3.0.dev1.tar.gz", hash = "sha256:77f02a85622a180918a11d4c4e4e97c10dc0ba142c6418ab1c501d6c1301a409", size = 61010, upload-time = "2026-04-10T17:20:58.524Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/58/92b159e86e73af3a61aedea05e9390181d83e4a6c717e37845a7cf1eedd5/pageindex-0.3.0.dev3.tar.gz", hash = "sha256:93174bbfcd261c5e7d6c7d47f1be371ae21c1fe977ce706cf3c021f4932693bd", size = 76083, upload-time = "2026-07-10T07:00:30.522Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/7b/a2d37a28475605b715f9fe28320989aec753c023b272fbf9c4bf9f693a55/pageindex-0.3.0.dev1-py3-none-any.whl", hash = "sha256:570c7fd7e54d62782030154dfe02b2f6b9e88407a293f96ea824203716ef28d3", size = 66954, upload-time = "2026-04-10T17:20:56.738Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/29/34a2a1eaed83be5aeb879bf85bff7be9f6faa76fe70718479d6426ce21aa/pageindex-0.3.0.dev3-py3-none-any.whl", hash = "sha256:5056969108785f5c9c31e03ce60f5fa1043be96ecffb5a06353375212027b258", size = 81956, upload-time = "2026-07-10T07:00:29.163Z" },
 ]
 
 [[package]]

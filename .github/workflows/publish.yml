@@ -37,6 +37,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: "20"
+
+      # Build the Workbench SPA into openkb/web so it ships in the wheel/sdist
+      # (see pyproject `[tool.hatch.build] artifacts`). Without this step the
+      # published package would serve no UI.
+      - name: Build Workbench web bundle
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
       - name: Install build tools
         run: pip install build
 

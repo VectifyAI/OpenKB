@@ -82,6 +82,55 @@ def test_query_strategy_mentions_entities():
     assert "entities/" in text
 
 
+class TestResolveToolCallId:
+    """Fix 3: call-side and output-side keys must be derived identically so the
+    ``output/*.html`` artifact card correlates and fires (mirrors the Agents
+    SDK's ToolCallItem/ToolCallOutputItem.call_id: prefer call_id, fall back to
+    id, dict-aware)."""
+
+    def test_object_with_call_id(self):
+        from types import SimpleNamespace
+
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id(SimpleNamespace(call_id="c1", id="i1")) == "c1"
+
+    def test_object_falls_back_to_id(self):
+        from types import SimpleNamespace
+
+        from openkb.agent.query import _resolve_tool_call_id
+
+        # ChatCompletions/LiteLLM path: only ``id`` is present.
+        assert _resolve_tool_call_id(SimpleNamespace(id="i1")) == "i1"
+
+    def test_dict_with_call_id(self):
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id({"call_id": "c1", "id": "i1"}) == "c1"
+
+    def test_dict_falls_back_to_id(self):
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id({"id": "i1"}) == "i1"
+
+    def test_call_and_output_sides_agree_on_litellm_path(self):
+        """The bug: call-side raw_item is an object with only ``id`` while the
+        output-side raw_item is a dict with only ``id`` — both must resolve to
+        the same key or ``pending_calls.pop`` misses."""
+        from types import SimpleNamespace
+
+        from openkb.agent.query import _resolve_tool_call_id
+
+        call_side = _resolve_tool_call_id(SimpleNamespace(id="abc123"))
+        output_side = _resolve_tool_call_id({"id": "abc123"})
+        assert call_side == output_side == "abc123"
+
+    def test_none_when_no_identifier(self):
+        from openkb.agent.query import _resolve_tool_call_id
+
+        assert _resolve_tool_call_id({}) is None
+
+
 class TestFmtFallback:
     """Regression tests for issue #34.
 
@@ -154,12 +203,60 @@ class TestQueryAgentExtraHeaders:
         set_extra_headers({"Editor-Version": "vscode/1.95.0"})
         agent = build_query_agent(str(tmp_path), "github_copilot/gpt-5-mini")
         assert agent.model_settings.extra_headers == {"Editor-Version": "vscode/1.95.0"}
-        # Existing settings are preserved.
-        assert agent.model_settings.parallel_tool_calls is False
 
     def test_no_extra_headers_by_default(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.extra_headers is None
+
+
+class TestQueryAgentParallelToolCalls:
+    """The resolved parallel_tool_calls value (stash) reaches the model settings.
+
+    Default is False (force sequential — unchanged historical behavior). A
+    config value of null resolves to None, which the agents-SDK omits from the
+    request — the escape hatch for Amazon Bedrock, whose Claude models reject
+    the request when parallel_tool_calls is sent at all (issue #175).
+    """
+
+    def test_unset_stash_still_defaults_to_false(self, tmp_path):
+        # No _setup_llm_key has run in this test (stash at its own raw
+        # "not configured" default) — build_query_agent must still land on
+        # the historical default, not on some other arbitrary value.
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(None, False)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.parallel_tool_calls is False
+
+    def test_null_stash_is_omitted(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(None, True)
+        agent = build_query_agent(str(tmp_path), "bedrock/eu.anthropic.claude-sonnet-4-6")
+        assert agent.model_settings.parallel_tool_calls is None
+
+    def test_false_stash_forces_sequential(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(False, True)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.parallel_tool_calls is False
+
+    def test_true_stash_allows_parallel(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        set_parallel_tool_calls(True, True)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
+        assert agent.model_settings.parallel_tool_calls is True
+
+    def test_bundle_does_not_read_process_global_settings(self, tmp_path):
+        """REST requests use the bundle instead of another KB's global settings."""
+        from openkb.config import LlmCredentialBundle, set_parallel_tool_calls
+
+        set_parallel_tool_calls(True, True)
+        bundle = LlmCredentialBundle(parallel_tool_calls=False, parallel_tool_calls_explicit=True)
+        agent = build_query_agent(str(tmp_path), "gpt-4o-mini", bundle=bundle)
+        assert agent.model_settings.parallel_tool_calls is False
 
 
 class TestQueryAgentTimeout:
@@ -179,3 +276,50 @@ class TestQueryAgentTimeout:
     def test_no_timeout_by_default(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.model_settings.extra_args is None
+
+
+class TestBuildRunConfigFromBundle:
+    """The per-KB RunConfig must pass the model string to litellm verbatim.
+
+    Regression: build_run_config_from_bundle prefixed the model with
+    litellm/ (an Agent-layer convention to select the LiteLLM backend),
+    producing litellm/openai/deepseek-v4-flash -- which litellm.acompletion
+    rejects with BadRequestError("LLM Provider NOT provided"). LitellmModel
+    feeds its model straight to litellm.acompletion, so it must be the
+    raw litellm provider/model string, with no prefix.
+    """
+
+    def test_none_bundle_returns_none(self):
+        """CLI path (bundle=None) returns None so the SDK uses the agent model."""
+        from openkb.agent.query import build_run_config_from_bundle
+
+        assert build_run_config_from_bundle("openai/gpt-4o", None) is None
+
+    def test_bundle_model_has_no_litellm_prefix(self):
+        from openkb.agent.query import build_run_config_from_bundle
+        from openkb.config import LlmCredentialBundle
+
+        bundle = LlmCredentialBundle(api_key="k", base_url=None)
+        run_config = build_run_config_from_bundle("openai/deepseek-v4-flash", bundle)
+        assert run_config is not None
+        # The model reaches litellm.acompletion as-is; the agent-layer prefix
+        # must not leak in.
+        assert run_config.model.model == "openai/deepseek-v4-flash"
+        assert not run_config.model.model.startswith("litellm/")
+
+
+def test_chat_session_agent_has_write_file(tmp_path):
+    from openkb.agent.chat import build_chat_session_agent
+    from openkb.agent.chat_session import ChatSession
+
+    kb_dir = tmp_path / "kb"
+    (kb_dir / "wiki").mkdir(parents=True)
+    (kb_dir / ".openkb").mkdir(parents=True)
+    (kb_dir / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
+
+    session = ChatSession.new(kb_dir, model="openai/gpt-4o", language="en")
+    agent = build_chat_session_agent(kb_dir, session)
+
+    tool_names = {getattr(t, "name", "") for t in agent.tools}
+    assert "write_file" in tool_names
+    assert "read_file" in tool_names  # still a superset of the query agent

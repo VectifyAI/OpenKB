@@ -1,0 +1,45 @@
+{
+  "tabs": {
+    "model": "Model",
+    "general": "General",
+    "conn": "Data sources",
+    "about": "About"
+  },
+  "savedToast": "Global defaults saved",
+  "saveChanges": "Save changes",
+  "unsaved": "Unsaved changes",
+  "modelSection": {
+    "title": "Model & threshold",
+    "desc": "Global default model & threshold (written to ~/.config/openkb/global.yaml; each KB can inherit or override in its own settings)",
+    "thresholdInvalid": "Threshold must be a whole number of 1 or more."
+  },
+  "credSection": {
+    "title": "Default credentials",
+    "desc": "Global default API credentials (written to ~/.config/openkb/.env; a KB's own .env and process env vars take precedence)",
+    "clearPending": "Marked for removal; takes effect on save",
+    "undoClear": "Undo"
+  },
+  "general": {
+    "langDesc": "The output language written into the compile prompt, e.g. en / 中文 / 日本語",
+    "entityTypesDesc": "The vocabulary used to classify entities extracted at compile time; each KB can inherit or override it in its own settings.",
+    "entityTypesNote": "Changes apply to future recompiles only; existing entity pages keep their current type.",
+    "kbRootLabel": "Knowledge base root",
+    "kbRootDesc": "Default location for new knowledge bases (<root>/<name>); leave empty to restore the built-in default. Individual KBs can set a custom path at creation.",
+    "kbRootPlaceholder": "e.g. ~/openkb",
+    "kbRootEnvPinned": "Pinned by the OPENKB_KB_ROOT environment variable; edits here won't take effect until it's unset."
+  },
+  "conn": {
+    "note": "Cloud data-source connectors (OAuth / S3) are in development and not yet available; for now, upload local files from the KB detail page. Want a connector? Click a card below to vote on GitHub and help us prioritize."
+  },
+  "about": {
+    "links": {
+      "repo": "GitHub repo",
+      "pageindex": "PageIndex (retrieval engine)",
+      "docs": "Docs docs.pageindex.ai",
+      "company": "Vectify AI (company)"
+    },
+    "blurb": "Compile raw documents into a structured, cross-linked wiki-style knowledge base, powered by PageIndex's vectorless, reasoning-based long-document retrieval.",
+    "byline": "Built by Vectify AI · part of the PageIndex product line",
+    "latestRelease": "See the latest release →"
+  }
+}

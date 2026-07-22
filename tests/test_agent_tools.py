@@ -3,12 +3,63 @@
 from __future__ import annotations
 
 from openkb.agent.tools import (
+    artifact_event_from_write,
     get_wiki_page_content,
     list_wiki_files,
     parse_pages,
     read_wiki_file,
+    read_wiki_image,
     write_wiki_file,
 )
+
+FAKE_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+
+
+# ---------------------------------------------------------------------------
+# read_wiki_image
+# ---------------------------------------------------------------------------
+
+
+class TestReadWikiImage:
+    def _make_image(self, tmp_path):
+        images_dir = tmp_path / "sources" / "images" / "doc"
+        images_dir.mkdir(parents=True)
+        (images_dir / "p1_img1.png").write_bytes(FAKE_PNG)
+
+    def test_reads_wiki_root_relative_path(self, tmp_path):
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("sources/images/doc/p1_img1.png", str(tmp_path))
+
+        assert result["type"] == "image"
+        assert result["image_url"].startswith("data:image/png;base64,")
+
+    def test_reads_note_relative_path_from_sources(self, tmp_path):
+        # Source .md pages embed images as "images/<doc>/<file>" (relative to
+        # wiki/sources/); the tool must resolve those verbatim too.
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("images/doc/p1_img1.png", str(tmp_path))
+
+        assert result["type"] == "image"
+        assert result["image_url"].startswith("data:image/png;base64,")
+
+    def test_missing_image_reports_not_found(self, tmp_path):
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("images/doc/nope.png", str(tmp_path))
+
+        assert result["type"] == "text"
+        assert "not found" in result["text"].lower()
+
+    def test_path_escape_denied(self, tmp_path):
+        self._make_image(tmp_path)
+
+        result = read_wiki_image("../outside.png", str(tmp_path))
+
+        assert result["type"] == "text"
+        assert "Access denied" in result["text"]
+
 
 # ---------------------------------------------------------------------------
 # list_wiki_files
@@ -222,3 +273,50 @@ class TestGetWikiPageContent:
         (tmp_path / "sources").mkdir()
         result = get_wiki_page_content("../../etc/passwd", "1", wiki_root)
         assert "denied" in result.lower() or "not found" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# artifact_event_from_write
+# ---------------------------------------------------------------------------
+
+_ARGS = '{"path": "output/nvda-guizang-test.html", "content": "<html></html>"}'
+
+
+def test_artifact_event_for_successful_output_html():
+    ev = artifact_event_from_write("write_file", _ARGS, "Written: output/nvda-guizang-test.html")
+    assert ev == {
+        "kind": "file",
+        "path": "output/nvda-guizang-test.html",
+        "name": "nvda-guizang-test.html",
+    }
+
+
+def test_artifact_event_none_for_non_write_tool():
+    assert artifact_event_from_write("read_file", _ARGS, "…") is None
+
+
+def test_artifact_event_none_when_write_failed():
+    # write_kb_file returns an "Access denied: …" string on rejection.
+    assert (
+        artifact_event_from_write("write_file", _ARGS, "Access denied: path escapes KB root.")
+        is None
+    )
+
+
+def test_artifact_event_none_for_non_html():
+    args = '{"path": "output/skills/x/SKILL.md", "content": "…"}'
+    assert (
+        artifact_event_from_write("write_file", args, "Written: output/skills/x/SKILL.md") is None
+    )
+
+
+def test_artifact_event_none_for_non_output_zone():
+    args = '{"path": "wiki/explorations/note.html", "content": "…"}'
+    assert (
+        artifact_event_from_write("write_file", args, "Written: wiki/explorations/note.html")
+        is None
+    )
+
+
+def test_artifact_event_none_for_bad_json():
+    assert artifact_event_from_write("write_file", "not json", "Written: output/x.html") is None

@@ -9,6 +9,17 @@ from openkb.cli import cli
 from openkb.schema import AGENTS_MD
 
 
+def test_version_flag_reports_installed_version():
+    import importlib.metadata
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    # Reports the package's installed version (via importlib.metadata), so it
+    # tracks the hatch-vcs-derived version without a hardcoded string.
+    assert importlib.metadata.version("openkb") in result.output
+
+
 def test_init_creates_structure(tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path), patch("openkb.cli.register_kb"):
@@ -389,6 +400,61 @@ class TestQuerySaveGhostStrip:
         assert "multi head attention" in saved
 
 
+class TestQueryUsesGlobalModel:
+    """`openkb query` must resolve its model via
+    ``resolve_effective_config(kb_dir)`` — not a bare per-KB
+    ``load_config(openkb_dir / "config.yaml")`` — so a ``global.yaml``
+    scalar default (set once, shared by every KB) takes effect when the
+    KB's own ``config.yaml`` is silent on ``model``.
+
+    Exercised through the real CLI call site (``cli.query``), not the
+    resolver in isolation: the KB fixture's config.yaml never sets
+    ``model``, so the value reaching ``run_query`` can only be the global
+    override if ``query()`` actually calls ``resolve_effective_config``.
+    If that site were reverted to ``load_config(openkb_dir /
+    "config.yaml")``, the spy would never fire and ``run_query`` would see
+    ``DEFAULT_CONFIG["model"]`` instead — failing this test.
+    """
+
+    def test_query_resolves_model_from_global_config(self, kb_dir, monkeypatch, tmp_path):
+        import openkb.cli as cli_mod
+        from openkb.config import save_global_config
+
+        gdir = tmp_path / "global-config"
+        gdir.mkdir()
+        monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+        monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+        save_global_config({"model": "global-only-model"})
+
+        real_resolve = cli_mod.resolve_effective_config
+        resolve_calls: list = []
+
+        def _spy_resolve(kb_dir_arg):
+            resolve_calls.append(kb_dir_arg)
+            return real_resolve(kb_dir_arg)
+
+        captured: dict = {}
+
+        async def fake_run_query(_question, _kb_dir_arg, model, **kwargs):
+            captured["model"] = model
+            return "the answer"
+
+        monkeypatch.setattr(cli_mod, "resolve_effective_config", _spy_resolve)
+        with (
+            patch("openkb.cli._stream_to_tty", return_value=False),
+            patch("openkb.agent.query.run_query", side_effect=fake_run_query),
+            patch("openkb.cli._setup_llm_key"),
+            patch("openkb.cli.append_log"),
+        ):
+            result = CliRunner().invoke(cli, ["--kb-dir", str(kb_dir), "query", "what is X?"])
+
+        assert result.exit_code == 0, result.output
+        # The resolver seam was invoked by cli.query with this exact KB dir.
+        assert resolve_calls == [kb_dir]
+        # ...and the global-only model it produced actually reached run_query.
+        assert captured["model"] == "global-only-model"
+
+
 class TestSetupLlmKey:
     """_setup_llm_key: OAuth-provider warning skip + extra-headers stash."""
 
@@ -483,3 +549,28 @@ class TestSetupLlmKey:
         kb = self._make_kb(tmp_path, "gpt-5.4-mini")
         _setup_llm_key(kb)
         assert get_timeout() is None
+
+    def test_provider_derived_from_global_only_model(self, tmp_path, monkeypatch, capsys):
+        """A global-only default model (KB config.yaml silent on ``model``) must
+        drive provider extraction the same way the command bodies do — via
+        ``resolve_effective_config`` — so an OAuth provider set only in
+        ``global.yaml`` suppresses the missing-key warning. Before the fix,
+        ``_setup_llm_key`` read the KB config alone and fell back to
+        ``DEFAULT_CONFIG``'s (API-key) model, wrongly emitting the warning.
+        """
+        from openkb.cli import _setup_llm_key
+        from openkb.config import save_global_config
+
+        gdir = tmp_path / "global-config"
+        gdir.mkdir()
+        monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", gdir)
+        monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_PATH", gdir / "global.yaml")
+        save_global_config({"model": "github_copilot/gpt-5-mini"})
+
+        # KB exists but its config.yaml never sets a model of its own.
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("", encoding="utf-8")
+
+        _setup_llm_key(tmp_path)
+        assert "No LLM API key found" not in capsys.readouterr().out

@@ -12,7 +12,7 @@ pip install openkb
 ```
 
 OpenKB pins a **pre-release** of its PageIndex dependency
-(`pageindex==0.3.0.dev1`), which some installers skip by default. If an install
+(`pageindex==0.3.0.dev3`), which some installers skip by default. If an install
 can't resolve `pageindex`, allow pre-releases:
 
 ```bash
@@ -70,6 +70,22 @@ model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 
+# Optional: cap concurrent LLM calls during ingest (PageIndex indexing and
+# concept/entity compilation — they never overlap, so one setting covers
+# both). Lower it if you hit provider rate limits or "too many open files" on
+# large PDFs. Omit to let each stage apply its own default.
+# concurrency: 5
+
+# Optional: whether the LLM agents (query, chat, lint, skill) may call tools
+# in parallel. Leave it UNSET (commented out) to keep OpenKB's per-agent
+# defaults. Setting it applies the SAME value to every agent:
+#   true    allow parallel tool calls
+#   false   force sequential tool calls
+#   null    don't send the setting at all (use the provider default) — REQUIRED
+#           for Amazon Bedrock Claude, which rejects the request when
+#           parallel_tool_calls is sent at all (any value). See #175.
+# parallel_tool_calls: null
+
 # Optional: override the entity-type vocabulary used for entity pages.
 # Omit this key to use the default 7 types
 # (person, organization, place, product, work, event, other).
@@ -95,6 +111,8 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
+| `concurrency` | `null` | Caps concurrent LLM calls OpenKB makes during ingest — both PageIndex's indexing of a long document and OpenKB's own concept/entity compilation. The two never run at once for the same document, so one setting covers both. Lower it if you hit provider rate limits or "too many open files" on large PDFs. `null` lets each stage apply its own default. |
+| `parallel_tool_calls` | unset | Whether the LLM agents (query, chat, lint, skill) may call tools in parallel. Unset keeps OpenKB's per-agent defaults; `true`/`false` force allow/sequential for every agent; `null` omits the setting (provider default). **Amazon Bedrock needs `null`** (see below). |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |
 
@@ -177,6 +195,26 @@ LLM_API_KEY=your-key-here
   won't warn about a missing one.
 - **PageIndex Cloud** uses a separate `PAGEINDEX_API_KEY` (see
   [`pageindex-cloud/`](../pageindex-cloud/)).
+- **Amazon Bedrock** (`model: bedrock/...`) authenticates with AWS credentials,
+  not `LLM_API_KEY`. Put them in `<kb>/.env` (LiteLLM/boto3 read them from the
+  environment); `LLM_API_KEY` isn't needed:
+
+  ```bash
+  # <kb>/.env
+  AWS_ACCESS_KEY_ID=...
+  AWS_SECRET_ACCESS_KEY=...
+  AWS_REGION_NAME=eu-central-1
+  ```
+
+  ```yaml
+  # <kb>/.openkb/config.yaml
+  model: bedrock/eu.anthropic.claude-sonnet-4-6
+  parallel_tool_calls: null   # REQUIRED for Bedrock Claude: sending
+                              # parallel_tool_calls at all (any value) makes
+                              # LiteLLM send a malformed tool_choice that Bedrock
+                              # rejects (#175). null tells OpenKB to omit it.
+                              # Write it as bare `null` — not `None` or "null".
+  ```
 
 **Where keys are read from** (first match wins, existing env always respected):
 

@@ -1,0 +1,61 @@
+{
+  "loading": "加载中…",
+  "pageLoadError": "页面加载失败：{{error}}",
+  "noChanges": "没有需要保存的更改",
+  "saveError": "保存失败：{{error}}",
+  "configLoadError": "加载配置失败：{{error}}",
+  "actions": {
+    "newKb": "新建知识库",
+    "close": "关闭",
+    "refresh": "刷新",
+    "cancel": "取消"
+  },
+  "fields": {
+    "model": "模型",
+    "wikiLanguage": "Wiki 输出语言",
+    "threshold": "PageIndex 阈值（页数）",
+    "entityTypes": "实体类型"
+  },
+  "entityTypes": {
+    "placeholder": "输入类型，按 Enter 添加",
+    "removeAria": "移除类型 {{type}}",
+    "always": "始终包含"
+  },
+  "errors": {
+    "requestFailed": "请求失败",
+    "uploadFailed": "上传失败：{{detail}}"
+  },
+  "nav": {
+    "home": "首页",
+    "kbs": "知识库",
+    "settings": "设置"
+  },
+  "titlebar": {
+    "chat": "对话",
+    "local": "本地"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统",
+    "toggleTitle": "主题：{{label}}（点击切换）",
+    "toggleAria": "主题：{{label}}"
+  },
+  "language": {
+    "zh": "中文",
+    "en": "English",
+    "toggleTitle": "语言：{{label}}（点击切换）",
+    "toggleAria": "语言：{{label}}"
+  },
+  "auth": {
+    "title": "需要访问令牌",
+    "description": "此服务器已配置访问令牌（OPENKB_API_TOKEN）。请输入令牌以继续；令牌仅保存在本浏览器中。",
+    "tokenLabel": "访问令牌",
+    "baseLabel": "API 地址（可选，留空使用当前源）",
+    "connect": "连接"
+  },
+  "connector": {
+    "tooltip": "云端同步开发中 · 去 GitHub 投票表达需求",
+    "vote": "想要它？去投票"
+  }
+}

@@ -27,6 +27,7 @@ from openkb.agent.skill_runner import (
     SkillRunResult,
     run_skill,
 )
+from openkb.config import LlmCredentialBundle
 from openkb.deck import deck_dir
 
 DEFAULT_DECK_SKILL = "openkb-deck-neon"
@@ -47,6 +48,7 @@ async def run_deck_create(
     model: str,
     critique: bool,
     skill_name: str = DEFAULT_DECK_SKILL,
+    bundle: LlmCredentialBundle | None = None,
 ) -> SkillRunResult:
     """Compile a single deck from the KB's wiki via the chosen skill.
 
@@ -81,6 +83,7 @@ async def run_deck_create(
             model=model,
             slug=deck_name,
             max_turns=MAX_TURNS_WITH_CRITIQUE if critique else MAX_TURNS,
+            bundle=bundle,
         )
     except SkillNotFoundError as exc:
         raise RuntimeError(
@@ -114,6 +117,7 @@ async def run_deck_create(
                 kb_dir=kb_dir,
                 model=model,
                 max_turns=CRITIC_MAX_TURNS,
+                bundle=bundle,
             )
         except SkillNotFoundError:
             # Critic missing is non-fatal — the unpatched deck still ships.

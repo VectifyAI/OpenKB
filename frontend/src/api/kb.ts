@@ -1,0 +1,98 @@
+import { apiFetch } from "./client"
+
+export interface KbSummary {
+  name: string
+  document_count: number
+  last_compile: string | null
+  has_raw: boolean
+  /** Absolute directory of this KB (may sit outside the default root). */
+  path?: string
+}
+
+export interface KbListResponse {
+  root: string
+  knowledge_bases: KbSummary[]
+}
+
+export function listKbs(): Promise<KbListResponse> {
+  return apiFetch<KbListResponse>("/api/v1/kbs")
+}
+
+/** Body for POST /api/v1/init. Only `kb` is required; model/credentials are
+ *  omitted here and left to inherit global defaults (set later via the per-KB
+ *  gear / KbSettingsSheet). When `path` is given, the KB is created at that
+ *  absolute directory instead of the default `<root>/<name>`. */
+export interface InitRequest {
+  kb: string
+  model?: string
+  api_key?: string
+  openai_api_base?: string
+  path?: string
+}
+
+export interface InitResponse {
+  kb: string
+  created: boolean
+  env_written: { api_key: boolean; openai_api_base: boolean }
+  message: string
+}
+
+export function createKb(body: InitRequest): Promise<InitResponse> {
+  return apiFetch<InitResponse>("/api/v1/init", { method: "POST", body })
+}
+
+/** Permanently delete a knowledge base (physical removal + unregister).
+ *  `confirmName` must equal `kb` (re-checked server-side); the caller collects
+ *  the type-the-name confirmation. */
+export function deleteKb(kb: string, confirmName: string): Promise<{ deleted: boolean; kb: string; path: string }> {
+  return apiFetch("/api/v1/kb/delete", { body: { kb, confirm_name: confirmName } })
+}
+
+export type ConfigSource = "kb" | "global" | "default"
+
+export interface KbConfig {
+  model: string
+  language: string
+  pageindex_threshold: number
+  /** CLEANED effective entity-extraction vocabulary (always includes "other"). */
+  entity_types: string[]
+  /** Plaintext LLM base URL (a config value, not a credential); null if unset. */
+  openai_api_base: string | null
+  /** Presence flag only — the raw key value is NEVER returned by the API. */
+  has_api_key: boolean
+  /** Which layer supplied each field's effective value. */
+  sources: Record<"model" | "language" | "pageindex_threshold" | "entity_types", ConfigSource>
+  /** Raw global-layer values (null where global.yaml is silent). */
+  global_values: {
+    model: string | null
+    language: string | null
+    pageindex_threshold: number | null
+    /** RAW global list (not cleaned) — for the inherited badge. */
+    entity_types: string[] | null
+  }
+}
+
+/**
+ * Shape of a config PATCH. Merge-patch (RFC 7386) semantics ride on the JSON
+ * body: an OMITTED field (TS `undefined`, dropped by JSON.stringify) leaves the
+ * value UNCHANGED; an explicit `null` CLEARS it; a value SETS it. Callers MUST
+ * therefore never send `api_key: ""` — the empty string is a real "set an empty
+ * key" request, not "unchanged" or "clear".
+ */
+export interface KbConfigPatch {
+  config?: Partial<Pick<KbConfig, "model" | "language" | "pageindex_threshold">> & {
+    /** A list sets/overrides for this KB; `null` reverts to inherited. Values
+     *  are cleaned server-side (lowercase, `[a-z0-9 _-]`, dedupe, + "other"). */
+    entity_types?: string[] | null
+  }
+  api_key?: string | null
+  openai_api_base?: string | null
+}
+
+export function getKbConfig(kb: string): Promise<KbConfig> {
+  return apiFetch<KbConfig>(`/api/v1/kb/config?kb=${encodeURIComponent(kb)}`)
+}
+
+export function patchKbConfig(kb: string, patch: KbConfigPatch): Promise<KbConfig> {
+  return apiFetch<KbConfig>("/api/v1/kb/config", { method: "PATCH", body: { kb, ...patch } })
+}

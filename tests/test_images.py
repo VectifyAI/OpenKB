@@ -41,7 +41,7 @@ class TestExtractBase64Images:
 
         # Result should reference a saved file, not the raw base64
         assert "data:image/png;base64," not in result
-        assert "![alt text](sources/images/doc/img_001.png)" == result
+        assert "![alt text](images/doc/img_001.png)" == result
 
         # File should exist on disk
         saved = images_dir / "img_001.png"
@@ -56,8 +56,8 @@ class TestExtractBase64Images:
         md = f"![fig1](data:image/png;base64,{b64_png})\n![fig2](data:image/jpeg;base64,{b64_jpg})"
         result = extract_base64_images(md, "doc", images_dir)
 
-        assert "![fig1](sources/images/doc/img_001.png)" in result
-        assert "![fig2](sources/images/doc/img_002.jpeg)" in result
+        assert "![fig1](images/doc/img_001.png)" in result
+        assert "![fig2](images/doc/img_002.jpeg)" in result
         assert (images_dir / "img_001.png").exists()
         assert (images_dir / "img_002.jpeg").exists()
 
@@ -85,7 +85,7 @@ class TestExtractBase64Images:
 
         with caplog.at_level(logging.WARNING, logger="openkb.images"):
             result = extract_base64_images(md, "doc", images_dir)
-        assert "![good](sources/images/doc/img_001.png)" in result
+        assert "![good](images/doc/img_001.png)" in result
         assert f"data:image/png;base64,{bad}" in result
 
 
@@ -107,7 +107,7 @@ class TestCopyRelativeImages:
         md = "![diagram](diagram.png)"
         result = copy_relative_images(md, source_dir, "doc", images_dir)
 
-        assert "![diagram](sources/images/doc/diagram.png)" == result
+        assert "![diagram](images/doc/diagram.png)" == result
         assert (images_dir / "diagram.png").read_bytes() == FAKE_PNG
 
     def test_missing_relative_image_leaves_original(self, tmp_path, caplog):
@@ -157,8 +157,8 @@ class TestCopyRelativeImages:
         md = "![a](a.png)\n![b](b.jpg)"
         result = copy_relative_images(md, source_dir, "doc", images_dir)
 
-        assert "![a](sources/images/doc/a.png)" in result
-        assert "![b](sources/images/doc/b.jpg)" in result
+        assert "![a](images/doc/a.png)" in result
+        assert "![b](images/doc/b.jpg)" in result
         assert (images_dir / "a.png").exists()
         assert (images_dir / "b.jpg").exists()
 
@@ -195,4 +195,55 @@ class TestCopyRelativeImages:
         result = copy_relative_images(md, source_dir, "doc", images_dir)
 
         assert [p.name for p in images_dir.iterdir()] == ["logo.png"]
-        assert result.count("sources/images/doc/logo.png") == 2
+        assert result.count("images/doc/logo.png") == 2
+
+
+# ---------------------------------------------------------------------------
+# Note-relative resolution (Obsidian / GitHub compatibility)
+# ---------------------------------------------------------------------------
+
+
+class TestNoteRelativeResolution:
+    """Generated ``![...](...)`` links must resolve relative to the note.
+
+    Source pages live at ``wiki/sources/<doc>.md`` and their images at
+    ``wiki/sources/images/<doc>/`` — renderers that resolve links relative
+    to the containing file (Obsidian, GitHub, VS Code) must find the image.
+    A wiki-root-relative link (``sources/images/...``) would resolve to the
+    non-existent ``wiki/sources/sources/images/...`` from those notes.
+    """
+
+    @staticmethod
+    def _link_paths(markdown: str) -> list[str]:
+        import re
+
+        return re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown)
+
+    def test_base64_image_ref_resolves_from_sources_note(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        note = wiki / "sources" / "doc.md"
+        images_dir = wiki / "sources" / "images" / "doc"
+        images_dir.mkdir(parents=True)
+
+        md = f"![alt](data:image/png;base64,{_make_b64(FAKE_PNG)})"
+        result = extract_base64_images(md, "doc", images_dir)
+        note.write_text(result, encoding="utf-8")
+
+        for rel in self._link_paths(result):
+            assert (note.parent / rel).exists(), rel
+
+    def test_copied_image_ref_resolves_from_sources_note(self, tmp_path):
+        source_dir = tmp_path / "clip"
+        source_dir.mkdir()
+        (source_dir / "figure.png").write_bytes(FAKE_PNG)
+
+        wiki = tmp_path / "wiki"
+        note = wiki / "sources" / "doc.md"
+        images_dir = wiki / "sources" / "images" / "doc"
+        images_dir.mkdir(parents=True)
+
+        result = copy_relative_images("![f](figure.png)", source_dir, "doc", images_dir)
+        note.write_text(result, encoding="utf-8")
+
+        for rel in self._link_paths(result):
+            assert (note.parent / rel).exists(), rel

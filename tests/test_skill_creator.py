@@ -32,17 +32,52 @@ def _make_kb(tmp_path):
     return tmp_path
 
 
-def test_build_agent_interpolates_intent_and_name(tmp_path):
-    kb = _make_kb(tmp_path)
-    agent = build_skill_create_agent(
+def _build_demo_agent(kb, model="gpt-4o-mini"):
+    return build_skill_create_agent(
         wiki_root=str(kb / "wiki"),
         skill_root=str(kb / "output" / "skills" / "demo"),
         skill_name="demo",
         intent="distill a tax-lookup skill",
-        model="gpt-4o-mini",
+        model=model,
     )
+
+
+def test_build_agent_interpolates_intent_and_name(tmp_path):
+    kb = _make_kb(tmp_path)
+    agent = _build_demo_agent(kb)
     assert "demo" in agent.instructions
     assert "distill a tax-lookup skill" in agent.instructions
+
+
+class TestSkillCreateAgentParallelToolCalls:
+    """skill-create defaults to True (fan-out read phase; see creator.py), but an
+    explicit config value must override it — a Bedrock user's `null` has to reach
+    skill creation too, or `openkb skill new` stays broken on Bedrock (#175).
+    """
+
+    def test_unset_defaults_to_true(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        kb = _make_kb(tmp_path)
+        set_parallel_tool_calls(None, False)  # not configured
+        agent = _build_demo_agent(kb)
+        assert agent.model_settings.parallel_tool_calls is True
+
+    def test_explicit_null_omits_for_bedrock(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        kb = _make_kb(tmp_path)
+        set_parallel_tool_calls(None, True)  # explicit null
+        agent = _build_demo_agent(kb, model="bedrock/eu.anthropic.claude-sonnet-4-6")
+        assert agent.model_settings.parallel_tool_calls is None
+
+    def test_explicit_false_overrides_default(self, tmp_path):
+        from openkb.config import set_parallel_tool_calls
+
+        kb = _make_kb(tmp_path)
+        set_parallel_tool_calls(False, True)  # explicit false
+        agent = _build_demo_agent(kb)
+        assert agent.model_settings.parallel_tool_calls is False
 
 
 @pytest.mark.asyncio

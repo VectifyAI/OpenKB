@@ -11,9 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
-from markitdown import MarkItDown
 
-from openkb.config import load_config
+from openkb.config import resolve_effective_config
 from openkb.images import convert_pdf_with_images, copy_relative_images, extract_base64_images
 from openkb.locks import atomic_write_text, kb_ingest_lock
 from openkb.state import HashRegistry
@@ -150,7 +149,7 @@ def _convert_document_impl(
     # Load config & state
     # ------------------------------------------------------------------
     openkb_dir = kb_dir / ".openkb"
-    config = load_config(openkb_dir / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     threshold: int = config.get("pageindex_threshold", 20)
     artifact_root = staging_dir if staging_dir is not None else kb_dir
     registry = HashRegistry(openkb_dir / "hashes.json")
@@ -223,7 +222,15 @@ def _convert_document_impl(
         # Use pymupdf dict-mode for PDFs: text + images inline at correct positions
         markdown = convert_pdf_with_images(src, doc_name, images_dir)
     else:
-        # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.)
+        # Non-PDF, non-MD: use markitdown (docx, pptx, html, etc.).
+        # Imported lazily: markitdown pulls in magika → onnxruntime (tens
+        # of MB, slow to import) that only this branch needs. Keeping it
+        # out of module import makes `import openkb` cheap and lets a
+        # packaged build drop those deps when Office-format ingest isn't
+        # required. markitdown appends warning filters on import but leaves
+        # the CLI's front "ignore" filter in place, so no re-suppress here.
+        from markitdown import MarkItDown
+
         mid = MarkItDown()
         result = mid.convert(str(src), keep_data_uris=True)
         markdown = result.text_content

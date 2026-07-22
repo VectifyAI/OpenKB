@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
@@ -24,7 +24,12 @@ from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
-from openkb.agent.query import MAX_TURNS, build_chat_agent
+from openkb.agent.query import (
+    MAX_TURNS,
+    build_chat_agent,
+    iter_agent_response_events,
+)
+from openkb.config import LlmCredentialBundle
 from openkb.log import append_log
 
 _STYLE_DICT: dict[str, str] = {
@@ -66,6 +71,13 @@ _HELP_TEXT = (
 )
 
 _SIGINT_EXIT_WINDOW = 2.0
+
+# The read-only tools whose calls are recorded into a chat turn's persisted
+# trace. Mirrors the frontend's toolCallSource whitelist (chat.ts): these are
+# the only tool reads the UI renders, and limiting the trace to them keeps a
+# non-read tool's large arguments (e.g. write_file's full file `content`) out
+# of the session JSON and off the restore wire.
+_TRACE_READ_TOOLS = frozenset({"read_file", "get_page_content"})
 
 
 def _use_color(force_off: bool) -> bool:
@@ -558,9 +570,9 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     # Load model from KB config
-    from openkb.config import DEFAULT_CONFIG, load_config
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.skill.generator import Generator
@@ -689,9 +701,9 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     # Load model from KB config
-    from openkb.config import DEFAULT_CONFIG, load_config
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     from openkb.deck.creator import DEFAULT_DECK_SKILL
@@ -855,9 +867,9 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
         SkillNotFoundError,
         run_skill,
     )
-    from openkb.config import DEFAULT_CONFIG, load_config
+    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG["model"])
 
     # Path passed to the skill is relative to kb_dir (the agent's cwd
@@ -892,6 +904,101 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
     _fmt(style, ("class:slash.ok", f"Critique pass complete: {rel_str}\n"))
 
 
+def build_chat_session_agent(
+    kb_dir: Path,
+    session: ChatSession,
+    bundle: "LlmCredentialBundle | None" = None,
+) -> Any:
+    """Build the write- and skill-capable agent for one chat session (REST ``/chat``).
+
+    Thin wrapper that resolves language from the session/config and delegates
+    to ``build_chat_agent`` with the session's model. Kept in chat.py (not
+    query.py) so the query module's ``build_chat_agent`` signature stays
+    unchanged for the CLI; the API uses this session-aware variant instead.
+    """
+    from openkb.config import resolve_effective_config
+
+    config = resolve_effective_config(kb_dir)[0]
+    language = session.language or config.get("language", "en")
+    return build_chat_agent(kb_dir, session.model, language=language, bundle=bundle)
+
+
+async def iter_chat_turn_events(
+    agent: Any,
+    session: ChatSession,
+    user_input: str,
+    *,
+    run_config: Any = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield non-TTY events for one chat turn and persist the final turn.
+
+    Used by the REST ``/chat`` SSE stream: forwards delta/tool_call events from
+    ``iter_agent_response_events`` unchanged, and on the final event records
+    the turn into the session (history + counts) before re-emitting it with
+    ``session_id``/``turn_count``.
+    """
+    new_input = session.history + [{"role": "user", "content": user_input}]
+
+    # Accumulate the ordered, interleaved trace (narration text + tool reads) in
+    # SSE arrival order, mirroring the frontend's live fold, so a RESTORED turn
+    # renders step-by-step identically instead of collapsing to one text block.
+    # Persisted per turn via record_turn(trace=...). Only READ tools go into the
+    # trace (see _TRACE_READ_TOOLS): they are all the frontend renders, and
+    # recording a non-read tool like write_file would persist its full `content`
+    # argument (the whole generated file) into the session JSON and ship it to
+    # the browser on restore only to be dropped — the same large-payload waste
+    # the `final` frame already avoids by stripping history.
+    trace: list[dict[str, Any]] = []
+
+    async for event in iter_agent_response_events(
+        agent, new_input, max_turns=MAX_TURNS, run_config=run_config
+    ):
+        kind = event["event"]
+        if kind == "delta":
+            text = event["data"].get("text", "")
+            if text:
+                if trace and trace[-1].get("kind") == "text":
+                    trace[-1]["text"] += text
+                else:
+                    trace.append({"kind": "text", "text": text})
+            yield event
+            continue
+        if kind == "tool_call":
+            d = event["data"]
+            # Record only read-tool calls (the frontend renders nothing else);
+            # this keeps write_file's large `content` argument out of the
+            # persisted trace and off the restore wire.
+            if d.get("name") in _TRACE_READ_TOOLS:
+                trace.append(
+                    {"kind": "tool", "name": d.get("name"), "arguments": d.get("arguments")}
+                )
+            yield event
+            continue
+        if kind != "final":
+            yield event
+            continue
+
+        data = event["data"]
+        answer = data["answer"]
+        # If the model streamed no *substantive* text (answer came from
+        # final_output, or the only streamed deltas were whitespace like " " /
+        # "\n"), ensure the answer still lands in the trace so the restored turn
+        # is not empty. A whitespace-only delta creates a text step, so guarding
+        # on mere presence of a text step would wrongly treat that empty step as
+        # the answer; require a text step with non-whitespace content instead.
+        if answer and not any(s.get("kind") == "text" and s.get("text", "").strip() for s in trace):
+            trace.append({"kind": "text", "text": answer})
+        session.record_turn(user_input, answer, data["history"], trace=trace)
+        yield {
+            "event": "final",
+            "data": {
+                "answer": answer,
+                "session_id": session.id,
+                "turn_count": session.turn_count,
+            },
+        }
+
+
 async def run_chat(
     kb_dir: Path,
     session: ChatSession,
@@ -900,12 +1007,12 @@ async def run_chat(
     raw: bool = False,
 ) -> None:
     """Run the chat REPL against ``session`` until the user exits."""
-    from openkb.config import load_config
+    from openkb.config import resolve_effective_config
 
     use_color = _use_color(force_off=no_color)
     style = _build_style(use_color)
 
-    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    config = resolve_effective_config(kb_dir)[0]
     language = session.language or config.get("language", "en")
     agent = build_chat_agent(kb_dir, session.model, language=language)
 
