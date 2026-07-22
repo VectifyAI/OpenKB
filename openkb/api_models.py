@@ -285,6 +285,24 @@ class PageResponse(BaseModel):
     content: str
 
 
+class DocumentSourceRequest(BaseModel):
+    kb: str = Field(..., min_length=1)
+    # SHA-256 hash key from /list — the unique document identifier (avoids
+    # ambiguity when two documents share a doc_name/filename stem).
+    hash: str = Field(..., min_length=1)
+
+
+class DocumentSourceResponse(BaseModel):
+    hash: str
+    name: str
+    doc_name: str
+    type: str
+    format: str
+    content: str
+    # Page count for long docs (per-page JSON); None for short (single .md).
+    pages: int | None = None
+
+
 class PageDeleteRequest(BaseModel):
     kb: str = Field(..., min_length=1)
     # A '<section>/<name>' wiki-page ref, e.g. "concepts/attention". Only
