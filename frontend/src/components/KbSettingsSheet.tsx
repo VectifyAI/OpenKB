@@ -16,6 +16,7 @@ import type { SseEvent } from '@/api/client'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { UnLanguageDatalist, UN_LANG_LIST_ID } from '@/components/UnLanguageDatalist'
+import EntityTypesEditor from '@/components/EntityTypesEditor'
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -169,6 +170,22 @@ function KbConfigSection({ kb }: { kb: string }) {
     [kb, apply, t],
   )
 
+  // Persist the entity-types override (list) or revert to inherited (null).
+  // Always adopts the response: the row then shows the server-CLEANED list.
+  const setEntityTypesOverride = useCallback(
+    async (value: string[] | null) => {
+      setBusy(true)
+      try {
+        apply(await patchKbConfig(kb, { config: { entity_types: value } }))
+      } catch (e) {
+        toast.error(t('common:saveError', { error: errMsg(e) }))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [kb, apply, t],
+  )
+
   const saveCredentials = useCallback(async () => {
     if (!config) return
     setBusy(true)
@@ -257,6 +274,13 @@ function KbConfigSection({ kb }: { kb: string }) {
         // convert directly (no silent null-on-invalid — see OverrideRow).
         onSet={(v) => setOverride('pageindex_threshold', Number(v))}
         onRevert={() => setOverride('pageindex_threshold', null)}
+      />
+      <EntityTypesRow
+        source={config.sources.entity_types}
+        effective={config.entity_types}
+        busy={busy}
+        onSet={setEntityTypesOverride}
+        onRevert={() => setEntityTypesOverride(null)}
       />
 
       <h3 className="pt-2 text-[12px] font-semibold text-muted-foreground tracking-wide">{t('kbSettings:credHeading')}</h3>
@@ -381,6 +405,64 @@ function OverrideRow({
           {inheritedBadge}
         </div>
       )}
+    </div>
+  )
+}
+
+/** OverrideRow's list-shaped sibling for the entity-extraction vocabulary:
+ *  the same 为本库覆盖 switch + inherited badge, but the override editor is a
+ *  chips list (EntityTypesEditor) and every add/remove persists immediately —
+ *  the chips always show the server-cleaned effective list. */
+function EntityTypesRow({
+  source, effective, busy, onSet, onRevert,
+}: {
+  source: ConfigSource
+  /** Cleaned effective list (always includes "other") — shown as-is in the
+   *  inherited badge, so it matches the vocabulary the compiler actually uses. */
+  effective: string[]
+  busy: boolean
+  onSet: (value: string[]) => void
+  onRevert: () => void
+}) {
+  const { t } = useTranslation(['kbSettings', 'common'])
+  const overridden = source === 'kb'
+  const label = t('common:fields.entityTypes')
+
+  const inheritedBadge =
+    source === 'global'
+      ? t('kbSettings:inheritGlobal', { value: effective.join(', ') })
+      : t('kbSettings:inheritDefault', { value: effective.join(', ') })
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <label className="text-[12px] font-medium text-muted-foreground">{label}</label>
+        <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          {t('kbSettings:override')}
+          <Switch
+            checked={overridden}
+            disabled={busy}
+            // ON seeds the override with the current effective list (the
+            // backend then owns it as this KB's own list); OFF reverts to
+            // inherited via an explicit null.
+            onCheckedChange={(v) => (v ? onSet(effective) : onRevert())}
+            aria-label={t('kbSettings:overrideAria', { label })}
+          />
+        </span>
+      </div>
+      {overridden ? (
+        <div className="mt-1.5">
+          <EntityTypesEditor value={effective} disabled={busy} onChange={onSet} />
+        </div>
+      ) : (
+        <div
+          data-field="entity_types"
+          className="mt-1.5 flex min-h-9 items-center rounded-md border border-dashed border-[hsl(var(--glass-border))] px-3 py-1.5 text-[12.5px] text-muted-foreground"
+        >
+          {inheritedBadge}
+        </div>
+      )}
+      <p className="mt-1.5 text-[11.5px] text-muted-foreground">{t('kbSettings:entityTypesNote')}</p>
     </div>
   )
 }

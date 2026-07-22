@@ -34,6 +34,7 @@ from openkb.config import (
     load_global_config,
     resolve_credential_bundle,
     resolve_effective_config,
+    resolve_entity_types,
     save_config,
 )
 from openkb.locks import atomic_write_text
@@ -150,6 +151,9 @@ def read_kb_config(kb_dir: Path) -> KbConfigResponse:
         model=effective["model"],
         language=effective["language"],
         pageindex_threshold=effective["pageindex_threshold"],
+        # Cleaned effective list (what the compiler will use), not the raw stored
+        # value — resolve_entity_types defaults + dedupes + ensures "other".
+        entity_types=resolve_entity_types(effective, warn=False),
         openai_api_base=bundle.base_url,
         has_api_key=bundle.api_key is not None,
         sources=sources,
@@ -157,6 +161,7 @@ def read_kb_config(kb_dir: Path) -> KbConfigResponse:
             model=global_config.get("model"),
             language=global_config.get("language"),
             pageindex_threshold=global_config.get("pageindex_threshold"),
+            entity_types=global_config.get("entity_types"),
         ),
     )
 
@@ -262,6 +267,8 @@ def read_global_config() -> GlobalConfigResponse:
         model=gc.get("model", DEFAULT_CONFIG["model"]),
         language=gc.get("language", DEFAULT_CONFIG["language"]),
         pageindex_threshold=gc.get("pageindex_threshold", DEFAULT_CONFIG["pageindex_threshold"]),
+        # Effective global vocabulary (cleaned; defaults to DEFAULT_ENTITY_TYPES).
+        entity_types=resolve_entity_types(gc, warn=False),
         # Report the EFFECTIVE root (env > global.yaml kb_root > default) via the
         # module object so a test-monkeypatched GLOBAL_CONFIG_DIR is honored.
         kb_root=str(_config_module.kb_root_dir()),

@@ -18,6 +18,7 @@
   "inheritDefault": "Inherited · default ({{value}})",
   "override": "Override for this KB",
   "overrideAria": "Override {{label}} for this KB",
+  "entityTypesNote": "Changes apply to future recompiles only; existing entity pages keep their current type.",
   "unnamed": "(unnamed)",
   "recompileFailed": "Recompile failed",
   "watchStarted": "File watching started",

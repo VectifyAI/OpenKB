@@ -13,7 +13,13 @@
   "fields": {
     "model": "模型",
     "wikiLanguage": "Wiki 输出语言",
-    "threshold": "PageIndex 阈值（页数）"
+    "threshold": "PageIndex 阈值（页数）",
+    "entityTypes": "实体类型"
+  },
+  "entityTypes": {
+    "placeholder": "输入类型，按 Enter 添加",
+    "removeAria": "移除类型 {{type}}",
+    "always": "始终包含"
   },
   "errors": {
     "requestFailed": "请求失败",
