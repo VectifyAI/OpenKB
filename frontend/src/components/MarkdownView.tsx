@@ -43,7 +43,7 @@ function inline(
   // alternative `![alt](url)` is included ONLY when a resolveImageSrc is given
   // (the document reader), so chat/wiki rendering stays byte-for-byte unchanged.
   const re = resolveImageSrc
-    ? /(\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
+    ? /(\[\[[^\]]+\]\]|!\[[^\]]*\]\((?:[^()]|\([^()]*\))*\)|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
     : /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
   let last = 0, m: RegExpExecArray | null, k = 0
   while ((m = re.exec(text))) {
@@ -105,7 +105,7 @@ function inline(
       // source path to an authed API path, or null for external/data URLs
       // (left as literal text). Cannot collide with the link/wikilink branches:
       // those match tokens starting with '[', this one starts with '!['.
-      const im = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(tok)
+      const im = /^!\[([^\]]*)\]\(((?:[^()]|\([^()]*\))*)\)$/.exec(tok)
       const alt = im ? im[1] : ''
       const raw = im ? im[2].trim() : ''
       const apiPath = raw ? (resolveImageSrc?.(raw) ?? null) : null
@@ -244,8 +244,9 @@ function MermaidBlock({ code }: { code: string }) {
 
 /** Render a bearer-authed KB image. The API token can't ride on `<img src>`,
  *  so we fetch the API path as a blob (mirrors `artifacts.ts`), show it, and
- *  revoke the object URL on unmount / src change. On failure it renders nothing
- *  rather than a broken-image glyph; while loading it shows a muted placeholder. */
+ *  revoke the object URL on unmount / src change. While loading it shows a muted
+ *  placeholder; on failure it shows a small dashed chip (the alt) so a missing
+ *  image is visible, not silently dropped. */
 function AuthedImage({ apiPath, alt }: { apiPath: string; alt: string }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
@@ -271,7 +272,14 @@ function AuthedImage({ apiPath, alt }: { apiPath: string; alt: string }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [apiPath])
-  if (failed) return null
+  // Surface a failed load (missing file, network, expired token) with a muted
+  // dashed placeholder showing the alt, rather than silently rendering nothing.
+  if (failed)
+    return (
+      <span className="my-3 inline-block rounded-lg border border-dashed border-[hsl(var(--glass-border))] px-2.5 py-1 text-[12px] text-muted-foreground">
+        {alt}
+      </span>
+    )
   if (!url) return <span className="my-3 block h-32 animate-pulse rounded-lg bg-muted" aria-hidden />
   return (
     <img

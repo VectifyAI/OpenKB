@@ -206,6 +206,26 @@ def test_document_image_serves_extracted_image(monkeypatch, kb_dir):
     assert resp.content == b"\x89PNG\r\n\x1a\nfake-bytes"
 
 
+def test_document_image_sets_explicit_media_type(monkeypatch, kb_dir):
+    """Media type is set from the suffix (not guessed), so a .webp is served as
+    image/webp even on Pythons whose mimetypes lacks a webp entry (which would
+    otherwise degrade to text/plain and break a blob-loaded <img>)."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    img_dir = kb_dir / "wiki" / "sources" / "images" / "doc"
+    img_dir.mkdir(parents=True)
+    (img_dir / "p1_img1.webp").write_bytes(b"RIFFfake")
+
+    resp = client.get(
+        "/api/v1/document/image",
+        params={"kb": kb, "path": "sources/images/doc/p1_img1.webp"},
+        headers=_auth(),
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/webp"
+
+
 def test_document_image_rejects_traversal(monkeypatch, kb_dir):
     """A path escaping wiki/sources/images (even to another .png) is rejected by
     the containment guard before the suffix check."""

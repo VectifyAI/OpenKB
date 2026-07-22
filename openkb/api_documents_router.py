@@ -18,8 +18,18 @@ from openkb.documents import read_document_source
 
 documents_router = APIRouter()
 
-# Raster types the image extractor produces; SVG is excluded (inline-script risk).
-_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+# Raster types the image extractor produces, mapped to explicit media types.
+# SVG is excluded (inline-script risk). We set the media type ourselves rather
+# than let FileResponse guess it: mimetypes has no ``.webp`` entry on some
+# Python versions and would fall back to ``text/plain``, which a blob-loaded
+# ``<img>`` then refuses to render.
+_IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 
 @documents_router.post("/api/v1/document/source", response_model=DocumentSourceResponse)
@@ -57,8 +67,9 @@ async def document_image_endpoint(
     full = (kb_dir / "wiki" / path).resolve()
     if not full.is_relative_to(images_root):
         raise HTTPException(status_code=400, detail="Invalid image path.")
-    if full.suffix.lower() not in _IMAGE_SUFFIXES:
+    media_type = _IMAGE_MEDIA_TYPES.get(full.suffix.lower())
+    if media_type is None:
         raise HTTPException(status_code=400, detail="Only extracted images are served.")
     if not full.is_file():
         raise HTTPException(status_code=404, detail="Image not found.")
-    return FileResponse(full)
+    return FileResponse(full, media_type=media_type)
