@@ -216,6 +216,29 @@ LLM_API_KEY=your-key-here
                               # Write it as bare `null` — not `None` or "null".
   ```
 
+- **Eden AI** (`OPENAI_API_BASE=https://api.edenai.run/v3`) is a French, EU-based
+  OpenAI-compatible gateway. Set `LLM_API_KEY` to your Eden AI key, point
+  `OPENAI_API_BASE` at Eden AI, and use a double-prefixed `model` so LiteLLM
+  keeps Eden AI's vendor-prefixed id intact:
+
+  ```bash
+  # <kb>/.env
+  LLM_API_KEY=your-edenai-key
+  OPENAI_API_BASE=https://api.edenai.run/v3   # or https://api.eu.edenai.run/v3 for EU data residency
+  ```
+
+  ```yaml
+  # <kb>/.openkb/config.yaml
+  model: openai/openai/gpt-4o-mini   # openai/<vendor>/<model>, e.g. openai/anthropic/claude-sonnet-4-5
+  ```
+
+  The leading `openai/` selects LiteLLM's OpenAI-compatible transport (so it uses
+  `OPENAI_API_BASE`); the remaining `<vendor>/<model>` is Eden AI's model id. Eden
+  AI's EU endpoint processes and routes prompts and outputs within the European
+  Union, with zero data retention by default (SOC 2 / ISO 27001, DPA as standard),
+  which is useful for GDPR-sensitive knowledge bases. See
+  https://www.edenai.co/data-compliancy.
+
 **Where keys are read from** (first match wins, existing env always respected):
 
 1. your shell environment
