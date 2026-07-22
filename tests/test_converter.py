@@ -482,3 +482,28 @@ class TestConvertDocumentCollision:
         # have backfilled the copy's path onto the legacy entry
         reg2 = HashRegistry(kb_dir / ".openkb" / "hashes.json")
         assert "path" not in reg2.get(first.file_hash)  # not poisoned
+
+
+def test_convert_document_for_prepare_does_not_acquire_mutation_lock_or_write_official_paths(
+    tmp_path,
+):
+    from openkb.converter import convert_document_for_prepare
+
+    kb_dir = tmp_path / "kb"
+    (kb_dir / ".openkb").mkdir(parents=True)
+    (kb_dir / ".openkb" / "config.yaml").write_text("model: gpt-4o-mini\n", encoding="utf-8")
+    (kb_dir / ".openkb" / "hashes.json").write_text("{}", encoding="utf-8")
+    (kb_dir / "raw").mkdir()
+    (kb_dir / "wiki" / "sources").mkdir(parents=True)
+    staging_dir = tmp_path / "private-staging"
+    doc = tmp_path / "note.md"
+    doc.write_text("# Note\n", encoding="utf-8")
+
+    with patch("openkb.converter.kb_ingest_lock", side_effect=AssertionError("lock acquired")):
+        result = convert_document_for_prepare(doc, kb_dir, staging_dir=staging_dir)
+
+    assert result.doc_name == "note"
+    assert (staging_dir / "raw" / "note.md").exists()
+    assert (staging_dir / "wiki" / "sources" / "note.md").exists()
+    assert not (kb_dir / "raw" / "note.md").exists()
+    assert not (kb_dir / "wiki" / "sources" / "note.md").exists()

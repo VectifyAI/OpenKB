@@ -246,43 +246,124 @@ class TestAddCommand:
 
         runner = CliRunner()
         with (
-            patch("openkb.cli.add_single_file") as mock_add,
+            patch("openkb.cli.add_directory_serial") as mock_serial,
             patch("openkb.cli._find_kb_dir", return_value=kb_dir),
         ):
             runner.invoke(cli, ["add", str(docs_dir)])
-            # Should be called for .md and .txt but not .xyz
-            assert mock_add.call_count == 2
-            called_names = {call.args[0].name for call in mock_add.call_args_list}
-            assert "a.md" in called_names
-            assert "b.txt" in called_names
-            assert "ignore.xyz" not in called_names
+            # The filtered, sorted file list is passed to the serial coordinator.
+            mock_serial.assert_called_once()
+            processed = [p.name for p in mock_serial.call_args.args[0]]
+            assert processed == ["a.md", "b.txt"]  # .md and .txt, not .xyz
 
-    def test_add_directory_stops_after_dirty_rollback(self, tmp_path):
-        import pytest
+    def test_add_does_not_expose_jobs_option(self, tmp_path):
+        self._setup_kb(tmp_path)
+        runner = CliRunner()
 
+        result = runner.invoke(cli, ["add", "--jobs", "2"])
+
+        assert result.exit_code != 0
+        assert "No such option '--jobs'" in result.output
+
+    def test_add_serial_loop_stops_on_dirty_rollback(self, tmp_path):
         from openkb.add_coordinator import DirtyRollbackError
 
         kb_dir = self._setup_kb(tmp_path)
         docs_dir = tmp_path / "docs"
         docs_dir.mkdir()
-        (docs_dir / "a.md").write_text("# A")
-        (docs_dir / "b.md").write_text("# B")
-        dirty_error = DirtyRollbackError(
-            "add",
-            kb_dir / ".openkb" / "journal" / "retained.json",
-        )
+        (docs_dir / "a.md").write_text("# A\n", encoding="utf-8")
+        (docs_dir / "b.md").write_text("# B\n", encoding="utf-8")
 
         runner = CliRunner()
         with (
-            patch("openkb.cli.add_single_file", side_effect=dirty_error) as mock_add,
             patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.add_prepare.prepare_document", return_value=None),
+            patch(
+                "openkb.cli.commit_prepared_document",
+                side_effect=DirtyRollbackError("add", tmp_path / "j.json"),
+            ) as mock_commit,
         ):
-            with pytest.raises(DirtyRollbackError) as exc_info:
-                runner.invoke(cli, ["add", str(docs_dir)], catch_exceptions=False)
+            result = runner.invoke(cli, ["add", str(docs_dir)])
 
-        assert exc_info.value is dirty_error
-        mock_add.assert_called_once()
-        assert mock_add.call_args.args[0].name == "a.md"
+        assert result.exit_code == 1
+        assert mock_commit.call_count == 1  # batch stopped after the dirty rollback
+        assert "Dirty rollback" in result.output
+
+    def test_add_serial_loop_continues_on_normal_failure(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "a.md").write_text("# A\n", encoding="utf-8")
+        (docs_dir / "b.md").write_text("# B\n", encoding="utf-8")
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.add_prepare.prepare_document", return_value=None),
+            patch("openkb.cli.commit_prepared_document", return_value="failed") as mock_commit,
+        ):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+
+        assert result.exit_code == 0  # a normal "failed" does NOT stop the batch
+        assert mock_commit.call_count == 2
+
+    def test_add_directory_prepare_commit_end_to_end(self, tmp_path):
+        """`openkb add <dir>` routes through prepare/commit and lands every file
+        in raw/ + wiki/sources/ and the registry, in input order."""
+        from openkb.state import HashRegistry
+
+        kb_dir = self._setup_kb(tmp_path)
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "a.md").write_text("# Alpha\n", encoding="utf-8")
+        (docs_dir / "b.md").write_text("# Beta\n", encoding="utf-8")
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.cli.asyncio.run"),
+            patch("openkb.cli._setup_llm_key"),
+        ):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+
+        assert result.exit_code == 0
+        assert (kb_dir / "raw" / "a.md").exists()
+        assert (kb_dir / "raw" / "b.md").exists()
+        assert (kb_dir / "wiki" / "sources" / "a.md").exists()
+        assert (kb_dir / "wiki" / "sources" / "b.md").exists()
+        names = {
+            meta.get("name")
+            for meta in HashRegistry(kb_dir / ".openkb" / "hashes.json").all_entries().values()
+        }
+        assert {"a.md", "b.md"} <= names
+
+    def test_add_directory_prepare_failure_does_not_stop_batch(self, tmp_path):
+        """A prepare failure for one file is caught; the batch continues and the
+        other file is still added, with no official state change for the failure."""
+        from openkb.add_prepare import prepare_document as real_prepare
+
+        kb_dir = self._setup_kb(tmp_path)
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        (docs_dir / "a.md").write_text("# Alpha\n", encoding="utf-8")
+        (docs_dir / "b.md").write_text("# Beta\n", encoding="utf-8")
+
+        def fake_prepare(f, kb_dir, *, input_index):
+            if f.name == "a.md":
+                raise RuntimeError("boom")
+            return real_prepare(f, kb_dir, input_index=input_index)
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+            patch("openkb.cli.asyncio.run"),
+            patch("openkb.cli._setup_llm_key"),
+            patch("openkb.add_prepare.prepare_document", side_effect=fake_prepare),
+        ):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+
+        assert result.exit_code == 0  # batch continues past the failed prepare
+        assert not (kb_dir / "raw" / "a.md").exists()  # a.md not added
+        assert (kb_dir / "raw" / "b.md").exists()  # b.md still added
 
     def test_add_unsupported_extension(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
