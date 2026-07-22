@@ -109,11 +109,12 @@ export default function Settings() {
     if (threshold.trim() !== '' && Number.isInteger(n) && n >= 1 && n !== config.pageindex_threshold) {
       cfg.pageindex_threshold = n
     }
-    // Order-sensitive compare against the last-fetched cleaned list. The
-    // editor only appends/removes, so equal content ⇒ equal order; a reorder
-    // never happens client-side.
-    const baseTypes = config.entity_types
-    if (entityTypes.length !== baseTypes.length || entityTypes.some((v, i) => v !== baseTypes[i])) {
+    // Order-INSENSITIVE compare: the vocabulary is a set (the compiler treats
+    // it as an allowlist), and removing-then-re-adding a type appends it at the
+    // end — so a same-set reorder must NOT dirty the form or persist a no-op.
+    const a = [...entityTypes].sort()
+    const b = [...config.entity_types].sort()
+    if (a.length !== b.length || a.some((v, i) => v !== b[i])) {
       cfg.entity_types = entityTypes
     }
     if (Object.keys(cfg).length > 0) patch.config = cfg

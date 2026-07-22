@@ -15,13 +15,7 @@ from openkb.locks import atomic_write_text, flock, funlock
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "gpt-5.4",
-    "language": "en",
-    "pageindex_threshold": 20,
-}
-
-# Default entity-type vocabulary. Overridable per-KB via the optional
+# Default entity-type vocabulary. Overridable globally / per-KB via the optional
 # ``entity_types:`` config key (see ``resolve_entity_types``).
 DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
     "person",
@@ -32,6 +26,17 @@ DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
     "event",
     "other",
 )
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "model": "gpt-5.4",
+    "language": "en",
+    "pageindex_threshold": 20,
+    # A GLOBAL_SCALAR_KEY like the three above, so the merged `effective` dict
+    # always carries it (the layering/`sources` logic is type-agnostic). A
+    # global/KB list overrides it wholesale; resolve_entity_types cleans the
+    # effective value on read.
+    "entity_types": list(DEFAULT_ENTITY_TYPES),
+}
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
@@ -88,7 +93,7 @@ def _load_global_config_unlocked() -> dict[str, Any]:
     return {}
 
 
-def resolve_entity_types(config: dict) -> list[str]:
+def resolve_entity_types(config: dict, *, warn: bool = True) -> list[str]:
     """Resolve the effective entity-type list from a loaded config dict.
 
     If ``config["entity_types"]`` is a non-empty list, each string item is
@@ -98,18 +103,23 @@ def resolve_entity_types(config: dict) -> list[str]:
     de-duped (order preserving) and ``"other"`` is always appended when missing
     (it is the coercion fallback). Otherwise — key absent, not a list, empty,
     or fully malformed — :data:`DEFAULT_ENTITY_TYPES` is returned, so behavior
-    is byte-identical to the default. A warning is logged only when
-    ``entity_types`` was present-but-malformed.
+    is byte-identical to the default.
+
+    ``warn`` logs a warning when ``entity_types`` is present-but-malformed. It is
+    ``True`` for the compile path (a real config problem the author should see)
+    and passed ``False`` by the config-READ endpoints, which run on every GET and
+    must not spam the log for a malformed value.
     """
     raw = config.get("entity_types")
     if raw is None:
         return list(DEFAULT_ENTITY_TYPES)
     if not isinstance(raw, list):
-        logger.warning(
-            "config: 'entity_types' must be a list of strings, got %s — "
-            "falling back to the default entity types.",
-            type(raw).__name__,
-        )
+        if warn:
+            logger.warning(
+                "config: 'entity_types' must be a list of strings, got %s — "
+                "falling back to the default entity types.",
+                type(raw).__name__,
+            )
         return list(DEFAULT_ENTITY_TYPES)
     cleaned: list[str] = []
     for x in raw:
@@ -119,10 +129,11 @@ def resolve_entity_types(config: dict) -> list[str]:
         if s and s not in cleaned:
             cleaned.append(s)
     if not cleaned:
-        logger.warning(
-            "config: 'entity_types' was present but yielded no usable values — "
-            "falling back to the default entity types.",
-        )
+        if warn:
+            logger.warning(
+                "config: 'entity_types' was present but yielded no usable values — "
+                "falling back to the default entity types.",
+            )
         return list(DEFAULT_ENTITY_TYPES)
     if "other" not in cleaned:
         cleaned.append("other")
@@ -533,10 +544,12 @@ def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, st
         if not isinstance(kb_config, dict):
             kb_config = {}
         for key, value in kb_config.items():
-            # A scalar explicitly nulled in config.yaml means "inherit": don't
-            # let it clobber the global/default layer. The gate is on
-            # GLOBAL_SCALAR_KEYS so non-scalar nulls (parallel_tool_calls) stay.
-            if key in GLOBAL_SCALAR_KEYS and value is None:
+            # A GLOBAL_SCALAR_KEYS value explicitly nulled — or an empty
+            # entity_types list, since an empty vocabulary is meaningless —
+            # means "inherit": don't clobber the global/default layer, and keep
+            # `sources` reporting the layer that actually supplied the value. The
+            # gate is on GLOBAL_SCALAR_KEYS so non-scalar nulls (parallel_tool_calls) stay.
+            if key in GLOBAL_SCALAR_KEYS and (value is None or value == []):
                 continue
             effective[key] = value
             if key in GLOBAL_SCALAR_KEYS:

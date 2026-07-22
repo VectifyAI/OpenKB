@@ -278,7 +278,6 @@ function KbConfigSection({ kb }: { kb: string }) {
       <EntityTypesRow
         source={config.sources.entity_types}
         effective={config.entity_types}
-        globalValue={config.global_values.entity_types}
         busy={busy}
         onSet={setEntityTypesOverride}
         onRevert={() => setEntityTypesOverride(null)}
@@ -415,13 +414,12 @@ function OverrideRow({
  *  chips list (EntityTypesEditor) and every add/remove persists immediately —
  *  the chips always show the server-cleaned effective list. */
 function EntityTypesRow({
-  source, effective, globalValue, busy, onSet, onRevert,
+  source, effective, busy, onSet, onRevert,
 }: {
   source: ConfigSource
-  /** Cleaned effective list (always includes "other"). */
+  /** Cleaned effective list (always includes "other") — shown as-is in the
+   *  inherited badge, so it matches the vocabulary the compiler actually uses. */
   effective: string[]
-  /** RAW global-layer list; null when global.yaml is silent. */
-  globalValue: string[] | null
   busy: boolean
   onSet: (value: string[]) => void
   onRevert: () => void
@@ -432,7 +430,7 @@ function EntityTypesRow({
 
   const inheritedBadge =
     source === 'global'
-      ? t('kbSettings:inheritGlobal', { value: (globalValue ?? effective).join(', ') })
+      ? t('kbSettings:inheritGlobal', { value: effective.join(', ') })
       : t('kbSettings:inheritDefault', { value: effective.join(', ') })
 
   return (
