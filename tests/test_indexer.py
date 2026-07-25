@@ -123,6 +123,45 @@ class TestBuildIndexConfig:
             _build_index_config({})
         assert "llm_params" in caplog.text
 
+    def test_bundle_base_url_wins_over_global(self, monkeypatch):
+        """The per-request bundle (REST API path) takes precedence over the
+        process-wide base URL (CLI path), keeping concurrent requests isolated."""
+        from openkb.config import LlmCredentialBundle, set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        set_base_url("https://global.example/v3")
+        bundle = LlmCredentialBundle(base_url="https://bundle.example/v3")
+        cfg = _build_index_config({}, bundle=bundle)
+        assert cfg.llm_params["base_url"] == "https://bundle.example/v3"
+
+    def test_bundle_falls_back_to_global_base_url(self, monkeypatch):
+        """A bundle without a base_url still honors the process-wide one."""
+        from openkb.config import LlmCredentialBundle, set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        set_base_url("https://global.example/v3")
+        cfg = _build_index_config({}, bundle=LlmCredentialBundle())
+        assert cfg.llm_params == {"base_url": "https://global.example/v3"}
+
+    def test_bundle_headers_and_timeout_forwarded(self, monkeypatch):
+        """Gateways that authenticate via headers (e.g. Editor-Version) need
+        them on PageIndex's own litellm calls too, not just openkb's."""
+        from openkb.config import LlmCredentialBundle, set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        set_base_url(None)
+        bundle = LlmCredentialBundle(extra_headers={"Editor-Version": "x"}, timeout=42.0)
+        cfg = _build_index_config({}, bundle=bundle)
+        assert cfg.llm_params == {"extra_headers": {"Editor-Version": "x"}, "timeout": 42.0}
+
+    def test_empty_bundle_yields_no_llm_params(self, monkeypatch):
+        from openkb.config import LlmCredentialBundle, set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        set_base_url(None)
+        cfg = _build_index_config({}, bundle=LlmCredentialBundle())
+        assert getattr(cfg, "llm_params", None) is None
+
 
 class TestNormalizePageContent:
     def test_normalizes_pageindex_dicts(self):

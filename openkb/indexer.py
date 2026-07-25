@@ -11,7 +11,12 @@ from typing import Any
 
 from pageindex import IndexConfig, PageIndexClient
 
-from openkb.config import get_base_url, resolve_concurrency, resolve_effective_config
+from openkb.config import (
+    LlmCredentialBundle,
+    get_base_url,
+    resolve_concurrency,
+    resolve_effective_config,
+)
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
@@ -153,7 +158,9 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
-def _build_index_config(config: dict[str, Any]) -> IndexConfig:
+def _build_index_config(
+    config: dict[str, Any], *, bundle: LlmCredentialBundle | None = None
+) -> IndexConfig:
     """Build the PageIndex ``IndexConfig`` for local indexing.
 
     Forwards the KB's ``concurrency`` setting to PageIndex, which caps how many
@@ -162,6 +169,10 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
     installed PageIndex's ``IndexConfig`` declares the field, so OpenKB keeps
     working against a pinned PageIndex that predates it (``IndexConfig``
     forbids unknown kwargs).
+
+    ``bundle`` carries the per-request LLM credentials on the REST API path
+    (which never touches process-wide state); the CLI path leaves it ``None``
+    and relies on the process-wide base URL set by ``_setup_llm_key``.
     """
     kwargs: dict[str, Any] = {
         "if_add_node_text": True,
@@ -177,28 +188,46 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
                 "config: 'concurrency' is set but the installed PageIndex "
                 "version does not support it yet — ignoring it."
             )
-    # Route the resolved base URL into PageIndex's own litellm calls. PageIndex
-    # indexes via its internal litellm.completion (not openkb's _llm_call), so
-    # without this a provider-prefixed model like deepseek/... ignores
-    # litellm.api_base and falls back to the provider's default endpoint.
-    base_url = get_base_url()
+    # Route the resolved LLM credentials into PageIndex's own litellm calls.
+    # PageIndex indexes via its internal litellm.completion (not openkb's
+    # _llm_call), so without this a provider-prefixed model like deepseek/...
+    # ignores litellm.api_base and falls back to the provider's default
+    # endpoint.
+    llm_params: dict[str, Any] = {}
+    base_url = (bundle.base_url if bundle else None) or get_base_url()
     if base_url:
+        llm_params["base_url"] = base_url
+    if bundle is not None:
+        if bundle.extra_headers:
+            llm_params["extra_headers"] = bundle.extra_headers
+        if bundle.timeout is not None:
+            llm_params["timeout"] = bundle.timeout
+    if llm_params:
         if "llm_params" in IndexConfig.model_fields:
-            kwargs["llm_params"] = {"base_url": base_url}
+            kwargs["llm_params"] = llm_params
         else:
             logger.warning(
-                "config: a base URL is configured but the installed PageIndex "
-                "version does not support llm_params; PageIndex LLM calls will "
-                "use the provider's default endpoint."
+                "config: LLM overrides are configured but the installed "
+                "PageIndex version does not support llm_params; PageIndex LLM "
+                "calls will use the provider's default endpoint."
             )
     return IndexConfig(**kwargs)
 
 
-def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
+def index_long_document(
+    pdf_path: Path,
+    kb_dir: Path,
+    doc_name: str | None = None,
+    *,
+    bundle: LlmCredentialBundle | None = None,
+) -> IndexResult:
     """Index a long PDF document using PageIndex and write wiki pages.
 
     ``doc_name`` is the collision-resistant wiki name used for all written
     artifacts; defaults to the PDF's stem for backward compatibility.
+    ``bundle`` carries per-request LLM credentials (REST API path); when
+    ``None`` (CLI path) the process-wide base URL set by ``_setup_llm_key``
+    applies instead.
     """
     source_name = doc_name or pdf_path.stem
     openkb_dir = kb_dir / ".openkb"
@@ -207,7 +236,7 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     model: str = config.get("model", "gpt-5.4")
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
 
-    index_config = _build_index_config(config)
+    index_config = _build_index_config(config, bundle=bundle)
 
     client = PageIndexClient(
         api_key=pageindex_api_key or None,

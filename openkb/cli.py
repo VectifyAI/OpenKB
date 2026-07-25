@@ -535,7 +535,9 @@ def _add_single_file_locked(
             try:
                 from openkb.indexer import index_long_document
 
-                index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
+                index_result = index_long_document(
+                    result.raw_path, kb_dir, doc_name=doc_name, bundle=bundle
+                )
             except Exception as exc:
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
