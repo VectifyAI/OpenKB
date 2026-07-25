@@ -6,7 +6,9 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_extra_headers():
     """Keep the process-wide LLM extra-headers / timeout / base-url /
-    parallel-tool-calls stashes from leaking across tests."""
+    parallel-tool-calls / response-format-rejection stashes from leaking
+    across tests."""
+    from openkb.agent.compiler import _response_format_rejected
     from openkb.config import (
         set_base_url,
         set_extra_headers,
@@ -19,6 +21,7 @@ def _reset_extra_headers():
     set_timeout(None)
     set_base_url(None)
     set_parallel_tool_calls(None, False)
+    _response_format_rejected.clear()
 
 
 @pytest.fixture

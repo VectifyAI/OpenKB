@@ -2701,6 +2701,120 @@ class TestLLMCallExtraHeaders:
         assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
 
 
+class TestResponseFormatRejection:
+    """Endpoints that 400 on ``response_format`` get one retry without it, and
+    the model is remembered so later JSON steps skip the param directly (e.g.
+    ark-hosted deepseek-v4-flash, which rejects ``json_object``)."""
+
+    _RF_ERROR = (
+        'DeepseekException - {"error":{"code":"InvalidParameter","message":'
+        '"The parameter `response_format.type` specified in the request are not valid: '
+        '`json_object` is not supported by this model."}}'
+    )
+
+    @staticmethod
+    def _bad_request(message: str):
+        import litellm
+
+        return litellm.BadRequestError(message=message, model="m", llm_provider="deepseek")
+
+    def test_retries_without_response_format_on_rejection(self):
+        import litellm as real_litellm
+
+        from openkb.agent.compiler import _llm_call, _response_format_rejected
+
+        calls: list[dict] = []
+        ok = _mock_completion(["{}"])
+
+        def side_effect(*args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise self._bad_request(self._RF_ERROR)
+            return ok(*args, **kwargs)
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.BadRequestError = real_litellm.BadRequestError
+            mock_litellm.completion = MagicMock(side_effect=side_effect)
+            out = _llm_call(
+                "m",
+                [{"role": "user", "content": "hi"}],
+                "step",
+                response_format={"type": "json_object"},
+            )
+        assert out == "{}"
+        assert len(calls) == 2
+        assert "response_format" in calls[0]
+        assert "response_format" not in calls[1]
+        assert "m" in _response_format_rejected
+
+    def test_skips_response_format_after_rejection(self):
+        from openkb.agent.compiler import _llm_call, _response_format_rejected
+
+        _response_format_rejected.add("m")
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion(["{}"]))
+            out = _llm_call(
+                "m",
+                [{"role": "user", "content": "hi"}],
+                "step",
+                response_format={"type": "json_object"},
+            )
+        assert out == "{}"
+        assert mock_litellm.completion.call_count == 1
+        assert "response_format" not in mock_litellm.completion.call_args.kwargs
+
+    def test_unrelated_bad_request_propagates(self):
+        import litellm as real_litellm
+
+        from openkb.agent.compiler import _llm_call, _response_format_rejected
+
+        def side_effect(*args, **kwargs):
+            raise self._bad_request("Unsupported parameter: max_tokens")
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.BadRequestError = real_litellm.BadRequestError
+            mock_litellm.completion = MagicMock(side_effect=side_effect)
+            with pytest.raises(real_litellm.BadRequestError):
+                _llm_call(
+                    "m",
+                    [{"role": "user", "content": "hi"}],
+                    "step",
+                    response_format={"type": "json_object"},
+                )
+        assert mock_litellm.completion.call_count == 1
+        assert "m" not in _response_format_rejected
+
+    @pytest.mark.asyncio
+    async def test_async_retries_without_response_format_on_rejection(self):
+        import litellm as real_litellm
+
+        from openkb.agent.compiler import _llm_call_async, _response_format_rejected
+
+        calls: list[dict] = []
+        ok = _mock_acompletion(["{}"])
+
+        async def side_effect(*args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise self._bad_request(self._RF_ERROR)
+            return await ok(*args, **kwargs)
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.BadRequestError = real_litellm.BadRequestError
+            mock_litellm.acompletion = AsyncMock(side_effect=side_effect)
+            out = await _llm_call_async(
+                "m",
+                [{"role": "user", "content": "hi"}],
+                "step",
+                response_format={"type": "json_object"},
+            )
+        assert out == "{}"
+        assert len(calls) == 2
+        assert "response_format" in calls[0]
+        assert "response_format" not in calls[1]
+        assert "m" in _response_format_rejected
+
+
 class TestCacheControlStripping:
     """cache_control markers must only reach providers that honour them.
 

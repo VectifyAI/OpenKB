@@ -51,6 +51,15 @@ logger = logging.getLogger(__name__)
 # is set; the templates below already do.
 _JSON_RESPONSE_FORMAT = {"type": "json_object"}
 
+# Models whose endpoint rejected ``response_format`` with a 400. Some
+# OpenAI-compatible gateways (e.g. certain Volcano Engine Ark deployments)
+# reject ``json_object`` even though litellm believes the model family
+# supports it; once an endpoint says no, skip the param for the rest of the
+# process instead of paying a wasted 400 round-trip per JSON step. Capability
+# state only (never credentials), so a process-wide set is safe to share
+# across KBs on the REST API path.
+_response_format_rejected: set[str] = set()
+
 _SYSTEM_TEMPLATE = """\
 You are OpenKB's wiki compilation agent for a personal knowledge base.
 
@@ -426,6 +435,8 @@ def _llm_call(
         base_url = get_base_url()
         if base_url is not None:
             kwargs.setdefault("base_url", base_url)
+    if model in _response_format_rejected:
+        kwargs.pop("response_format", None)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -434,7 +445,19 @@ def _llm_call(
     spinner.start()
     t0 = time.time()
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
+    try:
+        response = litellm.completion(model=model, messages=messages, **kwargs)
+    except litellm.BadRequestError as exc:
+        if "response_format" not in kwargs or "response_format" not in str(exc):
+            raise
+        logger.info(
+            "LLM [%s]: endpoint rejects response_format; retrying without it (model=%s)",
+            step_name,
+            model,
+        )
+        _response_format_rejected.add(model)
+        kwargs.pop("response_format")
+        response = litellm.completion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -477,13 +500,27 @@ async def _llm_call_async(
         base_url = get_base_url()
         if base_url is not None:
             kwargs.setdefault("base_url", base_url)
+    if model in _response_format_rejected:
+        kwargs.pop("response_format", None)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
 
     t0 = time.time()
 
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    try:
+        response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    except litellm.BadRequestError as exc:
+        if "response_format" not in kwargs or "response_format" not in str(exc):
+            raise
+        logger.info(
+            "LLM [%s]: endpoint rejects response_format; retrying without it (model=%s)",
+            step_name,
+            model,
+        )
+        _response_format_rejected.add(model)
+        kwargs.pop("response_format")
+        response = await litellm.acompletion(model=model, messages=messages, **kwargs)
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
