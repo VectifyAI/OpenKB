@@ -186,6 +186,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code>                   | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (`--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts)                                                                     |
 | <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the compile pipeline on already-indexed docs without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten (`--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md`) |
 | <code>openkb&nbsp;feedback&nbsp;["msg"]</code>                     | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it)                                                                                                                                          |
+| <code>openkb&nbsp;migrate-images</code>                            | One-time migration for KBs ingested before the note-relative image-link change (#181): rewrite old image links in sources pages so they render in Obsidian/GitHub/VS Code (`--dry-run` to preview)                                   |
 
 </details>
 

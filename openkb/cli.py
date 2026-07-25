@@ -2513,6 +2513,48 @@ def lint(ctx, fix):
     asyncio.run(run_lint(kb_dir))
 
 
+@cli.command("migrate-images")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Report the files and link counts that would change without writing.",
+)
+@click.pass_context
+def migrate_images(ctx, dry_run):
+    """Migrate old wiki-root-relative image links in sources pages.
+
+    KBs ingested before the note-relative image-link change embedded
+    images in wiki/sources/<doc>.md with ``sources/images/...`` links,
+    which render broken in Obsidian, GitHub, and VS Code. This one-time
+    migration rewrites them to the ``images/...`` form now emitted at
+    ingest. Idempotent — re-running finds nothing to do.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.migrate import migrate_source_image_links
+
+    wiki = kb_dir / "wiki"
+    if dry_run:
+        changed = migrate_source_image_links(wiki, dry_run=True)
+    else:
+        with kb_ingest_lock(kb_dir / ".openkb"):
+            changed = migrate_source_image_links(wiki)
+            if changed:
+                total = sum(count for _, count in changed)
+                append_log(wiki, "migrate-images", f"{total} link(s) across {len(changed)} file(s)")
+    if not changed:
+        click.echo("Nothing to migrate — sources image links are already note-relative.")
+        return
+    for path, count in changed:
+        click.echo(f"  {path.relative_to(wiki)}: {count} link(s)")
+    total = sum(count for _, count in changed)
+    verb = "Would rewrite" if dry_run else "Rewrote"
+    click.echo(f"{verb} {total} image link(s) across {len(changed)} file(s).")
+
+
 @cli.command()
 @click.option(
     "--open/--no-open",
