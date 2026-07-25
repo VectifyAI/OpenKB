@@ -289,12 +289,6 @@ class TestBuildRunConfigFromBundle:
     raw litellm provider/model string, with no prefix.
     """
 
-    def test_none_bundle_returns_none(self):
-        """CLI path (bundle=None) returns None so the SDK uses the agent model."""
-        from openkb.agent.query import build_run_config_from_bundle
-
-        assert build_run_config_from_bundle("openai/gpt-4o", None) is None
-
     def test_bundle_model_has_no_litellm_prefix(self):
         from openkb.agent.query import build_run_config_from_bundle
         from openkb.config import LlmCredentialBundle
@@ -306,6 +300,31 @@ class TestBuildRunConfigFromBundle:
         # must not leak in.
         assert run_config.model.model == "openai/deepseek-v4-flash"
         assert not run_config.model.model.startswith("litellm/")
+
+    def test_none_bundle_returns_none_without_base_url(self):
+        """CLI path (bundle=None) with no base URL configured returns None so
+        the SDK uses the default provider."""
+        from openkb.config import set_base_url
+
+        set_base_url(None)
+        from openkb.agent.query import build_run_config_from_bundle
+
+        assert build_run_config_from_bundle("deepseek/deepseek-v4-flash", None) is None
+
+    def test_none_bundle_surfaces_global_base_url(self):
+        """CLI path (bundle=None) with a base URL resolved from litellm.api_base /
+        OPENAI_API_BASE builds a LitellmModel carrying it, so provider-prefixed
+        models (deepseek/...) honor the override instead of falling back to the
+        provider's default endpoint."""
+        from openkb.config import set_base_url
+
+        set_base_url("https://ark.example/api/v3")
+        from openkb.agent.query import build_run_config_from_bundle
+
+        run_config = build_run_config_from_bundle("deepseek/deepseek-v4-flash", None)
+        assert run_config is not None
+        assert run_config.model.model == "deepseek/deepseek-v4-flash"
+        assert run_config.model.base_url == "https://ark.example/api/v3"
 
 
 def test_chat_session_agent_has_write_file(tmp_path):

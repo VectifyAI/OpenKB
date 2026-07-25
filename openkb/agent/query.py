@@ -14,7 +14,7 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
-from openkb.config import LlmCredentialBundle, resolve_model_settings
+from openkb.config import LlmCredentialBundle, get_base_url, resolve_model_settings
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -495,7 +495,14 @@ def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None
     """Build an Agents-SDK `RunConfig` from a credential bundle.
 
     When *bundle* is `None` (CLI path), returns `None` so the runner falls
-    back to the default provider (process-wide `litellm.api_key` / env vars).
+    back to the default provider (process-wide `litellm.api_key` / env vars) -
+    unless a base URL was resolved from ``litellm.api_base`` / ``OPENAI_API_BASE``
+    (see :func:`openkb.config.set_base_url`), in which case a dedicated
+    `LitellmModel` is constructed with it so provider-prefixed models such as
+    ``deepseek/...`` honor the override (their provider config ignores
+    ``litellm.api_base``). The API key is left to litellm's module global /
+    provider env (``litellm.api_key`` / ``DEEPSEEK_API_KEY``), set by
+    ``cli._setup_llm_key``.
     When a bundle is supplied, a dedicated `LitellmModel` instance is created
     with the per-KB `api_key` and `base_url` so concurrent requests on the
     shared event-loop thread never read each other's credentials.
@@ -507,7 +514,14 @@ def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None
     litellm rejects as an unknown provider.
     """
     if bundle is None:
-        return None
+        base_url = get_base_url()
+        if base_url is None:
+            return None
+        from agents import RunConfig
+        from agents.extensions.models.litellm_model import LitellmModel
+
+        litellm_model = LitellmModel(model=model, base_url=base_url, api_key=None)
+        return RunConfig(model=litellm_model)
     from agents import RunConfig
     from agents.extensions.models.litellm_model import LitellmModel
 

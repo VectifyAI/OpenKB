@@ -59,6 +59,7 @@ from openkb.config import (
     set_extra_headers,
     resolve_parallel_tool_calls,
     set_parallel_tool_calls,
+    set_base_url,
     set_timeout,
     resolve_per_request_overrides,
 )
@@ -179,6 +180,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
     parallel_tool_calls: bool | None = None
     parallel_tool_calls_explicit = False
     litellm_settings: dict = {}
+    api_base: str | None = None
     if kb_dir is not None:
         # Resolve model the same way the command bodies do (DEFAULT -> global.yaml
         # -> KB config.yaml) so provider extraction sees the effective, global-
@@ -189,11 +191,17 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
         config = resolve_effective_config(kb_dir)[0]
         model = config.get("model", DEFAULT_CONFIG["model"])
         provider = _extract_provider(str(model))
-        extra_headers, timeout, litellm_settings = resolve_per_request_overrides(config)
+        # api_base (from litellm.api_base) is popped centrally and routed via
+        # set_base_url -> the ``base_url`` kwarg on each completion call, NOT as
+        # the litellm.api_base module global (which the deepseek provider ignores).
+        extra_headers, timeout, api_base, litellm_settings = resolve_per_request_overrides(config)
         parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
     set_extra_headers(extra_headers)
     set_timeout(timeout)
     set_parallel_tool_calls(parallel_tool_calls, parallel_tool_calls_explicit)
+    # OPENAI_API_BASE (env, incl. the .env files loaded above) wins over
+    # litellm.api_base from config.yaml.
+    set_base_url(os.environ.get("OPENAI_API_BASE") or api_base)
     _apply_litellm_settings(litellm_settings)
 
     if not api_key:

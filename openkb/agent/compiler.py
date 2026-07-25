@@ -32,6 +32,7 @@ import litellm
 from openkb import frontmatter
 from openkb.config import (
     DEFAULT_ENTITY_TYPES,
+    get_base_url,
     get_extra_headers,
     get_timeout,
     resolve_entity_types,
@@ -417,6 +418,14 @@ def _llm_call(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    else:
+        # CLI path (no per-KB bundle): surface a base URL resolved from
+        # litellm.api_base / OPENAI_API_BASE so provider-prefixed models such
+        # as ``deepseek/...`` honor it (litellm's own api_base module global is
+        # ignored by those providers). See config.set_base_url.
+        base_url = get_base_url()
+        if base_url is not None:
+            kwargs.setdefault("base_url", base_url)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -460,6 +469,14 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    else:
+        # CLI path (no per-KB bundle): surface a base URL resolved from
+        # litellm.api_base / OPENAI_API_BASE so provider-prefixed models such
+        # as ``deepseek/...`` honor it (litellm's own api_base module global is
+        # ignored by those providers). See config.set_base_url.
+        base_url = get_base_url()
+        if base_url is not None:
+            kwargs.setdefault("base_url", base_url)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)

@@ -18,7 +18,7 @@ def test_litellm_extra_headers_overrides_top_level():
         "extra_headers": {"Editor-Version": "top-level"},
         "litellm": {"extra_headers": {"Editor-Version": "from-litellm"}},
     }
-    headers, _timeout, _litellm = resolve_per_request_overrides(config)
+    headers, _timeout, _api_base, _litellm = resolve_per_request_overrides(config)
     assert headers == {"Editor-Version": "from-litellm"}
 
 
@@ -28,7 +28,7 @@ def test_litellm_timeout_overrides_top_level():
         "timeout": 30,
         "litellm": {"timeout": 120},
     }
-    _headers, timeout, _litellm = resolve_per_request_overrides(config)
+    _headers, timeout, _api_base, _litellm = resolve_per_request_overrides(config)
     assert timeout == 120
 
 
@@ -41,7 +41,7 @@ def test_popped_keys_absent_from_litellm_settings():
             "drop_params": True,  # genuine module-level setting, must survive
         },
     }
-    _h, _t, litellm_settings = resolve_per_request_overrides(config)
+    _h, _t, _api_base, litellm_settings = resolve_per_request_overrides(config)
     assert "extra_headers" not in litellm_settings
     assert "timeout" not in litellm_settings
     assert litellm_settings == {"drop_params": True}
@@ -50,7 +50,7 @@ def test_popped_keys_absent_from_litellm_settings():
 def test_no_litellm_block_preserves_top_level():
     """Without a litellm: block, top-level extra_headers/timeout pass through."""
     config = {"extra_headers": {"Editor-Version": "ok"}, "timeout": 45}
-    headers, timeout, litellm_settings = resolve_per_request_overrides(config)
+    headers, timeout, _api_base, litellm_settings = resolve_per_request_overrides(config)
     assert headers == {"Editor-Version": "ok"}
     assert timeout == 45
     assert litellm_settings == {}
@@ -88,3 +88,41 @@ def test_bundle_has_no_litellm_settings_field():
 
     field_names = {f.name for f in dataclasses.fields(LlmCredentialBundle)}
     assert "litellm_settings" not in field_names
+
+
+def test_litellm_api_base_popped_and_returned():
+    """litellm.api_base is popped from litellm_settings (so the CLI path does
+    not set the deepseek-ignored litellm.api_base module global) and returned
+    as the third element for the bundle / set_base_url routing."""
+    config = {"litellm": {"api_base": "https://ark.example/api/v3", "drop_params": True}}
+    _h, _t, api_base, litellm_settings = resolve_per_request_overrides(config)
+    assert api_base == "https://ark.example/api/v3"
+    assert "api_base" not in litellm_settings
+    assert litellm_settings == {"drop_params": True}
+
+
+def test_bundle_routes_litellm_api_base_into_base_url(tmp_path, monkeypatch):
+    """litellm.api_base flows into bundle.base_url so provider-prefixed models
+    (e.g. deepseek/...) honor it via the explicit base_url kwarg."""
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path / "global")
+    _write_config(tmp_path, {"litellm": {"api_base": "https://ark.example/api/v3"}})
+    bundle = resolve_credential_bundle(tmp_path)
+    assert bundle.base_url == "https://ark.example/api/v3"
+
+
+def test_bundle_openai_api_base_env_wins_over_litellm_api_base(tmp_path, monkeypatch):
+    """OPENAI_API_BASE (env) takes precedence over litellm.api_base (config)."""
+    _write_config(tmp_path, {"litellm": {"api_base": "https://from-config/v3"}})
+    monkeypatch.setenv("OPENAI_API_BASE", "https://from-env/v3")
+    bundle = resolve_credential_bundle(tmp_path)
+    assert bundle.base_url == "https://from-env/v3"
+
+
+def test_bundle_no_api_base_when_neither_configured(tmp_path, monkeypatch):
+    """With neither litellm.api_base nor OPENAI_API_BASE, bundle.base_url is None."""
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    monkeypatch.setattr("openkb.config.GLOBAL_CONFIG_DIR", tmp_path / "global")
+    _write_config(tmp_path, {"model": "deepseek/deepseek-v4-flash"})
+    bundle = resolve_credential_bundle(tmp_path)
+    assert bundle.base_url is None

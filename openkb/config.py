@@ -298,13 +298,16 @@ def resolve_litellm_settings(config: dict) -> dict[str, Any]:
 # REST paths apply identical litellm.* override semantics.
 def resolve_per_request_overrides(
     config: dict[str, Any],
-) -> tuple[dict[str, str], float | None, dict[str, Any]]:
-    """Resolve extra_headers / timeout / litellm_settings with litellm.* overrides.
+) -> tuple[dict[str, str], float | None, str | None, dict[str, Any]]:
+    """Resolve extra_headers / timeout / api_base / litellm_settings with litellm.* overrides.
 
     ``litellm.extra_headers`` / ``litellm.timeout`` override the top-level
     ``extra_headers`` / ``timeout`` keys (matching legacy precedence), and are
     popped from the returned ``litellm_settings`` so they are not also applied
-    as process-wide litellm module settings.
+    as process-wide litellm module settings. ``litellm.api_base`` is likewise
+    popped and returned third: it is routed as an explicit ``base_url`` kwarg
+    (honored by every provider) rather than the ``litellm.api_base`` module
+    global, which provider-prefixed models such as ``deepseek/...`` ignore.
     """
     extra_headers = resolve_extra_headers(config)
     timeout = resolve_timeout(config)
@@ -315,7 +318,10 @@ def resolve_per_request_overrides(
         )
     if "timeout" in litellm_settings:
         timeout = resolve_timeout({"timeout": litellm_settings.pop("timeout")})
-    return extra_headers, timeout, litellm_settings
+    api_base = litellm_settings.pop("api_base", None)
+    if not isinstance(api_base, str):
+        api_base = None
+    return extra_headers, timeout, api_base, litellm_settings
 
 
 _runtime_extra_headers: dict[str, str] = {}
@@ -353,6 +359,23 @@ def get_timeout_extra_args() -> dict[str, float] | None:
     field), or ``None``. The LiteLLM provider forwards it to the completion call.
     """
     return {"timeout": _runtime_timeout} if _runtime_timeout is not None else None
+
+
+# Process-wide LLM base URL (``litellm.api_base`` or ``OPENAI_API_BASE``), read
+# via get_base_url(). Carried ourselves (not as litellm's module global) because
+# provider-prefixed models like ``deepseek/...`` only honor a ``base_url`` kwarg.
+_runtime_base_url: str | None = None
+
+
+def set_base_url(base_url: str | None) -> None:
+    """Set the process-wide LLM base URL; ``None`` clears it."""
+    global _runtime_base_url
+    _runtime_base_url = base_url
+
+
+def get_base_url() -> str | None:
+    """Return the process-wide LLM base URL, or ``None``."""
+    return _runtime_base_url
 
 
 # Process-wide agent ``parallel_tool_calls`` as ``(value, was_explicit)``, set
@@ -455,7 +478,11 @@ def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
         # semantics. litellm module-level settings (drop_params etc.) are
         # process globals and intentionally not carried per-request: the REST
         # server runs multiple KBs in one process, so they cannot be isolated.
-        extra_headers, timeout, _ = resolve_per_request_overrides(config)
+        extra_headers, timeout, api_base, _litellm_settings = resolve_per_request_overrides(config)
+        # Route litellm.api_base as a base_url kwarg (the module global is ignored
+        # by deepseek/...). OPENAI_API_BASE (env) wins over litellm.api_base.
+        if api_base and not base_url:
+            base_url = api_base
         parallel_tool_calls, parallel_tool_calls_explicit = resolve_parallel_tool_calls(config)
 
     return LlmCredentialBundle(
