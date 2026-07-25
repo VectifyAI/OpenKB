@@ -28,6 +28,7 @@ class _FakeIndexConfigWithConcurrency:
         "if_add_node_summary": None,
         "if_add_doc_description": None,
         "max_concurrency": None,
+        "llm_params": None,
     }
 
     def __init__(self, **kwargs):
@@ -93,6 +94,34 @@ class TestBuildIndexConfig:
         with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
             _build_index_config({"concurrency": 8})
         assert caplog.text == ""
+
+    def test_forwards_base_url_into_llm_params(self, monkeypatch):
+        """A resolved base URL (litellm.api_base / OPENAI_API_BASE) is forwarded
+        to PageIndex via llm_params so its internal litellm.completion honors it
+        for provider-prefixed models (e.g. deepseek/...)."""
+        from openkb.config import set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        set_base_url("https://ark.example/api/v3")
+        cfg = _build_index_config({})
+        assert cfg.llm_params == {"base_url": "https://ark.example/api/v3"}
+
+    def test_no_llm_params_when_no_base_url(self, monkeypatch):
+        from openkb.config import set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        set_base_url(None)
+        cfg = _build_index_config({})
+        assert getattr(cfg, "llm_params", None) is None
+
+    def test_warns_when_base_url_but_llm_params_unsupported(self, monkeypatch, caplog):
+        from openkb.config import set_base_url
+
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithoutConcurrency)
+        set_base_url("https://ark.example/api/v3")
+        with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
+            _build_index_config({})
+        assert "llm_params" in caplog.text
 
 
 class TestNormalizePageContent:

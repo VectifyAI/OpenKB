@@ -11,7 +11,7 @@ from typing import Any
 
 from pageindex import IndexConfig, PageIndexClient
 
-from openkb.config import resolve_concurrency, resolve_effective_config
+from openkb.config import get_base_url, resolve_concurrency, resolve_effective_config
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
@@ -176,6 +176,20 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
             logger.warning(
                 "config: 'concurrency' is set but the installed PageIndex "
                 "version does not support it yet — ignoring it."
+            )
+    # Route the resolved base URL into PageIndex's own litellm calls. PageIndex
+    # indexes via its internal litellm.completion (not openkb's _llm_call), so
+    # without this a provider-prefixed model like deepseek/... ignores
+    # litellm.api_base and falls back to the provider's default endpoint.
+    base_url = get_base_url()
+    if base_url:
+        if "llm_params" in IndexConfig.model_fields:
+            kwargs["llm_params"] = {"base_url": base_url}
+        else:
+            logger.warning(
+                "config: a base URL is configured but the installed PageIndex "
+                "version does not support llm_params; PageIndex LLM calls will "
+                "use the provider's default endpoint."
             )
     return IndexConfig(**kwargs)
 
