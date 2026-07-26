@@ -45,8 +45,10 @@
       "emptyDoc": "This document has no extracted text.",
       "emptyPage": "This page has no extracted text.",
       "pageOf": "Page {{page}} of {{total}}",
+      "firstPage": "First page",
       "prevPage": "Previous page",
-      "nextPage": "Next page"
+      "nextPage": "Next page",
+      "lastPage": "Last page"
     },
     "delete": {
       "action": "Delete document",

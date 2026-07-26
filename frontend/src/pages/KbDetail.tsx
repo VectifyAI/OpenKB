@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle, X, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react'
+import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle, X, BookOpen, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { deletePage, editPage, getDocumentSource, getKbInventory, getPage, getPageLinks, type DocumentSource, type KbInventory, type WikiDocument } from '@/api/wiki'
 import { streamUpload, removeDocument, type AddResult } from '@/api/maintenance'
@@ -864,8 +864,10 @@ function DocumentReaderDrawer({
   isEmpty,
   page,
   totalPages,
+  onFirst,
   onPrev,
   onNext,
+  onLast,
   onRetry,
   onClose,
 }: {
@@ -876,8 +878,10 @@ function DocumentReaderDrawer({
   isEmpty: boolean
   page: number
   totalPages: number
+  onFirst: () => void
   onPrev: () => void
   onNext: () => void
+  onLast: () => void
   onRetry: () => void
   onClose: () => void
 }) {
@@ -930,6 +934,14 @@ function DocumentReaderDrawer({
                 e.preventDefault()
                 openerRef.current?.focus()
               }}
+              // Radix fires `onPointerDownOutside`/`onInteractOutside` when focus
+              // is lost mid-interaction - exactly what happens when a page-turn
+              // click nulls `docSource` and unmounts the focused footer button
+              // for a frame. Disable both: the overlay's own `onClick={onClose}`
+              // still handles dismiss-by-backdrop, and the X button handles the
+              // explicit close. This stops the drawer from vanishing on next/prev.
+              onPointerDownOutside={(e) => e.preventDefault()}
+              onInteractOutside={(e) => e.preventDefault()}
             >
               <motion.aside
                 className="fixed inset-y-0 right-0 z-50 flex w-[min(70vw,900px)] max-w-full flex-col glass border-l border-[hsl(var(--glass-border))] shadow-glass-lg rounded-l-apple-lg"
@@ -1004,7 +1016,17 @@ function DocumentReaderDrawer({
                     disabled at the ends so keyboard activation is a no-op, not a
                     wrap-around. */}
                 {totalPages > 1 && (
-                  <div className="flex shrink-0 items-center justify-center gap-2 border-t border-[hsl(var(--glass-border))] px-5 py-2.5">
+                  <div className="flex shrink-0 items-center justify-center gap-1.5 border-t border-[hsl(var(--glass-border))] px-5 py-2.5">
+                    <button
+                      type="button"
+                      onClick={onFirst}
+                      disabled={page <= 1}
+                      aria-label={t('kb:docs.reader.firstPage')}
+                      title={t('kb:docs.reader.firstPage')}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronsLeft className="h-4 w-4" />
+                    </button>
                     <button
                       type="button"
                       onClick={onPrev}
@@ -1027,6 +1049,16 @@ function DocumentReaderDrawer({
                       className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                     >
                       <ChevronRight className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onLast}
+                      disabled={page >= totalPages}
+                      aria-label={t('kb:docs.reader.lastPage')}
+                      title={t('kb:docs.reader.lastPage')}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronsRight className="h-4 w-4" />
                     </button>
                   </div>
                 )}
@@ -1345,8 +1377,10 @@ function DocumentsPane({
       isEmpty={readerEmpty}
       page={docSource?.page ?? docPage}
       totalPages={docSource?.total_pages ?? docTotalPages}
+      onFirst={() => setDocPage(1)}
       onPrev={() => setDocPage((p) => Math.max(1, p - 1))}
       onNext={() => setDocPage((p) => p + 1)}
+      onLast={() => setDocPage(docSource?.total_pages ?? docTotalPages)}
       onRetry={() => setDocReloadSeq((s) => s + 1)}
       onClose={closeDrawer}
     />
