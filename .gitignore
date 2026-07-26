@@ -30,3 +30,5 @@ examples/docs/
 # Shipped inside the wheel via hatchling `artifacts`, never committed to git.
 /openkb/web/
 web/
+
+.idea
