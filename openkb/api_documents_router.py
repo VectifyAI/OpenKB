@@ -25,7 +25,7 @@ async def document_source_endpoint(
 ) -> DocumentSourceResponse:
     kb_dir = _resolve_kb(request.kb)
     try:
-        result = await run_in_threadpool(read_document_source, kb_dir, request.hash)
+        result = await run_in_threadpool(read_document_source, kb_dir, request.hash, request.page)
     except (OSError, ValueError) as exc:
         # Corrupt/unreadable source file (bad JSON, unexpected shape, I/O error):
         # a controlled 500 with a clean message beats an unhandled stack trace.

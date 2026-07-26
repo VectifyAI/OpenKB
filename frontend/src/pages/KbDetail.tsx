@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle, X, BookOpen } from 'lucide-react'
+import { FileText, Link2, Loader2, Pencil, Upload, RefreshCw, Settings2, Trash2, Circle, CheckCircle2, CircleSlash2, XCircle, X, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { deletePage, editPage, getDocumentSource, getKbInventory, getPage, getPageLinks, type DocumentSource, type KbInventory, type WikiDocument } from '@/api/wiki'
 import { streamUpload, removeDocument, type AddResult } from '@/api/maintenance'
@@ -862,6 +862,10 @@ function DocumentReaderDrawer({
   loading,
   error,
   isEmpty,
+  page,
+  totalPages,
+  onPrev,
+  onNext,
   onRetry,
   onClose,
 }: {
@@ -870,6 +874,10 @@ function DocumentReaderDrawer({
   loading: boolean
   error: string | null
   isEmpty: boolean
+  page: number
+  totalPages: number
+  onPrev: () => void
+  onNext: () => void
   onRetry: () => void
   onClose: () => void
 }) {
@@ -885,10 +893,10 @@ function DocumentReaderDrawer({
   useEffect(() => {
     if (doc) setShown(doc)
   }, [doc])
-  // Reset scroll to top when switching documents.
+  // Reset scroll to top when switching documents or turning pages.
   useEffect(() => {
     if (doc) scrollRef.current?.scrollTo(0, 0)
-  }, [doc])
+  }, [doc, page])
 
   return (
     <Dialog.Root
@@ -981,7 +989,9 @@ function DocumentReaderDrawer({
                     )}
                     {!loading && !error && isEmpty && (
                       <div className="py-16 text-center text-[13px] text-muted-foreground">
-                        {t('kb:docs.reader.emptyDoc')}
+                        {totalPages > 1
+                          ? t('kb:docs.reader.emptyPage')
+                          : t('kb:docs.reader.emptyDoc')}
                       </div>
                     )}
                     {!loading && !error && !isEmpty && (
@@ -989,6 +999,37 @@ function DocumentReaderDrawer({
                     )}
                   </div>
                 </div>
+
+                {/* Page navigation: hidden for single-page (short) docs. Prev/next
+                    disabled at the ends so keyboard activation is a no-op, not a
+                    wrap-around. */}
+                {totalPages > 1 && (
+                  <div className="flex shrink-0 items-center justify-center gap-2 border-t border-[hsl(var(--glass-border))] px-5 py-2.5">
+                    <button
+                      type="button"
+                      onClick={onPrev}
+                      disabled={page <= 1}
+                      aria-label={t('kb:docs.reader.prevPage')}
+                      title={t('kb:docs.reader.prevPage')}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-[5.5rem] text-center text-[12px] tabular-nums text-muted-foreground">
+                      {t('kb:docs.reader.pageOf', { page, total: totalPages })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={onNext}
+                      disabled={page >= totalPages}
+                      aria-label={t('kb:docs.reader.nextPage')}
+                      title={t('kb:docs.reader.nextPage')}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
               </motion.aside>
             </Dialog.Content>
           </Dialog.Portal>
@@ -1039,8 +1080,25 @@ function DocumentsPane({
   const [docLoading, setDocLoading] = useState(false)
   const [docError, setDocError] = useState<string | null>(null)
   const [docReloadSeq, setDocReloadSeq] = useState(0)
+  // Current source page (1-indexed) for the open doc. Long docs paginate one
+  // page per request; short docs are a single page.
+  const [docPage, setDocPage] = useState(1)
+  // Last known total page count for the open doc. Persisted across page-change
+  // fetches (which null `docSource` while loading) so the footer - and the
+  // focused prev/next button inside it - stays mounted; otherwise Radix Dialog
+  // closes when the focused button unmounts mid-click.
+  const [docTotalPages, setDocTotalPages] = useState(1)
   const sourceCache = useRef<Map<string, DocumentSource>>(new Map())
   const closeDrawer = useCallback(() => setOpenDoc(null), [])
+  // Opening a (different) doc resets to page 1 and clears the cached total so
+  // the footer doesn't briefly show the previous doc's page count. Done here
+  // in the open handler (not an effect) to avoid a set-state-in-effect render
+  // cascade and a flash of the wrong page.
+  const openDocAt = useCallback((d: WikiDocument) => {
+    setDocPage(1)
+    setDocTotalPages(1)
+    setOpenDoc(d)
+  }, [])
   const openHash = openDoc?.hash ?? null
 
   // Drop cached content when the inventory changes (a recompile can rewrite a
@@ -1050,10 +1108,12 @@ function DocumentsPane({
     sourceCache.current.clear()
   }, [documents])
 
-  // Fetch the open document's source (per-hash cache; retry via docReloadSeq).
+  // Fetch the open document's current page (per-`hash:page` cache; retry via
+  // docReloadSeq). Cached pages render instantly without a refetch.
   useEffect(() => {
     if (!openHash) return
-    const cached = sourceCache.current.get(openHash)
+    const cacheKey = `${openHash}:${docPage}`
+    const cached = sourceCache.current.get(cacheKey)
     if (cached) {
       setDocSource(cached)
       setDocError(null)
@@ -1064,11 +1124,12 @@ function DocumentsPane({
     setDocLoading(true)
     setDocSource(null)
     setDocError(null)
-    getDocumentSource(kb, openHash)
+    getDocumentSource(kb, openHash, docPage)
       .then((r) => {
         if (cancelled) return
-        sourceCache.current.set(openHash, r)
+        sourceCache.current.set(cacheKey, r)
         setDocSource(r)
+        setDocTotalPages(r.total_pages)
       })
       .catch((e) => {
         if (!cancelled) setDocError(errMsg(e))
@@ -1079,7 +1140,7 @@ function DocumentsPane({
     return () => {
       cancelled = true
     }
-  }, [kb, openHash, docReloadSeq])
+  }, [kb, openHash, docPage, docReloadSeq])
 
   // Parse Markdown once per fetched source (stable cache ref → no re-parse).
   const readerBody = useMemo(
@@ -1209,7 +1270,7 @@ function DocumentsPane({
                   no event-propagation guard is needed. */}
               <button
                 type="button"
-                onClick={() => setOpenDoc(d)}
+                onClick={() => openDocAt(d)}
                 title={t('kb:docs.reader.open')}
                 className="flex min-w-0 flex-1 items-center gap-3 text-left rounded-xl cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand/50"
               >
@@ -1282,6 +1343,10 @@ function DocumentsPane({
       loading={docLoading}
       error={docError}
       isEmpty={readerEmpty}
+      page={docSource?.page ?? docPage}
+      totalPages={docSource?.total_pages ?? docTotalPages}
+      onPrev={() => setDocPage((p) => Math.max(1, p - 1))}
+      onNext={() => setDocPage((p) => p + 1)}
       onRetry={() => setDocReloadSeq((s) => s + 1)}
       onClose={closeDrawer}
     />

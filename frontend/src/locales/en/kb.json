@@ -42,7 +42,11 @@
       "loading": "Loading document…",
       "error": "Couldn't load document: {{error}}",
       "retry": "Retry",
-      "emptyDoc": "This document has no extracted text."
+      "emptyDoc": "This document has no extracted text.",
+      "emptyPage": "This page has no extracted text.",
+      "pageOf": "Page {{page}} of {{total}}",
+      "prevPage": "Previous page",
+      "nextPage": "Next page"
     },
     "delete": {
       "action": "Delete document",

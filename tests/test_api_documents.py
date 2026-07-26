@@ -52,11 +52,12 @@ def test_document_source_short_md(monkeypatch, kb_dir):
     payload = resp.json()
     assert payload["content"] == "# Notes\n\nBody text."
     assert payload["format"] == "markdown"
-    assert payload["pages"] is None
+    assert payload["page"] == 1
+    assert payload["total_pages"] == 1
     assert payload["name"] == "notes.md"
 
 
-def test_document_source_long_json_concatenates_pages(monkeypatch, kb_dir):
+def test_document_source_long_json_returns_first_page_by_default(monkeypatch, kb_dir):
     client = _client(monkeypatch)
     kb = _use_named_kb(monkeypatch, kb_dir)
     _write_hashes(kb_dir, {"h2": {"name": "paper.pdf", "doc_name": "paper", "type": "long_pdf"}})
@@ -70,11 +71,53 @@ def test_document_source_long_json_concatenates_pages(monkeypatch, kb_dir):
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert "Page one text." in payload["content"]
-    assert "Page two text." in payload["content"]
-    # page boundaries preserved via a thematic break
-    assert "---" in payload["content"]
-    assert payload["pages"] == 2
+    # Default page=1 returns ONLY the first page (not the concatenated whole).
+    assert payload["content"] == "Page one text."
+    assert "Page two text." not in payload["content"]
+    assert payload["page"] == 1
+    assert payload["total_pages"] == 2
+
+
+def test_document_source_long_json_paginates_by_page(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    _write_hashes(kb_dir, {"h2": {"name": "paper.pdf", "doc_name": "paper", "type": "long_pdf"}})
+    pages = [
+        {"page": 1, "content": "Page one text.", "images": []},
+        {"page": 2, "content": "Page two text.", "images": []},
+        {"page": 3, "content": "Page three text.", "images": []},
+    ]
+    (kb_dir / "wiki" / "sources" / "paper.json").write_text(json.dumps(pages), encoding="utf-8")
+
+    resp = client.post(
+        "/api/v1/document/source", json={"kb": kb, "hash": "h2", "page": 2}, headers=_auth()
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["content"] == "Page two text."
+    assert payload["page"] == 2
+    assert payload["total_pages"] == 3
+
+
+def test_document_source_page_clamped_when_out_of_range(monkeypatch, kb_dir):
+    """A page past the end clamps to the last page (no 404), so a stale client
+    request after a recompile shrinks the doc degrades gracefully."""
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+    _write_hashes(kb_dir, {"h2": {"name": "paper.pdf", "doc_name": "paper", "type": "long_pdf"}})
+    pages = [{"page": 1, "content": "Only page.", "images": []}]
+    (kb_dir / "wiki" / "sources" / "paper.json").write_text(json.dumps(pages), encoding="utf-8")
+
+    resp = client.post(
+        "/api/v1/document/source", json={"kb": kb, "hash": "h2", "page": 99}, headers=_auth()
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["page"] == 1
+    assert payload["total_pages"] == 1
+    assert payload["content"] == "Only page."
 
 
 def test_document_source_prefers_stored_source_path(monkeypatch, kb_dir):
@@ -145,7 +188,7 @@ def test_document_source_doc_name_collision_resolves_by_type(monkeypatch, kb_dir
     assert long_resp.status_code == 200
     assert "LONG page one" in long_resp.json()["content"]
     assert "SHORT content" not in long_resp.json()["content"]
-    assert long_resp.json()["pages"] == 1
+    assert long_resp.json()["total_pages"] == 1
 
     short_resp = client.post(
         "/api/v1/document/source", json={"kb": kb, "hash": "short"}, headers=_auth()

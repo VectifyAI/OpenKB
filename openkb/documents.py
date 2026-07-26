@@ -17,16 +17,6 @@ from openkb.cli import _LONG_DOC_TYPES
 from openkb.state import HashRegistry
 
 
-def _render_pages(pages: list[dict[str, Any]]) -> str:
-    """Join a long doc's per-page ``content`` into one Markdown string.
-
-    Pages are separated by a thematic break (``---``) so the reader keeps
-    page boundaries; blank/missing content and non-dict entries are skipped.
-    """
-    parts = [str(page.get("content", "")).strip() for page in pages if isinstance(page, dict)]
-    return "\n\n---\n\n".join(part for part in parts if part)
-
-
 def _resolve_source_file(kb_dir: Path, meta: dict, doc_name: str) -> Path | None:
     """Resolve a document's source file, guarding against path traversal.
 
@@ -56,13 +46,18 @@ def _resolve_source_file(kb_dir: Path, meta: dict, doc_name: str) -> Path | None
     return None
 
 
-def read_document_source(kb_dir: Path, file_hash: str) -> dict[str, Any] | None:
-    """Return the ingested source text for the document identified by hash.
+def read_document_source(kb_dir: Path, file_hash: str, page: int = 1) -> dict[str, Any] | None:
+    """Return one page of a document's ingested source text.
 
-    Returns ``None`` when the hash is unknown OR its source file is missing,
-    so the caller maps both to a 404. ``format`` is always ``"markdown"``;
-    ``pages`` is the page count for long docs (per-page JSON) and ``None`` for
-    short docs.
+    Returns ``None`` when the hash is unknown OR its source file is missing, so
+    the caller maps both to a 404. ``format`` is always ``"markdown"``.
+
+    Long docs (per-page JSON) are paginated: ``page`` selects one entry (1-indexed)
+    and is clamped to ``[1, total_pages]``; ``total_pages`` is the page-list length.
+    Short docs (single ``.md``) are one page: ``page`` is always 1 and
+    ``total_pages`` is 1 - the whole text is returned. A blank page yields an
+    empty ``content`` string rather than being skipped, so page numbers stay
+    aligned with the source document.
     """
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
     meta = registry.get(file_hash)
@@ -78,11 +73,15 @@ def read_document_source(kb_dir: Path, file_hash: str) -> dict[str, Any] | None:
         pages = json.loads(source.read_text(encoding="utf-8"))
         if not isinstance(pages, list):
             raise ValueError(f"source JSON is not a page list: {source.name}")
-        content = _render_pages(pages)
-        page_count: int | None = len(pages)
+        total_pages = len(pages)
+        # Clamp to the last page: a recompile can shrink the doc, and a stale
+        # client request past the end should land on the final page, not 404.
+        current = max(1, min(page, total_pages)) if total_pages else 1
+        entry = pages[current - 1] if total_pages else None
+        content = str(entry.get("content", "")).strip() if isinstance(entry, dict) else ""
     else:
         content = source.read_text(encoding="utf-8")
-        page_count = None
+        current, total_pages = 1, 1
 
     return {
         "hash": file_hash,
@@ -91,5 +90,6 @@ def read_document_source(kb_dir: Path, file_hash: str) -> dict[str, Any] | None:
         "type": meta.get("type", "unknown"),
         "format": "markdown",
         "content": content,
-        "pages": page_count,
+        "page": current,
+        "total_pages": total_pages,
     }

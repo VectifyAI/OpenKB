@@ -290,6 +290,10 @@ class DocumentSourceRequest(BaseModel):
     # SHA-256 hash key from /list — the unique document identifier (avoids
     # ambiguity when two documents share a doc_name/filename stem).
     hash: str = Field(..., min_length=1)
+    # 1-indexed source page to return (long docs only). Defaults to 1; short
+    # docs are a single page and ignore this. Out-of-range values clamp to the
+    # last page so a recompile that shrinks the doc degrades gracefully.
+    page: int = Field(default=1, ge=1)
 
 
 class DocumentSourceResponse(BaseModel):
@@ -299,8 +303,10 @@ class DocumentSourceResponse(BaseModel):
     type: str
     format: str
     content: str
-    # Page count for long docs (per-page JSON); None for short (single .md).
-    pages: int | None = None
+    # Current page (1-indexed) and total page count. Short docs are a single
+    # page (page=1, total_pages=1); long docs total_pages is the page-list length.
+    page: int
+    total_pages: int
 
 
 class PageDeleteRequest(BaseModel):

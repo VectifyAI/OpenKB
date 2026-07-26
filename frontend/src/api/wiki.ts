@@ -55,8 +55,8 @@ export function getKbInventory(kb: string): Promise<KbInventory> {
 
 /** A document's ingested source text (`/api/v1/document/source`). This is the
  *  READ-ONLY conversion output stored under `wiki/sources/` — short docs are a
- *  single Markdown string; long docs are per-page text concatenated into one.
- *  `pages` is the page count for long docs and null for short. */
+ *  single Markdown string (`total_pages=1`); long docs are paginated per
+ *  source page. `page` is the 1-indexed page returned. */
 export interface DocumentSource {
   hash: string
   name: string
@@ -64,12 +64,15 @@ export interface DocumentSource {
   type: string
   format: string
   content: string
-  pages: number | null
+  page: number
+  total_pages: number
 }
 
-/** Fetch a document's converted full text by its `hash` (the /list identifier). */
-export function getDocumentSource(kb: string, hash: string): Promise<DocumentSource> {
-  return apiFetch<DocumentSource>("/api/v1/document/source", { body: { kb, hash } })
+/** Fetch one page of a document's converted text by its `hash` (the /list
+ *  identifier). `page` is 1-indexed; long docs return just that page, short
+ *  docs ignore it (always page 1 of 1). */
+export function getDocumentSource(kb: string, hash: string, page = 1): Promise<DocumentSource> {
+  return apiFetch<DocumentSource>("/api/v1/document/source", { body: { kb, hash, page } })
 }
 
 /** Result of `/api/v1/page/delete`. `backlinks` are 'section/stem' refs whose
