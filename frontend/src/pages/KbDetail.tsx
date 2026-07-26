@@ -901,10 +901,34 @@ function DocumentReaderDrawer({
   useEffect(() => {
     if (doc) scrollRef.current?.scrollTo(0, 0)
   }, [doc, page])
+  // `modal={false}` (below) sidesteps Radix's react-remove-scroll, whose
+  // document-level wheel listener cancels wheel over the reader body via a
+  // React-18 timing gap. The trade-off: Radix no longer applies its own
+  // body-scroll lock or Esc-to-close (the DismissableLayer escape listener
+  // only attaches when it is the highest layer, which is unreliable with
+  // `forceMount` + `AnimatePresence` ref timing). Restore both here.
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
 
   return (
     <Dialog.Root
       open={open}
+      modal={false}
       onOpenChange={(next) => {
         if (!next) onClose()
       }}
@@ -912,20 +936,21 @@ function DocumentReaderDrawer({
       <AnimatePresence>
         {open && (
           <Dialog.Portal forceMount>
-            <Dialog.Overlay asChild forceMount>
-              <motion.div
-                className="fixed inset-0 z-40 bg-black/30"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={reduce ? { duration: 0.12 } : { duration: 0.2 }}
-                onClick={onClose}
-              />
-            </Dialog.Overlay>
+            {/* Radix `Dialog.Overlay` renders null when `modal={false}`
+                (see @radix-ui/react-dialog: `context.modal ? ... : null`),
+                so render the backdrop as a plain motion.div instead - it
+                still portals above the page and `onClick` closes. */}
+            <motion.div
+              className="fixed inset-0 z-40 bg-black/30"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={reduce ? { duration: 0.12 } : { duration: 0.2 }}
+              onClick={onClose}
+            />
             <Dialog.Content
               asChild
               forceMount
-              aria-modal="true"
               aria-describedby={undefined}
               onOpenAutoFocus={() => {
                 openerRef.current = document.activeElement as HTMLElement | null
@@ -934,12 +959,11 @@ function DocumentReaderDrawer({
                 e.preventDefault()
                 openerRef.current?.focus()
               }}
-              // Radix fires `onPointerDownOutside`/`onInteractOutside` when focus
-              // is lost mid-interaction - exactly what happens when a page-turn
-              // click nulls `docSource` and unmounts the focused footer button
-              // for a frame. Disable both: the overlay's own `onClick={onClose}`
-              // still handles dismiss-by-backdrop, and the X button handles the
-              // explicit close. This stops the drawer from vanishing on next/prev.
+              // Route outside-dismiss only through the overlay's own
+              // `onClick` below: the backdrop is a sibling of the content
+              // (hence "outside" to Radix), and `modal={false}` no longer
+              // auto-closes on focus loss, so these guards avoid a redundant
+              // DismissableLayer dismissal competing with the backdrop click.
               onPointerDownOutside={(e) => e.preventDefault()}
               onInteractOutside={(e) => e.preventDefault()}
             >
