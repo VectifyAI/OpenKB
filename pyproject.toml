@@ -38,12 +38,15 @@ dependencies = [
     "click==8.4.0",
     "watchdog==6.0.0",
     "litellm==1.87.2",
-    "openai-agents==0.17.3",
-    # openai 2.45.0 added a required `cache_write_tokens` field to
-    # InputTokensDetails that openai-agents 0.17.3 does not set, crashing
-    # usage parsing on every response (issue #187). Pin below 2.45 until
-    # openai-agents catches up.
-    "openai==2.44.0",
+    # openai-agents 0.19.0 adds MCP Python SDK v2 compatibility (mcp 2.0.0b2).
+    # mcp<2 (required by 0.17.3) conflicts with fastmcp>=4 which requires
+    # mcp>=2.0.0b2. Vetted: stdio + streamable-http transports tested against
+    # fastmcp 4.0.0a2; InputTokensDetails issue #187 resolved in 0.19.0.
+    "openai-agents==0.19.0",
+    # openai 2.48.0 is the minimum that openai-agents 0.19.0 declares compatible.
+    # The InputTokensDetails crash (issue #187) that pinned us to 2.44.0 is
+    # resolved in openai-agents 0.19.0 which correctly handles cache_write_tokens.
+    "openai==2.48.0",
     "pyyaml==6.0.3",
     "python-dotenv==1.2.2",
     "json-repair==0.59.10",
