@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from openkb.lint import (
@@ -543,6 +544,270 @@ class TestStripGhostWikilinks:
         # Sanity: fuzzy rewrite, plus one ghost
         assert "[[concepts/gist-memory]]" in out_b
         assert "[[concepts/missing]]" not in out_b
+
+
+class TestObsidianSyntax:
+    """Obsidian link syntax beyond ``[[page]]`` / ``[[page|alias]]``.
+
+    Heading links (``[[page#H]]``), block refs (``[[page#^b]]``), same-page
+    fragments (``[[#H]]``), embeds (``![[file.png]]``), and attachment
+    links (``[[file.pdf]]``) are all valid in Obsidian. The linter must
+    neither demote them to plain text (strip/fix) nor report them as
+    broken (find_broken_links).
+    """
+
+    # --- strip_ghost_wikilinks -------------------------------------------
+
+    def test_keeps_heading_fragment_on_direct_match(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/attention#Scaled Dot-Product]].",
+            {"concepts/attention"},
+        )
+        assert out == "See [[concepts/attention#Scaled Dot-Product]]."
+        assert ghosts == []
+
+    def test_keeps_block_ref_on_direct_match(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/attention#^abc123]].",
+            {"concepts/attention"},
+        )
+        assert out == "See [[concepts/attention#^abc123]]."
+        assert ghosts == []
+
+    def test_keeps_fragment_with_alias(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/attention#Scores|the scores]].",
+            {"concepts/attention"},
+        )
+        assert out == "See [[concepts/attention#Scores|the scores]]."
+        assert ghosts == []
+
+    def test_preserves_fragment_through_fuzzy_rewrite(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/gist_memory#Notes]].",
+            {"concepts/gist-memory"},
+        )
+        assert out == "See [[concepts/gist-memory#Notes]]."
+        assert ghosts == []
+
+    def test_preserves_fragment_and_alias_through_fuzzy_rewrite(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/gist_memory#Notes|notes]].",
+            {"concepts/gist-memory"},
+        )
+        assert out == "See [[concepts/gist-memory#Notes|notes]]."
+        assert ghosts == []
+
+    def test_ghost_with_fragment_demoted_without_fragment_text(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/missing#Section]].",
+            {"concepts/attention"},
+        )
+        assert out == "See missing."
+        assert ghosts == ["concepts/missing"]
+
+    def test_uncommon_attachment_extensions_left_untouched(self):
+        # Obsidian accepts arbitrary attachment formats — classification is
+        # by extension *shape*, not a closed list (the P1 regression: these
+        # were silently demoted to plain text).
+        text = "![[notes.txt]] ![[audio.flac]] ![[diagram.drawio]] [[note.md]]"
+        out, ghosts = strip_ghost_wikilinks(text, set())
+        assert out == text
+        assert ghosts == []
+
+    def test_dotted_page_name_still_ghosted(self):
+        # A numeric dotted suffix is not extension-like — an unknown page
+        # target such as an unsanitized arXiv id still gets demoted.
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[summaries/2509.11420]].",
+            {"summaries/other"},
+        )
+        assert out == "See 2509.11420."
+        assert ghosts == ["summaries/2509.11420"]
+
+    def test_page_named_like_file_validates_before_attachment_check(self):
+        # Page validation runs first: a real page whose name carries an
+        # extension-like suffix still direct-matches and fuzzy-rewrites.
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[concepts/node.js]] and [[concepts/Node.js]].",
+            {"concepts/node.js"},
+        )
+        assert out == "See [[concepts/node.js]] and [[concepts/node.js]]."
+        assert ghosts == []
+
+    def test_attachment_embed_left_untouched(self):
+        text = "Figure: ![[images/doc/p1_img1.png]] here."
+        out, ghosts = strip_ghost_wikilinks(text, set())
+        assert out == text
+        assert ghosts == []
+
+    def test_note_embed_kept_on_direct_match(self):
+        # ![[page]] embeds a note — a page link like any other, keep the "!".
+        out, ghosts = strip_ghost_wikilinks(
+            "Embedded: ![[concepts/attention]].",
+            {"concepts/attention"},
+        )
+        assert out == "Embedded: ![[concepts/attention]]."
+        assert ghosts == []
+
+    def test_note_embed_fuzzy_rewrite_preserves_embed_marker(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "Embedded: ![[concepts/Gist_Memory#Notes]].",
+            {"concepts/gist-memory"},
+        )
+        assert out == "Embedded: ![[concepts/gist-memory#Notes]]."
+        assert ghosts == []
+
+    def test_ghost_note_embed_demoted_without_bang_residue(self):
+        out, ghosts = strip_ghost_wikilinks(
+            "Embedded: ![[concepts/missing]].",
+            {"concepts/attention"},
+        )
+        assert out == "Embedded: missing."
+        assert ghosts == ["concepts/missing"]
+
+    def test_attachment_link_left_untouched(self):
+        text = "Original: [[report.pdf]]."
+        out, ghosts = strip_ghost_wikilinks(text, set())
+        assert out == text
+        assert ghosts == []
+
+    def test_same_page_fragment_left_untouched(self):
+        text = "Jump to [[#Conclusiones]]."
+        out, ghosts = strip_ghost_wikilinks(text, set())
+        assert out == text
+        assert ghosts == []
+
+    def test_extra_brackets_not_swallowed_into_target(self):
+        # [[[a]]] contains a valid [[a]] wrapped in literal brackets; the
+        # target is "a", not "[a" (which never validated and got demoted).
+        out, ghosts = strip_ghost_wikilinks(
+            "See [[[concepts/attention]]].",
+            {"concepts/attention"},
+        )
+        assert out == "See [[[concepts/attention]]]."
+        assert ghosts == []
+
+    def test_unmatched_bracket_run_scans_in_linear_time(self):
+        # Regression: allowing "[" in the target class made the scan
+        # quadratic — 20k unmatched brackets (ASCII art, base64, stray
+        # LLM output) took ~10s per pass. Generous bound; the quadratic
+        # regex exceeds it by an order of magnitude.
+        payload = "[" * 20_000
+        start = time.perf_counter()
+        out, ghosts = strip_ghost_wikilinks(payload, set())
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert out == payload
+        assert ghosts == []
+
+    def test_unmatched_fragment_run_scans_in_linear_time(self):
+        # Regression: excluding "[" from the *target* class alone was not
+        # enough — the frag class `#[^\]|]*` still swallowed following `[[`s,
+        # so a long `]`-free run of `[[a#`… stayed quadratic (~15s at 10k).
+        # Excluding "[" from the frag class too keeps it linear.
+        payload = "[[a#" * 20_000
+        start = time.perf_counter()
+        out, ghosts = strip_ghost_wikilinks(payload, set())
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert out == payload
+        assert ghosts == []
+
+    def test_unmatched_alias_run_scans_in_linear_time(self):
+        # Same quadratic class via the alias group `[^\]]+` on a `[[a|`… run;
+        # excluding "[" from the alias class bounds it.
+        payload = "[[a|" * 20_000
+        start = time.perf_counter()
+        out, ghosts = strip_ghost_wikilinks(payload, set())
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert out == payload
+        assert ghosts == []
+
+    # --- find_broken_links ------------------------------------------------
+
+    def test_heading_link_to_existing_page_not_broken(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "attention.md").write_text("# Attention", encoding="utf-8")
+        (wiki / "summaries" / "paper.md").write_text(
+            "See [[concepts/attention#Scores]] and [[concepts/attention#^b1]].",
+            encoding="utf-8",
+        )
+
+        assert find_broken_links(wiki) == []
+
+    def test_embed_and_attachment_links_not_reported_broken(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "summaries" / "paper.md").write_text(
+            "![[images/doc/fig.png]] and [[scan.pdf]] and [[#Local]] "
+            "and ![[audio.flac]] and ![[diagram.drawio]] and [[note.md]].",
+            encoding="utf-8",
+        )
+
+        assert find_broken_links(wiki) == []
+
+    def test_heading_link_to_missing_page_still_broken(self, tmp_path):
+        wiki = _make_wiki(tmp_path)
+        (wiki / "summaries" / "paper.md").write_text(
+            "See [[concepts/ghost#Section]].", encoding="utf-8"
+        )
+
+        result = find_broken_links(wiki)
+
+        assert len(result) == 1
+        assert "ghost" in result[0]
+
+    def test_note_embed_validated_as_page_link(self, tmp_path):
+        # ![[page]] note embeds participate in lint: a broken one is
+        # reported, an existing one is not.
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "attention.md").write_text("# Attention", encoding="utf-8")
+        (wiki / "summaries" / "paper.md").write_text(
+            "![[concepts/attention]] and ![[concepts/ghost]].", encoding="utf-8"
+        )
+
+        result = find_broken_links(wiki)
+
+        assert len(result) == 1
+        assert "ghost" in result[0]
+
+    def test_note_embed_counts_as_incoming_link_for_orphans(self, tmp_path):
+        # A page referenced only via ![[embed]] is linked, not an orphan.
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "embedded.md").write_text("# Embedded", encoding="utf-8")
+        (wiki / "summaries" / "host.md").write_text("![[concepts/embedded]]", encoding="utf-8")
+
+        result = find_orphans(wiki)
+
+        assert "concepts/embedded" not in result
+
+    # --- fix_broken_links regression on explorations/ ---------------------
+
+    def test_fix_is_idempotent_on_handwritten_exploration(self, tmp_path):
+        """A manually written note in explorations/ using the full Obsidian
+        syntax must survive a wiki-wide ``lint --fix`` sweep unchanged —
+        this was the data-loss path: heading/block/embed links were being
+        demoted to plain text."""
+        wiki = _make_wiki(tmp_path)
+        (wiki / "concepts" / "attention.md").write_text("# Attention", encoding="utf-8")
+        (wiki / "explorations").mkdir()
+        note = wiki / "explorations" / "notas-manuales.md"
+        original = (
+            "# Notas\n\n"
+            "Ver [[concepts/attention#Scaled Dot-Product]] y "
+            "[[concepts/attention#^bloque1|el bloque]].\n\n"
+            "![[images/doc/p1_img1.png]]\n\n"
+            "Nota embebida: ![[concepts/attention]]\n\n"
+            "Adjunto: [[informe.pdf]] — y volver a [[#Notas]].\n"
+        )
+        note.write_text(original, encoding="utf-8")
+
+        files_changed, ghosts = fix_broken_links(wiki)
+
+        assert note.read_text(encoding="utf-8") == original
+        assert files_changed == 0
+        assert ghosts == 0
 
 
 class TestBuildNormIndex:
