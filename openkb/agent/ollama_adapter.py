@@ -1,22 +1,33 @@
-"""Resilient wrapper for Ollama models that handles tool-call hallucination.
+"""Resilient wrapper for Ollama models that handles tool-call issues.
 
-When using Ollama models via LiteLLM, small models often hallucinate tool
-names instead of using the registered tools. The openai-agents SDK then
-raises ``ModelBehaviorError: Tool X not found in agent …`` and the entire
-query/chat run aborts with no recovery.
+When using Ollama models via LiteLLM, two problems cause the openai-agents
+SDK tool-calling loop to fail:
 
-This module provides:
+1. **LiteLLM prompt injection fallback** — when the model is addressed as
+   ``ollama/<model>``, LiteLLM treats it as a "legacy" Ollama endpoint that
+   does not support native tool calling.  It strips the ``tools`` parameter,
+   sets ``format: json``, and injects the tool definitions into the prompt
+   text.  The model then returns tool-call JSON in the ``content`` field
+   instead of the ``tool_calls`` field, and the SDK cannot execute the tool.
 
-1. :func:`is_ollama_backend` — detect whether a model string targets Ollama.
-2. :func:`run_with_retry` — wrap ``Runner.run`` in a try/except for
-   ``ModelBehaviorError``, retrying with a corrective system message that
-   tells the model which tools actually exist.
-3. :func:`run_streamed_with_retry` — same but for ``Runner.run_streamed``.
+   **Fix**: rewrite ``ollama/<model>`` to ``ollama_chat/<model>`` so LiteLLM
+   uses the native Ollama Chat API endpoint, which supports ``tools``
+   natively (Ollama >= 0.4).
 
-The corrective message is injected as a **user** message appended to the
-input, so the model sees its mistake and the available tools on the next
-turn.  Only Ollama backends use the retry path; all other providers keep the
-original bare-Runner behaviour unchanged.
+2. **Tool-name hallucination** — small models may call non-existent tools
+   (e.g. ``get_topics`` instead of ``read_file``), causing
+   ``ModelBehaviorError: Tool X not found in agent …``.
+
+   **Fix**: wrap ``Runner.run`` / ``Runner.run_streamed`` in a retry loop
+   that catches ``ModelBehaviorError`` and retries with a corrective message
+   listing the actual available tools.
+
+3. **Timeouts** — local models on modest hardware can take minutes per
+   tool-calling turn.  The adapter passes a configurable timeout (default
+   300 s) to LiteLLM so the loop does not abort prematurely.
+
+Only Ollama backends use the rewrite + retry path; all other providers keep
+the original bare-Runner behaviour unchanged.
 """
 
 from __future__ import annotations
@@ -32,17 +43,45 @@ logger = logging.getLogger(__name__)
 # Maximum retry attempts for tool-call hallucination errors.
 DEFAULT_MAX_RETRIES = 3
 
+# Default per-request timeout for Ollama models (seconds).
+# Local models on modest hardware can take 60-120s per tool-calling turn.
+DEFAULT_OLLAMA_TIMEOUT = 300
+
 
 def is_ollama_backend(model: str) -> bool:
     """Return *True* if *model* targets an Ollama backend.
 
-    Accepts both ``ollama/llama3.2:1b`` (LiteLLM prefix) and
-    ``litellm/ollama/llama3.2:1b`` (Agent-layer prefix used by OpenKB).
+    Accepts ``ollama/...``, ``ollama_chat/...``, and ``litellm/ollama/...``
+    (the Agent-layer prefix used by OpenKB).
     """
     if not model:
         return False
     lower = model.lower()
-    return lower.startswith("ollama/") or "/ollama/" in lower
+    return ("ollama/" in lower or "ollama_chat/" in lower)
+
+
+def rewrite_ollama_model(model: str) -> str:
+    """Rewrite ``ollama/<model>`` to ``ollama_chat/<model>`` for native tools.
+
+    LiteLLM treats ``ollama/`` as a legacy endpoint and falls back to prompt
+    injection for tool calls.  ``ollama_chat/`` uses the native Ollama Chat
+    API which supports ``tools`` natively (Ollama >= 0.4).
+
+    If *model* already uses ``ollama_chat/`` or is not an Ollama model, it is
+    returned unchanged.
+    """
+    if not model:
+        return model
+    # Strip "litellm/" prefix first (Agent-layer convention)
+    stripped = model
+    if stripped.startswith("litellm/"):
+        stripped = stripped[len("litellm/"):]
+
+    if stripped.startswith("ollama/") and not stripped.startswith("ollama_chat/"):
+        return "ollama_chat/" + stripped[len("ollama/"):]
+    if stripped.startswith("ollama_chat/"):
+        return stripped  # already correct
+    return model
 
 
 def _extract_tool_names(agent: Any) -> list[str]:
@@ -102,6 +141,26 @@ def _extract_bad_tool_name(error: ModelBehaviorError) -> str:
     return "unknown"
 
 
+def _ensure_ollama_timeout(
+    agent: Any,
+    timeout: float | None,
+) -> None:
+    """Ensure the agent's model settings include an Ollama-appropriate timeout.
+
+    If *timeout* is provided and the agent's ``model_settings`` does not
+    already carry one, inject it into ``extra_args["timeout"]``.
+    """
+    if timeout is None:
+        return
+    ms = getattr(agent, "model_settings", None)
+    if ms is None:
+        return
+    extra_args = getattr(ms, "extra_args", None) or {}
+    if "timeout" not in extra_args:
+        extra_args["timeout"] = timeout
+        ms.extra_args = extra_args
+
+
 def run_with_retry(
     agent: Any,
     input_data: str | list[dict[str, Any]],
@@ -109,12 +168,14 @@ def run_with_retry(
     max_turns: int = 50,
     run_config: Any = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
 ) -> Any:
-    """Run ``Runner.run`` with retry on ``ModelBehaviorError`` for Ollama models.
+    """Run ``Runner.run_sync`` with retry on ``ModelBehaviorError`` for Ollama.
 
     On each retry, a corrective user message is appended to the input so
     the model sees which tools are actually available.
     """
+    _ensure_ollama_timeout(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
 
@@ -144,8 +205,10 @@ async def arun_with_retry(
     max_turns: int = 50,
     run_config: Any = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
 ) -> Any:
     """Async version of :func:`run_with_retry` using ``await Runner.run``."""
+    _ensure_ollama_timeout(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
 
@@ -175,14 +238,14 @@ def run_streamed_with_retry(
     max_turns: int = 50,
     run_config: Any = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
 ) -> Any:
     """Run ``Runner.run_streamed`` with retry on ``ModelBehaviorError``.
 
-    Streaming retry works by catching the error from ``stream_events()`` and
-    re-creating the streamed run with a corrective message. The caller
-    should iterate ``stream_events()`` on the returned object; if the run
-    fails, this function will re-create the stream and return the new one.
+    Returns a :class:`_RetryableStreamResult` that seamlessly re-creates
+    the stream on error.
     """
+    _ensure_ollama_timeout(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
     last_error: ModelBehaviorError | None = None
@@ -195,35 +258,16 @@ def run_streamed_with_retry(
         else:
             result = Runner.run_streamed(agent, current_input, max_turns=max_turns)
 
-        # For streaming, we need to check if the run fails during iteration.
-        # We use a wrapper that catches errors from stream_events().
-        try:
-            # Consume the stream to see if it errors.
-            # If it does, we retry with a correction.
-            # If it succeeds, we return the result (already consumed).
-            # But we need to yield events to the caller...
-            # So we return a _RetryableStreamResult that handles this.
-            return _RetryableStreamResult(
-                result,
-                agent=agent,
-                available_tools=available_tools,
-                current_input=current_input,
-                max_turns=max_turns,
-                run_config=run_config,
-                max_retries=max_retries,
-                attempt=attempt,
-            )
-        except ModelBehaviorError as exc:
-            if attempt > max_retries:
-                raise
-            bad_name = _extract_bad_tool_name(exc)
-            logger.warning(
-                "Ollama streamed tool-call retry %d/%d: model called '%s'",
-                attempt, max_retries, bad_name,
-            )
-            correction = _build_correction_message(bad_name, available_tools, attempt)
-            current_input = _append_correction(current_input, correction)
-            last_error = exc
+        return _RetryableStreamResult(
+            result,
+            agent=agent,
+            available_tools=available_tools,
+            current_input=current_input,
+            max_turns=max_turns,
+            run_config=run_config,
+            max_retries=max_retries,
+            attempt=attempt,
+        )
 
     if last_error:
         raise last_error
@@ -231,14 +275,7 @@ def run_streamed_with_retry(
 
 
 class _RetryableStreamResult:
-    """Wrapper around a streamed RunResult that retries on ModelBehaviorError.
-
-    The first ``stream_events()`` call consumes the underlying stream. If
-    a ``ModelBehaviorError`` is raised during iteration, the wrapper catches
-    it, builds a corrective message, re-creates the stream, and continues
-    yielding events from the new stream. The caller sees a single seamless
-    event iterator.
-    """
+    """Wrapper around a streamed RunResult that retries on ModelBehaviorError."""
 
     def __init__(
         self,
@@ -270,8 +307,6 @@ class _RetryableStreamResult:
 
     async def stream_events(self) -> Any:
         """Yield events, retrying on ModelBehaviorError."""
-        import asyncio
-
         result = self._result
         current_input = self._current_input
 

@@ -17,6 +17,7 @@ from openkb.agent.tools import (
 from openkb.agent.ollama_adapter import (
     arun_with_retry,
     is_ollama_backend,
+    rewrite_ollama_model,
     run_streamed_with_retry,
 )
 from openkb.config import LlmCredentialBundle, resolve_model_settings
@@ -123,7 +124,7 @@ def build_query_agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
-        model=f"litellm/{model}",
+        model=f"litellm/{rewrite_ollama_model(model)}",
         model_settings=ModelSettings(**model_settings),
     )
 
@@ -532,7 +533,7 @@ def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None
     from agents.extensions.models.litellm_model import LitellmModel
 
     litellm_model = LitellmModel(
-        model=model,
+        model=rewrite_ollama_model(model),
         base_url=bundle.base_url,
         api_key=bundle.api_key,
     )
