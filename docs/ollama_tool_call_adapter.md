@@ -154,21 +154,62 @@ with a corrective message and continues yielding events seamlessly.
 
 ```bash
 # Run adapter tests
-python -m pytest tests/test_ollama_adapter.py -v  # 56 passed
+python -m pytest tests/test_ollama_adapter.py -v  # 80 passed
 
 # Run full test suite (non-Ollama path unchanged)
-python -m pytest tests/ -q  # 1116 passed
+python -m pytest tests/ -q  # 1148 passed
 ```
+
+## Minimum Model Requirements
+
+OpenKB uses two LLM workloads with different requirements:
+
+### 1. Ingestion (`add`) — low requirements
+
+The `add` command compiles documents into wiki pages (summary, concepts,
+entities). It uses direct LLM completion — **no tool-calling needed**.
+Models ≥12B work reliably.
+
+### 2. Query / Chat — higher requirements
+
+The `query` and `chat` commands use a multi-step tool-calling loop: the
+model must call `read_file` to read wiki pages, process the results, and
+produce a grounded answer. This requires **instruction-following** and
+**tool-use capability**, which smaller models may lack.
+
+### Tested models
+
+| Model | Size | `add` | `query` | Notes |
+|---|---|---|---|---|
+| qwen3.5 (cloud) | 397B | ✅ | ✅ grounded | Stable across all runs |
+| gemma4 | 12B | ✅ | ⚠️ unstable | Grounded answer on some runs; "could not retrieve" on others |
+| qwen2.5-coder | 14B | ✅ | ❌ | Model ignores nudge retries; sanitize fallback returns clear message |
+
+### Recommendations
+
+- **For `add` (ingestion):** any Ollama model ≥12B works. Tool-calling
+  is not required.
+- **For `query` / `chat`:** use models with strong instruction-following
+  capability. General-purpose models (e.g. gemma4, qwen3) perform better
+  than code-focused models (e.g. qwen2.5-coder) for tool-use tasks.
+- **For slow hardware:** set `ollama.timeout: 600` or higher. Local 12B
+  models can take 60-730s per request depending on GPU and model size.
+- **Instability:** 12B models may produce different results between runs
+  (grounded answer on one run, "could not retrieve" on the next). This is
+  model-level variance, not an adapter issue. Consider fixing
+  temperature/seed if reproducibility is needed.
 
 ## Live Test Results
 
-Tested with `ollama_chat/gemma4:12b` on Ollama 0.32.5:
+Tested with Ollama 0.32.5, LiteLLM 1.94.0, openai-agents 0.19.1:
 
-| Test | Result |
-|---|---|
-| LiteLLM raw tool call | `read_file` with correct name, 14s |
-| Full SDK tool-loop | `index.md` → `messages.md` → final answer, 132s |
-| Non-Ollama path | Unchanged, no regressions (1116 tests pass) |
+| Model | Test | Result |
+|---|---|---|
+| gemma4:12b | LiteLLM raw tool call | `read_file` with correct name, 14s |
+| gemma4:12b | Full SDK tool-loop | `index.md` → `messages.md` → final answer, 132s |
+| qwen3.5:397b (cloud) | Full tool-loop | Grounded answer with time/equipment details |
+| qwen2.5-coder:14b | Full tool-loop | 3 nudge retries → sanitize fallback (clear message) |
+| Non-Ollama path | Full test suite | 1148 passed, 0 regressions |
 
 ## Limitations
 
