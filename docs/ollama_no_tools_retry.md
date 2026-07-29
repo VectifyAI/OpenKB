@@ -114,14 +114,16 @@ Based on live testing with tg-collector:
 
 | Model | Size | add (ingestion) | query (tool-loop) |
 |---|---|---|---|
-| qwen3.5 (cloud) | 397B | ✅ | ✅ grounded answer |
-| gemma4 | 12B | ✅ | ✅ grounded answer (with nudge retry) |
-| qwen2.5-coder | 14B | ✅ | ❌ model ignores nudges, cannot tool-loop |
+| qwen3.5 (cloud) | 397B | ✅ stable | ✅ grounded answer, stable |
+| gemma4 | 12B | ✅ | ⚠️ unstable (grounded on some runs, "could not retrieve" on others) |
+| qwen2.5-coder | 14B | ✅ | ❌ model ignores nudges; sanitize returns clear message |
 
-**Recommendation**: for `query` and `chat` tool-loop, use ≥12B models with
-good instruction-following capability. `qwen2.5-coder:14b` (code-focused)
-struggles with tool-use despite the nudge retries. For `add` (ingestion),
-12-14B models work fine — tool-calling is not required.
+**Recommendation**: for `query` and `chat` tool-loop, use models with
+strong instruction-following capability (general-purpose, not code-focused).
+Minimum tested working size: 12B (gemma4, with nudge retry). For `add`
+(ingestion), 12-14B models work fine — tool-calling is not required.
+
+See also `docs/ollama_tool_call_adapter.md` for full model requirements.
 
 ## Limitations
 
