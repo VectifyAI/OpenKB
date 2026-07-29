@@ -417,6 +417,13 @@ def _llm_call(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    else:
+        # For Ollama (ollama_chat) the LiteLLM provider does not read
+        # OPENAI_API_BASE; pass api_base explicitly from the environment.
+        import os as _os
+        _api_base = _os.environ.get("OPENAI_API_BASE") or _os.environ.get("OLLAMA_API_BASE")
+        if _api_base and "api_base" not in kwargs:
+            kwargs.setdefault("api_base", _api_base)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -460,6 +467,13 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    else:
+        # For Ollama (ollama_chat) the LiteLLM provider does not read
+        # OPENAI_API_BASE; pass api_base explicitly from the environment.
+        import os as _os
+        _api_base = _os.environ.get("OPENAI_API_BASE") or _os.environ.get("OLLAMA_API_BASE")
+        if _api_base and "api_base" not in kwargs:
+            kwargs.setdefault("api_base", _api_base)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)

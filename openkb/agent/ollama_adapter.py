@@ -33,12 +33,30 @@ the original bare-Runner behaviour unchanged.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from agents import Runner
 from agents.exceptions import ModelBehaviorError
 
 logger = logging.getLogger(__name__)
+
+# Propagate OPENAI_API_BASE → OLLAMA_API_BASE at import time so the
+# ``ollama_chat`` LiteLLM provider picks up the correct endpoint even
+# for code paths that don't go through the adapter (e.g. ``openkb add``).
+# LiteLLM's ollama_chat provider reads OLLAMA_API_BASE, not OPENAI_API_BASE.
+_openai_base = os.environ.get("OPENAI_API_BASE")
+if _openai_base:
+    if not os.environ.get("OLLAMA_API_BASE"):
+        os.environ["OLLAMA_API_BASE"] = _openai_base
+    # Also set litellm module-level api_base so calls without explicit
+    # api_base= parameter (e.g. openkb add) reach the Ollama endpoint.
+    try:
+        import litellm as _litellm
+        if not getattr(_litellm, "api_base", None):
+            _litellm.api_base = _openai_base
+    except ImportError:
+        pass
 
 # Maximum retry attempts for tool-call hallucination errors.
 DEFAULT_MAX_RETRIES = 3
@@ -141,15 +159,36 @@ def _extract_bad_tool_name(error: ModelBehaviorError) -> str:
     return "unknown"
 
 
-def _ensure_ollama_timeout(
+def _ensure_ollama_settings(
     agent: Any,
     timeout: float | None,
 ) -> None:
-    """Ensure the agent's model settings include an Ollama-appropriate timeout.
+    """Ensure the agent's model settings include Ollama-appropriate defaults.
 
-    If *timeout* is provided and the agent's ``model_settings`` does not
-    already carry one, inject it into ``extra_args["timeout"]``.
+    - If *timeout* is provided and the agent's ``model_settings`` does not
+      already carry one, inject it into ``extra_args["timeout"]``.
+    - Set ``litellm.drop_params = True`` process-wide so LiteLLM drops
+      unsupported params (e.g. ``parallel_tool_calls`` for ``ollama_chat``)
+      instead of raising ``UnsupportedParamsError``.
+    - Propagate ``OPENAI_API_BASE`` to ``OLLAMA_API_BASE`` so the
+      ``ollama_chat`` LiteLLM provider picks up the correct endpoint
+      (it reads ``OLLAMA_API_BASE``, not ``OPENAI_API_BASE``).
     """
+    import os
+
+    # drop_params is critical for ollama_chat — it rejects parallel_tool_calls
+    try:
+        import litellm
+        litellm.drop_params = True
+    except ImportError:
+        pass
+
+    # ollama_chat reads OLLAMA_API_BASE, not OPENAI_API_BASE.
+    # If OPENAI_API_BASE is set but OLLAMA_API_BASE is not, propagate it.
+    openai_base = os.environ.get("OPENAI_API_BASE")
+    if openai_base and not os.environ.get("OLLAMA_API_BASE"):
+        os.environ["OLLAMA_API_BASE"] = openai_base
+
     if timeout is None:
         return
     ms = getattr(agent, "model_settings", None)
@@ -175,7 +214,7 @@ def run_with_retry(
     On each retry, a corrective user message is appended to the input so
     the model sees which tools are actually available.
     """
-    _ensure_ollama_timeout(agent, timeout)
+    _ensure_ollama_settings(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
 
@@ -208,7 +247,7 @@ async def arun_with_retry(
     timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
 ) -> Any:
     """Async version of :func:`run_with_retry` using ``await Runner.run``."""
-    _ensure_ollama_timeout(agent, timeout)
+    _ensure_ollama_settings(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
 
@@ -245,7 +284,7 @@ def run_streamed_with_retry(
     Returns a :class:`_RetryableStreamResult` that seamlessly re-creates
     the stream on error.
     """
-    _ensure_ollama_timeout(agent, timeout)
+    _ensure_ollama_settings(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
     last_error: ModelBehaviorError | None = None

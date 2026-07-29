@@ -13,7 +13,7 @@ from openkb.agent.ollama_adapter import (
     DEFAULT_OLLAMA_TIMEOUT,
     _append_correction,
     _build_correction_message,
-    _ensure_ollama_timeout,
+    _ensure_ollama_settings,
     _extract_bad_tool_name,
     _extract_tool_names,
     arun_with_retry,
@@ -173,14 +173,14 @@ class TestAppendCorrection:
 
 
 class TestEnsureOllamaTimeout:
-    """Tests for _ensure_ollama_timeout()."""
+    """Tests for _ensure_ollama_settings()."""
 
     def test_injects_timeout_when_missing(self) -> None:
         ms = MagicMock()
         ms.extra_args = {}
         agent = MagicMock()
         agent.model_settings = ms
-        _ensure_ollama_timeout(agent, 300)
+        _ensure_ollama_settings(agent, 300)
         assert ms.extra_args["timeout"] == 300
 
     def test_preserves_existing_timeout(self) -> None:
@@ -188,7 +188,7 @@ class TestEnsureOllamaTimeout:
         ms.extra_args = {"timeout": 600}
         agent = MagicMock()
         agent.model_settings = ms
-        _ensure_ollama_timeout(agent, 300)
+        _ensure_ollama_settings(agent, 300)
         assert ms.extra_args["timeout"] == 600  # not overwritten
 
     def test_no_timeout_none(self) -> None:
@@ -196,12 +196,12 @@ class TestEnsureOllamaTimeout:
         ms.extra_args = {}
         agent = MagicMock()
         agent.model_settings = ms
-        _ensure_ollama_timeout(agent, None)
+        _ensure_ollama_settings(agent, None)
         assert "timeout" not in ms.extra_args
 
     def test_no_model_settings(self) -> None:
         agent = MagicMock(spec=[])  # no model_settings
-        _ensure_ollama_timeout(agent, 300)  # should not raise
+        _ensure_ollama_settings(agent, 300)  # should not raise
 
 
 class TestRunWithRetry:
