@@ -10,12 +10,15 @@ import pytest
 
 from openkb.agent.ollama_adapter import (
     DEFAULT_MAX_RETRIES,
+    DEFAULT_OLLAMA_TIMEOUT,
     _append_correction,
     _build_correction_message,
+    _ensure_ollama_timeout,
     _extract_bad_tool_name,
     _extract_tool_names,
     arun_with_retry,
     is_ollama_backend,
+    rewrite_ollama_model,
     run_with_retry,
 )
 
@@ -26,8 +29,14 @@ class TestIsOllamaBackend:
     def test_litellm_prefix(self) -> None:
         assert is_ollama_backend("ollama/llama3.2:1b") is True
 
+    def test_ollama_chat_prefix(self) -> None:
+        assert is_ollama_backend("ollama_chat/gemma4:12b") is True
+
     def test_agent_layer_prefix(self) -> None:
         assert is_ollama_backend("litellm/ollama/llama3.2:1b") is True
+
+    def test_agent_layer_ollama_chat(self) -> None:
+        assert is_ollama_backend("litellm/ollama_chat/gemma4:12b") is True
 
     def test_non_ollama(self) -> None:
         assert is_ollama_backend("openai/gpt-4o") is False
@@ -40,6 +49,34 @@ class TestIsOllamaBackend:
 
     def test_case_insensitive(self) -> None:
         assert is_ollama_backend("OLLAMA/Llama3.2:1b") is True
+
+
+class TestRewriteOllamaModel:
+    """Tests for rewrite_ollama_model()."""
+
+    def test_ollama_to_ollama_chat(self) -> None:
+        assert rewrite_ollama_model("ollama/gemma4:12b") == "ollama_chat/gemma4:12b"
+
+    def test_ollama_with_colon_tag(self) -> None:
+        assert rewrite_ollama_model("ollama/llama3.1:8b-instruct-q8_0") == "ollama_chat/llama3.1:8b-instruct-q8_0"
+
+    def test_already_ollama_chat(self) -> None:
+        assert rewrite_ollama_model("ollama_chat/gemma4:12b") == "ollama_chat/gemma4:12b"
+
+    def test_litellm_ollama_prefix(self) -> None:
+        assert rewrite_ollama_model("litellm/ollama/gemma4:12b") == "ollama_chat/gemma4:12b"
+
+    def test_litellm_ollama_chat_prefix(self) -> None:
+        assert rewrite_ollama_model("litellm/ollama_chat/gemma4:12b") == "ollama_chat/gemma4:12b"
+
+    def test_non_ollama_unchanged(self) -> None:
+        assert rewrite_ollama_model("openai/gpt-4o") == "openai/gpt-4o"
+
+    def test_empty_unchanged(self) -> None:
+        assert rewrite_ollama_model("") == ""
+
+    def test_none_safe(self) -> None:
+        assert rewrite_ollama_model(None) is None  # type: ignore[arg-type]
 
 
 class TestExtractToolNames:
@@ -135,6 +172,38 @@ class TestAppendCorrection:
         assert len(original) == 1  # not modified in place
 
 
+class TestEnsureOllamaTimeout:
+    """Tests for _ensure_ollama_timeout()."""
+
+    def test_injects_timeout_when_missing(self) -> None:
+        ms = MagicMock()
+        ms.extra_args = {}
+        agent = MagicMock()
+        agent.model_settings = ms
+        _ensure_ollama_timeout(agent, 300)
+        assert ms.extra_args["timeout"] == 300
+
+    def test_preserves_existing_timeout(self) -> None:
+        ms = MagicMock()
+        ms.extra_args = {"timeout": 600}
+        agent = MagicMock()
+        agent.model_settings = ms
+        _ensure_ollama_timeout(agent, 300)
+        assert ms.extra_args["timeout"] == 600  # not overwritten
+
+    def test_no_timeout_none(self) -> None:
+        ms = MagicMock()
+        ms.extra_args = {}
+        agent = MagicMock()
+        agent.model_settings = ms
+        _ensure_ollama_timeout(agent, None)
+        assert "timeout" not in ms.extra_args
+
+    def test_no_model_settings(self) -> None:
+        agent = MagicMock(spec=[])  # no model_settings
+        _ensure_ollama_timeout(agent, 300)  # should not raise
+
+
 class TestRunWithRetry:
     """Tests for run_with_retry() and arun_with_retry()."""
 
@@ -143,8 +212,11 @@ class TestRunWithRetry:
         mock_result = MagicMock()
         mock_result.final_output = "answer"
 
+        ms = MagicMock()
+        ms.extra_args = {}
         agent = MagicMock()
         agent.tools = [MagicMock(name="read_file")]
+        agent.model_settings = ms
 
         with patch("openkb.agent.ollama_adapter.Runner.run_sync", return_value=mock_result):
             result = run_with_retry(agent, "question", max_turns=5)
@@ -157,10 +229,13 @@ class TestRunWithRetry:
         mock_result = MagicMock()
         mock_result.final_output = "recovered answer"
 
+        ms = MagicMock()
+        ms.extra_args = {}
         tool = MagicMock()
         tool.name = "read_file"
         agent = MagicMock()
         agent.tools = [tool]
+        agent.model_settings = ms
 
         call_count = [0]
 
@@ -179,10 +254,13 @@ class TestRunWithRetry:
         """If retries exhausted, the last error is re-raised."""
         from agents.exceptions import ModelBehaviorError
 
+        ms = MagicMock()
+        ms.extra_args = {}
         tool = MagicMock()
         tool.name = "read_file"
         agent = MagicMock()
         agent.tools = [tool]
+        agent.model_settings = ms
 
         with patch(
             "openkb.agent.ollama_adapter.Runner.run_sync",
@@ -197,10 +275,13 @@ class TestRunWithRetry:
         mock_result = MagicMock()
         mock_result.final_output = "answer"
 
+        ms = MagicMock()
+        ms.extra_args = {}
         tool = MagicMock()
         tool.name = "read_file"
         agent = MagicMock()
         agent.tools = [tool]
+        agent.model_settings = ms
 
         async def mock_run(*args: Any, **kwargs: Any) -> Any:
             return mock_result
@@ -217,10 +298,13 @@ class TestRunWithRetry:
         mock_result = MagicMock()
         mock_result.final_output = "recovered"
 
+        ms = MagicMock()
+        ms.extra_args = {}
         tool = MagicMock()
         tool.name = "read_file"
         agent = MagicMock()
         agent.tools = [tool]
+        agent.model_settings = ms
 
         call_count = [0]
 
@@ -240,10 +324,13 @@ class TestRunWithRetry:
         from agents.exceptions import ModelBehaviorError
 
         mock_result = MagicMock()
+        ms = MagicMock()
+        ms.extra_args = {}
         tool = MagicMock()
         tool.name = "read_file"
         agent = MagicMock()
         agent.tools = [tool]
+        agent.model_settings = ms
 
         captured_inputs: list[Any] = []
 
@@ -262,3 +349,19 @@ class TestRunWithRetry:
         assert len(captured_inputs[1]) == 2
         assert "hallucinated" in captured_inputs[1][1]["content"]
         assert "read_file" in captured_inputs[1][1]["content"]
+
+    def test_timeout_injected(self) -> None:
+        """Verify that timeout is injected into model_settings.extra_args."""
+        ms = MagicMock()
+        ms.extra_args = {}
+        tool = MagicMock()
+        tool.name = "read_file"
+        agent = MagicMock()
+        agent.tools = [tool]
+        agent.model_settings = ms
+
+        mock_result = MagicMock()
+        with patch("openkb.agent.ollama_adapter.Runner.run_sync", return_value=mock_result):
+            run_with_retry(agent, "question", max_turns=5, timeout=600)
+
+        assert ms.extra_args["timeout"] == 600
