@@ -6,3 +6,4 @@
 *
 !.gitignore
 !golden-principles.md
+!ollama_tool_call_adapter.md
