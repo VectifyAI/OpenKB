@@ -226,6 +226,45 @@ def _append_nudge(
     return input_data
 
 
+def _sanitize_ungrounded_output(result: Any) -> Any:
+    """When retries are exhausted and the model never called tools, wrap
+    its raw output in a clear message so the user sees an explanation
+    instead of raw tool-call JSON or an unhelpful empty string.
+
+    Returns a new RunResult-like object with a modified final_output.
+    If the output is already reasonable text, returns it unchanged.
+    """
+    raw = getattr(result, "final_output", None)
+    if raw is None:
+        return result
+
+    text = str(raw).strip() if raw is not None else ""
+
+    # If output looks like raw tool-call JSON (starts with { or [),
+    # or is empty, replace with a clear message.
+    if not text or text.startswith("{") or text.startswith("["):
+        logger.warning(
+            "Ollama no-tools-called: sanitizing ungrounded output "
+            "(raw=%r, len=%d)",
+            text[:80], len(text),
+        )
+        # Try to set final_output — RunResult may be frozen, so we
+        # use object.__setattr__ if direct assignment fails.
+        message = (
+            "I could not find relevant information in the knowledge base. "
+            "The available tools were not used successfully. "
+            "Try rephrasing your question or adding more documents."
+        )
+        try:
+            result.final_output = message  # type: ignore[misc]
+        except (AttributeError, TypeError):
+            try:
+                object.__setattr__(result, "final_output", message)
+            except (AttributeError, TypeError):
+                pass  # best-effort; caller will see the original
+    return result
+
+
 def _build_correction_message(
     bad_tool_name: str,
     available_tools: list[str],
@@ -368,7 +407,7 @@ def run_with_retry(
                     "returning ungrounded answer",
                     max_retries,
                 )
-                return result
+                return _sanitize_ungrounded_output(result)
             logger.warning(
                 "Ollama no-tools-called retry %d/%d: model answered without "
                 "calling any tools, nudging",
@@ -380,7 +419,7 @@ def run_with_retry(
 
         return result
 
-    return result  # type: ignore[possibly-undefined]
+    return _sanitize_ungrounded_output(result)  # type: ignore[possibly-undefined]
 
 
 async def arun_with_retry(
@@ -445,7 +484,7 @@ async def arun_with_retry(
                     "returning ungrounded answer",
                     max_retries,
                 )
-                return result
+                return _sanitize_ungrounded_output(result)
             logger.warning(
                 "Ollama no-tools-called retry %d/%d: model answered without "
                 "calling any tools, nudging",
@@ -458,7 +497,7 @@ async def arun_with_retry(
         return result
 
     # Should not reach here, but return last result if we do
-    return result  # type: ignore[possibly-undefined]
+    return _sanitize_ungrounded_output(result)  # type: ignore[possibly-undefined]
 
 
 def run_streamed_with_retry(
