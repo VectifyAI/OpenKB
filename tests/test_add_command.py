@@ -167,6 +167,7 @@ class TestAddCommand:
         .openkb/files, while a pre-existing blob (another document) survives —
         the targeted track_new must not touch blobs this add didn't create."""
         from openkb.cli import add_single_file
+        from openkb.config import LlmCredentialBundle
         from openkb.indexer import IndexResult
 
         kb_dir = self._setup_kb(tmp_path)
@@ -176,8 +177,12 @@ class TestAddCommand:
         other.write_bytes(b"another-doc-keep-me")
 
         new_id = "11111111-1111-1111-1111-111111111111"
+        bundle = LlmCredentialBundle(api_key="ui-key")
+        seen_bundle = None
 
-        def fake_index(raw_path, kb_dir_arg, doc_name=None):
+        def fake_index(raw_path, kb_dir_arg, doc_name=None, *, bundle=None):
+            nonlocal seen_bundle
+            seen_bundle = bundle
             (files / f"{new_id}.pdf").write_bytes(b"new-blob")
             (files / new_id / "images").mkdir(parents=True)
             (files / new_id / "images" / "p1.png").write_bytes(b"img")
@@ -194,9 +199,10 @@ class TestAddCommand:
             patch("openkb.cli.time.sleep"),
             patch("openkb.cli._setup_llm_key"),
         ):
-            outcome = add_single_file(doc, kb_dir)
+            outcome = add_single_file(doc, kb_dir, bundle=bundle)
 
         assert outcome == "failed"
+        assert seen_bundle is bundle
         assert not (files / f"{new_id}.pdf").exists()  # new blob rolled back
         assert not (files / new_id).exists()  # new images subtree rolled back
         assert other.read_bytes() == b"another-doc-keep-me"  # pre-existing survives
@@ -216,7 +222,7 @@ class TestAddCommand:
         existing_blob = files / f"{existing_id}.pdf"
         existing_blob.write_bytes(b"pre-existing-do-not-delete")
 
-        def fake_index_dedup(raw_path, kb_dir_arg, doc_name=None):
+        def fake_index_dedup(raw_path, kb_dir_arg, doc_name=None, *, bundle=None):
             # Dedup hit: return the existing doc_id, create NO new blob.
             return IndexResult(doc_id=existing_id, description="", tree={"structure": []})
 

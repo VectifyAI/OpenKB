@@ -6,7 +6,9 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pageindex import PageIndexClient
 
+from openkb.config import LlmCredentialBundle
 from openkb.indexer import (
     IndexResult,
     _build_index_config,
@@ -93,6 +95,23 @@ class TestBuildIndexConfig:
         with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
             _build_index_config({"concurrency": 8})
         assert caplog.text == ""
+
+    def test_forwards_rest_credentials_as_pageindex_per_call_params(self):
+        bundle = LlmCredentialBundle(
+            api_key="ui-key",
+            base_url="https://gateway.example/v1",
+            extra_headers={"X-Tenant": "alpha"},
+            timeout=45,
+        )
+
+        cfg = _build_index_config({}, bundle=bundle)
+
+        assert cfg.llm_params == {
+            "api_key": "ui-key",
+            "base_url": "https://gateway.example/v1",
+            "extra_headers": {"X-Tenant": "alpha"},
+            "timeout": 45,
+        }
 
 
 class TestNormalizePageContent:
@@ -312,6 +331,58 @@ class TestIndexLongDocument:
 
         _, kwargs = mock_cls.call_args
         assert kwargs["index_config"].max_concurrency == 7
+
+    def test_rest_bundle_reaches_local_pageindex_client(self, kb_dir, sample_tree, tmp_path):
+        doc_id = "bundle-123"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+        bundle = LlmCredentialBundle(
+            api_key="ui-key",
+            base_url="https://gateway.example/v1",
+        )
+        pdf_path = tmp_path / "report.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with (
+            patch(
+                "openkb.indexer._PerRequestPageIndexClient",
+                return_value=fake_client,
+            ) as mock_cls,
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
+            index_long_document(pdf_path, kb_dir, bundle=bundle)
+
+        _, kwargs = mock_cls.call_args
+        assert kwargs["llm_api_key"] == "ui-key"
+        assert kwargs["index_config"].llm_params == {
+            "api_key": "ui-key",
+            "base_url": "https://gateway.example/v1",
+        }
+
+    def test_rest_bundle_does_not_require_provider_key_in_process_env(
+        self, kb_dir, sample_tree, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setattr("litellm.api_key", None)
+        (kb_dir / ".openkb" / "config.yaml").write_text(
+            "model: openai/gpt-5.4-pool\n", encoding="utf-8"
+        )
+        fake_col = self._make_fake_collection("bundle-456", sample_tree)
+        bundle = LlmCredentialBundle(
+            api_key="ui-key",
+            base_url="https://gateway.example/v1",
+        )
+        pdf_path = tmp_path / "report.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with (
+            patch.object(PageIndexClient, "collection", return_value=fake_col),
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
+            result = index_long_document(pdf_path, kb_dir, bundle=bundle)
+
+        assert result.doc_id == "bundle-456"
 
     def test_cloud_page_content_is_normalized(self, kb_dir, sample_tree, tmp_path, monkeypatch):
         doc_id = "cloud-123"
