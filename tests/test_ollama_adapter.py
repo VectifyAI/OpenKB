@@ -18,6 +18,7 @@ from openkb.agent.ollama_adapter import (
     _extract_tool_names,
     arun_with_retry,
     is_ollama_backend,
+    resolve_ollama_settings,
     rewrite_ollama_model,
     run_with_retry,
 )
@@ -365,3 +366,97 @@ class TestRunWithRetry:
             run_with_retry(agent, "question", max_turns=5, timeout=600)
 
         assert ms.extra_args["timeout"] == 600
+
+
+class TestResolveOllamaSettings:
+    """Tests for resolve_ollama_settings()."""
+
+    def test_empty_config_returns_defaults(self) -> None:
+        max_retries, timeout = resolve_ollama_settings({})
+        assert max_retries == DEFAULT_MAX_RETRIES
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_none_config_returns_defaults(self) -> None:
+        max_retries, timeout = resolve_ollama_settings(None)  # type: ignore[arg-type]
+        assert max_retries == DEFAULT_MAX_RETRIES
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_ollama_timeout(self) -> None:
+        config = {"ollama": {"timeout": 600}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert timeout == 600.0
+        assert max_retries == DEFAULT_MAX_RETRIES
+
+    def test_ollama_tool_call_retries(self) -> None:
+        config = {"ollama": {"tool_call_retries": 5}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert max_retries == 5
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_both_settings(self) -> None:
+        config = {"ollama": {"timeout": 900, "tool_call_retries": 7}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert max_retries == 7
+        assert timeout == 900.0
+
+    def test_ollama_not_dict(self) -> None:
+        config = {"ollama": "not a dict"}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert max_retries == DEFAULT_MAX_RETRIES
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_negative_timeout_ignored(self) -> None:
+        config = {"ollama": {"timeout": -1}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_zero_timeout_ignored(self) -> None:
+        config = {"ollama": {"timeout": 0}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_negative_retries_ignored(self) -> None:
+        config = {"ollama": {"tool_call_retries": -3}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert max_retries == DEFAULT_MAX_RETRIES
+
+    def test_invalid_timeout_type(self) -> None:
+        config = {"ollama": {"timeout": "not a number"}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert timeout == DEFAULT_OLLAMA_TIMEOUT
+
+    def test_invalid_retries_type(self) -> None:
+        config = {"ollama": {"tool_call_retries": "not a number"}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert max_retries == DEFAULT_MAX_RETRIES
+
+    def test_timeout_as_string(self) -> None:
+        config = {"ollama": {"timeout": "600"}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert timeout == 600.0
+
+    def test_retries_as_string(self) -> None:
+        config = {"ollama": {"tool_call_retries": "5"}}
+        max_retries, timeout = resolve_ollama_settings(config)
+        assert max_retries == 5
+
+    def test_falls_back_to_process_timeout(self) -> None:
+        """When ollama.timeout is not set, fall back to get_timeout()."""
+        from openkb.config import set_timeout
+        set_timeout(1200.0)
+        try:
+            max_retries, timeout = resolve_ollama_settings({})
+            assert timeout == 1200.0
+        finally:
+            set_timeout(None)
+
+    def test_ollama_timeout_overrides_process_timeout(self) -> None:
+        """ollama.timeout takes precedence over process-wide timeout."""
+        from openkb.config import set_timeout
+        set_timeout(1200.0)
+        try:
+            config = {"ollama": {"timeout": 600}}
+            max_retries, timeout = resolve_ollama_settings(config)
+            assert timeout == 600.0
+        finally:
+            set_timeout(None)
