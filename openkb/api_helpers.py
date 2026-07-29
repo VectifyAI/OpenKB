@@ -335,12 +335,10 @@ async def _run_add_uploads(
     kb: str,
     kb_dir: Path,
     saved_uploads: list[tuple[Path, str]],
-    *,
-    bundle=None,
 ) -> AddResponse:
     results = []
     for saved_path, original_name in saved_uploads:
-        results.append(await _add_saved_file(kb_dir, saved_path, original_name, bundle=bundle))
+        results.append(await _add_saved_file(kb_dir, saved_path, original_name))
     return _summarize_add_results(kb, results)
 
 
@@ -348,8 +346,6 @@ async def _stream_add_uploads(
     kb: str,
     kb_dir: Path,
     saved_uploads: list[tuple[Path, str]],
-    *,
-    bundle=None,
 ) -> AsyncIterator[str]:
     yield _sse(
         "start",
@@ -366,7 +362,7 @@ async def _stream_add_uploads(
                 "file_start",
                 {"original_name": original_name, "saved_path": str(saved_path)},
             )
-            item = await _add_saved_file(kb_dir, saved_path, original_name, bundle=bundle)
+            item = await _add_saved_file(kb_dir, saved_path, original_name)
             results.append(item)
             yield _sse("file_done", _model_payload(item))
         final = _summarize_add_results(kb, results)
@@ -378,10 +374,8 @@ async def _stream_add_uploads(
     yield _sse("done", {})
 
 
-async def _add_saved_file(
-    kb_dir: Path, saved_path: Path, original_name: str, *, bundle=None
-) -> AddFileItem:
-    result = await run_in_threadpool(_add_for_api, saved_path, kb_dir, bundle=bundle)
+async def _add_saved_file(kb_dir: Path, saved_path: Path, original_name: str) -> AddFileItem:
+    result = await run_in_threadpool(_add_for_api, saved_path, kb_dir)
     item = AddFileItem(**result.__dict__)
     item.original_name = original_name
     if item.status == "skipped":

@@ -11,10 +11,25 @@ from typing import Any
 
 from pageindex import IndexConfig, PageIndexClient
 
-from openkb.config import resolve_concurrency, resolve_effective_config
+from openkb.config import LlmCredentialBundle, resolve_concurrency, resolve_effective_config
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
+
+
+class _PerRequestPageIndexClient(PageIndexClient):
+    """PageIndex local client for credentials supplied in ``IndexConfig``.
+
+    PageIndex validates only process-wide provider environment variables during
+    construction, before its scoped ``llm_params`` reach LiteLLM. REST requests
+    deliberately keep credentials out of process globals, so this client skips
+    that premature check; LiteLLM still validates the per-call key/base URL when
+    the indexing request is made.
+    """
+
+    @staticmethod
+    def _validate_llm_provider(model: str) -> None:
+        return None
 
 
 @dataclass
@@ -153,7 +168,11 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
-def _build_index_config(config: dict[str, Any]) -> IndexConfig:
+def _build_index_config(
+    config: dict[str, Any],
+    *,
+    bundle: LlmCredentialBundle | None = None,
+) -> IndexConfig:
     """Build the PageIndex ``IndexConfig`` for local indexing.
 
     Forwards the KB's ``concurrency`` setting to PageIndex, which caps how many
@@ -177,10 +196,29 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
                 "config: 'concurrency' is set but the installed PageIndex "
                 "version does not support it yet — ignoring it."
             )
+    if bundle is not None:
+        llm_params = {
+            key: value
+            for key, value in {
+                "api_key": bundle.api_key,
+                "base_url": bundle.base_url,
+                "extra_headers": bundle.extra_headers or None,
+                "timeout": bundle.timeout,
+            }.items()
+            if value is not None
+        }
+        if llm_params:
+            kwargs["llm_params"] = llm_params
     return IndexConfig(**kwargs)
 
 
-def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
+def index_long_document(
+    pdf_path: Path,
+    kb_dir: Path,
+    doc_name: str | None = None,
+    *,
+    bundle: LlmCredentialBundle | None = None,
+) -> IndexResult:
     """Index a long PDF document using PageIndex and write wiki pages.
 
     ``doc_name`` is the collision-resistant wiki name used for all written
@@ -193,9 +231,14 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     model: str = config.get("model", "gpt-5.4")
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
 
-    index_config = _build_index_config(config)
+    index_config = _build_index_config(config, bundle=bundle)
 
-    client = PageIndexClient(
+    client_type = (
+        _PerRequestPageIndexClient
+        if bundle is not None and bundle.api_key and not pageindex_api_key
+        else PageIndexClient
+    )
+    client = client_type(
         api_key=pageindex_api_key or None,
         model=model,
         storage_path=str(openkb_dir),

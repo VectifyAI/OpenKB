@@ -14,6 +14,7 @@ from collections import deque
 from pathlib import Path
 
 from openkb.cli import AddFileResult
+from openkb.config import LlmCredentialBundle
 from openkb.watch_service import (
     WatcherState,
     WatchRegistry,
@@ -115,6 +116,22 @@ def test_worker_added_records_file_start_done_and_counter(kb_dir, monkeypatch):
     assert done["status"] == "added"
     assert done["message"] == "Added."
     assert state.counters == {"added": 1, "skipped": 0, "failed": 0}
+
+
+def test_worker_does_not_reuse_bundle_captured_at_watcher_start(kb_dir, monkeypatch):
+    state = _make_state(kb_dir)
+    state.bundle = LlmCredentialBundle(api_key="stale-key")
+    state.queue.put([str(kb_dir / "raw" / "paper.md")])
+    seen = []
+
+    def fake_add(path, kb, bundle=None):
+        seen.append(bundle)
+        return AddFileResult(path.name, str(path), "added", "Added.")
+
+    monkeypatch.setattr("openkb.watch_service._add_for_api", fake_add)
+    _drain_worker(state)
+
+    assert seen == [None]
 
 
 def test_worker_skipped_and_failed_branches(kb_dir, monkeypatch):

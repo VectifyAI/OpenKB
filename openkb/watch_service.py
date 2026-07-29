@@ -31,7 +31,6 @@ from typing import Any
 from watchdog.observers import Observer
 
 from openkb.cli import SUPPORTED_EXTENSIONS, _add_for_api
-from openkb.config import LlmCredentialBundle, resolve_credential_bundle
 from openkb.watcher import start_watch
 
 # How many recent events to retain per KB for status() and SSE replay.
@@ -55,7 +54,6 @@ class WatcherState:
     counters: dict[str, int] = field(
         default_factory=lambda: {"added": 0, "skipped": 0, "failed": 0}
     )
-    bundle: LlmCredentialBundle | None = None
     _seq: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -130,7 +128,7 @@ def _process_file(state: WatcherState, raw_path: str) -> None:
         },
     )
     try:
-        result = _add_for_api(path, state.kb_dir, bundle=state.bundle)
+        result = _add_for_api(path, state.kb_dir)
     except Exception as exc:  # worker must never die
         _record_event(
             state,
@@ -184,16 +182,11 @@ class WatchRegistry:
                 self._watchers.pop(kb, None)
             raw_dir = kb_dir / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
-            # Resolve the KB's credentials once at watcher start so background
-            # ingests use the same per-KB bundle as REST endpoints instead of
-            # mutating process-wide env state.
-            bundle = resolve_credential_bundle(kb_dir)
             state = WatcherState(
                 kb=kb,
                 kb_dir=kb_dir,
                 raw_dir=raw_dir,
                 debounce=debounce,
-                bundle=bundle,
                 started_at=time.time(),
                 events=deque(maxlen=self._max_events),
             )

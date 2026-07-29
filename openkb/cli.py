@@ -527,7 +527,12 @@ def _add_single_file_locked(
             try:
                 from openkb.indexer import index_long_document
 
-                index_result = index_long_document(result.raw_path, kb_dir, doc_name=doc_name)
+                index_result = index_long_document(
+                    result.raw_path,
+                    kb_dir,
+                    doc_name=doc_name,
+                    bundle=bundle,
+                )
             except Exception as exc:
                 click.echo(f"  [ERROR] Indexing failed: {exc}")
                 logger.debug("Indexing traceback:", exc_info=True)
@@ -647,7 +652,7 @@ class AddFileResult:
     message: str
 
 
-def _add_for_api(file_path: Path, kb_dir: Path, *, bundle=None) -> AddFileResult:
+def _add_for_api(file_path: Path, kb_dir: Path) -> AddFileResult:
     """Run the locked add pipeline and return a structured result for the API.
 
     Reuses the upstream ``add_single_file`` (which already holds the ingest
@@ -656,6 +661,13 @@ def _add_for_api(file_path: Path, kb_dir: Path, *, bundle=None) -> AddFileResult
     ``AddFileResult``; on ``skipped`` the caller (api._add_saved_file) deletes
     the freshly uploaded raw copy to avoid orphaning it.
     """
+    # Resolve at the start of EACH file ingest, not when an upload request or
+    # long-lived watcher starts. Settings can be changed from the Workbench
+    # while either is active; a captured bundle would keep using the old model,
+    # key, base URL, headers, and timeout until the next request/restart.
+    from openkb.config import resolve_credential_bundle
+
+    bundle = resolve_credential_bundle(kb_dir)
     status_str = add_single_file(file_path, kb_dir, bundle=bundle)
     if status_str == "skipped":
         message = f"Already in knowledge base: {file_path.name}"

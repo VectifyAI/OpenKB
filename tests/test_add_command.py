@@ -41,6 +41,38 @@ class TestFindKbDir:
             assert result is None
 
 
+def test_add_for_api_resolves_latest_persisted_credentials_each_call(tmp_path):
+    from openkb.cli import _add_for_api
+
+    (tmp_path / ".openkb").mkdir()
+    (tmp_path / ".openkb" / "config.yaml").write_text("model: openai/cs/abc_ex\n", encoding="utf-8")
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "LLM_API_KEY=old-key\nOPENAI_API_BASE=https://old.example/v1\n",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "doc.md"
+    doc.write_text("# Doc\n", encoding="utf-8")
+    seen = []
+
+    def fake_add(_path, _kb_dir, *, bundle=None):
+        seen.append((bundle.api_key, bundle.base_url))
+        return "added"
+
+    with patch("openkb.cli.add_single_file", side_effect=fake_add):
+        _add_for_api(doc, tmp_path)
+        env_path.write_text(
+            "LLM_API_KEY=new-key\nOPENAI_API_BASE=https://new.example/v1\n",
+            encoding="utf-8",
+        )
+        _add_for_api(doc, tmp_path)
+
+    assert seen == [
+        ("old-key", "https://old.example/v1"),
+        ("new-key", "https://new.example/v1"),
+    ]
+
+
 class TestAddCommand:
     def _setup_kb(self, tmp_path):
         """Create a minimal KB structure."""

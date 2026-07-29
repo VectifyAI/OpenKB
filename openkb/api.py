@@ -248,7 +248,6 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         resolved_kb_dir = _resolve_kb(kb)
-        bundle = resolve_credential_bundle(resolved_kb_dir)
         if not files:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -263,10 +262,10 @@ def create_app() -> FastAPI:
         saved_uploads = await _write_add_uploads(reserved, files)
         if _parse_stream_form(stream):
             return StreamingResponse(
-                _stream_add_uploads(kb, resolved_kb_dir, saved_uploads, bundle=bundle),
+                _stream_add_uploads(kb, resolved_kb_dir, saved_uploads),
                 media_type="text/event-stream",
             )
-        return await _run_add_uploads(kb, resolved_kb_dir, saved_uploads, bundle=bundle)
+        return await _run_add_uploads(kb, resolved_kb_dir, saved_uploads)
 
     @app.post("/api/v1/query", response_model=QueryResponse)
     async def query_endpoint(
