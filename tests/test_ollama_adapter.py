@@ -19,6 +19,7 @@ from openkb.agent.ollama_adapter import (
     _extract_bad_tool_name,
     _extract_tool_names,
     _has_tool_calls,
+    _sanitize_ungrounded_output,
     arun_with_retry,
     is_ollama_backend,
     resolve_ollama_settings,
@@ -734,3 +735,86 @@ class TestNoToolsCalledRetry:
         assert "summaries/index.md" in nudge1
         assert "MUST" in nudge2
         assert "IMPORTANT" in nudge3
+
+
+class TestSanitizeUngroundedOutput:
+    """Tests for _sanitize_ungrounded_output()."""
+
+    def test_replaces_empty_output(self) -> None:
+        from unittest.mock import MagicMock
+
+        result = MagicMock()
+        result.final_output = ""
+        sanitized = _sanitize_ungrounded_output(result)
+        assert "could not find" in str(sanitized.final_output).lower()
+
+    def test_replaces_raw_json_object(self) -> None:
+        from unittest.mock import MagicMock
+
+        result = MagicMock()
+        result.final_output = '{"name": "read_file", "arguments": {"path": "index.md"}}'
+        sanitized = _sanitize_ungrounded_output(result)
+        assert "could not find" in str(sanitized.final_output).lower()
+        assert "{" not in str(sanitized.final_output)
+
+    def test_replaces_raw_json_array(self) -> None:
+        from unittest.mock import MagicMock
+
+        result = MagicMock()
+        result.final_output = '[{"type": "function", "function": {"name": "read_file"}}]'
+        sanitized = _sanitize_ungrounded_output(result)
+        assert "could not find" in str(sanitized.final_output).lower()
+
+    def test_preserves_reasonable_text(self) -> None:
+        from unittest.mock import MagicMock
+
+        result = MagicMock()
+        result.final_output = "I cannot find relevant information about that topic."
+        sanitized = _sanitize_ungrounded_output(result)
+        # Should not be replaced — it's a real text answer, not raw JSON
+        assert sanitized.final_output == "I cannot find relevant information about that topic."
+
+    def test_preserves_grounded_answer(self) -> None:
+        from unittest.mock import MagicMock
+
+        result = MagicMock()
+        result.final_output = "The topics discussed are Infrastructure, AI Models, and Security."
+        sanitized = _sanitize_ungrounded_output(result)
+        assert sanitized.final_output == "The topics discussed are Infrastructure, AI Models, and Security."
+
+    def test_none_output(self) -> None:
+        from unittest.mock import MagicMock
+
+        result = MagicMock()
+        result.final_output = None
+        sanitized = _sanitize_ungrounded_output(result)
+        # Should return result unchanged when output is None
+        assert sanitized == result
+
+    @pytest.mark.asyncio
+    async def test_arun_returns_sanitized_when_exhausted(self) -> None:
+        """When retries exhausted with raw JSON, return sanitized message."""
+        from unittest.mock import MagicMock
+
+        result_no_tools = MagicMock()
+        result_no_tools.new_items = []
+        result_no_tools.final_output = '{"tool": "read_file", "path": "index.md"}'
+
+        ms = MagicMock()
+        ms.extra_args = {}
+        tool = MagicMock()
+        tool.name = "read_file"
+        agent = MagicMock()
+        agent.tools = [tool]
+        agent.model_settings = ms
+
+        async def mock_run(*args: Any, **kwargs: Any) -> Any:
+            return result_no_tools
+
+        with patch("openkb.agent.ollama_adapter.Runner.run", side_effect=mock_run):
+            result = await arun_with_retry(agent, "question", max_turns=5, max_retries=2)
+
+        # Should NOT return raw JSON — should return sanitized message
+        output = str(result.final_output)
+        assert "{" not in output
+        assert "could not find" in output.lower()

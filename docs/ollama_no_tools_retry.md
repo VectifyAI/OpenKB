@@ -93,6 +93,36 @@ python -m pytest tests/test_ollama_adapter.py -v  # 73 passed
 python -m pytest tests/ -q                          # 1148 passed
 ```
 
+## Sanitization of Ungrounded Output
+
+When all retries are exhausted and the model never called any tools, the
+adapter sanitizes the output before returning it to the user:
+
+- **Raw JSON** (e.g. `{"name": "read_file", ...}`) → replaced with a clear
+  message: *"I could not find relevant information in the knowledge base.
+  The available tools were not used successfully. Try rephrasing your
+  question or adding more documents."*
+- **Empty output** (`""`) → same message
+- **Reasonable text** (e.g. "I cannot find relevant information") →
+  returned as-is (it's a real answer, not raw JSON)
+
+This prevents users from seeing raw tool-call JSON in the query output.
+
+## Minimum Model Requirements
+
+Based on live testing with tg-collector:
+
+| Model | Size | add (ingestion) | query (tool-loop) |
+|---|---|---|---|
+| qwen3.5 (cloud) | 397B | ✅ | ✅ grounded answer |
+| gemma4 | 12B | ✅ | ✅ grounded answer (with nudge retry) |
+| qwen2.5-coder | 14B | ✅ | ❌ model ignores nudges, cannot tool-loop |
+
+**Recommendation**: for `query` and `chat` tool-loop, use ≥12B models with
+good instruction-following capability. `qwen2.5-coder:14b` (code-focused)
+struggles with tool-use despite the nudge retries. For `add` (ingestion),
+12-14B models work fine — tool-calling is not required.
+
 ## Limitations
 
 - The nudge cannot **force** a model to call tools — it can only
