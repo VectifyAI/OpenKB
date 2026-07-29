@@ -66,6 +66,61 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_OLLAMA_TIMEOUT = 300
 
 
+def resolve_ollama_settings(config: dict) -> tuple[int, float | None]:
+    """Resolve Ollama-specific timeout and retry settings from config.
+
+    Reads the optional ``ollama:`` block from ``config.yaml``::
+
+        ollama:
+          timeout: 600            # per-request timeout (s), default 300
+          tool_call_retries: 5     # max retries on hallucinated tool names, default 3
+
+    Falls back to process-wide ``get_timeout()`` (from ``litellm.timeout``
+    or top-level ``timeout:``) when ``ollama.timeout`` is not set, then to
+    ``DEFAULT_OLLAMA_TIMEOUT``.
+
+    Returns ``(max_retries, timeout)``.
+    """
+    ollama_cfg = config.get("ollama") if config else None
+    if not isinstance(ollama_cfg, dict):
+        ollama_cfg = {}
+
+    # Resolve timeout
+    timeout: float | None = None
+    raw_timeout = ollama_cfg.get("timeout")
+    if raw_timeout is not None:
+        try:
+            timeout = float(raw_timeout)
+            if timeout <= 0:
+                timeout = None
+        except (TypeError, ValueError):
+            timeout = None
+
+    if timeout is None:
+        # Fall back to process-wide timeout (from litellm.timeout or top-level timeout)
+        try:
+            from openkb.config import get_timeout
+            timeout = get_timeout()
+        except ImportError:
+            pass
+
+    if timeout is None:
+        timeout = DEFAULT_OLLAMA_TIMEOUT
+
+    # Resolve max_retries
+    max_retries = DEFAULT_MAX_RETRIES
+    raw_retries = ollama_cfg.get("tool_call_retries")
+    if raw_retries is not None:
+        try:
+            max_retries = int(raw_retries)
+            if max_retries < 0:
+                max_retries = DEFAULT_MAX_RETRIES
+        except (TypeError, ValueError):
+            pass
+
+    return max_retries, timeout
+
+
 def is_ollama_backend(model: str) -> bool:
     """Return *True* if *model* targets an Ollama backend.
 
@@ -206,14 +261,23 @@ def run_with_retry(
     *,
     max_turns: int = 50,
     run_config: Any = None,
-    max_retries: int = DEFAULT_MAX_RETRIES,
-    timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
+    max_retries: int | None = None,
+    timeout: float | None = None,
 ) -> Any:
     """Run ``Runner.run_sync`` with retry on ``ModelBehaviorError`` for Ollama.
 
-    On each retry, a corrective user message is appended to the input so
-    the model sees which tools are actually available.
+    If *max_retries* or *timeout* are ``None``, they are resolved from the
+    KB config's ``ollama:`` block (or process-wide / default fallbacks).
     """
+    if max_retries is None or timeout is None:
+        try:
+            cfg_max_retries, cfg_timeout = resolve_ollama_settings({})
+        except Exception:
+            cfg_max_retries, cfg_timeout = DEFAULT_MAX_RETRIES, DEFAULT_OLLAMA_TIMEOUT
+        if max_retries is None:
+            max_retries = cfg_max_retries
+        if timeout is None:
+            timeout = cfg_timeout
     _ensure_ollama_settings(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
@@ -243,10 +307,27 @@ async def arun_with_retry(
     *,
     max_turns: int = 50,
     run_config: Any = None,
-    max_retries: int = DEFAULT_MAX_RETRIES,
-    timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
+    max_retries: int | None = None,
+    timeout: float | None = None,
 ) -> Any:
-    """Async version of :func:`run_with_retry` using ``await Runner.run``."""
+    """Async version of :func:`run_with_retry` using ``await Runner.run``.
+
+    If *max_retries* or *timeout* are ``None``, they are resolved from the
+    KB config's ``ollama:`` block (or process-wide / default fallbacks).
+    """
+    if max_retries is None or timeout is None:
+        try:
+            from openkb.config import resolve_effective_config
+            from pathlib import Path
+            # resolve_effective_config needs a kb_dir, but we may not have one.
+            # Fall back to defaults if config is unavailable.
+            cfg_max_retries, cfg_timeout = resolve_ollama_settings({})
+        except Exception:
+            cfg_max_retries, cfg_timeout = DEFAULT_MAX_RETRIES, DEFAULT_OLLAMA_TIMEOUT
+        if max_retries is None:
+            max_retries = cfg_max_retries
+        if timeout is None:
+            timeout = cfg_timeout
     _ensure_ollama_settings(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
@@ -276,14 +357,23 @@ def run_streamed_with_retry(
     *,
     max_turns: int = 50,
     run_config: Any = None,
-    max_retries: int = DEFAULT_MAX_RETRIES,
-    timeout: float | None = DEFAULT_OLLAMA_TIMEOUT,
+    max_retries: int | None = None,
+    timeout: float | None = None,
 ) -> Any:
     """Run ``Runner.run_streamed`` with retry on ``ModelBehaviorError``.
 
-    Returns a :class:`_RetryableStreamResult` that seamlessly re-creates
-    the stream on error.
+    If *max_retries* or *timeout* are ``None``, they are resolved from the
+    KB config's ``ollama:`` block (or process-wide / default fallbacks).
     """
+    if max_retries is None or timeout is None:
+        try:
+            cfg_max_retries, cfg_timeout = resolve_ollama_settings({})
+        except Exception:
+            cfg_max_retries, cfg_timeout = DEFAULT_MAX_RETRIES, DEFAULT_OLLAMA_TIMEOUT
+        if max_retries is None:
+            max_retries = cfg_max_retries
+        if timeout is None:
+            timeout = cfg_timeout
     _ensure_ollama_settings(agent, timeout)
     available_tools = _extract_tool_names(agent)
     current_input: str | list[dict[str, Any]] = input_data
