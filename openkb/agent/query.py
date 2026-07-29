@@ -14,6 +14,11 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
+from openkb.agent.ollama_adapter import (
+    arun_with_retry,
+    is_ollama_backend,
+    run_streamed_with_retry,
+)
 from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
 
@@ -159,11 +164,16 @@ async def iter_agent_response_events(
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    result = (
-        Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config)
-        if run_config
-        else Runner.run_streamed(agent, input_data, max_turns=max_turns)
-    )
+    if is_ollama_backend(getattr(agent, "model", "")):
+        result = run_streamed_with_retry(
+            agent, input_data, max_turns=max_turns, run_config=run_config,
+        )
+    else:
+        result = (
+            Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config)
+            if run_config
+            else Runner.run_streamed(agent, input_data, max_turns=max_turns)
+        )
     collected: list[str] = []
     pending_calls: dict[str, tuple[str, str]] = {}
 
@@ -387,11 +397,16 @@ async def run_query(
     agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     if not stream:
-        result = (
-            await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config)
-            if run_config
-            else await Runner.run(agent, question, max_turns=MAX_TURNS)
-        )
+        if is_ollama_backend(model):
+            result = await arun_with_retry(
+                agent, question, max_turns=MAX_TURNS, run_config=run_config,
+            )
+        else:
+            result = (
+                await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+                if run_config
+                else await Runner.run(agent, question, max_turns=MAX_TURNS)
+            )
         return result.final_output or ""
 
     import os
@@ -425,11 +440,16 @@ async def run_query(
     live: Live | None = None
     last_was_text = False
     need_blank_before_text = False
-    result = (
-        Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config)
-        if run_config
-        else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
-    )
+    if is_ollama_backend(model):
+        result = run_streamed_with_retry(
+            agent, question, max_turns=MAX_TURNS, run_config=run_config,
+        )
+    else:
+        result = (
+            Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config)
+            if run_config
+            else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+        )
     collected: list[str] = []
     segment: list[str] = []
     try:
