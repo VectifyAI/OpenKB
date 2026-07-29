@@ -36,3 +36,16 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 #   extra_headers:         # extra HTTP headers some providers need (e.g. GitHub Copilot)
 #     Editor-Version: vscode/1.95.0
 #     Copilot-Integration-Id: vscode-chat
+
+# Optional: Ollama-specific tuning for local models (issue #205).
+# Only applies when model is an ollama/... or ollama_chat/... model.
+# ollama:
+#   timeout: 300              # per-request timeout (s) for Ollama models.
+#                             # Default 300. Raise for slow local hardware
+#                             # (e.g. 12B models on a single GPU may take
+#                             # 60-130s per tool-calling turn).
+#                             # Falls back to litellm.timeout, then to 300.
+#   tool_call_retries: 3      # max retries when a model hallucinates a tool
+#                             # name (e.g. calls 'get_topics' instead of
+#                             # 'read_file'). Default 3. Increase for very
+#                             # small models that need more correction.
