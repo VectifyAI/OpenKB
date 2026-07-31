@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -721,6 +722,40 @@ def test_add_endpoint_streams_events(monkeypatch, kb_dir):
     ]
     assert events[0]["data"]["kb"] == kb
     assert events[-2]["data"]["added_count"] == 1
+
+
+def test_add_endpoint_streams_keepalive_while_file_is_processing(monkeypatch, kb_dir):
+    client = _client(monkeypatch)
+    kb = _use_named_kb(monkeypatch, kb_dir)
+
+    import openkb.api_helpers as api_helpers
+    from openkb.api_models import AddFileItem
+
+    assert 15 <= api_helpers.ADD_SSE_KEEPALIVE_SECONDS <= 30
+
+    async def slow_add(kb_dir, saved_path, original_name, *, bundle=None):
+        await asyncio.sleep(0.03)
+        return AddFileItem(
+            original_name=original_name,
+            saved_path=str(saved_path),
+            status="added",
+            message=f"{original_name} added to knowledge base.",
+        )
+
+    monkeypatch.setattr(api_helpers, "_add_saved_file", slow_add)
+    monkeypatch.setattr(api_helpers, "ADD_SSE_KEEPALIVE_SECONDS", 0.005)
+
+    response = client.post(
+        "/api/v1/add",
+        data={"kb": kb, "stream": "true"},
+        files=[("files", ("paper.md", b"# Paper", "text/markdown"))],
+        headers=_auth(),
+    )
+
+    assert response.status_code == 200
+    assert ": ping\n\n" in response.text
+    assert "event: final" in response.text
+    assert "event: done" in response.text
 
 
 def test_unknown_kb_returns_400(monkeypatch, tmp_path):
