@@ -53,6 +53,7 @@ from openkb.watch_service import WatchRegistry
 
 security = HTTPBearer(auto_error=False)
 UPLOAD_CHUNK_BYTES = 1024 * 1024
+ADD_SSE_KEEPALIVE_SECONDS = 15
 MAX_UPLOAD_FILE_BYTES = int(os.environ.get("OPENKB_MAX_UPLOAD_FILE_BYTES", str(100 * 1024 * 1024)))
 MAX_UPLOAD_REQUEST_BYTES = int(
     os.environ.get("OPENKB_MAX_UPLOAD_REQUEST_BYTES", str(500 * 1024 * 1024))
@@ -366,7 +367,18 @@ async def _stream_add_uploads(
                 "file_start",
                 {"original_name": original_name, "saved_path": str(saved_path)},
             )
-            item = await _add_saved_file(kb_dir, saved_path, original_name, bundle=bundle)
+            add_task = asyncio.create_task(
+                _add_saved_file(kb_dir, saved_path, original_name, bundle=bundle)
+            )
+            try:
+                while not add_task.done():
+                    done, _ = await asyncio.wait({add_task}, timeout=ADD_SSE_KEEPALIVE_SECONDS)
+                    if add_task not in done:
+                        yield ": ping\n\n"
+                item = await add_task
+            finally:
+                if not add_task.done():
+                    add_task.cancel()
             results.append(item)
             yield _sse("file_done", _model_payload(item))
         final = _summarize_add_results(kb, results)
