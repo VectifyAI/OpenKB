@@ -216,6 +216,27 @@ LLM_API_KEY=your-key-here
                               # Write it as bare `null` — not `None` or "null".
   ```
 
+- **Moonshot / Kimi** (`model: moonshot/...`) runs two separate platforms, each
+  issuing its own keys — a key from one will not authenticate against the
+  other's endpoint:
+
+  | Platform | Console | API base |
+  | --- | --- | --- |
+  | International | `platform.moonshot.ai` | `https://api.moonshot.ai/v1` (default) |
+  | China | `platform.moonshot.cn` | `https://api.moonshot.cn/v1` |
+
+  LiteLLM's `moonshot/` provider always uses the international endpoint unless
+  told otherwise. If your key is from `platform.moonshot.cn`, point LiteLLM at
+  the China base explicitly in `<kb>/.env`:
+
+  ```bash
+  MOONSHOT_API_BASE=https://api.moonshot.cn/v1
+  ```
+
+  Seeing `litellm.AuthenticationError: ... MoonshotException - Invalid Authentication`
+  from a Moonshot/Kimi key you know is valid usually means this region
+  mismatch, not a bad key (#196).
+
 **Where keys are read from** (first match wins, existing env always respected):
 
 1. your shell environment
