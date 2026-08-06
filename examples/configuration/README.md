@@ -233,9 +233,9 @@ LLM_API_KEY=your-key-here
   MOONSHOT_API_BASE=https://api.moonshot.cn/v1
   ```
 
-  A `litellm.AuthenticationError: ... MoonshotException - Invalid
-  Authentication` from a Moonshot/Kimi key you know is valid usually means
-  this region mismatch, not a bad key (#196).
+  Seeing `litellm.AuthenticationError: ... MoonshotException - Invalid Authentication`
+  from a Moonshot/Kimi key you know is valid usually means this region
+  mismatch, not a bad key (#196).
 
 **Where keys are read from** (first match wins, existing env always respected):
 
