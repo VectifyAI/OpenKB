@@ -1,6 +1,10 @@
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+# max_doc_chars: 500000          # Hard cap (chars) on the source text sent to a
+#                                # single short-doc compile prompt. Prevents a
+#                                # large markdown doc overflowing the model
+#                                # context (issue #73). Lower for local models.
 
 # Optional: cap concurrent LLM calls during ingest (PageIndex indexing and
 # concept/entity compilation — they never overlap, so one setting covers

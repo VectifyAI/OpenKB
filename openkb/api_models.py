@@ -419,6 +419,10 @@ class _KbConfigWritable(BaseModel):
     model: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
+    # Upper bound (chars) on source text fed to a single short-doc compile
+    # prompt (see config.DEFAULT_CONFIG) — mirrors pageindex_threshold's scalar
+    # layering, so a sane default lives in code and users override per-KB/global.
+    max_doc_chars: int | None = None
     # Entity-type vocabulary for extraction. A list REPLACES the layer below; an
     # explicit null reverts to inherited. Values are cleaned/deduped and "other"
     # is always ensured at read time (config.resolve_entity_types).
