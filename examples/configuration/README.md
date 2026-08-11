@@ -69,6 +69,10 @@ The file `init` writes is small; everything else is optional. This is the shippe
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+# max_doc_chars: 500000          # Hard cap (chars) on the source text sent to a
+#                                # single short-doc compile prompt. Prevents a
+#                                # large markdown doc overflowing the model
+#                                # context (issue #73). Lower for local models.
 
 # Optional: cap concurrent LLM calls during ingest (PageIndex indexing and
 # concept/entity compilation — they never overlap, so one setting covers
@@ -111,6 +115,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `model` | `gpt-5.4` | LLM used for all compile/query/chat work. |
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
+| `max_doc_chars` | `500000` | Hard cap (characters) on the source text sent to a single short-doc compile prompt. Prevents a large markdown / text doc from overflowing the model context (which would otherwise fail or produce a truncated wiki page). Set it below your model's max input if you run local models. See issue #73. |
 | `concurrency` | `null` | Caps concurrent LLM calls OpenKB makes during ingest — both PageIndex's indexing of a long document and OpenKB's own concept/entity compilation. The two never run at once for the same document, so one setting covers both. Lower it if you hit provider rate limits or "too many open files" on large PDFs. `null` lets each stage apply its own default. |
 | `parallel_tool_calls` | unset | Whether the LLM agents (query, chat, lint, skill) may call tools in parallel. Unset keeps OpenKB's per-agent defaults; `true`/`false` force allow/sequential for every agent; `null` omits the setting (provider default). **Amazon Bedrock needs `null`** (see below). |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |

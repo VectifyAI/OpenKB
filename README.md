@@ -255,6 +255,7 @@ OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.y
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+max_doc_chars: 500000            # Hard cap (chars) on source text per short-doc compile prompt (see issue #73)
 ```
 
 The full settings reference — `entity_types`, OAuth providers (`chatgpt/*`, `github_copilot/*`), and LiteLLM tuning (timeouts for slow local runtimes like Ollama / LM Studio, `drop_params`, GitHub Copilot headers, install notes) — is in **[`examples/configuration/`](examples/configuration/)**.

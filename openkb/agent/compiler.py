@@ -260,6 +260,33 @@ Return ONLY the Markdown content (no frontmatter, no code fences).
 # ---------------------------------------------------------------------------
 
 
+def _maybe_truncate_doc(content: str, max_doc_chars: int, doc_name: str = "") -> str:
+    """Cap ``content`` at ``max_doc_chars`` characters when it overflows.
+
+    The short-doc compile path sends the whole source document as one LLM
+    message (no chunking — see issue #73). If the text is larger than the
+    budget the prompt would overflow the model context and fail, or the
+    provider would silently drop the tail. When that happens this truncates
+    the payload and appends an explicit marker so the model knows the tail is
+    missing. Documents within the budget are returned untouched (fast path).
+    """
+    if len(content) <= max_doc_chars:
+        return content
+    logger.warning(
+        "Markdown doc %s is %d chars (over max_doc_chars=%d); "
+        "truncating the tail with an explicit marker",
+        doc_name,
+        len(content),
+        max_doc_chars,
+    )
+    trunc_marker = (
+        f"\n\n> **NOTE:** this document was truncated at "
+        f"{max_doc_chars} characters (config `max_doc_chars`). "
+        f"The following sections were not included."
+    )
+    return content[:max_doc_chars] + trunc_marker
+
+
 def _cached_text(text: str) -> list[dict]:
     """Wrap a text payload into a content-block list with an Anthropic
     ephemeral cache_control marker.
@@ -2224,6 +2251,16 @@ async def compile_short_doc(
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
     content = source_path.read_text(encoding="utf-8")
+
+    # Issue #73 — the short-doc path sends the whole document as a single LLM
+    # message, so an oversized markdown file overflows the model context and
+    # fails (or the provider silently drops the tail). Cap the payload at the
+    # configured `max_doc_chars` budget and mark the truncation explicitly so
+    # the model knows the tail is missing and the user can tell it happened.
+    # Default 500k is a pure safety cap for normal docs; local-model users set
+    # `max_doc_chars` to fit their context window.
+    max_doc_chars = int(config.get("max_doc_chars", 500_000))
+    content = _maybe_truncate_doc(content, max_doc_chars, doc_name)
 
     # Base context A: system + document. cache_control marker on the doc
     # message creates a cache breakpoint that covers (system + doc) for

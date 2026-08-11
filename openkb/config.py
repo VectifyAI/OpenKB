@@ -31,6 +31,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
+    # Upper bound (characters) on the source text fed to a *single* short-doc
+    # compile prompt. The short-doc path sends the whole document as one LLM
+    # message (no chunking — see issue #73); without a cap, a large markdown
+    # file overflows the model context and fails or silently truncates. This is
+    # a pure safety cap, set high enough to never affect normal docs; local-model
+    # users should lower it to fit their context window. 500k chars ≈ 125k tokens.
+    "max_doc_chars": 500_000,
     # A GLOBAL_SCALAR_KEY like the three above, so the merged `effective` dict
     # always carries it (the layering/`sources` logic is type-agnostic). A
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
@@ -502,6 +509,7 @@ GLOBAL_SCALAR_KEYS: tuple[str, ...] = (
     "model",
     "language",
     "pageindex_threshold",
+    "max_doc_chars",
     "entity_types",
 )
 

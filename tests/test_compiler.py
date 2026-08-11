@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from openkb.agent.compiler import (
     _backlink_summary_entities,
     _compile_concepts,
     _filter_entity_items,
+    _maybe_truncate_doc,
     _parse_entities_plan,
     _parse_json,
     _prepend_source_to_frontmatter,
@@ -2830,3 +2832,147 @@ class TestFrontmatterDashBoundary:
         assert 'type: "Concept"' in text
         # Must have a properly closed frontmatter block (two '---' occurrences).
         assert text.count("---") >= 2
+
+
+class TestMaybeTruncateDoc:
+    """``_maybe_truncate_doc`` caps oversized source docs for the short-doc path.
+
+    Issue #73: the short-doc compiler sends the whole markdown file as one LLM
+    message, so an oversized doc overflows the model context. The helper must
+    truncate over-budget docs with an explicit marker and pass through docs
+    within the budget untouched.
+    """
+
+    def test_under_budget_passthrough_unchanged(self):
+        content = "short markdown body"
+        assert _maybe_truncate_doc(content, 1000, "doc") == content
+
+    def test_exactly_at_budget_passthrough(self):
+        content = "x" * 100
+        assert _maybe_truncate_doc(content, 100, "doc") == content
+
+    def test_over_budget_truncates_with_marker(self):
+        content = "A" * 200
+        out = _maybe_truncate_doc(content, 50, "doc")
+        # Body is capped at the budget...
+        assert out.startswith("A" * 50)
+        # ...and carries an explicit marker so the model knows the tail is gone.
+        assert "truncated at 50 characters" in out
+        assert "not included" in out
+        # The original tail text must NOT appear in the output.
+        assert "A" * 100 not in out
+
+    def test_marker_reports_configured_budget(self):
+        out = _maybe_truncate_doc("B" * 500, 123, "big-doc")
+        assert "truncated at 123 characters" in out
+        assert "config `max_doc_chars`" in out
+
+
+class TestShortDocContentBudget:
+    """Integration: ``compile_short_doc`` respects ``max_doc_chars`` from config.
+
+    An oversized markdown source must be truncated before it reaches the LLM
+    summary call, with the explicit marker visible in the user message.
+    """
+
+    def _write_kb(self, tmp_path, max_doc_chars: int) -> Path:
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / ".openkb" / "config.yaml").write_text(
+            f"max_doc_chars: {max_doc_chars}\n",
+            encoding="utf-8",
+        )
+        src = wiki / "sources" / "big.md"
+        return src
+
+    @pytest.mark.asyncio
+    async def test_large_markdown_is_truncated_with_marker(self, tmp_path):
+        src = self._write_kb(tmp_path, max_doc_chars=100)
+        # A document comfortably over the 100-char budget, with a distinctive tail.
+        src.write_text("Start of document.\n" + ("T" * 500) + "\nEND_TAIL_MARKER", encoding="utf-8")
+
+        captured: list[list[dict]] = []
+
+        def sync_side_effect(*args, **kwargs):
+            captured.append(kwargs["messages"])
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = json.dumps(
+                {"description": "d", "content": "summary"}
+            )
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        async def async_side_effect(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = json.dumps({"brief": "c", "content": "page"})
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock(side_effect=async_side_effect)
+            await compile_short_doc("big", src, tmp_path, "gpt-4o-mini")
+
+        # The first message sent to the LLM is the document-summary request; its
+        # user payload must be truncated and carry the marker.
+        summary_call = captured[0]
+        doc_user = summary_call[1]
+        sent_text = doc_user["content"]
+        # Content may be a list-of-blocks (from _cached_text) or a plain string;
+        # handle both the way the pipeline emits it.
+        if isinstance(sent_text, list):
+            sent_text = "".join(b.get("text", "") for b in sent_text)
+        assert "truncated at 100 characters" in sent_text, sent_text
+        # The distinctive tail is gone from the payload.
+        assert "END_TAIL_MARKER" not in sent_text
+
+    @pytest.mark.asyncio
+    async def test_doc_within_budget_passes_through(self, tmp_path):
+        src = self._write_kb(tmp_path, max_doc_chars=100_000)
+        body = "A modest document.\n" + ("P" * 400)
+        src.write_text(body, encoding="utf-8")
+
+        captured: list[list[dict]] = []
+
+        def sync_side_effect(*args, **kwargs):
+            captured.append(kwargs["messages"])
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = json.dumps(
+                {"description": "d", "content": "summary"}
+            )
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        async def async_side_effect(*args, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = json.dumps({"brief": "c", "content": "page"})
+            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
+            mock_litellm.acompletion = AsyncMock(side_effect=async_side_effect)
+            await compile_short_doc("big", src, tmp_path, "gpt-4o-mini")
+
+        summary_call = captured[0]
+        sent_text = summary_call[1]["content"]
+        if isinstance(sent_text, list):
+            sent_text = "".join(b.get("text", "") for b in sent_text)
+        # No truncation marker when the doc fits the budget.
+        assert "truncated at" not in sent_text
+        assert "P" * 400 in sent_text
