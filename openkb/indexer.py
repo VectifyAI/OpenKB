@@ -148,7 +148,10 @@ def _write_long_doc_artifacts(
     summaries_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summaries_dir / f"{doc_name}.md"
     summary_path.write_text(
-        render_summary_md(tree, doc_name, doc_id, description=description), encoding="utf-8"
+        render_summary_md(
+            tree, doc_name, doc_id, description=description, pages=pages
+        ),
+        encoding="utf-8",
     )
     return summary_path
 
