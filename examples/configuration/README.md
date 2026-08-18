@@ -175,6 +175,36 @@ It's opt-in by design: responses are stored on OpenRouter, so leave it off for
 zero-data-retention / regulated content. Only `openrouter/*` models read these
 headers; other providers ignore them.
 
+#### OrcaRouter (OpenAI-compatible gateway)
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible model router
+that serves 150+ models from OpenAI, Anthropic, Google, DeepSeek, Qwen, MiniMax
+and xAI from a single endpoint and API key. It also runs gateway-level,
+zero-trust security for AI agents on the same endpoint — screening every
+prompt/response and governing every tool call on a default-deny basis, with no
+application code changes.
+
+OrcaRouter routes by **provider-prefixed** model IDs (`openai/gpt-5.5`,
+`google/gemini-3-flash-preview`), so use the double-prefix form: LiteLLM strips
+the leading `openai/` provider prefix and sends the remaining id — which
+OrcaRouter requires to stay namespaced — to `OPENAI_API_BASE`. A bare
+`gpt-5.5` is rejected with a `503`.
+
+```yaml
+model: openai/openai/gpt-5.5     # LiteLLM strips one prefix; OrcaRouter sees openai/gpt-5.5
+language: en
+```
+
+```bash
+# <kb>/.env
+LLM_API_KEY=sk-orca-...
+OPENAI_API_BASE=https://api.orcarouter.ai/v1
+```
+
+Any provider-prefixed OrcaRouter id works the same way — write it as
+`openai/<id>`: `openai/google/gemini-3-flash-preview`,
+`openai/deepseek/deepseek-v4-flash`, or the router's own `openai/orcarouter/auto`.
+
 ---
 
 ## 3. API keys & providers
