@@ -30,6 +30,11 @@ def list_line(key: str, items) -> str:
     return f"{key}: {json.dumps(list(items), ensure_ascii=False)}"
 
 
+def json_line(key: str, value) -> str:
+    """Return one YAML field. Write `value` as one line of JSON."""
+    return f"{key}: {json.dumps(value, ensure_ascii=False)}"
+
+
 def block(lines: list[str]) -> str:
     """Assemble a complete frontmatter block (with delimiters + trailing blank)."""
     return "---\n" + "\n".join(lines) + "\n---\n\n"
@@ -99,7 +104,16 @@ def set_line(fm_block: str, key: str, value: str) -> str:
     opening ``---``. A lambda replacement is used so values containing regex
     backrefs (``\\1``, ``\\g<…>``) are inserted literally.
     """
-    line = kv_line(key, value)
+    return set_raw_line(fm_block, key, kv_line(key, value))
+
+
+def set_json_line(fm_block: str, key: str, value) -> str:
+    """Set one JSON field in a frontmatter block. Add the field if it is absent."""
+    return set_raw_line(fm_block, key, json_line(key, value))
+
+
+def set_raw_line(fm_block: str, key: str, line: str) -> str:
+    """Set one complete frontmatter line. Add the line if it is absent."""
     if re.search(rf"^{re.escape(key)}:", fm_block, flags=re.MULTILINE):
         return re.sub(
             rf"^{re.escape(key)}:.*", lambda _m: line, fm_block, count=1, flags=re.MULTILINE

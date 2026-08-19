@@ -10,6 +10,7 @@ from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from openkb.agent.tools import (
     artifact_event_from_write,
     get_wiki_page_content,
+    read_current_claims,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
@@ -33,18 +34,25 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
 3. Read concept pages (concepts/) for cross-document synthesis.
 4. For "who/what is X" questions about a specific named person, organization,
    place, or product, read the matching page in entities/ first.
-5. When you need detailed source document content, each summary page has a
+5. For current claims, find the wiki page for the question topic. Then call
+   read_current_page_claims(path). By default, the tool uses strict current
+   reads. Strict current reads return claims that have a "status" value of
+   "validated". Set include_proposed=true only when the question asks for claims
+   that have a "status" value of "proposed". Do not report a claim with a
+   "status" value of "proposed" as a claim with a "status" value of
+   "validated".
+6. When you need detailed source document content, each summary page has a
    `full_text` frontmatter field with the path to the original document content:
    - Short documents (doc_type: short): read_file with that path.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-6. Source content may reference images. Short-doc .md pages link them
+7. Source content may reference images. Short-doc .md pages link them
    note-relative (e.g. ![image](images/doc/file.png), resolved from
    wiki/sources/); long-doc JSON page metadata lists them wiki-root-relative
    (e.g. sources/images/doc/file.png). Pass either form as seen to the
    get_image tool — it accepts both.
-7. Synthesize a clear, concise, well-cited answer grounded in wiki content.
+8. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
 Before each tool call, output one short sentence explaining the reason.
@@ -101,6 +109,18 @@ def build_query_agent(
             return ToolOutputImage(image_url=result["image_url"])
         return ToolOutputText(text=result["text"])
 
+    @function_tool
+    def read_current_page_claims(path: str, include_proposed: bool = False) -> str:
+        """Read page claims. Return the claims as JSON.
+
+        Args:
+            path: File path relative to wiki root.
+            include_proposed: Include claims that have a `status` value of `proposed`.
+
+        By default, this tool uses strict current reads.
+        """
+        return read_current_claims(path, wiki_root, include_proposed=include_proposed)
+
     from agents.model_settings import ModelSettings
 
     if bundle is not None:
@@ -117,7 +137,7 @@ def build_query_agent(
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=[read_file, get_page_content, get_image, read_current_page_claims],
         model=f"litellm/{model}",
         model_settings=ModelSettings(**model_settings),
     )
