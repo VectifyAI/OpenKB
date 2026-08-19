@@ -30,6 +30,7 @@ from pathlib import Path
 import litellm
 
 from openkb import frontmatter
+from openkb.claims import claims_for_prompt, extract_raw_claims, merge_claims, normalize_claims
 from openkb.config import (
     DEFAULT_ENTITY_TYPES,
     get_extra_headers,
@@ -67,7 +68,7 @@ Full text:
 
 Write a summary page for this document in Markdown.
 
-Return a JSON object with two keys:
+Return a JSON object. Include these fields:
 - "description": A single sentence (under 100 chars) describing the document's main contribution
 - "content": The full summary in Markdown. Include key concepts, findings, ideas, \
 and [[wikilinks]] to concepts that could become cross-document concept pages
@@ -148,7 +149,7 @@ Write the concept page for: {title}
 This concept relates to the document "{doc_name}" summarized above.
 {update_instruction}
 
-Return a JSON object with two keys:
+Return a JSON object. Include these fields:
 - "description": A single sentence (under 100 chars) defining this concept
 - "content": The full concept page in Markdown. Include clear explanation, \
 key details from the source document, and [[wikilinks]] to related concepts \
@@ -164,17 +165,27 @@ Update the concept page for: {title}
 Current content of this page:
 {existing_content}
 
+Existing values from the "claims" field:
+{existing_claims}
+When you correct a claim, copy its exact "id" value to the "supersedes" field.
+
 New information from document "{doc_name}" (summarized above) should be \
 integrated into this page. Rewrite the full page incorporating the new \
 information naturally — do not just append. Preserve the existing structure \
 and intent of the page.
+
+Write the latest state that the source evidence supports.
+If you keep an old claim, identify the old claim as historical.
+If the old claim has a "status" value of "superseded", identify the old claim as superseded.
+If the old claim has a "status" value of "abandoned", identify the old claim as abandoned.
+Do not present an old claim as current.
 
 For [[wikilinks]] in the rewrite, follow the whitelist rules from the \
 message above: keep links whose target is in the whitelist, convert any \
 existing links whose target is NOT in the whitelist to plain text, and do \
 not invent new wikilink targets.
 
-Return a JSON object with two keys:
+Return a JSON object. Include these fields:
 - "description": A single sentence (under 100 chars) defining this concept (may differ from before)
 - "content": The rewritten full concept page in Markdown
 
@@ -186,7 +197,7 @@ Write the entity page for: {title} (type: {type})
 
 This entity relates to the document "{doc_name}" summarized above.
 
-Return a JSON object with three keys:
+Return a JSON object. Include these fields:
 - "description": A single sentence (under 100 chars) identifying this entity
 - "type": one of __ENTITY_TYPES__
 - "content": The full entity page in Markdown — what this entity is, the key
@@ -203,18 +214,58 @@ Update the entity page for: {title} (type: {type})
 Current content of this page:
 {existing_content}
 
+Existing values from the "claims" field:
+{existing_claims}
+When you correct a claim, copy its exact "id" value to the "supersedes" field.
+
 Integrate the new facts about this entity from document "{doc_name}"
 (summarized above). Rewrite the full page — do not just append. Preserve the
 existing structure and intent. Follow the whitelist rules from the message
 above for all [[wikilinks]].
 
-Return a JSON object with three keys:
+Write the latest state that the source evidence supports.
+If you keep an old claim, identify the old claim as historical.
+If the old claim has a "status" value of "superseded", identify the old claim as superseded.
+If the old claim has a "status" value of "abandoned", identify the old claim as abandoned.
+Do not present an old claim as current.
+
+Return a JSON object. Include these fields:
 - "description": A single sentence (under 100 chars) identifying this entity
 - "type": one of __ENTITY_TYPES__
 - "content": The rewritten full entity page in Markdown
 
 Return ONLY valid JSON, no fences.
 """
+
+_CLAIMS_FIELD_GUIDANCE = """\
+
+The JSON object can include a top-level "claims" field.
+The "claims" field must contain a JSON array.
+Each claim object must cite evidence from the source document.
+The "text" field must contain a non-empty string.
+The "as_of" field must contain an ISO-8601 date or datetime from the source evidence.
+The "status" field must have a value of "proposed", "validated", "superseded", or "abandoned".
+The "source_anchor" field must contain a non-empty evidence identifier.
+Set the "authority" field to "document".
+OpenKB sets the "authority" field to "document" before it writes the claim.
+Do not set the "authority" field to "first_party" or "assistant".
+An external adapter can verify source authority. The adapter can then set the "authority" field to "first_party" or "assistant" through the public claims API.
+Do not set the "id" field.
+Do not set the "superseded_by" field.
+OpenKB controls the "id" and "superseded_by" fields.
+When you correct a claim, copy its exact "id" value to the "supersedes" field.
+A claim with a "status" value of "proposed" cannot supersede a claim with a "status" value of "validated".
+Only a claim with a "status" value of "validated" or "abandoned" can supersede a claim with a "status" value of "validated".
+Do not invent a value for the "as_of" field.
+Do not invent a value for the "source_anchor" field.
+Do not set the "status" field to "validated" when the source evidence refutes the claim.
+If the source provides no time-based claim with evidence, set the "claims" field to [].
+"""
+_SUMMARY_USER += _CLAIMS_FIELD_GUIDANCE
+_CONCEPT_PAGE_USER += _CLAIMS_FIELD_GUIDANCE
+_CONCEPT_UPDATE_USER += _CLAIMS_FIELD_GUIDANCE
+_ENTITY_PAGE_USER += _CLAIMS_FIELD_GUIDANCE
+_ENTITY_UPDATE_USER += _CLAIMS_FIELD_GUIDANCE
 
 # NOTE: the prompt templates intentionally KEEP the literal ``__ENTITY_TYPES__``
 # token at import time. The effective entity-type list is resolved per-compile
@@ -938,23 +989,37 @@ def _remove_section_entry(lines: list[str], heading: str, link: str) -> bool:
 
 
 def _write_summary(
-    wiki_dir: Path, doc_name: str, summary: str, doc_type: str = "short", description: str = ""
+    wiki_dir: Path,
+    doc_name: str,
+    summary: str,
+    doc_type: str = "short",
+    description: str = "",
+    claims: list | None = None,
 ) -> None:
-    """Write summary page with frontmatter."""
+    """Write a summary page. Merge normalized claims when the caller supplies claims."""
     parts = frontmatter.split(summary)
     if parts is not None:
         _, summary = parts
         summary = summary.lstrip("\n")
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = summaries_dir / f"{doc_name}.md"
+    claims_to_write = None if claims is None else merge_claims([], claims)
+    if summary_path.exists():
+        existing_claims = _read_claims_from_text(summary_path.read_text(encoding="utf-8"))
+        claims_to_write = (
+            existing_claims if claims is None else merge_claims(existing_claims, claims)
+        )
     ext = "md" if doc_type == "short" else "json"
     fm_lines = [_yaml_kv_line("type", "Summary")]
     if description:
         fm_lines.append(_yaml_kv_line("description", description))
     fm_lines.append(f"doc_type: {doc_type}")
     fm_lines.append(_yaml_kv_line("full_text", f"sources/{doc_name}.{ext}"))
+    if claims_to_write:
+        fm_lines.append(frontmatter.json_line("claims", claims_to_write))
     fm_block = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
-    atomic_write_text(summaries_dir / f"{doc_name}.md", fm_block + summary)
+    atomic_write_text(summary_path, fm_block + summary)
 
 
 _SAFE_NAME_RE = re.compile(r"[^\w\-]")
@@ -972,8 +1037,52 @@ _yaml_list_line = frontmatter.list_line
 _parse_yaml_list_value = frontmatter.parse_list_value
 
 
+def _read_claims_from_text(text: str) -> list[dict]:
+    """Read the stored `claims` field. Normalize each claim."""
+    return normalize_claims(frontmatter.parse(text).get("claims"), log_label="page-claims")
+
+
+def _claims_from_model(page_object: dict | None, *, log_label: str) -> list[dict] | None:
+    """Set each model `authority` field to `document`. Normalize each claim."""
+    raw = extract_raw_claims(page_object)
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        raw = [
+            {**item, "authority": "document"} if isinstance(item, dict) else item for item in raw
+        ]
+    return normalize_claims(
+        raw,
+        log_label=log_label,
+        preserve_superseded_by=False,
+    )
+
+
+def _apply_claims_line(fm_block: str, claims: list[dict] | None) -> str:
+    """Keep the `claims` field when `claims` is `None`. Replace the field for all other values."""
+    if claims is None:
+        return fm_block
+    if claims:
+        return frontmatter.set_json_line(fm_block, "claims", claims)
+    return frontmatter.drop_line(fm_block, "claims")
+
+
+def _merge_page_claims(existing_text: str | None, new_claims: list | None) -> list[dict] | None:
+    """Merge new claims with stored claims. Return `None` when `new_claims` is `None`."""
+    if new_claims is None:
+        return None
+    existing = _read_claims_from_text(existing_text) if existing_text else []
+    return merge_claims(existing, new_claims)
+
+
 def _write_concept(
-    wiki_dir: Path, name: str, content: str, source_file: str, is_update: bool, brief: str = ""
+    wiki_dir: Path,
+    name: str,
+    content: str,
+    source_file: str,
+    is_update: bool,
+    brief: str = "",
+    claims: list | None = None,
 ) -> None:
     """Write or update a concept page, managing the sources frontmatter."""
     concepts_dir = wiki_dir / "concepts"
@@ -986,6 +1095,7 @@ def _write_concept(
 
     if is_update and path.exists():
         existing = path.read_text(encoding="utf-8")
+        merged_claims = _merge_page_claims(existing, claims)
         if source_file not in existing:
             existing = _prepend_source_to_frontmatter(existing, source_file)
         # Strip frontmatter from LLM content to avoid duplicate blocks
@@ -1015,6 +1125,8 @@ def _write_concept(
             ]
             if brief:
                 fm_lines.append(_yaml_kv_line("description", brief))
+            if merged_claims:
+                fm_lines.append(frontmatter.json_line("claims", merged_claims))
             existing = frontmatter.block(fm_lines) + clean
             atomic_write_text(path, existing)
             return
@@ -1027,18 +1139,22 @@ def _write_concept(
                 fm_block = _set_fm_line(fm_block, "description", brief)
             # Drop legacy brief: lines (migrated to description:).
             fm_block = frontmatter.drop_line(fm_block, "brief")
+            fm_block = _apply_claims_line(fm_block, merged_claims)
             existing = fm_block + body
         atomic_write_text(path, existing)
     else:
         clean_parts = frontmatter.split(content)
         if clean_parts is not None:
             content = clean_parts[1].lstrip("\n")
+        merged_claims = _merge_page_claims(None, claims)
         fm_lines = [
             _yaml_kv_line("type", "Concept"),
             _yaml_list_line("sources", [source_file]),
         ]
         if brief:
             fm_lines.append(_yaml_kv_line("description", brief))
+        if merged_claims:
+            fm_lines.append(frontmatter.json_line("claims", merged_claims))
         fm_block = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
         atomic_write_text(path, fm_block + content)
 
@@ -1052,6 +1168,7 @@ def _write_entity(
     brief: str = "",
     type_: str = "other",
     aliases: list[str] | None = None,
+    claims: list | None = None,
 ) -> None:
     """Write or update an entity page in entities/, managing frontmatter.
 
@@ -1072,17 +1189,20 @@ def _write_entity(
     clean_parts = frontmatter.split(content)
     clean = clean_parts[1].lstrip("\n") if clean_parts is not None else content
 
-    def _build_entity_frontmatter(sources: list[str]) -> str:
+    def _build_entity_frontmatter(sources: list[str], page_claims: list[dict] | None) -> str:
         fm_lines = [_yaml_list_line("sources", sources)]
         fm_lines.append(_yaml_kv_line("type", (type_ or "other").title()))
         if brief:
             fm_lines.append(_yaml_kv_line("description", brief))
         if aliases:
             fm_lines.append(_yaml_list_line("aliases", aliases))
+        if page_claims:
+            fm_lines.append(frontmatter.json_line("claims", page_claims))
         return "---\n" + "\n".join(fm_lines) + "\n---\n\n"
 
     if is_update and path.exists():
         existing = path.read_text(encoding="utf-8")
+        merged_claims = _merge_page_claims(existing, claims)
         if source_file not in existing:
             existing = _prepend_source_to_frontmatter(existing, source_file)
         ex_parts = frontmatter.split(existing)
@@ -1093,6 +1213,7 @@ def _write_entity(
             # Drop any legacy ``brief:`` key (migrated to ``description:``),
             # mirroring _write_concept's update path.
             fm_block = frontmatter.drop_line(fm_block, "brief")
+            fm_block = _apply_claims_line(fm_block, merged_claims)
             existing = fm_block + "\n" + clean
         else:
             # Malformed/absent frontmatter (opening ``---`` with no closing
@@ -1108,11 +1229,12 @@ def _write_entity(
                         recovered = parsed
                     break
             merged = [source_file] + [s for s in recovered if s != source_file]
-            existing = _build_entity_frontmatter(merged) + clean
+            existing = _build_entity_frontmatter(merged, merged_claims) + clean
         atomic_write_text(path, existing)
         return
 
-    atomic_write_text(path, _build_entity_frontmatter([source_file]) + clean)
+    merged_claims = _merge_page_claims(None, claims)
+    atomic_write_text(path, _build_entity_frontmatter([source_file], merged_claims) + clean)
 
 
 _set_fm_line = frontmatter.set_line
@@ -1604,6 +1726,7 @@ async def _compile_concepts(
     rewrite_summary: bool = False,
     entity_types: list[str] | None = None,
     bundle=None,
+    summary_claims: list | None = None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1669,7 +1792,7 @@ async def _compile_concepts(
                 doc_name,
                 ghosts[:5],
             )
-        _write_summary(wiki_dir, doc_name, cleaned, description=doc_brief)
+        _write_summary(wiki_dir, doc_name, cleaned, description=doc_brief, claims=summary_claims)
 
     try:
         parsed = _parse_json(plan_raw)
@@ -1832,7 +1955,7 @@ async def _compile_concepts(
     # --- Step 3: Generate/update concept pages concurrently (A cached) ---
     semaphore = asyncio.Semaphore(max_concurrency)
 
-    async def _gen_create(concept: dict) -> tuple[str, str, bool, str]:
+    async def _gen_create(concept: dict) -> tuple[str, str, bool, str, list | None]:
         name = concept["name"]
         title = concept.get("title", name)
         async with semaphore:
@@ -1856,18 +1979,20 @@ async def _compile_concepts(
                 response_format=_JSON_RESPONSE_FORMAT,
                 bundle=bundle,
             )
-        brief, content, _ = _page_fields(raw)
+        brief, content, obj = _page_fields(raw)
         _require_nonempty_content(content, name)
-        return name, content, False, brief
+        return name, content, False, brief, _claims_from_model(obj, log_label=f"concept:{name}")
 
-    async def _gen_update(concept: dict) -> tuple[str, str, bool, str]:
+    async def _gen_update(concept: dict) -> tuple[str, str, bool, str, list | None]:
         name = concept["name"]
         title = concept.get("title", name)
         concept_path = wiki_dir / "concepts" / f"{_sanitize_concept_name(name)}.md"
+        existing_claims_prompt = "(none)"
         if concept_path.exists():
             raw_text = concept_path.read_text(encoding="utf-8")
             ex_parts = frontmatter.split(raw_text)
             existing_content = ex_parts[1].strip() if ex_parts is not None else raw_text
+            existing_claims_prompt = claims_for_prompt(_read_claims_from_text(raw_text))
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
@@ -1884,6 +2009,7 @@ async def _compile_concepts(
                             title=title,
                             doc_name=doc_name,
                             existing_content=existing_content,
+                            existing_claims=existing_claims_prompt,
                         ),
                     },
                 ],
@@ -1891,11 +2017,11 @@ async def _compile_concepts(
                 response_format=_JSON_RESPONSE_FORMAT,
                 bundle=bundle,
             )
-        brief, content, _ = _page_fields(raw)
+        brief, content, obj = _page_fields(raw)
         _require_nonempty_content(content, name)
-        return name, content, True, brief
+        return name, content, True, brief, _claims_from_model(obj, log_label=f"concept:{name}")
 
-    async def _gen_entity_create(ent: dict) -> tuple[str, str, str, str]:
+    async def _gen_entity_create(ent: dict) -> tuple[str, str, str, str, list | None]:
         name = ent["name"]
         title = ent.get("title", name)
         etype = ent.get("type", "other")
@@ -1921,19 +2047,25 @@ async def _compile_concepts(
                 bundle=bundle,
             )
         brief, content, obj = _page_fields(raw)
-        etype_out = obj.get("type") if obj and obj.get("type") in valid_types else etype
+        etype_out = etype
+        if obj:
+            candidate_type = obj.get("type")
+            if isinstance(candidate_type, str) and candidate_type in valid_types:
+                etype_out = candidate_type
         _require_nonempty_content(content, name)
-        return name, content, brief, etype_out
+        return name, content, brief, etype_out, _claims_from_model(obj, log_label=f"entity:{name}")
 
-    async def _gen_entity_update(ent: dict) -> tuple[str, str, str, str]:
+    async def _gen_entity_update(ent: dict) -> tuple[str, str, str, str, list | None]:
         name = ent["name"]
         title = ent.get("title", name)
         etype = ent.get("type", "other")
         epath = wiki_dir / "entities" / f"{_sanitize_concept_name(name)}.md"
+        existing_claims_prompt = "(none)"
         if epath.exists():
             raw_text = epath.read_text(encoding="utf-8")
             ex_parts = frontmatter.split(raw_text)
             existing_content = ex_parts[1].strip() if ex_parts is not None else raw_text
+            existing_claims_prompt = claims_for_prompt(_read_claims_from_text(raw_text))
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
@@ -1951,6 +2083,7 @@ async def _compile_concepts(
                             type=etype,
                             doc_name=doc_name,
                             existing_content=existing_content,
+                            existing_claims=existing_claims_prompt,
                         ).replace("__ENTITY_TYPES__", types_str),
                     },
                 ],
@@ -1959,9 +2092,13 @@ async def _compile_concepts(
                 bundle=bundle,
             )
         brief, content, obj = _page_fields(raw)
-        etype_out = obj.get("type") if obj and obj.get("type") in valid_types else etype
+        etype_out = etype
+        if obj:
+            candidate_type = obj.get("type")
+            if isinstance(candidate_type, str) and candidate_type in valid_types:
+                etype_out = candidate_type
         _require_nonempty_content(content, name)
-        return name, content, brief, etype_out
+        return name, content, brief, etype_out, _claims_from_model(obj, log_label=f"entity:{name}")
 
     tasks = []
     tasks.extend(_gen_create(c) for c in create_items)
@@ -1977,10 +2114,10 @@ async def _compile_concepts(
 
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
-    pending_writes: list[tuple[str, str, bool, str]] = []
+    pending_writes: list[tuple[str, str, bool, str, list | None]] = []
     entity_names: list[str] = []
     entity_meta: dict[str, tuple[str, str]] = {}
-    entity_pending: list[tuple[str, str, str, str]] = []
+    entity_pending: list[tuple[str, str, str, str, list | None]] = []
 
     # Concepts and entities are independent and share the cached prompt
     # context + the same concurrency ``semaphore``, so overlap them in one
@@ -2010,8 +2147,8 @@ async def _compile_concepts(
                 logger.warning("Concept generation failed: %s", r)
                 failure_types.append(type(r).__name__)
                 continue
-            name, page_content, is_update, brief = r
-            pending_writes.append((name, page_content, is_update, brief))
+            name, page_content, is_update, brief, page_claims = r
+            pending_writes.append((name, page_content, is_update, brief, page_claims))
             safe_name = _sanitize_concept_name(name)
             concept_names.append(safe_name)
             if brief:
@@ -2035,8 +2172,8 @@ async def _compile_concepts(
                 logger.warning("Entity generation failed: %s", r)
                 entity_failure_types.append(type(r).__name__)
                 continue
-            name, page_content, brief, etype = r
-            entity_pending.append((name, page_content, brief, etype))
+            name, page_content, brief, etype, page_claims = r
+            entity_pending.append((name, page_content, brief, etype, page_claims))
 
         ewritten = len(entity_pending)
         if ewritten < etotal:
@@ -2052,7 +2189,7 @@ async def _compile_concepts(
             sys.stdout.flush()
 
     # Strip ghost wikilinks from entity bodies and write each page.
-    for name, page_content, brief, etype in entity_pending:
+    for name, page_content, brief, etype, page_claims in entity_pending:
         cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
         if ghosts:
             logger.info(
@@ -2063,14 +2200,23 @@ async def _compile_concepts(
             )
         safe = _sanitize_concept_name(name)
         is_update = (wiki_dir / "entities" / f"{safe}.md").exists()
-        _write_entity(wiki_dir, name, cleaned, source_file, is_update, brief=brief, type_=etype)
+        _write_entity(
+            wiki_dir,
+            name,
+            cleaned,
+            source_file,
+            is_update,
+            brief=brief,
+            type_=etype,
+            claims=page_claims,
+        )
         entity_names.append(safe)
         entity_meta[safe] = (etype, brief)
 
     # Strip unresolved wikilinks from concept bodies before writing. The
     # whitelist includes existing files + this round's planned slugs +
     # the summary for this document.
-    for i, (name, page_content, is_update, brief) in enumerate(pending_writes):
+    for i, (name, page_content, is_update, brief, page_claims) in enumerate(pending_writes):
         cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
         if ghosts:
             logger.info(
@@ -2079,7 +2225,7 @@ async def _compile_concepts(
                 name,
                 ghosts[:5],
             )
-        pending_writes[i] = (name, cleaned, is_update, brief)
+        pending_writes[i] = (name, cleaned, is_update, brief, page_claims)
 
     # --- Optional Step 3a: LLM rewrite the summary with full whitelist ---
     # Only for the short-doc path. The long-doc path leaves the indexer-
@@ -2150,10 +2296,16 @@ async def _compile_concepts(
                     doc_name,
                     fallback_ghosts[:5],
                 )
-        _write_summary(wiki_dir, doc_name, final_summary, description=doc_brief)
+        _write_summary(
+            wiki_dir,
+            doc_name,
+            final_summary,
+            description=doc_brief,
+            claims=summary_claims,
+        )
 
     # --- Write concept pages to disk ---
-    for name, page_content, is_update, brief in pending_writes:
+    for name, page_content, is_update, brief, page_claims in pending_writes:
         _write_concept(
             wiki_dir,
             name,
@@ -2161,6 +2313,7 @@ async def _compile_concepts(
             source_file,
             is_update,
             brief=brief,
+            claims=page_claims,
         )
 
     # --- Step 3b: Process related items (code only, no LLM) ---
@@ -2257,13 +2410,24 @@ async def compile_short_doc(
         response_format=_JSON_RESPONSE_FORMAT,
         bundle=bundle,
     )
+    summary_claims: list | None = None
     try:
         summary_parsed = _parse_json(summary_raw)
-        doc_brief = summary_parsed.get("description", "")
-        summary = summary_parsed.get("content", summary_raw)
+        if isinstance(summary_parsed, dict):
+            doc_brief = summary_parsed.get("description", "")
+            summary = summary_parsed.get("content", summary_raw)
+            summary_claims = _claims_from_model(
+                summary_parsed,
+                log_label=f"summary:{doc_name}",
+            )
+        else:
+            doc_brief = ""
+            summary = summary_raw
+            summary_claims = None
     except (json.JSONDecodeError, ValueError):
         doc_brief = ""
         summary = summary_raw
+        summary_claims = None
 
     # --- Steps 2-4: Concept plan → generate/update → summary rewrite → index ---
     try:
@@ -2281,6 +2445,7 @@ async def compile_short_doc(
             rewrite_summary=True,
             entity_types=entity_types,
             bundle=bundle,
+            summary_claims=summary_claims,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this

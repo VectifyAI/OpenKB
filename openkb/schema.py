@@ -56,6 +56,45 @@ Operations: ingest, query, lint
   `Concept`, or a capitalized entity subtype (e.g. `Organization`). This is the
   one field OKF requires; consumers use it for routing/filtering/presentation.
 - `description:` — a single-sentence one-liner (the field formerly named `brief`).
+- `claims:` — optional one-line JSON array of time-based evidence claims.
+  - Each claim must have a non-empty `text` field.
+  - Each claim must have an ISO-8601 `as_of` field.
+  - Each claim must have a non-empty `source_anchor` field.
+  - The `status` field must have a value of `proposed`, `validated`,
+    `superseded`, or `abandoned`.
+  - OpenKB creates the `id` field.
+  - The optional `authority` field can have a value of `first_party`,
+    `assistant`, or `document`.
+  - If an assistant claim has a `status` value of `validated`, OpenKB changes
+    the value to `proposed`.
+  - Assistant claims do not enter strict current reads.
+  - An assistant claim cannot supersede a claim that has a `status` value of
+    `validated`.
+  - Only a claim with an `authority` value of `first_party` can supersede
+    another claim with an `authority` value of `first_party`.
+  - Claims with an `authority` value of `document` use the same `as_of` and
+    `status` rules as claims without an `authority` field.
+  - The `supersedes` field contains `id` values for old claims on the same page.
+  - OpenKB applies supersession links only when the new `as_of` value is not
+    earlier than the old `as_of` value.
+  - OpenKB creates the `superseded_by` supersession links.
+  - A claim with a `status` value of `proposed` cannot supersede a claim that has
+    a `status` value of `validated`.
+  - A claim with a `status` value of `validated` or `abandoned` can supersede a
+    claim with a `status` value of `validated` when all other rules permit the
+    supersession link.
+  - Strict current reads return claims that have a `status` value of `validated`.
+  - An adapter can define the format of the `source_anchor` field.
+  - OpenKB does not require a specific transport or provider.
+  - If a stored claim has the same `id` value as an incoming duplicate claim,
+    OpenKB keeps the stored claim.
+  - OpenKB ignores every field and every supersession link from the incoming
+    duplicate claim.
+  - The document compiler sets the `authority` field to `document` for every
+    claim that a model creates.
+  - An external adapter can verify source authority.
+  - The adapter can then set the `authority` field to `first_party` or
+    `assistant` through the public claims API.
 - Do not include YAML frontmatter (---) in generated content; it is managed by code.
 """
 

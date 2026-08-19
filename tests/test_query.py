@@ -17,9 +17,9 @@ class TestBuildQueryAgent:
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         assert agent.name == "wiki-query"
 
-    def test_agent_has_three_tools(self, tmp_path):
+    def test_agent_has_four_tools(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
-        assert len(agent.tools) == 3
+        assert len(agent.tools) == 4
 
     def test_agent_tool_names(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
@@ -27,6 +27,7 @@ class TestBuildQueryAgent:
         assert "read_file" in names
         assert "get_page_content" in names
         assert "get_image" in names
+        assert "read_current_page_claims" in names
 
     def test_instructions_mention_get_page_content(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
@@ -80,6 +81,21 @@ def test_query_strategy_mentions_entities():
 
     text = query_mod._QUERY_INSTRUCTIONS_TEMPLATE
     assert "entities/" in text
+
+
+def test_query_strategy_requires_strict_current_claim_reads():
+    from openkb.agent import query as query_mod
+
+    text = query_mod._QUERY_INSTRUCTIONS_TEMPLATE
+    normalized = " ".join(text.split())
+    assert "read_current_page_claims" in text
+    assert (
+        'Strict current reads return claims that have a "status" value of "validated".'
+    ) in normalized
+    assert (
+        'Do not report a claim with a "status" value of "proposed" as a claim '
+        'with a "status" value of "validated".'
+    ) in normalized
 
 
 class TestResolveToolCallId:

@@ -162,6 +162,39 @@ When you add a document, the LLM:
 
 A single source might touch 10--15 wiki pages. Knowledge accumulates: each document enriches the existing wiki rather than sitting in isolation.
 
+### Temporal Claims
+
+Summary, concept, and entity pages can store time-based evidence in the
+`claims` frontmatter field. The field contains a one-line JSON array. OpenKB
+keeps old claims as history. OpenKB creates each `id` field. OpenKB also records
+candidate supersession links from the `supersedes` field. OpenKB validates each
+candidate link before OpenKB applies the link. OpenKB creates the
+`superseded_by` supersession links for the applied links.
+
+For strict current reads, OpenKB returns claims that have a `status` value of
+`validated`. OpenKB does not return claims that have a `status` value of
+`proposed`, `superseded`, or `abandoned`. A caller can request claims that have
+a `status` value of `proposed`.
+
+The optional `authority` field can have a value of `first_party`, `document`, or
+`assistant`. If an assistant claim has a `status` value of `validated`, OpenKB
+changes the value to `proposed`. An assistant claim cannot supersede a claim
+that has a `status` value of `validated`. Only a claim with an `authority` value
+of `first_party` can supersede another claim with an `authority` value of
+`first_party`.
+
+OpenKB applies the same `as_of` and `status` rules to claims that have an
+`authority` value of `document` and claims that do not have an `authority`
+field.
+
+The document compiler sets the `authority` field to `document` for each claim
+that a model creates. The compiler ignores the model value in the `authority`
+field. An external adapter can verify source authority. The adapter can then set
+the `authority` field to `first_party` or `assistant` through the public claims
+API. If a stored claim has the same `id` value as an incoming duplicate claim,
+OpenKB keeps the stored claim. OpenKB ignores every field and every supersession
+link from the incoming duplicate claim.
+
 # ⚙️ Usage
 
 OpenKB commands fall into two layers: the **wiki foundation** (compile + manage your knowledge) and **generators** (turn that wiki into useful output). Each links to a concrete walkthrough — a real artifact OpenKB generated from one sample paper (browse them all in [`examples/`](examples/)).

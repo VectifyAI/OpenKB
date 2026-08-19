@@ -11,6 +11,8 @@ import contextlib
 import json as _json
 from pathlib import Path, PurePosixPath
 
+from openkb import frontmatter
+from openkb.claims import current_claims
 from openkb.locks import atomic_write_text
 
 
@@ -55,6 +57,24 @@ def read_wiki_file(path: str, wiki_root: str) -> str:
     if not full_path.exists():
         return f"File not found: {path}"
     return full_path.read_text(encoding="utf-8")
+
+
+def read_current_claims(path: str, wiki_root: str, *, include_proposed: bool = False) -> str:
+    """Return page claims as JSON.
+
+    By default, use strict current reads. Strict current reads return claims that
+    have a `status` value of `validated`. If `include_proposed` is `True`, also
+    return claims that have a `status` value of `proposed`.
+    """
+    root = Path(wiki_root).resolve()
+    full_path = (root / path).resolve()
+    if not full_path.is_relative_to(root):
+        return "Access denied. The path is outside the wiki root."
+    if not full_path.is_file():
+        return f"OpenKB cannot find the file: {path}"
+    page = frontmatter.parse(full_path.read_text(encoding="utf-8"))
+    claims = current_claims(page.get("claims"), include_proposed=include_proposed)
+    return _json.dumps(claims, ensure_ascii=False)
 
 
 def parse_pages(pages: str) -> list[int]:
