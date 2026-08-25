@@ -17,13 +17,33 @@ interface RecentSession extends ChatSessionItem {
   kbIndex: number
 }
 
-function formatWhen(iso: string): string {
+/**
+ * Format a session timestamp for the recent-sessions cards.
+ *
+ * Backend stores UTC (`…Z`, see `openkb.agent.chat_session._utcnow_iso`).
+ * Never strip the `Z` and print the digits as-is — that shows UTC wall-clock
+ * and looks ~8h behind in China (UTC+8). Parse as an absolute Instant and
+ * format in the browser's local timezone; use the UI language only for the
+ * locale (digit/order style), not to hard-code a geographic zone.
+ */
+function formatWhen(iso: string, locale: string): string {
   if (!iso) return ""
-  return iso.replace("T", " ").replace("Z", "").slice(0, 16)
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  // zh → zh-CN (Asia-friendly date order); en → en-US. Timezone = local.
+  const loc = locale.toLowerCase().startsWith("zh") ? "zh-CN" : locale || undefined
+  return d.toLocaleString(loc, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
 }
 
 export default function Home() {
-  const { t } = useTranslation("home")
+  const { t, i18n } = useTranslation("home")
   const navigate = useNavigate()
   const location = useLocation() as { state?: { kbId?: string } }
   const [kbs, setKbs] = useState<KbSummary[]>([])
@@ -116,7 +136,7 @@ export default function Home() {
                       {s.updated_at && (
                         <>
                           <span className="opacity-50">·</span>
-                          {formatWhen(s.updated_at)}
+                          {formatWhen(s.updated_at, i18n.language)}
                         </>
                       )}
                       <ArrowRight className="w-3.5 h-3.5 ml-auto opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-accent-brand" />
