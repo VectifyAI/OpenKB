@@ -260,6 +260,71 @@ Return ONLY the Markdown content (no frontmatter, no code fences).
 # ---------------------------------------------------------------------------
 
 
+def _should_retry_exception(exc: Exception) -> bool:
+    """Determine whether an exception is retryable (transient error).
+
+    Returns True for temporary API/network errors that may succeed on retry:
+    - Timeout (client-side or server-side)
+    - APIError 5xx (server errors)
+    - RateLimitError (429)
+    - ConnectionError / ServiceUnavailableError
+
+    Returns False for permanent errors that won't be fixed by retry:
+    - TruncatedResponseError (model hit max_tokens)
+    - ValueError, TypeError (malformed input/output)
+    - AuthenticationError (credentials issue)
+    - BadRequestError (invalid parameters)
+    - Unknown error types (conservative approach)
+    """
+    exc_type_name = type(exc).__name__
+
+    # ===== RETRYABLE (transient errors) =====
+
+    # Timeout (network/gateway timeout)
+    if "Timeout" in exc_type_name:
+        return True
+
+    # Generic API errors (5xx range, but not 4xx)
+    if "APIError" in exc_type_name:
+        # Don't retry if it's a BadRequest/Invalid error (4xx)
+        if "Invalid" not in exc_type_name and "BadRequest" not in exc_type_name:
+            return True
+
+    # Rate limiting (429)
+    if "RateLimitError" in exc_type_name or "Rate" in exc_type_name:
+        return True
+
+    # Connection errors
+    if "ConnectionError" in exc_type_name:
+        return True
+
+    # Service unavailable
+    if "ServiceUnavailable" in exc_type_name:
+        return True
+
+    # ===== NOT RETRYABLE (permanent errors) =====
+
+    # Model hit max_tokens limit
+    if isinstance(exc, TruncatedResponseError):
+        return False
+
+    # Content validation failures
+    if "ValueError" in exc_type_name or "TypeError" in exc_type_name:
+        return False
+
+    # Authentication failures
+    if "Auth" in exc_type_name or "Permission" in exc_type_name:
+        return False
+
+    # Bad parameters/requests
+    if "BadRequest" in exc_type_name or "Invalid" in exc_type_name:
+        return False
+
+    # ===== UNKNOWN: Conservative approach =====
+    # Don't retry errors we don't recognize
+    return False
+
+
 def _cached_text(text: str) -> list[dict]:
     """Wrap a text payload into a content-block list with an Anthropic
     ephemeral cache_control marker.
@@ -406,7 +471,11 @@ def _llm_call(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Single LLM call with animated progress and debug logging."""
+    """Single LLM call with animated progress, debug logging, and retry support.
+
+    Transient errors (Timeout, 5xx, 429) are automatically retried by LiteLLM.
+    Permanent errors (4xx, truncation, validation) are raised immediately.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -417,6 +486,10 @@ def _llm_call(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+
+    # NEW: Retry configuration for transient errors (fixed: 2 retries, base 2)
+    kwargs.setdefault("retries", 2)
+
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -425,7 +498,27 @@ def _llm_call(
     spinner.start()
     t0 = time.time()
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
+    try:
+        response = litellm.completion(model=model, messages=messages, **kwargs)
+    except Exception as exc:
+        # NEW: Better error logging with retry context
+        if _should_retry_exception(exc):
+            logger.warning(
+                "LLM [%s] failed with transient error (retries applied by LiteLLM): %s",
+                step_name,
+                exc,
+                exc_info=False,  # Don't spam stack traces for known transient errors
+            )
+        else:
+            logger.warning(
+                "LLM [%s] failed with permanent error (no retry): %s",
+                step_name,
+                exc,
+                exc_info=True,  # Full trace for unexpected errors
+            )
+        spinner.stop("[FAILED]")
+        raise
+
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -449,7 +542,11 @@ async def _llm_call_async(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Async LLM call with timing output and debug logging."""
+    """Async LLM call with timing output, debug logging, and retry support.
+
+    Transient errors (Timeout, 5xx, 429) are automatically retried by LiteLLM.
+    Permanent errors (4xx, truncation, validation) are raised immediately.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -460,13 +557,36 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+
+    # NEW: Retry configuration for transient errors (fixed: 2 retries, base 2)
+    kwargs.setdefault("retries", 2)
+
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
 
     t0 = time.time()
 
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    try:
+        response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    except Exception as exc:
+        # NEW: Better error logging with retry context
+        if _should_retry_exception(exc):
+            logger.warning(
+                "LLM [%s] failed with transient error (retries applied by LiteLLM): %s",
+                step_name,
+                exc,
+                exc_info=False,
+            )
+        else:
+            logger.warning(
+                "LLM [%s] failed with permanent error (no retry): %s",
+                step_name,
+                exc,
+                exc_info=True,
+            )
+        raise
+
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
