@@ -1,6 +1,14 @@
 """Tests for LLM retry logic in compiler.py."""
 
-from openkb.agent.compiler import TruncatedResponseError, _should_retry_exception
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from openkb.agent.compiler import (
+    TruncatedResponseError,
+    _llm_call,
+    _llm_call_async,
+    _should_retry_exception,
+)
 
 
 # Custom exception classes for testing (so we can control the type name)
@@ -128,3 +136,45 @@ class TestShouldRetryException:
         """Generic Exception without special name should NOT be retried."""
         exc = Exception("generic error")
         assert _should_retry_exception(exc) is False
+
+
+def _fake_response():
+    choice = MagicMock()
+    choice.message.content = "ok"
+    choice.finish_reason = "stop"
+    resp = MagicMock()
+    resp.choices = [choice]
+    return resp
+
+
+class TestRetryKwargForwarding:
+    """Regression tests for #233: the retry kwarg forwarded to LiteLLM must be
+    ``num_retries`` (LiteLLM's recognized internal control parameter), not
+    ``retries``. An unrecognized kwarg falls through as a provider
+    request-body field, which strict-mode proxies reject.
+    """
+
+    def test_llm_call_forwards_num_retries_not_retries(self):
+        with patch(
+            "openkb.agent.compiler.litellm.completion", return_value=_fake_response()
+        ) as completion:
+            _llm_call("gpt-4o", [{"role": "user", "content": "hi"}], "step")
+        assert completion.call_args.kwargs["num_retries"] == 2
+        assert "retries" not in completion.call_args.kwargs
+
+    def test_llm_call_does_not_override_explicit_num_retries(self):
+        with patch(
+            "openkb.agent.compiler.litellm.completion", return_value=_fake_response()
+        ) as completion:
+            _llm_call("gpt-4o", [{"role": "user", "content": "hi"}], "step", num_retries=5)
+        assert completion.call_args.kwargs["num_retries"] == 5
+
+    def test_llm_call_async_forwards_num_retries_not_retries(self):
+        with patch(
+            "openkb.agent.compiler.litellm.acompletion",
+            new_callable=AsyncMock,
+            return_value=_fake_response(),
+        ) as acompletion:
+            asyncio.run(_llm_call_async("gpt-4o", [{"role": "user", "content": "hi"}], "step"))
+        assert acompletion.call_args.kwargs["num_retries"] == 2
+        assert "retries" not in acompletion.call_args.kwargs
