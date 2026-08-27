@@ -455,7 +455,10 @@ def add_single_file(
 def _delete_if_auto_cleanup_enabled(
     file_path: Path, status: Literal["added", "skipped", "failed"], config: dict
 ) -> bool:
-    """Delete file if addition succeeded and auto_delete_added_files is enabled.
+    """Delete file if auto_delete_added_files is enabled and ingestion succeeded/skipped.
+
+    Deletes on both "added" (successful ingestion) and "skipped" (duplicate already
+    in KB) to keep raw/ directory clean. Preserves files on "failed" to allow retries.
 
     Args:
         file_path: Path to the file to potentially delete.
@@ -465,7 +468,7 @@ def _delete_if_auto_cleanup_enabled(
     Returns:
         True if file was deleted, False otherwise.
     """
-    if status == "added" and config.get("auto_delete_added_files", False):
+    if status in ("added", "skipped") and config.get("auto_delete_added_files", False):
         try:
             file_path.unlink(missing_ok=True)
             return True
@@ -1110,8 +1113,9 @@ def add(ctx, path, from_pageindex_cloud):
     that is already indexed in PageIndex Cloud, with no local file. Requires
     the PAGEINDEX_API_KEY environment variable.
 
-    If ``auto_delete_added_files`` is enabled in config.yaml, successfully
-    added files are automatically deleted after ingestion.
+    If ``auto_delete_added_files`` is enabled in config.yaml, files are
+    automatically deleted after ingestion (both on successful addition and
+    on skip/duplicate).
     """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -1194,8 +1198,8 @@ def add_all(ctx):
 
     This command walks the ``raw/`` directory recursively for all supported
     document types and ingests them into the KB. If ``auto_delete_added_files``
-    is enabled in config.yaml, successfully added files are automatically deleted
-    after ingestion.
+    is enabled in config.yaml, files are automatically deleted after ingestion
+    (both on successful addition and on skip/duplicate).
 
     Returns a summary of the operation (added, skipped, failed, deleted counts).
     """
