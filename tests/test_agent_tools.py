@@ -9,6 +9,7 @@ from openkb.agent.tools import (
     parse_pages,
     read_wiki_file,
     read_wiki_image,
+    search_wiki,
     write_wiki_file,
 )
 
@@ -320,3 +321,41 @@ def test_artifact_event_none_for_non_output_zone():
 
 def test_artifact_event_none_for_bad_json():
     assert artifact_event_from_write("write_file", "not json", "Written: output/x.html") is None
+
+
+# ---------------------------------------------------------------------------
+# search_wiki
+# ---------------------------------------------------------------------------
+
+
+class TestSearchWiki:
+    def test_finds_matching_page(self, tmp_path):
+        wiki_root = str(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "cnn.md").write_text(
+            "# Convolutional Neural Networks\n\nDropout regularization prevents overfitting."
+        )
+
+        result = search_wiki("dropout regularization", wiki_root)
+
+        assert "[[concepts/cnn]]" in result
+        assert "Convolutional Neural Networks" in result
+
+    def test_no_matches_returns_message(self, tmp_path):
+        wiki_root = str(tmp_path)
+        (tmp_path / "concepts").mkdir()
+        (tmp_path / "concepts" / "cnn.md").write_text("# CNN\n\nSomething else entirely.")
+
+        result = search_wiki("nonexistent_keyword_xyz", wiki_root)
+
+        assert result == "No matching pages found."
+
+    def test_respects_top_k(self, tmp_path):
+        wiki_root = str(tmp_path)
+        (tmp_path / "entities").mkdir()
+        for i in range(5):
+            (tmp_path / "entities" / f"e{i}.md").write_text(f"# Entity {i}\n\nkeyword {i}.")
+
+        result = search_wiki("keyword", wiki_root, top_k=2)
+
+        assert result.count("[[entities/") == 2
