@@ -1112,36 +1112,45 @@ class TestAddRelatedLink:
         assert "[[summaries/new-doc]]" in text
 
 
+def _mock_response(content, finish_reason: str = "stop") -> MagicMock:
+    """Build a fake, already-complete LLM response (single-chunk stream).
+
+    ``_llm_call``/``_llm_call_async`` now call ``litellm.completion``/
+    ``acompletion`` with ``stream=True`` and merge the resulting chunks back
+    into one response (see ``_merge_stream_chunks``). Exposing ``.message``
+    (rather than the ``.delta`` a genuine stream chunk carries) tells
+    ``_merge_stream_chunks`` this single chunk *is* the final response, so it
+    is used as-is without needing to fake LiteLLM's internal delta format.
+    """
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock()]
+    mock_resp.choices[0].message.content = content
+    mock_resp.choices[0].finish_reason = finish_reason
+    mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+    mock_resp.usage.prompt_tokens_details = None
+    return mock_resp
+
+
 def _mock_completion(responses: list[str]):
-    """Create a mock for litellm.completion that returns responses in order."""
+    """Create a mock for litellm.completion returning a single-chunk stream."""
     call_count = {"n": 0}
 
     def side_effect(*args, **kwargs):
         idx = min(call_count["n"], len(responses) - 1)
         call_count["n"] += 1
-        mock_resp = MagicMock()
-        mock_resp.choices = [MagicMock()]
-        mock_resp.choices[0].message.content = responses[idx]
-        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_resp.usage.prompt_tokens_details = None
-        return mock_resp
+        return [_mock_response(responses[idx])]
 
     return side_effect
 
 
 def _mock_acompletion(responses: list[str]):
-    """Create an async mock for litellm.acompletion."""
+    """Create an async mock for litellm.acompletion returning a single-chunk stream."""
     call_count = {"n": 0}
 
     async def side_effect(*args, **kwargs):
         idx = min(call_count["n"], len(responses) - 1)
         call_count["n"] += 1
-        mock_resp = MagicMock()
-        mock_resp.choices = [MagicMock()]
-        mock_resp.choices[0].message.content = responses[idx]
-        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_resp.usage.prompt_tokens_details = None
-        return mock_resp
+        return [_mock_response(responses[idx])]
 
     return side_effect
 
@@ -1342,15 +1351,7 @@ class TestCompileShortDocFallbacks:
             sync_call_count["n"] += 1
             if idx == 2:  # the summary-rewrite call
                 raise RuntimeError("simulated API failure")
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = [
-                summary_response,
-                plan_response,
-            ][idx]
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response([summary_response, plan_response][idx])]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
@@ -1507,21 +1508,11 @@ class TestCacheControl:
         def sync_side_effect(*args, **kwargs):
             captured_sync_calls.append(kwargs["messages"])
             idx = min(len(captured_sync_calls) - 1, len(sync_responses) - 1)
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = sync_responses[idx]
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(sync_responses[idx])]
 
         async def async_side_effect(*args, **kwargs):
             captured_async_calls.append(kwargs["messages"])
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = concept_response
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(concept_response)]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
@@ -1586,15 +1577,9 @@ class TestCacheControl:
 
         def sync_side_effect(*args, **kwargs):
             captured.append(kwargs["messages"])
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
             # First call: overview (plain text); second: plan (JSON).
-            mock_resp.choices[0].message.content = (
-                "Overview text" if len(captured) == 1 else plan_response
-            )
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            content = "Overview text" if len(captured) == 1 else plan_response
+            return [_mock_response(content)]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
@@ -1726,16 +1711,9 @@ class TestCompileConceptsPlan:
         async def ordered_acompletion(*args, **kwargs):
             idx = call_order["n"]
             call_order["n"] += 1
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
             # create tasks come first, then update tasks
-            if idx == 0:
-                mock_resp.choices[0].message.content = create_page_response
-            else:
-                mock_resp.choices[0].message.content = update_page_response
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            content = create_page_response if idx == 0 else update_page_response
+            return [_mock_response(content)]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -1823,13 +1801,7 @@ class TestCompileConceptsPlan:
         )
 
         async def truncated_acompletion(*args, **kwargs):
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = truncated_page
-            mock_resp.choices[0].finish_reason = "length"
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(truncated_page, finish_reason="length")]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -1859,13 +1831,7 @@ class TestCompileConceptsPlan:
         truncated_page = json.dumps({"brief": "x", "content": "# Ghost\n\nPartial"})
 
         async def truncated_acompletion(*args, **kwargs):
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = truncated_page
-            mock_resp.choices[0].finish_reason = "length"
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(truncated_page, finish_reason="length")]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -1928,13 +1894,7 @@ class TestCompileConceptsPlan:
         )
 
         async def truncated_acompletion(*args, **kwargs):
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = truncated_page
-            mock_resp.choices[0].finish_reason = "length"
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(truncated_page, finish_reason="length")]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))

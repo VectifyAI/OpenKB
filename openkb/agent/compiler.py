@@ -397,6 +397,23 @@ class TruncatedResponseError(Exception):
     treat truncation as a failure (so a partial page is skipped, not written)."""
 
 
+def _merge_stream_chunks(chunks: list, messages: list[dict]):
+    """Merge streamed LLM chunks back into a single, non-streaming response.
+
+    Genuine LiteLLM stream chunks only ever carry a ``.delta`` (never a
+    ``.message``), so a real multi-chunk stream is merged via LiteLLM's own
+    :func:`litellm.stream_chunk_builder`. A single chunk that already looks
+    like a complete, non-streaming ``ModelResponse`` (exposing ``.message``)
+    is used as-is — there's nothing left to merge, and it lets test doubles
+    fake a one-shot response without simulating LiteLLM's internal delta
+    format.
+    """
+    choices = getattr(chunks[0], "choices", None) or []
+    if len(chunks) == 1 and choices and hasattr(choices[0], "message"):
+        return chunks[0]
+    return litellm.stream_chunk_builder(chunks, messages=messages)
+
+
 def _llm_call(
     model: str,
     messages: list[dict],
@@ -406,7 +423,15 @@ def _llm_call(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Single LLM call with animated progress and debug logging."""
+    """Single LLM call with animated progress and debug logging.
+
+    Uses ``stream=True``: some corporate LLM gateways enforce an idle
+    timeout on buffered (non-streaming) requests, which a long-running
+    completion can hit before the response is ever sent. Streaming keeps
+    bytes flowing over the connection so that timeout never fires; the
+    chunks are merged back into a single response via
+    :func:`_merge_stream_chunks` so callers see the same shape as before.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -417,6 +442,7 @@ def _llm_call(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    kwargs.setdefault("stream_options", {"include_usage": True})
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -425,7 +451,11 @@ def _llm_call(
     spinner.start()
     t0 = time.time()
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
+    stream = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
+    chunks = list(stream)
+    if not chunks:
+        raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+    response = _merge_stream_chunks(chunks, messages)
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -449,7 +479,10 @@ async def _llm_call_async(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Async LLM call with timing output and debug logging."""
+    """Async LLM call with timing output and debug logging.
+
+    See ``_llm_call`` for why ``stream=True`` is used.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -460,13 +493,21 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    kwargs.setdefault("stream_options", {"include_usage": True})
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
 
     t0 = time.time()
 
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    stream = await litellm.acompletion(model=model, messages=messages, stream=True, **kwargs)
+    if hasattr(stream, "__aiter__"):
+        chunks = [chunk async for chunk in stream]
+    else:
+        chunks = list(stream)
+    if not chunks:
+        raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+    response = _merge_stream_chunks(chunks, messages)
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
