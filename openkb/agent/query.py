@@ -14,6 +14,9 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
+from openkb.agent.tools import (
+    search_wiki as search_wiki_impl,
+)
 from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
 
@@ -33,18 +36,23 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
 3. Read concept pages (concepts/) for cross-document synthesis.
 4. For "who/what is X" questions about a specific named person, organization,
    place, or product, read the matching page in entities/ first.
-5. When you need detailed source document content, each summary page has a
+5. If index.md's one-line summaries don't surface a specific detail you
+   need (a niche term, an exact figure, a buried fact), use
+   search_wiki(query) — a keyword-level full-text search over
+   concepts/entities/summaries. This is a hybrid fallback: use it in
+   addition to, not instead of, index.md navigation.
+6. When you need detailed source document content, each summary page has a
    `full_text` frontmatter field with the path to the original document content:
    - Short documents (doc_type: short): read_file with that path.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
      ranges to help you target. Never fetch the whole document.
-6. Source content may reference images. Short-doc .md pages link them
+7. Source content may reference images. Short-doc .md pages link them
    note-relative (e.g. ![image](images/doc/file.png), resolved from
    wiki/sources/); long-doc JSON page metadata lists them wiki-root-relative
    (e.g. sources/images/doc/file.png). Pass either form as seen to the
    get_image tool — it accepts both.
-7. Synthesize a clear, concise, well-cited answer grounded in wiki content.
+8. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
 Before each tool call, output one short sentence explaining the reason.
@@ -84,6 +92,19 @@ def build_query_agent(
         return get_wiki_page_content(doc_name, pages, wiki_root)
 
     @function_tool
+    def search_wiki(query: str) -> str:
+        """Full-text (BM25) keyword search over concepts/entities/summaries.
+
+        Hybrid fallback for when index.md's one-line summaries don't surface
+        a specific buried detail (a niche term, an exact figure, a fact).
+        Use in addition to, not instead of, index.md navigation.
+
+        Args:
+            query: Free-text search query (keywords or a natural-language question).
+        """
+        return search_wiki_impl(query, wiki_root)
+
+    @function_tool
     def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
         """View an image from the wiki.
 
@@ -117,7 +138,7 @@ def build_query_agent(
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=[read_file, get_page_content, search_wiki, get_image],
         model=f"litellm/{model}",
         model_settings=ModelSettings(**model_settings),
     )

@@ -135,6 +135,36 @@ def get_wiki_page_content(doc_name: str, pages: str, wiki_root: str) -> str:
     return "\n\n".join(parts) + "\n\n"
 
 
+def search_wiki(query: str, wiki_root: str, top_k: int = 5) -> str:
+    """Full-text (BM25) search over concepts/entities/summaries wiki pages.
+
+    Hybrid retrieval helper: complements index.md-driven navigation by
+    surfacing pages whose one-line index summary doesn't mention a specific
+    buried detail the query is looking for (a niche term, a figure, an exact
+    fact). Additive — use alongside, not instead of, index.md navigation.
+
+    Args:
+        query: Free-text search query (keywords or a natural-language question).
+        wiki_root: Absolute path to the wiki root directory.
+        top_k: Maximum number of ranked results to return.
+
+    Returns:
+        A formatted, ranked list of page hits (wikilink, title, snippet), or
+        a message indicating no matches were found.
+    """
+    from openkb.fulltext_index import WikiFullTextIndex
+
+    hits = WikiFullTextIndex(wiki_root).search(query, top_k=top_k)
+    if not hits:
+        return "No matching pages found."
+
+    lines = []
+    for i, hit in enumerate(hits, start=1):
+        wikilink = hit.path[:-3] if hit.path.endswith(".md") else hit.path
+        lines.append(f"{i}. [[{wikilink}]] — {hit.title} (score: {hit.score})\n   {hit.snippet}")
+    return "\n".join(lines)
+
+
 _MIME_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",

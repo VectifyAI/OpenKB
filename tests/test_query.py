@@ -19,13 +19,14 @@ class TestBuildQueryAgent:
 
     def test_agent_has_three_tools(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
-        assert len(agent.tools) == 3
+        assert len(agent.tools) == 4
 
     def test_agent_tool_names(self, tmp_path):
         agent = build_query_agent(str(tmp_path), "gpt-4o-mini")
         names = {t.name for t in agent.tools}
         assert "read_file" in names
         assert "get_page_content" in names
+        assert "search_wiki" in names
         assert "get_image" in names
 
     def test_instructions_mention_get_page_content(self, tmp_path):
