@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1153,6 +1154,53 @@ def _mock_acompletion(responses: list[str]):
         return [_mock_response(responses[idx])]
 
     return side_effect
+
+
+class _NoOpSpinner:
+    """Test double that disables spinner side effects."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def start(self) -> None:
+        pass
+
+    def stop(self, _suffix: str = "") -> None:
+        pass
+
+
+class _AsyncStream:
+    """Simple async iterator for exercising streamed LiteLLM responses in tests."""
+
+    def __init__(
+        self,
+        chunks: list[object],
+        *,
+        error: Exception | None = None,
+        raise_after: int | None = None,
+    ) -> None:
+        self._chunks = chunks
+        self._error = error
+        self._raise_after = raise_after
+        self._index = 0
+
+    def __aiter__(self) -> _AsyncStream:
+        return self
+
+    async def __anext__(self) -> object:
+        if self._raise_after is not None and self._index == self._raise_after:
+            raise self._error or RuntimeError("stream exploded")
+        if self._index >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = self._chunks[self._index]
+        self._index += 1
+        return chunk
+
+
+def _stream_then_raise(chunks: list[object], error: Exception):
+    """Yield all chunks, then raise ``error`` on the next iteration."""
+    yield from chunks
+    raise error
 
 
 class TestCompileShortDoc:
@@ -2659,6 +2707,120 @@ class TestLLMCallExtraHeaders:
         assert out == "ok"
         kwargs = mock_litellm.acompletion.call_args.kwargs
         assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
+
+
+class TestLLMStreamTimingDebugLogging:
+    """Per-chunk debug timing should be visible when verbose logging is enabled."""
+
+    def test_llm_call_logs_each_stream_chunk_at_debug(self, caplog):
+        from openkb.agent.compiler import _llm_call
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(
+                return_value=iter(["chunk-1", "chunk-2", "chunk-3"])
+            )
+            mock_litellm.stream_chunk_builder = MagicMock(return_value=_mock_response("ok"))
+
+            out = _llm_call("m", [{"role": "user", "content": "hi"}], "sync-step")
+
+        assert out == "ok"
+        chunk_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "LLM stream chunk [sync-step]" in record.getMessage()
+        ]
+        assert len(chunk_logs) == 3
+        assert "#1" in chunk_logs[0]
+        assert "#3" in chunk_logs[-1]
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_logs_each_stream_chunk_at_debug(self, caplog):
+        from openkb.agent.compiler import _llm_call_async
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.acompletion = AsyncMock(
+                return_value=_AsyncStream(["chunk-1", "chunk-2", "chunk-3"])
+            )
+            mock_litellm.stream_chunk_builder = MagicMock(return_value=_mock_response("ok"))
+
+            out = await _llm_call_async("m", [{"role": "user", "content": "hi"}], "async-step")
+
+        assert out == "ok"
+        chunk_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "LLM stream chunk [async-step]" in record.getMessage()
+        ]
+        assert len(chunk_logs) == 3
+        assert "#1" in chunk_logs[0]
+        assert "#3" in chunk_logs[-1]
+
+    def test_llm_call_logs_stream_failure_before_reraising(self, caplog):
+        from openkb.agent.compiler import _llm_call
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        error = RuntimeError("stream exploded")
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(
+                return_value=_stream_then_raise(["chunk-1", "chunk-2"], error)
+            )
+
+            with pytest.raises(RuntimeError, match="stream exploded"):
+                _llm_call("m", [{"role": "user", "content": "hi"}], "sync-fail-step")
+
+        chunk_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "LLM stream chunk [sync-fail-step]" in record.getMessage()
+        ]
+        failure_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "LLM stream [sync-fail-step] failed after" in record.getMessage()
+        ]
+        assert len(chunk_logs) == 2
+        assert len(failure_logs) == 1
+        assert "2 chunk(s) received" in failure_logs[0]
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_logs_stream_failure_before_reraising(self, caplog):
+        from openkb.agent.compiler import _llm_call_async
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        error = RuntimeError("stream exploded")
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.acompletion = AsyncMock(
+                return_value=_AsyncStream(
+                    ["chunk-1", "chunk-2"],
+                    error=error,
+                    raise_after=2,
+                )
+            )
+
+            with pytest.raises(RuntimeError, match="stream exploded"):
+                await _llm_call_async("m", [{"role": "user", "content": "hi"}], "async-fail-step")
+
+        chunk_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "LLM stream chunk [async-fail-step]" in record.getMessage()
+        ]
+        failure_logs = [
+            record.getMessage()
+            for record in caplog.records
+            if "LLM stream [async-fail-step] failed after" in record.getMessage()
+        ]
+        assert len(chunk_logs) == 2
+        assert len(failure_logs) == 1
+        assert "2 chunk(s) received" in failure_logs[0]
 
 
 class TestCacheControlStripping:

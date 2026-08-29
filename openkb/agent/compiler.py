@@ -414,6 +414,86 @@ def _merge_stream_chunks(chunks: list, messages: list[dict]):
     return litellm.stream_chunk_builder(chunks, messages=messages)
 
 
+def _log_chunk_timing(
+    step_name: str, chunk_number: int, t0: float, last_t: float, now: float
+) -> None:
+    """Debug-log arrival timing for one streamed chunk.
+
+    Run with ``openkb -v`` to see, per LLM call, how long the first chunk took
+    (time-to-first-token) and the gap to each subsequent chunk. If chunks do
+    arrive before a timeout, that shows the proxy/gateway is forwarding the
+    stream; if no chunk is ever logged before a timeout, the instrumentation
+    narrows the problem to a no-first-byte case (e.g. slow TTFT or an
+    intermediary buffering the response).
+    """
+    logger.debug(
+        "LLM stream chunk [%s] #%d after %.2fs total (+%.2fs since previous)",
+        step_name,
+        chunk_number,
+        now - t0,
+        now - last_t,
+    )
+
+
+def _consume_stream(stream, step_name: str, t0: float) -> list:
+    """Collect a sync LiteLLM stream into a list, logging per-chunk timing.
+
+    A mid-stream exception (e.g. the gateway idle-timeout firing) propagates
+    after logging how many chunks arrived and when, so callers still see a
+    complete failure — no partial buffer is ever returned.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return list(stream)
+
+    chunks: list = []
+    last_t = t0
+    try:
+        for chunk in stream:
+            now = time.time()
+            _log_chunk_timing(step_name, len(chunks) + 1, t0, last_t, now)
+            chunks.append(chunk)
+            last_t = now
+    except Exception:
+        logger.debug(
+            "LLM stream [%s] failed after %.2fs with %d chunk(s) received",
+            step_name,
+            time.time() - t0,
+            len(chunks),
+            exc_info=True,
+        )
+        raise
+    return chunks
+
+
+async def _consume_stream_async(stream, step_name: str, t0: float) -> list:
+    """Collect an async LiteLLM stream into a list, logging per-chunk timing.
+
+    Mirrors :func:`_consume_stream`, including the no-partial-buffer invariant
+    on failure.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return [chunk async for chunk in stream]
+
+    chunks: list = []
+    last_t = t0
+    try:
+        async for chunk in stream:
+            now = time.time()
+            _log_chunk_timing(step_name, len(chunks) + 1, t0, last_t, now)
+            chunks.append(chunk)
+            last_t = now
+    except Exception:
+        logger.debug(
+            "LLM stream [%s] failed after %.2fs with %d chunk(s) received",
+            step_name,
+            time.time() - t0,
+            len(chunks),
+            exc_info=True,
+        )
+        raise
+    return chunks
+
+
 def _llm_call(
     model: str,
     messages: list[dict],
@@ -452,7 +532,7 @@ def _llm_call(
     t0 = time.time()
 
     stream = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
-    chunks = list(stream)
+    chunks = _consume_stream(stream, step_name, t0)
     if not chunks:
         raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
     response = _merge_stream_chunks(chunks, messages)
@@ -502,9 +582,9 @@ async def _llm_call_async(
 
     stream = await litellm.acompletion(model=model, messages=messages, stream=True, **kwargs)
     if hasattr(stream, "__aiter__"):
-        chunks = [chunk async for chunk in stream]
+        chunks = await _consume_stream_async(stream, step_name, t0)
     else:
-        chunks = list(stream)
+        chunks = _consume_stream(stream, step_name, t0)
     if not chunks:
         raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
     response = _merge_stream_chunks(chunks, messages)
