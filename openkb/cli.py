@@ -478,6 +478,33 @@ def _delete_if_auto_cleanup_enabled(
     return False
 
 
+def _cleanup_empty_directories(start_dir: Path) -> int:
+    """Recursively delete empty directories under start_dir.
+
+    Walks from deepest subdirectories up, deleting directories that become
+    empty after file cleanup.
+
+    Args:
+        start_dir: Root directory to clean up (e.g., kb_dir / "raw").
+
+    Returns:
+        Number of directories deleted.
+    """
+    deleted_count = 0
+    try:
+        for directory in sorted(start_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if directory.is_dir() and directory != start_dir:
+                try:
+                    if not list(directory.iterdir()):
+                        directory.rmdir()
+                        deleted_count += 1
+                except OSError:
+                    pass
+    except Exception as exc:
+        logger.warning(f"Error during directory cleanup: {exc}")
+    return deleted_count
+
+
 def _add_single_file_locked(
     file_path: Path, kb_dir: Path, *, stage: bool = True, bundle=None
 ) -> Literal["added", "skipped", "failed"]:
@@ -1199,7 +1226,8 @@ def add_all(ctx):
     This command walks the ``raw/`` directory recursively for all supported
     document types and ingests them into the KB. If ``auto_delete_added_files``
     is enabled in config.yaml, files are automatically deleted after ingestion
-    (both on successful addition and on skip/duplicate).
+    (both on successful addition and on skip/duplicate), and empty subdirectories
+    are cleaned up.
 
     Returns a summary of the operation (added, skipped, failed, deleted counts).
     """
@@ -1224,7 +1252,7 @@ def add_all(ctx):
 
     config = resolve_effective_config(kb_dir)[0]
     total = len(files)
-    added = skipped = failed = deleted = 0
+    added = skipped = failed = deleted = dirs_deleted = 0
 
     click.echo(f"Processing {total} file(s) from raw/ directory...")
     for i, f in enumerate(files, 1):
@@ -1239,9 +1267,14 @@ def add_all(ctx):
         if _delete_if_auto_cleanup_enabled(f, outcome, config):
             deleted += 1
 
-    click.echo(
-        f"\n\nSummary: Added: {added}, Skipped: {skipped}, Failed: {failed}, Deleted: {deleted}"
-    )
+    # Clean up empty subdirectories if auto-cleanup is enabled
+    if config.get("auto_delete_added_files", False):
+        dirs_deleted = _cleanup_empty_directories(raw_dir)
+
+    summary = f"Added: {added}, Skipped: {skipped}, Failed: {failed}, Deleted: {deleted}"
+    if dirs_deleted > 0:
+        summary += f", Empty dirs cleaned: {dirs_deleted}"
+    click.echo(f"\n\nSummary: {summary}")
 
 
 def _stream_to_tty() -> bool:
