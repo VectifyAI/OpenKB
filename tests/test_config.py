@@ -6,6 +6,7 @@ import pytest
 from openkb.config import (
     DEFAULT_CONFIG,
     GLOBAL_SCALAR_KEYS,
+    VALID_INSERT_MODES,
     get_extra_headers,
     get_parallel_tool_calls,
     get_timeout,
@@ -16,6 +17,7 @@ from openkb.config import (
     resolve_effective_config,
     resolve_extra_headers,
     resolve_init_kb_dir,
+    resolve_insert_mode,
     resolve_litellm_settings,
     resolve_model_settings,
     resolve_parallel_tool_calls,
@@ -194,6 +196,23 @@ def test_resolve_concurrency_none_is_silent(caplog):
     with caplog.at_level(logging.WARNING, logger="openkb.config"):
         assert resolve_concurrency({"concurrency": None}) is None
     assert caplog.text == ""
+
+
+def test_resolve_insert_mode_absent_is_normal():
+    assert resolve_insert_mode({}) == "normal"
+
+
+def test_resolve_insert_mode_valid_values():
+    assert set(VALID_INSERT_MODES) == {"normal", "fail-fast", "fail-at-end"}
+    for mode in VALID_INSERT_MODES:
+        assert resolve_insert_mode({"insert_mode": mode}) == mode
+
+
+def test_resolve_insert_mode_rejects_invalid(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = resolve_insert_mode({"insert_mode": "yolo"})
+    assert result == "normal"
+    assert "insert_mode" in caplog.text
 
 
 def test_load_missing_file_returns_defaults(tmp_path):

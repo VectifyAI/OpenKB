@@ -36,7 +36,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
     # effective value on read.
     "entity_types": list(DEFAULT_ENTITY_TYPES),
+    # How a partial compile (concept/entity generation failure) is reported.
+    # "normal" (today's behavior): warned, file still "added". Strict modes
+    # raise so the mutation rolls back and the file is "failed" — see
+    # resolve_insert_mode().
+    "insert_mode": "normal",
 }
+
+VALID_INSERT_MODES: tuple[str, ...] = ("normal", "fail-fast", "fail-at-end")
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
@@ -259,6 +266,25 @@ def resolve_concurrency(config: dict) -> int | None:
             value,
         )
         return None
+    return value
+
+
+def resolve_insert_mode(config: dict) -> str:
+    """Resolve ``insert_mode:`` — one of ``"normal"`` (default, unchanged),
+    ``"fail-fast"`` (abort on the first concept/entity failure), or
+    ``"fail-at-end"`` (run to completion, then fail if anything failed).
+    Strict modes raise ``ConceptCompilationError`` (``openkb.agent.compiler``),
+    which the mutation rollback turns into a ``"failed"`` outcome. An invalid
+    value degrades to ``"normal"`` with a warning.
+    """
+    value = config.get("insert_mode", "normal")
+    if value not in VALID_INSERT_MODES:
+        logger.warning(
+            "config: 'insert_mode' must be one of %s, got %r — using 'normal'.",
+            VALID_INSERT_MODES,
+            value,
+        )
+        return "normal"
     return value
 
 

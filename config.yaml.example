@@ -8,6 +8,16 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 # large PDFs. Omit to let each stage apply its own default.
 # concurrency: 5
 
+# Optional: how a partially-failed compile (some concept/entity couldn't be
+# generated, e.g. a transient LLM error) is reported for a single `add`.
+#   normal      (default) log a warning, still report the file "added".
+#   fail-fast   abort as soon as the first concept/entity fails; the add is
+#               rolled back and reported "failed".
+#   fail-at-end attempt every planned concept/entity first (so every failure
+#               for the file is logged in one pass), then roll back and
+#               report "failed" if anything failed.
+# insert_mode: normal
+
 # Optional: whether the LLM agents (query, chat, lint, skill) may call tools
 # in parallel. Leave it UNSET (commented out) to keep OpenKB's per-agent
 # defaults. Setting it applies the SAME value to every agent:
