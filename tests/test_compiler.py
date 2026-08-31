@@ -2710,9 +2710,11 @@ class TestLLMCallExtraHeaders:
 
 
 class TestLLMStreamTimingDebugLogging:
-    """Per-chunk debug timing should be visible when verbose logging is enabled."""
+    """Chunk-phase debug logging should be visible when verbose logging is
+    enabled: one line when the first chunk arrives, one more when the stream
+    ends cleanly or is interrupted — never one line per chunk (see #<TODO>)."""
 
-    def test_llm_call_logs_each_stream_chunk_at_debug(self, caplog):
+    def test_llm_call_logs_stream_start_and_end_at_debug(self, caplog):
         from openkb.agent.compiler import _llm_call
 
         caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
@@ -2728,17 +2730,17 @@ class TestLLMStreamTimingDebugLogging:
             out = _llm_call("m", [{"role": "user", "content": "hi"}], "sync-step")
 
         assert out == "ok"
-        chunk_logs = [
-            record.getMessage()
-            for record in caplog.records
-            if "LLM stream chunk [sync-step]" in record.getMessage()
-        ]
-        assert len(chunk_logs) == 3
-        assert "#1" in chunk_logs[0]
-        assert "#3" in chunk_logs[-1]
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [sync-step]" in m]
+        end_logs = [m for m in messages if "LLM stream finished [sync-step]" in m]
+        # Exactly one start line and one end line — never a line per chunk.
+        assert len(start_logs) == 1
+        assert len(end_logs) == 1
+        assert "3 chunk(s)" in end_logs[0]
+        assert not any("LLM stream chunk [sync-step]" in m for m in messages)
 
     @pytest.mark.asyncio
-    async def test_llm_call_async_logs_each_stream_chunk_at_debug(self, caplog):
+    async def test_llm_call_async_logs_stream_start_and_end_at_debug(self, caplog):
         from openkb.agent.compiler import _llm_call_async
 
         caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
@@ -2751,16 +2753,15 @@ class TestLLMStreamTimingDebugLogging:
             out = await _llm_call_async("m", [{"role": "user", "content": "hi"}], "async-step")
 
         assert out == "ok"
-        chunk_logs = [
-            record.getMessage()
-            for record in caplog.records
-            if "LLM stream chunk [async-step]" in record.getMessage()
-        ]
-        assert len(chunk_logs) == 3
-        assert "#1" in chunk_logs[0]
-        assert "#3" in chunk_logs[-1]
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [async-step]" in m]
+        end_logs = [m for m in messages if "LLM stream finished [async-step]" in m]
+        assert len(start_logs) == 1
+        assert len(end_logs) == 1
+        assert "3 chunk(s)" in end_logs[0]
+        assert not any("LLM stream chunk [async-step]" in m for m in messages)
 
-    def test_llm_call_logs_stream_failure_before_reraising(self, caplog):
+    def test_llm_call_logs_interruption_before_reraising(self, caplog):
         from openkb.agent.compiler import _llm_call
 
         caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
@@ -2776,22 +2777,21 @@ class TestLLMStreamTimingDebugLogging:
             with pytest.raises(RuntimeError, match="stream exploded"):
                 _llm_call("m", [{"role": "user", "content": "hi"}], "sync-fail-step")
 
-        chunk_logs = [
-            record.getMessage()
-            for record in caplog.records
-            if "LLM stream chunk [sync-fail-step]" in record.getMessage()
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [sync-fail-step]" in m]
+        interrupted_logs = [
+            m for m in messages if "LLM stream [sync-fail-step] interrupted unexpectedly" in m
         ]
-        failure_logs = [
-            record.getMessage()
-            for record in caplog.records
-            if "LLM stream [sync-fail-step] failed after" in record.getMessage()
-        ]
-        assert len(chunk_logs) == 2
-        assert len(failure_logs) == 1
-        assert "2 chunk(s) received" in failure_logs[0]
+        # Exactly one start line and one interruption line, no end-of-stream line,
+        # and no per-chunk lines in between.
+        assert len(start_logs) == 1
+        assert len(interrupted_logs) == 1
+        assert "after chunk 2" in interrupted_logs[0]
+        assert not any("LLM stream finished [sync-fail-step]" in m for m in messages)
+        assert not any("LLM stream chunk [sync-fail-step]" in m for m in messages)
 
     @pytest.mark.asyncio
-    async def test_llm_call_async_logs_stream_failure_before_reraising(self, caplog):
+    async def test_llm_call_async_logs_interruption_before_reraising(self, caplog):
         from openkb.agent.compiler import _llm_call_async
 
         caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
@@ -2808,19 +2808,41 @@ class TestLLMStreamTimingDebugLogging:
             with pytest.raises(RuntimeError, match="stream exploded"):
                 await _llm_call_async("m", [{"role": "user", "content": "hi"}], "async-fail-step")
 
-        chunk_logs = [
-            record.getMessage()
-            for record in caplog.records
-            if "LLM stream chunk [async-fail-step]" in record.getMessage()
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [async-fail-step]" in m]
+        interrupted_logs = [
+            m for m in messages if "LLM stream [async-fail-step] interrupted unexpectedly" in m
         ]
-        failure_logs = [
-            record.getMessage()
-            for record in caplog.records
-            if "LLM stream [async-fail-step] failed after" in record.getMessage()
+        assert len(start_logs) == 1
+        assert len(interrupted_logs) == 1
+        assert "after chunk 2" in interrupted_logs[0]
+        assert not any("LLM stream finished [async-fail-step]" in m for m in messages)
+        assert not any("LLM stream chunk [async-fail-step]" in m for m in messages)
+
+    def test_llm_call_logs_interruption_before_any_chunk(self, caplog):
+        """No chunk ever arrives (e.g. a proxy silently buffering despite
+        stream=True): no start line, and the interruption line says so
+        instead of an inapplicable chunk number."""
+        from openkb.agent.compiler import _llm_call
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        error = RuntimeError("connect timeout")
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(return_value=_stream_then_raise([], error))
+
+            with pytest.raises(RuntimeError, match="connect timeout"):
+                _llm_call("m", [{"role": "user", "content": "hi"}], "sync-no-chunk-step")
+
+        messages = [record.getMessage() for record in caplog.records]
+        interrupted_logs = [
+            m for m in messages if "LLM stream [sync-no-chunk-step] interrupted unexpectedly" in m
         ]
-        assert len(chunk_logs) == 2
-        assert len(failure_logs) == 1
-        assert "2 chunk(s) received" in failure_logs[0]
+        assert len(interrupted_logs) == 1
+        assert "before any chunk arrived" in interrupted_logs[0]
+        assert not any("LLM stream started [sync-no-chunk-step]" in m for m in messages)
 
 
 class TestCacheControlStripping:

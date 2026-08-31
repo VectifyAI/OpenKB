@@ -414,33 +414,72 @@ def _merge_stream_chunks(chunks: list, messages: list[dict]):
     return litellm.stream_chunk_builder(chunks, messages=messages)
 
 
-def _log_chunk_timing(
-    step_name: str, chunk_number: int, t0: float, last_t: float, now: float
-) -> None:
-    """Debug-log arrival timing for one streamed chunk.
+def _log_stream_start(step_name: str, t0: float, first_chunk_t: float) -> None:
+    """Debug-log the time-to-first-chunk (TTFT) once a stream's first chunk arrives.
 
-    Run with ``openkb -v`` to see, per LLM call, how long the first chunk took
-    (time-to-first-token) and the gap to each subsequent chunk. If chunks do
-    arrive before a timeout, that shows the proxy/gateway is forwarding the
-    stream; if no chunk is ever logged before a timeout, the instrumentation
-    narrows the problem to a no-first-byte case (e.g. slow TTFT or an
-    intermediary buffering the response).
+    Marks the start of a "chunk phase" in the log. The counterpart is
+    :func:`_log_stream_end` (clean finish) or :func:`_log_stream_interrupted`
+    (mid-stream failure) — together these replace a debug line per chunk
+    (which used to drown out the rest of the log on a long response, e.g.
+    hundreds of lines for one LLM call) with exactly one line at the start
+    and exactly one more at the end/interruption.
     """
     logger.debug(
-        "LLM stream chunk [%s] #%d after %.2fs total (+%.2fs since previous)",
+        "LLM stream started [%s]: first chunk after %.2fs",
         step_name,
-        chunk_number,
+        first_chunk_t - t0,
+    )
+
+
+def _log_stream_end(step_name: str, chunk_count: int, t0: float, last_chunk_t: float) -> None:
+    """Debug-log a stream's clean completion: total chunk count and elapsed time."""
+    logger.debug(
+        "LLM stream finished [%s]: %d chunk(s), last chunk after %.2fs total",
+        step_name,
+        chunk_count,
+        last_chunk_t - t0,
+    )
+
+
+def _log_stream_interrupted(
+    step_name: str, chunk_count: int, t0: float, last_chunk_t: float
+) -> None:
+    """Debug-log a stream that raised mid-iteration, right before it is re-raised.
+
+    ``chunk_count`` is how many chunks were successfully received before the
+    failure (0 if the very first chunk never arrived). The exception itself
+    (with traceback) is attached via ``exc_info=True`` so the failure and the
+    chunk-phase summary land in a single log record.
+    """
+    now = time.time()
+    if chunk_count == 0:
+        logger.debug(
+            "LLM stream [%s] interrupted unexpectedly before any chunk arrived (%.2fs total)",
+            step_name,
+            now - t0,
+            exc_info=True,
+        )
+        return
+    logger.debug(
+        "LLM stream [%s] interrupted unexpectedly after chunk %d "
+        "(last chunk after %.2fs, failure after %.2fs total)",
+        step_name,
+        chunk_count,
+        last_chunk_t - t0,
         now - t0,
-        now - last_t,
+        exc_info=True,
     )
 
 
 def _consume_stream(stream, step_name: str, t0: float) -> list:
-    """Collect a sync LiteLLM stream into a list, logging per-chunk timing.
+    """Collect a sync LiteLLM stream into a list, debug-logging the chunk phase.
 
-    A mid-stream exception (e.g. the gateway idle-timeout firing) propagates
-    after logging how many chunks arrived and when, so callers still see a
-    complete failure — no partial buffer is ever returned.
+    Logs exactly one line when the first chunk arrives (time-to-first-token)
+    and exactly one more line when the stream ends — either
+    :func:`_log_stream_end` on a clean finish or :func:`_log_stream_interrupted`
+    if it raises mid-iteration. A mid-stream exception (e.g. the gateway
+    idle-timeout firing) propagates after being logged, so callers still see
+    a complete failure — no partial buffer is ever returned.
     """
     if not logger.isEnabledFor(logging.DEBUG):
         return list(stream)
@@ -450,26 +489,22 @@ def _consume_stream(stream, step_name: str, t0: float) -> list:
     try:
         for chunk in stream:
             now = time.time()
-            _log_chunk_timing(step_name, len(chunks) + 1, t0, last_t, now)
+            if not chunks:
+                _log_stream_start(step_name, t0, now)
             chunks.append(chunk)
             last_t = now
     except Exception:
-        logger.debug(
-            "LLM stream [%s] failed after %.2fs with %d chunk(s) received",
-            step_name,
-            time.time() - t0,
-            len(chunks),
-            exc_info=True,
-        )
+        _log_stream_interrupted(step_name, len(chunks), t0, last_t)
         raise
+    _log_stream_end(step_name, len(chunks), t0, last_t)
     return chunks
 
 
 async def _consume_stream_async(stream, step_name: str, t0: float) -> list:
-    """Collect an async LiteLLM stream into a list, logging per-chunk timing.
+    """Collect an async LiteLLM stream into a list, debug-logging the chunk phase.
 
-    Mirrors :func:`_consume_stream`, including the no-partial-buffer invariant
-    on failure.
+    Mirrors :func:`_consume_stream`, including the start/end-or-interrupted
+    logging and the no-partial-buffer invariant on failure.
     """
     if not logger.isEnabledFor(logging.DEBUG):
         return [chunk async for chunk in stream]
@@ -479,18 +514,14 @@ async def _consume_stream_async(stream, step_name: str, t0: float) -> list:
     try:
         async for chunk in stream:
             now = time.time()
-            _log_chunk_timing(step_name, len(chunks) + 1, t0, last_t, now)
+            if not chunks:
+                _log_stream_start(step_name, t0, now)
             chunks.append(chunk)
             last_t = now
     except Exception:
-        logger.debug(
-            "LLM stream [%s] failed after %.2fs with %d chunk(s) received",
-            step_name,
-            time.time() - t0,
-            len(chunks),
-            exc_info=True,
-        )
+        _log_stream_interrupted(step_name, len(chunks), t0, last_t)
         raise
+    _log_stream_end(step_name, len(chunks), t0, last_t)
     return chunks
 
 
