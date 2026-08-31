@@ -28,16 +28,19 @@ keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "age
 # All dependencies are pinned exactly (supply-chain caution — e.g. the
 # litellm package-poisoning incident). Bump deliberately after vetting
 # each release.
-# litellm 1.87.2 fixes the chatgpt/* (ChatGPT subscription) provider
-# returning empty Responses output (BerriAI/litellm#25429) and
-# auto-injects GitHub Copilot IDE-auth headers.
+# litellm 1.87.2 was yanked from PyPI (no longer installable — see #238),
+# so this pins to 1.98.0, the latest stable release at the time of the
+# bump. Verified against openai-agents 0.17.3 / openai 2.44.0 below:
+# litellm 1.98.0 requires openai>=2.20.0,<3.0.0, so the existing
+# openai==2.44.0 pin (kept below 2.45 for openai-agents 0.17.3
+# compatibility, see #187) remains satisfied.
 dependencies = [
     "pageindex==0.3.0.dev3",
     "markitdown[docx,pptx,xlsx,xls]==0.1.5",
     "trafilatura==2.0.0",
     "click==8.4.0",
     "watchdog==6.0.0",
-    "litellm==1.87.2",
+    "litellm==1.98.0",
     "openai-agents==0.17.3",
     # openai 2.45.0 added a required `cache_write_tokens` field to
     # InputTokensDetails that openai-agents 0.17.3 does not set, crashing
