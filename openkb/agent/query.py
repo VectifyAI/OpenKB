@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
+from openkb.agent.model_compat import with_chat_completions_compat
 from openkb.agent.tools import (
     artifact_event_from_write,
     get_wiki_page_content,
@@ -159,10 +160,11 @@ async def iter_agent_response_events(
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
     from openai.types.responses import ResponseTextDeltaEvent
 
-    result = (
-        Runner.run_streamed(agent, input_data, max_turns=max_turns, run_config=run_config)
-        if run_config
-        else Runner.run_streamed(agent, input_data, max_turns=max_turns)
+    result = Runner.run_streamed(
+        agent,
+        input_data,
+        max_turns=max_turns,
+        run_config=with_chat_completions_compat(run_config),
     )
     collected: list[str] = []
     pending_calls: dict[str, tuple[str, str]] = {}
@@ -387,10 +389,11 @@ async def run_query(
     agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
 
     if not stream:
-        result = (
-            await Runner.run(agent, question, max_turns=MAX_TURNS, run_config=run_config)
-            if run_config
-            else await Runner.run(agent, question, max_turns=MAX_TURNS)
+        result = await Runner.run(
+            agent,
+            question,
+            max_turns=MAX_TURNS,
+            run_config=with_chat_completions_compat(run_config),
         )
         return result.final_output or ""
 
@@ -425,10 +428,11 @@ async def run_query(
     live: Live | None = None
     last_was_text = False
     need_blank_before_text = False
-    result = (
-        Runner.run_streamed(agent, question, max_turns=MAX_TURNS, run_config=run_config)
-        if run_config
-        else Runner.run_streamed(agent, question, max_turns=MAX_TURNS)
+    result = Runner.run_streamed(
+        agent,
+        question,
+        max_turns=MAX_TURNS,
+        run_config=with_chat_completions_compat(run_config),
     )
     collected: list[str] = []
     segment: list[str] = []
