@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 from agents import Runner, function_tool
 
+from openkb.agent.model_compat import with_chat_completions_compat
 from openkb.agent.query import build_query_agent, build_run_config_from_bundle
 from openkb.agent.skills import _parse_frontmatter, scan_local_skills
 from openkb.agent.tools import read_kb_file, write_kb_file
@@ -190,15 +191,17 @@ async def run_skill(
 
     # Per-KB credential isolation: when a bundle is supplied (REST path) the
     # RunConfig carries a dedicated LitellmModel with this KB's api_key/base_url,
-    # overriding the process-global provider for this run only. When bundle is
-    # None (CLI path) build_run_config_from_bundle returns None and the call is
-    # byte-identical to the pre-bundle behavior (no run_config kwarg passed).
+    # overriding the process-global provider for this run only. The compatibility
+    # helper preserves that config and adapts image tool outputs for Chat
+    # Completions; without a bundle it creates the minimal compatible config.
     run_config = build_run_config_from_bundle(model, bundle)
     try:
-        if run_config:
-            await Runner.run(agent, user_seed, max_turns=max_turns, run_config=run_config)
-        else:
-            await Runner.run(agent, user_seed, max_turns=max_turns)
+        await Runner.run(
+            agent,
+            user_seed,
+            max_turns=max_turns,
+            run_config=with_chat_completions_compat(run_config),
+        )
     except MaxTurnsExceeded as exc:
         raise RuntimeError(
             f"Skill {skill_name!r} hit the {max_turns}-step cap before "

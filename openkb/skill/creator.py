@@ -20,6 +20,7 @@ from pathlib import Path
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 from agents.model_settings import ModelSettings
 
+from openkb.agent.model_compat import with_chat_completions_compat
 from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.prompts import load_prompt
 from openkb.schema import get_agents_md
@@ -228,17 +229,19 @@ async def run_skill_create(
     # Per-KB credential isolation: when a bundle is supplied (REST path) the
     # RunConfig carries a dedicated LitellmModel with this KB's api_key/base_url,
     # overriding the process-global provider for this run only. When bundle is
-    # None (CLI path) build_run_config_from_bundle returns None and the call is
-    # byte-identical to the pre-bundle behavior (no run_config kwarg passed).
+    # None (CLI path) build_run_config_from_bundle returns None, so the shared
+    # Chat Completions image compatibility config is used instead.
     # Lazy import mirrors this module's convention of keeping query imports local.
     from openkb.agent.query import build_run_config_from_bundle
 
     run_config = build_run_config_from_bundle(model, bundle)
     try:
-        if run_config:
-            await Runner.run(agent, seed, max_turns=MAX_TURNS, run_config=run_config)
-        else:
-            await Runner.run(agent, seed, max_turns=MAX_TURNS)
+        await Runner.run(
+            agent,
+            seed,
+            max_turns=MAX_TURNS,
+            run_config=with_chat_completions_compat(run_config),
+        )
     except MaxTurnsExceeded as exc:
         raise RuntimeError(
             f"Skill compilation hit the {MAX_TURNS}-step cap before finishing. "

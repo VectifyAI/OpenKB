@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from openkb.agent.model_compat import adapt_image_tool_outputs_for_chat_completions
 from openkb.agent.skill_runner import (
     MAX_TURNS,
     SkillNotFoundError,
@@ -103,6 +104,7 @@ async def test_run_skill_loads_body_into_instructions(tmp_path: Path):
     async def fake_runner_run(agent, seed, **kw):
         captured["instructions"] = agent.instructions
         captured["tools"] = [getattr(t, "name", "?") for t in agent.tools]
+        captured["run_config"] = kw["run_config"]
         return MagicMock()
 
     with patch("openkb.agent.skill_runner.Runner.run", new=fake_runner_run):
@@ -120,6 +122,10 @@ async def test_run_skill_loads_body_into_instructions(tmp_path: Path):
     # The skill-runner's two distinguishing tools are wired in.
     assert "write_file" in captured["tools"]
     assert "read_output_or_skill_file" in captured["tools"]
+    assert (
+        captured["run_config"].call_model_input_filter
+        is adapt_image_tool_outputs_for_chat_completions
+    )
     # Return shape
     assert isinstance(result, SkillRunResult)
     assert result.skill_name == "marker-skill"

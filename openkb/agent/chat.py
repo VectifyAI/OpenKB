@@ -24,6 +24,7 @@ from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
+from openkb.agent.model_compat import with_chat_completions_compat
 from openkb.agent.query import (
     MAX_TURNS,
     build_chat_agent,
@@ -354,7 +355,12 @@ async def _run_turn(
 
     new_input = session.history + [{"role": "user", "content": user_input}]
 
-    result = Runner.run_streamed(agent, new_input, max_turns=MAX_TURNS)
+    result = Runner.run_streamed(
+        agent,
+        new_input,
+        max_turns=MAX_TURNS,
+        run_config=with_chat_completions_compat(None),
+    )
 
     print()
     collected: list[str] = []
