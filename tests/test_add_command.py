@@ -284,6 +284,30 @@ class TestAddCommand:
         mock_add.assert_called_once()
         assert mock_add.call_args.args[0].name == "a.md"
 
+    def test_add_directory_prints_summary_and_cleans_empty_dirs(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / ".openkb" / "config.yaml").write_text(
+            "model: gpt-4o-mini\nauto_delete_added_files: true\n", encoding="utf-8"
+        )
+        docs_dir = tmp_path / "docs"
+        sub_dir = docs_dir / "sub"
+        sub_dir.mkdir(parents=True)
+        doc = sub_dir / "a.md"
+        doc.write_text("# A")
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli.add_single_file", return_value="added"),
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
+            result = runner.invoke(cli, ["add", str(docs_dir)])
+            assert not doc.exists()
+            assert not sub_dir.exists()
+            assert (
+                "Summary: Added: 1, Skipped: 0, Failed: 0, Deleted: 1, Empty dirs cleaned: 1"
+                in result.output
+            )
+
     def test_add_unsupported_extension(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         doc = tmp_path / "file.xyz"
@@ -448,12 +472,61 @@ class TestAddCommand:
             mock_imp.assert_not_called()
             mock_add.assert_not_called()
 
-    def test_add_requires_path_or_cloud(self, tmp_path):
+    def test_add_no_path_processes_raw_dir_by_default(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / "raw" / "a.md").write_text("# A")
+        (kb_dir / "raw" / "b.txt").write_text("B content")
+        (kb_dir / "raw" / "ignore.xyz").write_text("skip me")
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli.add_single_file", return_value="added") as mock_add,
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
+            result = runner.invoke(cli, ["add"])
+            assert mock_add.call_count == 2
+            called_names = {call.args[0].name for call in mock_add.call_args_list}
+            assert called_names == {"a.md", "b.txt"}
+            assert "Summary: Added: 2, Skipped: 0, Failed: 0, Deleted: 0" in result.output
+
+    def test_add_no_path_empty_raw_dir_reports_no_files(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         runner = CliRunner()
         with patch("openkb.cli._find_kb_dir", return_value=kb_dir):
             result = runner.invoke(cli, ["add"])
-            assert "Provide a PATH" in result.output
+            assert "No supported files found" in result.output
+
+    def test_add_no_path_no_cloud_missing_raw_dir_errors(self, tmp_path):
+        # KB without a raw/ directory (e.g. deleted by the user).
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")
+        (openkb_dir / "hashes.json").write_text(json.dumps({}))
+
+        runner = CliRunner()
+        with patch("openkb.cli._find_kb_dir", return_value=tmp_path):
+            result = runner.invoke(cli, ["add"])
+            assert "No raw/ directory found" in result.output
+
+    def test_add_no_path_auto_cleanup_deletes_files_and_empty_dirs(self, tmp_path):
+        kb_dir = self._setup_kb(tmp_path)
+        (kb_dir / ".openkb" / "config.yaml").write_text(
+            "model: gpt-4o-mini\nauto_delete_added_files: true\n", encoding="utf-8"
+        )
+        sub_dir = kb_dir / "raw" / "sub"
+        sub_dir.mkdir()
+        doc = sub_dir / "a.md"
+        doc.write_text("# A")
+
+        runner = CliRunner()
+        with (
+            patch("openkb.cli.add_single_file", return_value="added"),
+            patch("openkb.cli._find_kb_dir", return_value=kb_dir),
+        ):
+            result = runner.invoke(cli, ["add"])
+            assert not doc.exists()
+            assert not sub_dir.exists()
+            assert "Empty dirs cleaned: 1" in result.output
 
 
 class TestImportFromPageindexCloud:
