@@ -171,7 +171,7 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | Command                                                      | Description                                                                             |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | `openkb init`                                                | Initialize a new knowledge base (interactive)                                           |
-| <code>openkb&nbsp;add&nbsp;&lt;file_or_dir_or_URL&gt;</code> | Add files, directories, or URLs and compile to wiki (URL content type is auto-detected) |
+| <code>openkb&nbsp;add&nbsp;[file_or_dir_or_URL]</code>       | Add files, directories, or URLs and compile to wiki (URL content type is auto-detected); omit the argument to process `raw/` recursively with a summary |
 | `openkb list`                                                | List indexed documents and concepts                                                     |
 | `openkb status`                                              | Show knowledge base stats                                                               |
 | `openkb watch`                                               | Watch `raw/` and auto-compile new files                                                 |

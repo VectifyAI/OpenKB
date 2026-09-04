@@ -452,6 +452,59 @@ def add_single_file(
         return _add_single_file_locked(file_path, kb_dir, stage=stage, bundle=bundle)
 
 
+def _delete_if_auto_cleanup_enabled(
+    file_path: Path, status: Literal["added", "skipped", "failed"], config: dict
+) -> bool:
+    """Delete file if auto_delete_added_files is enabled and ingestion succeeded/skipped.
+
+    Deletes on both "added" (successful ingestion) and "skipped" (duplicate already
+    in KB) to keep raw/ directory clean. Preserves files on "failed" to allow retries.
+
+    Args:
+        file_path: Path to the file to potentially delete.
+        status: Result status from add_single_file ("added", "skipped", or "failed").
+        config: Configuration dict (typically from resolve_effective_config).
+
+    Returns:
+        True if file was deleted, False otherwise.
+    """
+    if status in ("added", "skipped") and config.get("auto_delete_added_files", False):
+        try:
+            file_path.unlink(missing_ok=True)
+            return True
+        except Exception as exc:
+            logger.warning(f"Failed to delete {file_path.name}: {exc}")
+            return False
+    return False
+
+
+def _cleanup_empty_directories(start_dir: Path) -> int:
+    """Recursively delete empty directories under start_dir.
+
+    Walks from deepest subdirectories up, deleting directories that become
+    empty after file cleanup.
+
+    Args:
+        start_dir: Root directory to clean up (e.g., kb_dir / "raw").
+
+    Returns:
+        Number of directories deleted.
+    """
+    deleted_count = 0
+    try:
+        for directory in sorted(start_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if directory.is_dir() and directory != start_dir:
+                try:
+                    if not list(directory.iterdir()):
+                        directory.rmdir()
+                        deleted_count += 1
+                except OSError:
+                    pass
+    except Exception as exc:
+        logger.warning(f"Error during directory cleanup: {exc}")
+    return deleted_count
+
+
 def _add_single_file_locked(
     file_path: Path, kb_dir: Path, *, stage: bool = True, bundle=None
 ) -> Literal["added", "skipped", "failed"]:
@@ -1083,9 +1136,20 @@ def add(ctx, path, from_pageindex_cloud):
     magic-byte sniff) are saved as ``.pdf``; HTML responses are run
     through trafilatura's main-content extractor and saved as ``.md``.
 
+    If PATH is omitted (and --from-pageindex-cloud is not used), the KB's
+    ``raw/`` directory is used instead: all supported files under it are
+    walked recursively and added, an aggregated summary (added/skipped/
+    failed/deleted counts) is printed at the end, and — if
+    ``auto_delete_added_files`` is enabled — now-empty subdirectories under
+    ``raw/`` are cleaned up.
+
     Alternatively, pass --from-pageindex-cloud <DOC_ID> to import a document
     that is already indexed in PageIndex Cloud, with no local file. Requires
     the PAGEINDEX_API_KEY environment variable.
+
+    If ``auto_delete_added_files`` is enabled in config.yaml, files are
+    automatically deleted after ingestion (both on successful addition and
+    on skip/duplicate).
     """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
@@ -1102,33 +1166,41 @@ def add(ctx, path, from_pageindex_cloud):
             ctx.exit(1)
         return
 
+    config = resolve_effective_config(kb_dir)[0]
+
     if path is None:
-        click.echo("Provide a PATH or use --from-pageindex-cloud <DOC_ID>.")
-        return
-
-    # URL ingest: download into raw/ first, then call add_single_file explicitly.
-    # Keep staged conversion enabled so converted source artifacts do not touch
-    # the live KB before the mutation snapshot exists. The tri-state outcome
-    # still lets us clean up the just-downloaded raw file on dedup.
-    from openkb.url_ingest import looks_like_url, fetch_url_to_raw
-
-    if looks_like_url(path):
-        fetched = fetch_url_to_raw(path, kb_dir)
-        if fetched is None:
+        # No PATH given: default to the KB's raw/ directory (mirrors the
+        # former standalone `add-all` command).
+        target = kb_dir / "raw"
+        if not target.is_dir():
+            click.echo(f"No raw/ directory found at {target}")
             return
-        outcome = add_single_file(fetched, kb_dir)
-        # Only clean up on dedup-skip. On "failed" we keep the file so
-        # the user can retry (e.g. transient LLM error during compile)
-        # without re-downloading — and so they don't lose data when
-        # indexing has already succeeded but compilation didn't.
-        if outcome == "skipped":
-            fetched.unlink(missing_ok=True)
-        return
+    else:
+        # URL ingest: download into raw/ first, then call add_single_file explicitly.
+        # Keep staged conversion enabled so converted source artifacts do not touch
+        # the live KB before the mutation snapshot exists. The tri-state outcome
+        # still lets us clean up the just-downloaded raw file on dedup.
+        from openkb.url_ingest import looks_like_url, fetch_url_to_raw
 
-    target = Path(path)
-    if not target.exists():
-        click.echo(f"Path does not exist: {path}")
-        return
+        if looks_like_url(path):
+            fetched = fetch_url_to_raw(path, kb_dir)
+            if fetched is None:
+                return
+            outcome = add_single_file(fetched, kb_dir)
+            # Only clean up on dedup-skip. On "failed" we keep the file so
+            # the user can retry (e.g. transient LLM error during compile)
+            # without re-downloading — and so they don't lose data when
+            # indexing has already succeeded but compilation didn't.
+            if outcome == "skipped":
+                fetched.unlink(missing_ok=True)
+            else:
+                _delete_if_auto_cleanup_enabled(fetched, outcome, config)
+            return
+
+        target = Path(path)
+        if not target.exists():
+            click.echo(f"Path does not exist: {path}")
+            return
 
     if target.is_dir():
         files = [
@@ -1137,13 +1209,30 @@ def add(ctx, path, from_pageindex_cloud):
             if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
         ]
         if not files:
-            click.echo(f"No supported files found in {path}.")
+            click.echo(f"No supported files found in {target}.")
             return
         total = len(files)
-        click.echo(f"Found {total} supported file(s) in {path}.")
+        added = skipped = failed = deleted = dirs_deleted = 0
+        click.echo(f"Found {total} supported file(s) in {target}.")
         for i, f in enumerate(files, 1):
             click.echo(f"\n[{i}/{total}] ", nl=False)
-            add_single_file(f, kb_dir)
+            outcome = add_single_file(f, kb_dir)
+            if outcome == "added":
+                added += 1
+            elif outcome == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+            if _delete_if_auto_cleanup_enabled(f, outcome, config):
+                deleted += 1
+
+        if config.get("auto_delete_added_files", False):
+            dirs_deleted = _cleanup_empty_directories(target)
+
+        summary = f"Added: {added}, Skipped: {skipped}, Failed: {failed}, Deleted: {deleted}"
+        if dirs_deleted > 0:
+            summary += f", Empty dirs cleaned: {dirs_deleted}"
+        click.echo(f"\n\nSummary: {summary}")
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(
@@ -1151,7 +1240,8 @@ def add(ctx, path, from_pageindex_cloud):
                 f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
             )
             return
-        add_single_file(target, kb_dir)
+        outcome = add_single_file(target, kb_dir)
+        _delete_if_auto_cleanup_enabled(target, outcome, config)
 
 
 def _stream_to_tty() -> bool:

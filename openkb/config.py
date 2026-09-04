@@ -36,6 +36,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
     # effective value on read.
     "entity_types": list(DEFAULT_ENTITY_TYPES),
+    "auto_delete_added_files": False,
 }
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
