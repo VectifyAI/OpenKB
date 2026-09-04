@@ -2140,9 +2140,12 @@ class TestInsertMode:
 
     @staticmethod
     def _flaky_once_acompletion():
-        """Fails the first time "concept-b" is generated, succeeds on any
-        later call — simulates a transient error that clears up by the time
-        the end-of-first-pass sweep retries it."""
+        """Fails every "concept-b" call during the first pass — exhausting
+        all 3 of _llm_call_async's own internal retry attempts — then
+        succeeds once the sweep starts a fresh _llm_call_async invocation
+        (its own attempt 4+). This distinguishes a failure that only clears
+        up at the sweep tier from one _llm_call_async's own retry would
+        already have absorbed."""
         attempts: dict[str, int] = {}
 
         def _call(*args, **kwargs):
@@ -2150,7 +2153,7 @@ class TestInsertMode:
             last_content = messages[-1]["content"] if messages else ""
             if "concept-b" in last_content:
                 attempts["concept-b"] = attempts.get("concept-b", 0) + 1
-                if attempts["concept-b"] == 1:
+                if attempts["concept-b"] <= 3:
                     raise RuntimeError("boom: transient concept-b failure")
             mock_resp = MagicMock()
             mock_resp.choices = [MagicMock()]
@@ -2159,7 +2162,7 @@ class TestInsertMode:
             )
             mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
             mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [mock_resp]
 
         return _call
 
@@ -2271,9 +2274,11 @@ class TestInsertMode:
 
     @pytest.mark.asyncio
     async def test_normal_mode_sweep_recovers_transient_failure(self, tmp_path):
-        """A concept that fails its first attempt but succeeds on retry gets
-        picked up by the end-of-first-pass sweep (a tier above the low-level
-        _llm_call retry) and ends up written, with no exception raised."""
+        """A concept that exhausts _llm_call_async's own 3 internal retry
+        attempts in the first pass but succeeds once the sweep starts a
+        fresh call gets picked up by the end-of-first-pass sweep (a tier
+        above the low-level _llm_call retry) and ends up written, with no
+        exception raised."""
         wiki = self._setup_wiki(tmp_path)
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
@@ -2296,9 +2301,9 @@ class TestInsertMode:
 
     @pytest.mark.asyncio
     async def test_fail_fast_does_not_get_a_sweep_retry(self, tmp_path):
-        """insert_mode="fail-fast" aborts on the first failure without
+        """insert_mode="fail-fast" aborts on the first pass's failure without
         waiting for the rest of the batch, so it never reaches the sweep —
-        even a failure that would have cleared up on retry still aborts."""
+        even a failure that would have cleared up there still aborts."""
         from openkb.agent.compiler import ConceptCompilationError
 
         wiki = self._setup_wiki(tmp_path)
