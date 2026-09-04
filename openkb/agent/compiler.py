@@ -397,6 +397,134 @@ class TruncatedResponseError(Exception):
     treat truncation as a failure (so a partial page is skipped, not written)."""
 
 
+def _merge_stream_chunks(chunks: list, messages: list[dict]):
+    """Merge streamed LLM chunks back into a single, non-streaming response.
+
+    Genuine LiteLLM stream chunks only ever carry a ``.delta`` (never a
+    ``.message``), so a real multi-chunk stream is merged via LiteLLM's own
+    :func:`litellm.stream_chunk_builder`. A single chunk that already looks
+    like a complete, non-streaming ``ModelResponse`` (exposing ``.message``)
+    is used as-is — there's nothing left to merge, and it lets test doubles
+    fake a one-shot response without simulating LiteLLM's internal delta
+    format.
+    """
+    choices = getattr(chunks[0], "choices", None) or []
+    if len(chunks) == 1 and choices and hasattr(choices[0], "message"):
+        return chunks[0]
+    return litellm.stream_chunk_builder(chunks, messages=messages)
+
+
+def _log_stream_start(step_name: str, t0: float, first_chunk_t: float) -> None:
+    """Debug-log the time-to-first-chunk (TTFT) once a stream's first chunk arrives.
+
+    Marks the start of a "chunk phase" in the log. The counterpart is
+    :func:`_log_stream_end` (clean finish) or :func:`_log_stream_interrupted`
+    (mid-stream failure) — together these replace a debug line per chunk
+    (which used to drown out the rest of the log on a long response, e.g.
+    hundreds of lines for one LLM call) with exactly one line at the start
+    and exactly one more at the end/interruption.
+    """
+    logger.debug(
+        "LLM stream started [%s]: first chunk after %.2fs",
+        step_name,
+        first_chunk_t - t0,
+    )
+
+
+def _log_stream_end(step_name: str, chunk_count: int, t0: float, last_chunk_t: float) -> None:
+    """Debug-log a stream's clean completion: total chunk count and elapsed time."""
+    logger.debug(
+        "LLM stream finished [%s]: %d chunk(s), last chunk after %.2fs total",
+        step_name,
+        chunk_count,
+        last_chunk_t - t0,
+    )
+
+
+def _log_stream_interrupted(
+    step_name: str, chunk_count: int, t0: float, last_chunk_t: float
+) -> None:
+    """Debug-log a stream that raised mid-iteration, right before it is re-raised.
+
+    ``chunk_count`` is how many chunks were successfully received before the
+    failure (0 if the very first chunk never arrived). The exception itself
+    (with traceback) is attached via ``exc_info=True`` so the failure and the
+    chunk-phase summary land in a single log record.
+    """
+    now = time.time()
+    if chunk_count == 0:
+        logger.debug(
+            "LLM stream [%s] interrupted unexpectedly before any chunk arrived (%.2fs total)",
+            step_name,
+            now - t0,
+            exc_info=True,
+        )
+        return
+    logger.debug(
+        "LLM stream [%s] interrupted unexpectedly after chunk %d "
+        "(last chunk after %.2fs, failure after %.2fs total)",
+        step_name,
+        chunk_count,
+        last_chunk_t - t0,
+        now - t0,
+        exc_info=True,
+    )
+
+
+def _consume_stream(stream, step_name: str, t0: float) -> list:
+    """Collect a sync LiteLLM stream into a list, debug-logging the chunk phase.
+
+    Logs exactly one line when the first chunk arrives (time-to-first-token)
+    and exactly one more line when the stream ends — either
+    :func:`_log_stream_end` on a clean finish or :func:`_log_stream_interrupted`
+    if it raises mid-iteration. A mid-stream exception (e.g. the gateway
+    idle-timeout firing) propagates after being logged, so callers still see
+    a complete failure — no partial buffer is ever returned.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return list(stream)
+
+    chunks: list = []
+    last_t = t0
+    try:
+        for chunk in stream:
+            now = time.time()
+            if not chunks:
+                _log_stream_start(step_name, t0, now)
+            chunks.append(chunk)
+            last_t = now
+    except Exception:
+        _log_stream_interrupted(step_name, len(chunks), t0, last_t)
+        raise
+    _log_stream_end(step_name, len(chunks), t0, last_t)
+    return chunks
+
+
+async def _consume_stream_async(stream, step_name: str, t0: float) -> list:
+    """Collect an async LiteLLM stream into a list, debug-logging the chunk phase.
+
+    Mirrors :func:`_consume_stream`, including the start/end-or-interrupted
+    logging and the no-partial-buffer invariant on failure.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return [chunk async for chunk in stream]
+
+    chunks: list = []
+    last_t = t0
+    try:
+        async for chunk in stream:
+            now = time.time()
+            if not chunks:
+                _log_stream_start(step_name, t0, now)
+            chunks.append(chunk)
+            last_t = now
+    except Exception:
+        _log_stream_interrupted(step_name, len(chunks), t0, last_t)
+        raise
+    _log_stream_end(step_name, len(chunks), t0, last_t)
+    return chunks
+
+
 def _llm_call(
     model: str,
     messages: list[dict],
@@ -406,7 +534,15 @@ def _llm_call(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Single LLM call with animated progress and debug logging."""
+    """Single LLM call with animated progress and debug logging.
+
+    Uses ``stream=True``: some corporate LLM gateways enforce an idle
+    timeout on buffered (non-streaming) requests, which a long-running
+    completion can hit before the response is ever sent. Streaming keeps
+    bytes flowing over the connection so that timeout never fires; the
+    chunks are merged back into a single response via
+    :func:`_merge_stream_chunks` so callers see the same shape as before.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -417,6 +553,7 @@ def _llm_call(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    kwargs.setdefault("stream_options", {"include_usage": True})
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -425,7 +562,29 @@ def _llm_call(
     spinner.start()
     t0 = time.time()
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
+    # Fixed 2 extra attempts for transient stream/LLM errors — not a tunable
+    # knob, just a resilience floor. The concept/entity sweep in
+    # _compile_concepts is the next retry tier above this one.
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            stream = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
+            chunks = _consume_stream(stream, step_name, t0)
+            if not chunks:
+                raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+            response = _merge_stream_chunks(chunks, messages)
+            break
+        except Exception as exc:
+            if attempt == attempts - 1:
+                spinner.stop("failed")
+                raise
+            logger.warning(
+                "LLM [%s] attempt %d/%d failed: %s; retrying...",
+                step_name,
+                attempt + 1,
+                attempts,
+                exc,
+            )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -449,7 +608,10 @@ async def _llm_call_async(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Async LLM call with timing output and debug logging."""
+    """Async LLM call with timing output and debug logging.
+
+    See ``_llm_call`` for why ``stream=True`` is used.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -460,13 +622,40 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    kwargs.setdefault("stream_options", {"include_usage": True})
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
 
     t0 = time.time()
 
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    # Fixed 2 extra attempts for transient stream/LLM errors — not a tunable
+    # knob, just a resilience floor. The concept/entity sweep in
+    # _compile_concepts is the next retry tier above this one.
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            stream = await litellm.acompletion(
+                model=model, messages=messages, stream=True, **kwargs
+            )
+            if hasattr(stream, "__aiter__"):
+                chunks = await _consume_stream_async(stream, step_name, t0)
+            else:
+                chunks = _consume_stream(stream, step_name, t0)
+            if not chunks:
+                raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+            response = _merge_stream_chunks(chunks, messages)
+            break
+        except Exception as exc:
+            if attempt == attempts - 1:
+                raise
+            logger.warning(
+                "LLM [%s] attempt %d/%d failed: %s; retrying...",
+                step_name,
+                attempt + 1,
+                attempts,
+                exc,
+            )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
