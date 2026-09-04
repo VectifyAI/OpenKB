@@ -2770,8 +2770,12 @@ class TestLLMStreamTimingDebugLogging:
             patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
             patch("openkb.agent.compiler.litellm") as mock_litellm,
         ):
+            # Fresh generator per call: _llm_call now retries 3 times total
+            # (fixed resilience floor), and a real litellm.completion() call
+            # returns an independent stream every time, unlike reusing one
+            # already-exhausted mock generator across attempts.
             mock_litellm.completion = MagicMock(
-                return_value=_stream_then_raise(["chunk-1", "chunk-2"], error)
+                side_effect=lambda *a, **k: _stream_then_raise(["chunk-1", "chunk-2"], error)
             )
 
             with pytest.raises(RuntimeError, match="stream exploded"):
@@ -2782,11 +2786,11 @@ class TestLLMStreamTimingDebugLogging:
         interrupted_logs = [
             m for m in messages if "LLM stream [sync-fail-step] interrupted unexpectedly" in m
         ]
-        # Exactly one start line and one interruption line, no end-of-stream line,
-        # and no per-chunk lines in between.
-        assert len(start_logs) == 1
-        assert len(interrupted_logs) == 1
-        assert "after chunk 2" in interrupted_logs[0]
+        # One start + one interruption line per attempt (3 attempts total),
+        # no end-of-stream line, and no per-chunk lines in between.
+        assert len(start_logs) == 3
+        assert len(interrupted_logs) == 3
+        assert all("after chunk 2" in m for m in interrupted_logs)
         assert not any("LLM stream finished [sync-fail-step]" in m for m in messages)
         assert not any("LLM stream chunk [sync-fail-step]" in m for m in messages)
 
@@ -2797,8 +2801,10 @@ class TestLLMStreamTimingDebugLogging:
         caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
         error = RuntimeError("stream exploded")
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            # Fresh _AsyncStream per call (see the sync test above for why):
+            # _llm_call_async now retries 3 times total.
             mock_litellm.acompletion = AsyncMock(
-                return_value=_AsyncStream(
+                side_effect=lambda *a, **k: _AsyncStream(
                     ["chunk-1", "chunk-2"],
                     error=error,
                     raise_after=2,
@@ -2813,9 +2819,9 @@ class TestLLMStreamTimingDebugLogging:
         interrupted_logs = [
             m for m in messages if "LLM stream [async-fail-step] interrupted unexpectedly" in m
         ]
-        assert len(start_logs) == 1
-        assert len(interrupted_logs) == 1
-        assert "after chunk 2" in interrupted_logs[0]
+        assert len(start_logs) == 3
+        assert len(interrupted_logs) == 3
+        assert all("after chunk 2" in m for m in interrupted_logs)
         assert not any("LLM stream finished [async-fail-step]" in m for m in messages)
         assert not any("LLM stream chunk [async-fail-step]" in m for m in messages)
 
@@ -2831,7 +2837,11 @@ class TestLLMStreamTimingDebugLogging:
             patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
             patch("openkb.agent.compiler.litellm") as mock_litellm,
         ):
-            mock_litellm.completion = MagicMock(return_value=_stream_then_raise([], error))
+            # Fresh generator per call (see test_llm_call_logs_interruption_before_reraising):
+            # _llm_call now retries 3 times total.
+            mock_litellm.completion = MagicMock(
+                side_effect=lambda *a, **k: _stream_then_raise([], error)
+            )
 
             with pytest.raises(RuntimeError, match="connect timeout"):
                 _llm_call("m", [{"role": "user", "content": "hi"}], "sync-no-chunk-step")
@@ -2840,8 +2850,8 @@ class TestLLMStreamTimingDebugLogging:
         interrupted_logs = [
             m for m in messages if "LLM stream [sync-no-chunk-step] interrupted unexpectedly" in m
         ]
-        assert len(interrupted_logs) == 1
-        assert "before any chunk arrived" in interrupted_logs[0]
+        assert len(interrupted_logs) == 3
+        assert all("before any chunk arrived" in m for m in interrupted_logs)
         assert not any("LLM stream started [sync-no-chunk-step]" in m for m in messages)
 
 

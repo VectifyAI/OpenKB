@@ -562,11 +562,29 @@ def _llm_call(
     spinner.start()
     t0 = time.time()
 
-    stream = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
-    chunks = _consume_stream(stream, step_name, t0)
-    if not chunks:
-        raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
-    response = _merge_stream_chunks(chunks, messages)
+    # Fixed 2 extra attempts for transient stream/LLM errors — not a tunable
+    # knob, just a resilience floor. The concept/entity sweep in
+    # _compile_concepts is the next retry tier above this one.
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            stream = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
+            chunks = _consume_stream(stream, step_name, t0)
+            if not chunks:
+                raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+            response = _merge_stream_chunks(chunks, messages)
+            break
+        except Exception as exc:
+            if attempt == attempts - 1:
+                spinner.stop("failed")
+                raise
+            logger.warning(
+                "LLM [%s] attempt %d/%d failed: %s; retrying...",
+                step_name,
+                attempt + 1,
+                attempts,
+                exc,
+            )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -611,14 +629,33 @@ async def _llm_call_async(
 
     t0 = time.time()
 
-    stream = await litellm.acompletion(model=model, messages=messages, stream=True, **kwargs)
-    if hasattr(stream, "__aiter__"):
-        chunks = await _consume_stream_async(stream, step_name, t0)
-    else:
-        chunks = _consume_stream(stream, step_name, t0)
-    if not chunks:
-        raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
-    response = _merge_stream_chunks(chunks, messages)
+    # Fixed 2 extra attempts for transient stream/LLM errors — not a tunable
+    # knob, just a resilience floor. The concept/entity sweep in
+    # _compile_concepts is the next retry tier above this one.
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            stream = await litellm.acompletion(
+                model=model, messages=messages, stream=True, **kwargs
+            )
+            if hasattr(stream, "__aiter__"):
+                chunks = await _consume_stream_async(stream, step_name, t0)
+            else:
+                chunks = _consume_stream(stream, step_name, t0)
+            if not chunks:
+                raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+            response = _merge_stream_chunks(chunks, messages)
+            break
+        except Exception as exc:
+            if attempt == attempts - 1:
+                raise
+            logger.warning(
+                "LLM [%s] attempt %d/%d failed: %s; retrying...",
+                step_name,
+                attempt + 1,
+                attempts,
+                exc,
+            )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
