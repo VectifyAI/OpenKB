@@ -2300,6 +2300,32 @@ class TestInsertMode:
         assert (wiki / "concepts" / "concept-b.md").exists()
 
     @pytest.mark.asyncio
+    async def test_fail_at_end_sweep_recovers_transient_failure_does_not_raise(self, tmp_path):
+        """insert_mode="fail-at-end" checks for completeness only after the
+        sweep has had its chance — a failure the sweep clears up must not
+        raise ConceptCompilationError, unlike a failure that's still there
+        afterwards (see test_fail_at_end_writes_then_raises)."""
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._flaky_once_acompletion())
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+                insert_mode="fail-at-end",
+            )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+        assert (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
     async def test_fail_fast_does_not_get_a_sweep_retry(self, tmp_path):
         """insert_mode="fail-fast" aborts on the first pass's failure without
         waiting for the rest of the batch, so it never reaches the sweep —
