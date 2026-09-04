@@ -397,6 +397,19 @@ class TruncatedResponseError(Exception):
     treat truncation as a failure (so a partial page is skipped, not written)."""
 
 
+class ConceptCompilationError(Exception):
+    """Raised by ``_compile_concepts`` when ``insert_mode`` is ``"fail-fast"``
+    or ``"fail-at-end"`` and one or more planned concept/entity updates could
+    not be generated for a document (see ``openkb.config.resolve_insert_mode``).
+
+    Propagates through ``compile_short_doc``/``compile_long_doc`` up to
+    ``cli._add_single_file_locked``'s ``commit_body``, where the existing
+    mutation-snapshot rollback (``openkb.add_coordinator``) already reverts
+    every wiki/raw change for the add and reports the file as ``"failed"`` —
+    no separate rollback path is needed for strict mode.
+    """
+
+
 def _llm_call(
     model: str,
     messages: list[dict],
@@ -1590,6 +1603,27 @@ def _format_known_targets(targets: set[str]) -> str:
     return "\n".join(f"- {t}" for t in sorted(targets))
 
 
+async def _sweep_failed_generations(results: list, factories: list, kind: str) -> list:
+    """Retry, once, only the items that failed the first pass.
+
+    Not used under ``insert_mode="fail-fast"`` — that mode already aborts on
+    the first failure without waiting for the rest of the batch.
+    """
+    failed_idx = [i for i, r in enumerate(results) if isinstance(r, Exception)]
+    if not failed_idx:
+        return results
+    logger.warning(
+        "Retrying %d failed %s generation(s) after the first pass...", len(failed_idx), kind
+    )
+    retry_results = await asyncio.gather(
+        *(factories[i]() for i in failed_idx), return_exceptions=True
+    )
+    results = list(results)
+    for idx, r in zip(failed_idx, retry_results):
+        results[idx] = r
+    return results
+
+
 async def _compile_concepts(
     wiki_dir: Path,
     kb_dir: Path,
@@ -1604,6 +1638,7 @@ async def _compile_concepts(
     rewrite_summary: bool = False,
     entity_types: list[str] | None = None,
     bundle=None,
+    insert_mode: str = "normal",
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1613,6 +1648,27 @@ async def _compile_concepts(
     written to disk. When ``rewrite_summary=True`` (short-doc path), the
     summary is rewritten by the LLM after concepts are finalized so its
     wikilinks reflect the actual concept pages on disk.
+
+    ``insert_mode`` (see ``openkb.config.resolve_insert_mode``) controls what
+    happens when one or more planned concept/entity updates cannot be
+    generated:
+
+    - ``"normal"`` (default): unchanged behavior — failures are logged as
+      warnings and whatever *did* generate is written; the document as a
+      whole is still considered compiled.
+    - ``"fail-fast"``: the first concept/entity generation failure cancels
+      every other still-pending (not yet started) generation in this batch
+      and immediately raises ``ConceptCompilationError`` — nothing from this
+      batch is written.
+    - ``"fail-at-end"``: every planned concept/entity generation is attempted
+      (so every failure for this document is logged in one pass) and
+      whatever succeeded is written, same as "normal" — but
+      ``ConceptCompilationError`` is raised at the end if anything failed.
+
+    In both strict modes the raised exception is expected to propagate out of
+    ``compile_short_doc``/``compile_long_doc`` so the caller's existing
+    mutation rollback discards this add entirely (see
+    ``ConceptCompilationError``).
     """
     source_file = f"summaries/{doc_name}.md"
 
@@ -1626,6 +1682,20 @@ async def _compile_concepts(
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
     entity_briefs = _read_entity_briefs(wiki_dir)
+
+    def _maybe_raise_incomplete(reason: str) -> None:
+        """Raise ``ConceptCompilationError`` under a strict ``insert_mode``.
+
+        A no-op under ``"normal"``, matching today's silent-partial-success
+        behavior. Called from every early-return branch below plus the final
+        completeness check, so both strict modes cover the "plan came back
+        unparseable/empty" cases, not just individual concept/entity
+        generation failures.
+        """
+        if insert_mode in ("fail-fast", "fail-at-end"):
+            raise ConceptCompilationError(
+                f"insert_mode={insert_mode!r}: {doc_name!r} compiled incompletely — {reason}"
+            )
 
     # Second cache breakpoint: end of the assistant summary message. Covers
     # (system + doc + summary) for the plan call and every concept call.
@@ -1686,6 +1756,7 @@ async def _compile_concepts(
             f"no concept pages generated. See log (stderr) for details.\n"
         )
         sys.stdout.flush()
+        _maybe_raise_incomplete("concepts plan response was unparseable")
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
@@ -1706,6 +1777,7 @@ async def _compile_concepts(
             type(parsed).__name__,
             doc_name,
         )
+        _maybe_raise_incomplete("concepts plan parsed to a scalar, not a usable plan")
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
@@ -1788,6 +1860,13 @@ async def _compile_concepts(
         and not entity_update
         and not entity_related
     ):
+        # A genuinely empty plan (original_total == 0) is a complete, valid
+        # outcome for strict modes too — nothing was planned, so nothing is
+        # missing. But if items were planned and all got dropped as malformed
+        # (original_total > 0, already warned above), that's real content
+        # loss under a strict insert_mode.
+        if original_total > 0:
+            _maybe_raise_incomplete("all planned concept/entity items were dropped as malformed")
         if rewrite_summary:
             _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
@@ -1964,16 +2043,28 @@ async def _compile_concepts(
         return name, content, brief, etype_out
 
     tasks = []
-    tasks.extend(_gen_create(c) for c in create_items)
-    tasks.extend(_gen_update(c) for c in update_items)
+    tasks.extend(asyncio.create_task(_gen_create(c)) for c in create_items)
+    tasks.extend(asyncio.create_task(_gen_update(c)) for c in update_items)
+
+    # Zero-arg factories, same order as `tasks`, so a failed item can be
+    # re-run in isolation by the end-of-first-pass sweep below.
+    concept_factories = [(lambda c=c: _gen_create(c)) for c in create_items] + [
+        (lambda c=c: _gen_update(c)) for c in update_items
+    ]
 
     # --- Step 3 (entities): build the entity task list up front so it can be
     # gathered concurrently with the concept tasks below. Entity coroutines
     # return 4-arity tuples (name, content, brief, type), so their results are
     # processed in their own loop rather than mixed with the concept tuples.
+    # Wrapped in asyncio.create_task (not left as bare coroutines) so a
+    # "fail-fast" insert_mode can cancel the ones still pending below.
     entity_tasks = []
-    entity_tasks.extend(_gen_entity_create(e) for e in entity_create)
-    entity_tasks.extend(_gen_entity_update(e) for e in entity_update)
+    entity_tasks.extend(asyncio.create_task(_gen_entity_create(e)) for e in entity_create)
+    entity_tasks.extend(asyncio.create_task(_gen_entity_update(e)) for e in entity_update)
+
+    entity_factories = [(lambda e=e: _gen_entity_create(e)) for e in entity_create] + [
+        (lambda e=e: _gen_entity_update(e)) for e in entity_update
+    ]
 
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
@@ -1998,13 +2089,45 @@ async def _compile_concepts(
 
     results, entity_results = ([], [])
     if tasks or entity_tasks:
-        results, entity_results = await asyncio.gather(
-            asyncio.gather(*tasks, return_exceptions=True),
-            asyncio.gather(*entity_tasks, return_exceptions=True),
-        )
+        if insert_mode == "fail-fast":
+            # Wait only until the first exception surfaces (or everything
+            # finishes cleanly) instead of always waiting for the full batch —
+            # cancelling whatever hasn't started/finished yet saves the LLM
+            # calls that batch would have made. asyncio.wait requires Tasks
+            # (not bare coroutines), hence the create_task() wrapping above.
+            all_tasks = tasks + entity_tasks
+            done, pending = await asyncio.wait(all_tasks, return_when=asyncio.FIRST_EXCEPTION)
+            first_exc = next((t.exception() for t in done if t.exception() is not None), None)
+            if first_exc is not None:
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    # Swallow the resulting CancelledErrors; we only need the
+                    # cancellations to settle before raising below.
+                    await asyncio.gather(*pending, return_exceptions=True)
+                logger.warning("Concept/entity generation failed: %s", first_exc)
+                raise ConceptCompilationError(
+                    f"insert_mode='fail-fast': aborting compile for {doc_name!r} after a "
+                    f"concept/entity generation failure: {first_exc}"
+                ) from first_exc
+            results = [t.result() for t in tasks]
+            entity_results = [t.result() for t in entity_tasks]
+        else:
+            results, entity_results = await asyncio.gather(
+                asyncio.gather(*tasks, return_exceptions=True),
+                asyncio.gather(*entity_tasks, return_exceptions=True),
+            )
+            # One more chance for exactly the items that failed, now that the
+            # rest of the batch has run (transient conditions get real
+            # wall-clock time to clear, prompt cache is still warm). Not used
+            # under "fail-fast" — that mode already aborted above.
+            results = await _sweep_failed_generations(results, concept_factories, "concept")
+            entity_results = await _sweep_failed_generations(
+                entity_results, entity_factories, "entity"
+            )
 
+    failure_types: list[str] = []
     if tasks:
-        failure_types: list[str] = []
         for r in results:
             if isinstance(r, Exception):
                 logger.warning("Concept generation failed: %s", r)
@@ -2028,8 +2151,8 @@ async def _compile_concepts(
             )
             sys.stdout.flush()
 
+    entity_failure_types: list[str] = []
     if entity_tasks:
-        entity_failure_types: list[str] = []
         for r in entity_results:
             if isinstance(r, Exception):
                 logger.warning("Entity generation failed: %s", r)
@@ -2052,6 +2175,7 @@ async def _compile_concepts(
             sys.stdout.flush()
 
     # Strip ghost wikilinks from entity bodies and write each page.
+
     for name, page_content, brief, etype in entity_pending:
         cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
         if ghosts:
@@ -2201,6 +2325,18 @@ async def _compile_concepts(
         entity_meta=entity_meta,
     )
 
+    # "fail-fast" always raises earlier (see the gather branch above) before
+    # reaching this point, so only "fail-at-end" needs a completeness check
+    # here — everything planned was attempted (so every failure for this
+    # document is already logged above), and only now do we decide whether
+    # the document as a whole should count as failed.
+    if insert_mode == "fail-at-end" and (failure_types or entity_failure_types):
+        raise ConceptCompilationError(
+            f"insert_mode='fail-at-end': {doc_name!r} had {len(failure_types)} failed "
+            f"concept(s) and {len(entity_failure_types)} failed entity(ies) — "
+            f"{', '.join(sorted(set(failure_types + entity_failure_types))) or 'see log (stderr)'}"
+        )
+
 
 async def compile_short_doc(
     doc_name: str,
@@ -2215,11 +2351,12 @@ async def compile_short_doc(
     Step 1: Build base context A (schema + doc content), generate summary.
     Steps 2-4: Delegated to ``_compile_concepts``.
     """
-    from openkb.config import resolve_effective_config
+    from openkb.config import resolve_effective_config, resolve_insert_mode
 
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
+    insert_mode = resolve_insert_mode(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -2281,6 +2418,7 @@ async def compile_short_doc(
             rewrite_summary=True,
             entity_types=entity_types,
             bundle=bundle,
+            insert_mode=insert_mode,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this
@@ -2303,11 +2441,12 @@ async def compile_long_doc(
     The summary page is already written by the indexer. This function
     generates concept pages and updates the index.
     """
-    from openkb.config import resolve_effective_config
+    from openkb.config import resolve_effective_config, resolve_insert_mode
 
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
+    insert_mode = resolve_insert_mode(config)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
@@ -2365,6 +2504,7 @@ async def compile_long_doc(
             doc_type="pageindex",
             entity_types=entity_types,
             bundle=bundle,
+            insert_mode=insert_mode,
         )
     finally:
         # Close per-loop litellm async clients before asyncio.run tears this

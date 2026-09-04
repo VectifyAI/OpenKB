@@ -2085,6 +2085,310 @@ class TestCompileConceptsPlan:
         assert "Attention" in att_text
 
 
+class TestInsertMode:
+    """insert_mode="fail-fast"/"fail-at-end" turn a partial compile (one or
+    more failed concept/entity generations) into a raised
+    ConceptCompilationError instead of a silently-partial "success"; see
+    ``_compile_concepts``'s ``insert_mode`` docstring."""
+
+    def _setup_wiki(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "raw").mkdir(exist_ok=True)
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
+        return wiki
+
+    @staticmethod
+    def _selective_acompletion(*args, **kwargs):
+        """Succeed for "concept-a", raise for "concept-b" — keyed off the
+        concept title embedded in the page-generation prompt (see
+        ``_CONCEPT_PAGE_USER``) rather than call order, since concurrent
+        tasks don't guarantee a fixed completion order."""
+        messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+        # Only the page-specific user message (appended last by _gen_create/
+        # _gen_update) carries the concept title — the earlier messages
+        # (system/doc/summary/known-targets) are shared cached context common
+        # to every concept in this batch and mention both concept names.
+        last_content = messages[-1]["content"] if messages else ""
+        if "concept-b" in last_content:
+            raise RuntimeError("boom: concept-b generation failed")
+        mock_resp = MagicMock()
+        mock_resp.choices = [MagicMock()]
+        mock_resp.choices[0].message.content = json.dumps(
+            {"brief": "b", "content": "# Concept A\n\nBody."}
+        )
+        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+        mock_resp.usage.prompt_tokens_details = None
+        return mock_resp
+
+    def _plan_response(self):
+        return json.dumps(
+            {
+                "create": [
+                    {"name": "concept-a", "title": "concept-a"},
+                    {"name": "concept-b", "title": "concept-b"},
+                ],
+                "update": [],
+                "related": [],
+            }
+        )
+
+    @staticmethod
+    def _flaky_once_acompletion():
+        """Fails every "concept-b" call during the first pass — exhausting
+        all 3 of _llm_call_async's own internal retry attempts — then
+        succeeds once the sweep starts a fresh _llm_call_async invocation
+        (its own attempt 4+). This distinguishes a failure that only clears
+        up at the sweep tier from one _llm_call_async's own retry would
+        already have absorbed."""
+        attempts: dict[str, int] = {}
+
+        def _call(*args, **kwargs):
+            messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+            last_content = messages[-1]["content"] if messages else ""
+            if "concept-b" in last_content:
+                attempts["concept-b"] = attempts.get("concept-b", 0) + 1
+                if attempts["concept-b"] <= 3:
+                    raise RuntimeError("boom: transient concept-b failure")
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = json.dumps(
+                {"brief": "b", "content": "# Concept\n\nBody."}
+            )
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return [mock_resp]
+
+        return _call
+
+    @pytest.mark.asyncio
+    async def test_normal_mode_keeps_partial_success_silent(self, tmp_path):
+        """Default/omitted insert_mode: unchanged behavior — no exception,
+        the succeeded concept is written, the failed one is just logged."""
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._selective_acompletion)
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+                insert_mode="normal",
+            )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+        assert not (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_fail_fast_raises_and_writes_nothing(self, tmp_path):
+        """insert_mode="fail-fast": raises ConceptCompilationError and skips
+        the write phase entirely — even the concept that already succeeded
+        must not be written, since the caller rolls back this whole add."""
+        from openkb.agent.compiler import ConceptCompilationError
+
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._selective_acompletion)
+            with pytest.raises(ConceptCompilationError):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                    insert_mode="fail-fast",
+                )
+        assert not (wiki / "concepts" / "concept-a.md").exists()
+        assert not (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_fail_at_end_writes_then_raises(self, tmp_path):
+        """insert_mode="fail-at-end": every planned concept is attempted (so
+        the succeeded one IS written, unlike fail-fast) before
+        ConceptCompilationError is raised at the end — the caller's mutation
+        rollback is what discards the write, not _compile_concepts itself."""
+        from openkb.agent.compiler import ConceptCompilationError
+
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._selective_acompletion)
+            with pytest.raises(ConceptCompilationError):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                    insert_mode="fail-at-end",
+                )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+        assert not (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_fail_at_end_no_failures_does_not_raise(self, tmp_path):
+        """A fully successful compile under insert_mode="fail-at-end" behaves
+        exactly like "normal" — the strict check only fires on an actual
+        failure."""
+        wiki = self._setup_wiki(tmp_path)
+        plan_response = json.dumps(
+            {"create": [{"name": "concept-a", "title": "concept-a"}], "update": [], "related": []}
+        )
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
+            mock_litellm.acompletion = AsyncMock(side_effect=self._selective_acompletion)
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+                insert_mode="fail-at-end",
+            )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_normal_mode_sweep_recovers_transient_failure(self, tmp_path):
+        """A concept that exhausts _llm_call_async's own 3 internal retry
+        attempts in the first pass but succeeds once the sweep starts a
+        fresh call gets picked up by the end-of-first-pass sweep (a tier
+        above the low-level _llm_call retry) and ends up written, with no
+        exception raised."""
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._flaky_once_acompletion())
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+                insert_mode="normal",
+            )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+        assert (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_fail_at_end_sweep_recovers_transient_failure_does_not_raise(self, tmp_path):
+        """insert_mode="fail-at-end" checks for completeness only after the
+        sweep has had its chance — a failure the sweep clears up must not
+        raise ConceptCompilationError, unlike a failure that's still there
+        afterwards (see test_fail_at_end_writes_then_raises)."""
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._flaky_once_acompletion())
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+                insert_mode="fail-at-end",
+            )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+        assert (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_fail_fast_does_not_get_a_sweep_retry(self, tmp_path):
+        """insert_mode="fail-fast" aborts on the first pass's failure without
+        waiting for the rest of the batch, so it never reaches the sweep —
+        even a failure that would have cleared up there still aborts."""
+        from openkb.agent.compiler import ConceptCompilationError
+
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._flaky_once_acompletion())
+            with pytest.raises(ConceptCompilationError):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                    insert_mode="fail-fast",
+                )
+        assert not (wiki / "concepts" / "concept-a.md").exists()
+        assert not (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_compile_short_doc_reads_insert_mode_from_kb_config(self, tmp_path):
+        """End-to-end wiring check: compile_short_doc reads insert_mode from
+        the KB's config.yaml (via resolve_effective_config) and threads it
+        into _compile_concepts — no CLI-level plumbing needed."""
+        from openkb.agent.compiler import ConceptCompilationError
+
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nContent.", encoding="utf-8")
+        openkb_dir = tmp_path / ".openkb"
+        openkb_dir.mkdir()
+        (openkb_dir / "config.yaml").write_text("insert_mode: fail-fast\n", encoding="utf-8")
+        (tmp_path / "raw").mkdir()
+        (tmp_path / "raw" / "test-doc.pdf").write_bytes(b"fake")
+
+        summary_response = json.dumps({"description": "d", "content": "# Summary\n\nContent."})
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([summary_response, self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._selective_acompletion)
+            with pytest.raises(ConceptCompilationError):
+                await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
+        # fail-fast: neither concept must have been written.
+        assert not (wiki / "concepts" / "concept-a.md").exists()
+        assert not (wiki / "concepts" / "concept-b.md").exists()
+
+
 class TestBriefIntegration:
     @pytest.mark.asyncio
     async def test_short_doc_briefs_in_index_and_frontmatter(self, tmp_path):

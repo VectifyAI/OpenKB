@@ -76,6 +76,16 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 # large PDFs. Omit to let each stage apply its own default.
 # concurrency: 5
 
+# Optional: how a partially-failed compile (some concept/entity couldn't be
+# generated, e.g. a transient LLM error) is reported for a single `add`.
+#   normal      (default) log a warning, still report the file "added".
+#   fail-fast   abort as soon as the first concept/entity fails; the add is
+#               rolled back and reported "failed".
+#   fail-at-end attempt every planned concept/entity first (so every failure
+#               for the file is logged in one pass), then roll back and
+#               report "failed" if anything failed.
+# insert_mode: normal
+
 # Optional: whether the LLM agents (query, chat, lint, skill) may call tools
 # in parallel. Leave it UNSET (commented out) to keep OpenKB's per-agent
 # defaults. Setting it applies the SAME value to every agent:
@@ -112,6 +122,7 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 | `language` | `en` | Language the wiki is written in. |
 | `pageindex_threshold` | `20` | PDFs with this many pages **or more** take the long-doc (PageIndex) path; shorter ones go through the short-doc path. See [`pageindex-cloud/`](../pageindex-cloud/). |
 | `concurrency` | `null` | Caps concurrent LLM calls OpenKB makes during ingest — both PageIndex's indexing of a long document and OpenKB's own concept/entity compilation. The two never run at once for the same document, so one setting covers both. Lower it if you hit provider rate limits or "too many open files" on large PDFs. `null` lets each stage apply its own default. |
+| `insert_mode` | `normal` | How a partially-failed compile (some concept/entity couldn't be generated) is reported. `normal` logs a warning and still reports the file "added". `fail-fast` aborts on the first failure; `fail-at-end` attempts every planned concept/entity first (so every failure is logged in one pass). Both strict modes roll back the add and report it "failed" instead of "added". |
 | `parallel_tool_calls` | unset | Whether the LLM agents (query, chat, lint, skill) may call tools in parallel. Unset keeps OpenKB's per-agent defaults; `true`/`false` force allow/sequential for every agent; `null` omits the setting (provider default). **Amazon Bedrock needs `null`** (see below). |
 | `entity_types` | 7 defaults | Custom vocabulary for entity pages. `other` is always kept. |
 | `litellm:` | – | A pass-through block for LiteLLM. See below. |

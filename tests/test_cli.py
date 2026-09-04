@@ -303,6 +303,60 @@ def test_init_model_prompt_accepts_input(tmp_path):
         assert config["model"] == "anthropic/claude-opus-4-6"
 
 
+class TestRunCompileWithRetry:
+    """insert_mode already decided a document is incomplete when it raises
+    ConceptCompilationError, so _run_compile_with_retry must not spend a
+    second full-document recompile repeating the same failures — but every
+    other exception keeps its original 2-attempt retry."""
+
+    def test_concept_compilation_error_is_not_retried(self):
+        from openkb.agent.compiler import ConceptCompilationError
+        from openkb.cli import _run_compile_with_retry
+
+        calls = 0
+
+        async def _factory():
+            nonlocal calls
+            calls += 1
+            raise ConceptCompilationError("insert_mode said no")
+
+        with (
+            patch("openkb.cli.time.sleep"),
+            pytest.raises(ConceptCompilationError),
+        ):
+            _run_compile_with_retry(_factory, "compiling")
+        assert calls == 1
+
+    def test_other_exceptions_still_get_one_retry(self):
+        from openkb.cli import _run_compile_with_retry
+
+        calls = 0
+
+        async def _factory():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient")
+
+        with patch("openkb.cli.time.sleep"):
+            _run_compile_with_retry(_factory, "compiling")
+        assert calls == 2
+
+    def test_other_exceptions_raise_after_exhausting_retries(self):
+        from openkb.cli import _run_compile_with_retry
+
+        calls = 0
+
+        async def _factory():
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("still broken")
+
+        with patch("openkb.cli.time.sleep"), pytest.raises(RuntimeError, match="still broken"):
+            _run_compile_with_retry(_factory, "compiling")
+        assert calls == 2
+
+
 class TestQueryStreamGate:
     """Regression tests for issue #34.
 
