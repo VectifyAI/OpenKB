@@ -429,11 +429,17 @@ def _snapshot_add_paths(
 
 
 def _run_compile_with_retry(coro_factory, label: str) -> None:
+    from openkb.agent.compiler import ConceptCompilationError
+
     click.echo(f"  {label}...")
     for attempt in range(2):
         try:
             asyncio.run(coro_factory())
             return
+        except ConceptCompilationError:
+            # insert_mode already decided this document is incomplete —
+            # a full recompile would just repeat the same failures.
+            raise
         except Exception as exc:
             if attempt == 0:
                 click.echo("  Retrying compilation in 2s...")

@@ -2138,6 +2138,31 @@ class TestInsertMode:
             }
         )
 
+    @staticmethod
+    def _flaky_once_acompletion():
+        """Fails the first time "concept-b" is generated, succeeds on any
+        later call — simulates a transient error that clears up by the time
+        the end-of-first-pass sweep retries it."""
+        attempts: dict[str, int] = {}
+
+        def _call(*args, **kwargs):
+            messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
+            last_content = messages[-1]["content"] if messages else ""
+            if "concept-b" in last_content:
+                attempts["concept-b"] = attempts.get("concept-b", 0) + 1
+                if attempts["concept-b"] == 1:
+                    raise RuntimeError("boom: transient concept-b failure")
+            mock_resp = MagicMock()
+            mock_resp.choices = [MagicMock()]
+            mock_resp.choices[0].message.content = json.dumps(
+                {"brief": "b", "content": "# Concept\n\nBody."}
+            )
+            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+            mock_resp.usage.prompt_tokens_details = None
+            return mock_resp
+
+        return _call
+
     @pytest.mark.asyncio
     async def test_normal_mode_keeps_partial_success_silent(self, tmp_path):
         """Default/omitted insert_mode: unchanged behavior — no exception,
@@ -2243,6 +2268,59 @@ class TestInsertMode:
                 insert_mode="fail-at-end",
             )
         assert (wiki / "concepts" / "concept-a.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_normal_mode_sweep_recovers_transient_failure(self, tmp_path):
+        """A concept that fails its first attempt but succeeds on retry gets
+        picked up by the end-of-first-pass sweep (a tier above the low-level
+        _llm_call retry) and ends up written, with no exception raised."""
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._flaky_once_acompletion())
+            await _compile_concepts(
+                wiki,
+                tmp_path,
+                "gpt-4o-mini",
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": "d"},
+                "summary",
+                "test-doc",
+                5,
+                insert_mode="normal",
+            )
+        assert (wiki / "concepts" / "concept-a.md").exists()
+        assert (wiki / "concepts" / "concept-b.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_fail_fast_does_not_get_a_sweep_retry(self, tmp_path):
+        """insert_mode="fail-fast" aborts on the first failure without
+        waiting for the rest of the batch, so it never reaches the sweep —
+        even a failure that would have cleared up on retry still aborts."""
+        from openkb.agent.compiler import ConceptCompilationError
+
+        wiki = self._setup_wiki(tmp_path)
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion([self._plan_response()])
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=self._flaky_once_acompletion())
+            with pytest.raises(ConceptCompilationError):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                    insert_mode="fail-fast",
+                )
+        assert not (wiki / "concepts" / "concept-a.md").exists()
+        assert not (wiki / "concepts" / "concept-b.md").exists()
 
     @pytest.mark.asyncio
     async def test_compile_short_doc_reads_insert_mode_from_kb_config(self, tmp_path):

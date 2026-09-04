@@ -1603,6 +1603,27 @@ def _format_known_targets(targets: set[str]) -> str:
     return "\n".join(f"- {t}" for t in sorted(targets))
 
 
+async def _sweep_failed_generations(results: list, factories: list, kind: str) -> list:
+    """Retry, once, only the items that failed the first pass.
+
+    Not used under ``insert_mode="fail-fast"`` — that mode already aborts on
+    the first failure without waiting for the rest of the batch.
+    """
+    failed_idx = [i for i, r in enumerate(results) if isinstance(r, Exception)]
+    if not failed_idx:
+        return results
+    logger.warning(
+        "Retrying %d failed %s generation(s) after the first pass...", len(failed_idx), kind
+    )
+    retry_results = await asyncio.gather(
+        *(factories[i]() for i in failed_idx), return_exceptions=True
+    )
+    results = list(results)
+    for idx, r in zip(failed_idx, retry_results):
+        results[idx] = r
+    return results
+
+
 async def _compile_concepts(
     wiki_dir: Path,
     kb_dir: Path,
@@ -2025,6 +2046,12 @@ async def _compile_concepts(
     tasks.extend(asyncio.create_task(_gen_create(c)) for c in create_items)
     tasks.extend(asyncio.create_task(_gen_update(c)) for c in update_items)
 
+    # Zero-arg factories, same order as `tasks`, so a failed item can be
+    # re-run in isolation by the end-of-first-pass sweep below.
+    concept_factories = [(lambda c=c: _gen_create(c)) for c in create_items] + [
+        (lambda c=c: _gen_update(c)) for c in update_items
+    ]
+
     # --- Step 3 (entities): build the entity task list up front so it can be
     # gathered concurrently with the concept tasks below. Entity coroutines
     # return 4-arity tuples (name, content, brief, type), so their results are
@@ -2034,6 +2061,10 @@ async def _compile_concepts(
     entity_tasks = []
     entity_tasks.extend(asyncio.create_task(_gen_entity_create(e)) for e in entity_create)
     entity_tasks.extend(asyncio.create_task(_gen_entity_update(e)) for e in entity_update)
+
+    entity_factories = [(lambda e=e: _gen_entity_create(e)) for e in entity_create] + [
+        (lambda e=e: _gen_entity_update(e)) for e in entity_update
+    ]
 
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
@@ -2085,6 +2116,14 @@ async def _compile_concepts(
             results, entity_results = await asyncio.gather(
                 asyncio.gather(*tasks, return_exceptions=True),
                 asyncio.gather(*entity_tasks, return_exceptions=True),
+            )
+            # One more chance for exactly the items that failed, now that the
+            # rest of the batch has run (transient conditions get real
+            # wall-clock time to clear, prompt cache is still warm). Not used
+            # under "fail-fast" — that mode already aborted above.
+            results = await _sweep_failed_generations(results, concept_factories, "concept")
+            entity_results = await _sweep_failed_generations(
+                entity_results, entity_factories, "entity"
             )
 
     failure_types: list[str] = []
