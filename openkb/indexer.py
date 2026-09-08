@@ -11,7 +11,7 @@ from typing import Any
 
 from pageindex import IndexConfig, PageIndexClient
 
-from openkb.config import resolve_concurrency, resolve_effective_config
+from openkb.config import resolve_concurrency, resolve_credential_bundle, resolve_effective_config
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
-def _build_index_config(config: dict[str, Any]) -> IndexConfig:
+def _build_index_config(config: dict[str, Any], bundle=None) -> IndexConfig:
     """Build the PageIndex ``IndexConfig`` for local indexing.
 
     Forwards the KB's ``concurrency`` setting to PageIndex, which caps how many
@@ -162,6 +162,18 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
     installed PageIndex's ``IndexConfig`` declares the field, so OpenKB keeps
     working against a pinned PageIndex that predates it (``IndexConfig``
     forbids unknown kwargs).
+
+    ``bundle``'s ``api_key``/``base_url``/``extra_headers``/``timeout`` (the
+    same credentials ``compiler.py``'s own LLM calls use — see
+    :func:`openkb.config.resolve_credential_bundle`) are forwarded as
+    PageIndex's own per-call ``llm_params`` (see #219): without this,
+    PageIndex's internal indexing calls (TOC/tree/summary generation) fall
+    back to LiteLLM's default provider-key/env-var lookup, which doesn't know
+    about a KB's custom ``LLM_API_KEY``/gateway ``base_url`` — or, for
+    gateways authenticated purely via a header (e.g. an ``Authorization:
+    Bearer`` proxy token in ``litellm.extra_headers``), has no credentials at
+    all. Guarded by the same ``model_fields`` check as ``max_concurrency``
+    above, so it degrades gracefully against an older pinned PageIndex.
     """
     kwargs: dict[str, Any] = {
         "if_add_node_text": True,
@@ -177,7 +189,51 @@ def _build_index_config(config: dict[str, Any]) -> IndexConfig:
                 "config: 'concurrency' is set but the installed PageIndex "
                 "version does not support it yet — ignoring it."
             )
+    if bundle is not None:
+        llm_params = {
+            key: value
+            for key, value in {
+                "api_key": bundle.api_key,
+                "base_url": bundle.base_url,
+                "extra_headers": bundle.extra_headers,
+                "timeout": bundle.timeout,
+            }.items()
+            if value or (key == "timeout" and value is not None)
+        }
+        if llm_params:
+            if "llm_params" in IndexConfig.model_fields:
+                kwargs["llm_params"] = llm_params
+            else:
+                logger.warning(
+                    "config: a custom LLM_API_KEY/base_url is set but the installed "
+                    "PageIndex version doesn't support forwarding it (llm_params) yet "
+                    "— PageIndex's own LLM calls will use their default credential "
+                    "lookup instead."
+                )
     return IndexConfig(**kwargs)
+
+
+def _close_pageindex_client(client: PageIndexClient) -> None:
+    """Best-effort close of ``client``'s local SQLite connection(s).
+
+    The pinned ``pageindex`` version has no public ``close()``/context-manager
+    API on ``PageIndexClient``/``Collection`` — only on the low-level
+    ``SQLiteStorage`` its local backend holds internally — so this reaches into
+    that private attribute directly. In *cloud* mode (``client`` built with a
+    ``PAGEINDEX_API_KEY``) there is no local backend/storage at all, so this is
+    a silent no-op. Never raises: called from both the success and the failure
+    path of :func:`index_long_document`, and closing must never mask a real
+    indexing error. Without this, a subsequent mutation rollback can't
+    unlink/rename ``pageindex.db`` on Windows while this process still holds it
+    open (#249).
+    """
+    storage = getattr(getattr(client, "_backend", None), "_storage", None)
+    close = getattr(storage, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logger.debug("Failed to close PageIndex's local storage", exc_info=True)
 
 
 def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
@@ -192,8 +248,9 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
 
     model: str = config.get("model", "gpt-5.4")
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
+    bundle = resolve_credential_bundle(kb_dir)
 
-    index_config = _build_index_config(config)
+    index_config = _build_index_config(config, bundle)
 
     client = PageIndexClient(
         api_key=pageindex_api_key or None,
@@ -201,97 +258,105 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
         storage_path=str(openkb_dir),
         index_config=index_config,
     )
-    col = client.collection()
-
-    # Add PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
-    max_retries = 3
-    doc_id = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            doc_id = col.add(str(pdf_path))
-            logger.info(
-                "PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt
-            )
-            break
-        except Exception as exc:
-            logger.warning(
-                "PageIndex attempt %d/%d failed for %s: %s",
-                attempt,
-                max_retries,
-                pdf_path.name,
-                exc,
-            )
-            if attempt == max_retries:
-                raise RuntimeError(
-                    f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}"
-                ) from exc
-
-    # The PageIndex blob for doc_id is now durably on disk. The add mutation no
-    # longer eagerly snapshots .openkb/files — it registers the new blob via
-    # snapshot.track_new() only on a successful return — so if any step below
-    # fails, delete the document we just added. Otherwise the blob leaks as an
-    # orphan that pageindex.db (rolled back by the snapshot) no longer refs and
-    # no reaper reclaims.
+    # Closed in `finally` (both success and failure) so a subsequent mutation
+    # rollback can always unlink/rename pageindex.db on Windows — see #249.
     try:
-        # Fetch complete document (metadata + structure + text)
-        doc = col.get_document(doc_id, include_text=True)
-        indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
-        description: str = doc.get("doc_description", "")
-        structure: list = doc.get("structure", [])
+        col = client.collection()
 
-        # Debug: print doc keys and page_count to diagnose get_page_content range
-        logger.info("Doc keys: %s", list(doc.keys()))
-        logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
-
-        tree = {
-            "doc_name": indexed_doc_name,
-            "doc_description": description,
-            "structure": structure,
-        }
-
-        # Write wiki/sources/ — per-page content
-        sources_dir = kb_dir / "wiki" / "sources"
-        sources_dir.mkdir(parents=True, exist_ok=True)
-        images_dir = sources_dir / "images" / source_name
-
-        all_pages: list[dict[str, Any]] = []
-        if pageindex_api_key:
-            # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
-            # requires a page range, so pass "1-N".
-            page_count = _get_pdf_page_count(pdf_path)
+        # Add PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
+        max_retries = 3
+        doc_id = None
+        for attempt in range(1, max_retries + 1):
             try:
-                all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
-            except Exception as exc:
-                logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
-
-        if not all_pages:
-            if pageindex_api_key:
-                logger.warning(
-                    "Cloud returned no pages for %s; falling back to local pymupdf", pdf_path.name
+                doc_id = col.add(str(pdf_path))
+                logger.info(
+                    "PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt
                 )
-            all_pages = _normalize_page_content(
-                _convert_pdf_to_pages(pdf_path, source_name, images_dir)
-            )
+                break
+            except Exception as exc:
+                logger.warning(
+                    "PageIndex attempt %d/%d failed for %s: %s",
+                    attempt,
+                    max_retries,
+                    pdf_path.name,
+                    exc,
+                )
+                if attempt == max_retries:
+                    raise RuntimeError(
+                        f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}"
+                    ) from exc
 
-        if not all_pages:
-            raise RuntimeError(f"No page content extracted for {pdf_path.name}")
-
-        _write_long_doc_artifacts(
-            tree, all_pages, source_name, doc_id, kb_dir, description=description
-        )
-        return IndexResult(doc_id=doc_id, description=description, tree=tree)
-    except BaseException:
-        # Best-effort: remove the blob this add created. A failure here (e.g. a
-        # second interrupt) only means the blob may stay orphaned — the original
-        # error still propagates so the caller (mutation coordinator) rolls back
-        # everything else it snapshotted.
+        # The PageIndex blob for doc_id is now durably on disk. The add mutation no
+        # longer eagerly snapshots .openkb/files — it registers the new blob via
+        # snapshot.track_new() only on a successful return — so if any step below
+        # fails, delete the document we just added. Otherwise the blob leaks as an
+        # orphan that pageindex.db (rolled back by the snapshot) no longer refs and
+        # no reaper reclaims.
         try:
-            col.delete_document(doc_id)
-        except Exception:
-            logger.warning(
-                "PageIndex cleanup of %s failed after error; blob may be orphaned", doc_id
+            # Fetch complete document (metadata + structure + text)
+            doc = col.get_document(doc_id, include_text=True)
+            indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
+            description: str = doc.get("doc_description", "")
+            structure: list = doc.get("structure", [])
+
+            # Debug: print doc keys and page_count to diagnose get_page_content range
+            logger.info("Doc keys: %s", list(doc.keys()))
+            logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
+
+            tree = {
+                "doc_name": indexed_doc_name,
+                "doc_description": description,
+                "structure": structure,
+            }
+
+            # Write wiki/sources/ — per-page content
+            sources_dir = kb_dir / "wiki" / "sources"
+            sources_dir.mkdir(parents=True, exist_ok=True)
+            images_dir = sources_dir / "images" / source_name
+
+            all_pages: list[dict[str, Any]] = []
+            if pageindex_api_key:
+                # Cloud mode: fetch OCR'd markdown from PageIndex. get_page_content
+                # requires a page range, so pass "1-N".
+                page_count = _get_pdf_page_count(pdf_path)
+                try:
+                    all_pages = _normalize_page_content(
+                        col.get_page_content(doc_id, f"1-{page_count}")
+                    )
+                except Exception as exc:
+                    logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
+
+            if not all_pages:
+                if pageindex_api_key:
+                    logger.warning(
+                        "Cloud returned no pages for %s; falling back to local pymupdf",
+                        pdf_path.name,
+                    )
+                all_pages = _normalize_page_content(
+                    _convert_pdf_to_pages(pdf_path, source_name, images_dir)
+                )
+
+            if not all_pages:
+                raise RuntimeError(f"No page content extracted for {pdf_path.name}")
+
+            _write_long_doc_artifacts(
+                tree, all_pages, source_name, doc_id, kb_dir, description=description
             )
-        raise
+            return IndexResult(doc_id=doc_id, description=description, tree=tree)
+        except BaseException:
+            # Best-effort: remove the blob this add created. A failure here (e.g. a
+            # second interrupt) only means the blob may stay orphaned — the original
+            # error still propagates so the caller (mutation coordinator) rolls back
+            # everything else it snapshotted.
+            try:
+                col.delete_document(doc_id)
+            except Exception:
+                logger.warning(
+                    "PageIndex cleanup of %s failed after error; blob may be orphaned", doc_id
+                )
+            raise
+    finally:
+        _close_pageindex_client(client)
 
 
 # PageIndex's get_page_content rejects a single page range covering more than

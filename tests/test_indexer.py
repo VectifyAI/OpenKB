@@ -10,13 +10,15 @@ import pytest
 from openkb.indexer import (
     IndexResult,
     _build_index_config,
+    _close_pageindex_client,
     _normalize_page_content,
     index_long_document,
 )
 
 
 class _FakeIndexConfigWithConcurrency:
-    """Stand-in for a PageIndex ``IndexConfig`` that declares ``max_concurrency``.
+    """Stand-in for a PageIndex ``IndexConfig`` that declares ``max_concurrency``
+    and ``llm_params``.
 
     Used instead of relying on whatever ``pageindex`` happens to be installed in
     this environment, so the forwarding tests are deterministic regardless of
@@ -28,6 +30,7 @@ class _FakeIndexConfigWithConcurrency:
         "if_add_node_summary": None,
         "if_add_doc_description": None,
         "max_concurrency": None,
+        "llm_params": None,
     }
 
     def __init__(self, **kwargs):
@@ -93,6 +96,99 @@ class TestBuildIndexConfig:
         with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
             _build_index_config({"concurrency": 8})
         assert caplog.text == ""
+
+
+class _FakeBundle:
+    def __init__(self, api_key=None, base_url=None, extra_headers=None, timeout=None):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.extra_headers = extra_headers or {}
+        self.timeout = timeout
+
+
+class TestBuildIndexConfigLlmParams:
+    """``bundle``'s api_key/base_url/extra_headers/timeout must reach PageIndex's
+    own LLM calls via ``IndexConfig(llm_params=...)`` (#219) — without this they
+    silently fall back to LiteLLM's default provider-key/env-var lookup (or, for
+    header-only gateway auth, have no credentials at all)."""
+
+    def test_forwards_api_key_and_base_url_when_supported(self, monkeypatch):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        bundle = _FakeBundle(api_key="sk-test", base_url="https://gateway.example/v1")
+        cfg = _build_index_config({}, bundle)
+        assert cfg.llm_params == {"api_key": "sk-test", "base_url": "https://gateway.example/v1"}
+
+    def test_no_bundle_means_no_llm_params(self, monkeypatch):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        cfg = _build_index_config({}, None)
+        assert not hasattr(cfg, "llm_params")
+
+    def test_empty_bundle_means_no_llm_params(self, monkeypatch):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        cfg = _build_index_config({}, _FakeBundle())
+        assert not hasattr(cfg, "llm_params")
+
+    def test_partial_bundle_forwards_only_set_fields(self, monkeypatch):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        cfg = _build_index_config({}, _FakeBundle(api_key="sk-test"))
+        assert cfg.llm_params == {"api_key": "sk-test"}
+
+    def test_does_not_forward_when_unsupported(self, monkeypatch, caplog):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithoutConcurrency)
+        bundle = _FakeBundle(api_key="sk-test")
+        with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
+            cfg = _build_index_config({}, bundle)
+        assert not hasattr(cfg, "llm_params")
+        assert "llm_params" in caplog.text
+
+    def test_forwards_extra_headers_and_timeout_when_supported(self, monkeypatch):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        bundle = _FakeBundle(extra_headers={"Authorization": "Bearer proxy-token"}, timeout=30.0)
+        cfg = _build_index_config({}, bundle)
+        assert cfg.llm_params == {
+            "extra_headers": {"Authorization": "Bearer proxy-token"},
+            "timeout": 30.0,
+        }
+
+    def test_empty_extra_headers_is_not_forwarded(self, monkeypatch):
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        cfg = _build_index_config({}, _FakeBundle(extra_headers={}))
+        assert not hasattr(cfg, "llm_params")
+
+    def test_zero_timeout_is_forwarded(self, monkeypatch):
+        # timeout=0 is falsy but a deliberately-set value — must not be filtered
+        # out the same way an unset (None) timeout is.
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        cfg = _build_index_config({}, _FakeBundle(timeout=0))
+        assert cfg.llm_params == {"timeout": 0}
+
+    def test_header_only_gateway_auth_is_forwarded_without_api_key(self, monkeypatch):
+        # Regression: proxy/gateway setups that authenticate purely via a
+        # header (no LLM_API_KEY) must still reach PageIndex's LLM calls.
+        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
+        bundle = _FakeBundle(extra_headers={"Authorization": "Bearer proxy-token"})
+        cfg = _build_index_config({}, bundle)
+        assert cfg.llm_params == {"extra_headers": {"Authorization": "Bearer proxy-token"}}
+
+
+class TestClosePageindexClient:
+    """Best-effort close of PageIndex's local SQLite connection(s) — see #249."""
+
+    def test_closes_local_backend_storage(self):
+        client = MagicMock()
+        _close_pageindex_client(client)
+        client._backend._storage.close.assert_called_once()
+
+    def test_cloud_client_without_backend_storage_is_a_noop(self):
+        client = MagicMock(spec=[])  # no attributes at all, unlike a bare MagicMock
+        _close_pageindex_client(client)  # must not raise
+
+    def test_close_exception_is_swallowed(self, caplog):
+        client = MagicMock()
+        client._backend._storage.close.side_effect = RuntimeError("boom")
+        with caplog.at_level(logging.DEBUG, logger="openkb.indexer"):
+            _close_pageindex_client(client)  # must not raise
+        assert "Failed to close" in caplog.text
 
 
 class TestNormalizePageContent:
@@ -183,6 +279,46 @@ class TestIndexLongDocument:
         assert result.doc_id == doc_id
         assert result.description == sample_tree["doc_description"]
         assert result.tree is not None
+
+    def test_closes_pageindex_client_on_success(self, kb_dir, sample_tree, tmp_path):
+        """See #249: the local SQLite connection must be closed once indexing
+        succeeds so a later mutation step doesn't leave it open unnecessarily."""
+        doc_id = "abc-123"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client),
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
+            index_long_document(pdf_path, kb_dir)
+
+        fake_client._backend._storage.close.assert_called_once()
+
+    def test_closes_pageindex_client_on_failure(self, kb_dir, sample_tree, tmp_path):
+        """See #249: closing must also happen when indexing fails, so a
+        subsequent mutation rollback can unlink/rename pageindex.db on Windows
+        instead of hitting WinError 32 while this process still holds it open."""
+        doc_id = "abc-123"
+        col = self._make_fake_collection(doc_id, sample_tree)
+        col.get_document.side_effect = RuntimeError("get_document blew up")
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = col
+
+        pdf_path = tmp_path / "sample.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with patch("openkb.indexer.PageIndexClient", return_value=fake_client):
+            with pytest.raises(RuntimeError, match="get_document blew up"):
+                index_long_document(pdf_path, kb_dir)
+
+        fake_client._backend._storage.close.assert_called_once()
 
     def test_deletes_pageindex_doc_when_a_post_add_step_fails(self, kb_dir, sample_tree, tmp_path):
         """The PageIndex blob is durably written by col.add(), but .openkb/files is
@@ -286,6 +422,32 @@ class TestIndexLongDocument:
         assert ic.if_add_node_text is True
         assert ic.if_add_node_summary is True
         assert ic.if_add_doc_description is True
+
+    def test_credential_bundle_flows_into_index_config(self, kb_dir, sample_tree, tmp_path):
+        """See #219: a KB's resolved LLM_API_KEY/base_url must reach PageIndex's
+        own indexing calls via IndexConfig(llm_params=...), the same way it
+        reaches compiler.py's own LLM calls — not just the isolated
+        _build_index_config unit tests exercised directly with a fake bundle."""
+        doc_id = "cred-123"
+        fake_col = self._make_fake_collection(doc_id, sample_tree)
+
+        fake_client = MagicMock()
+        fake_client.collection.return_value = fake_col
+        fake_bundle = _FakeBundle(api_key="sk-test", base_url="https://gateway.example/v1")
+
+        pdf_path = tmp_path / "report.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+        with (
+            patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls,
+            patch("openkb.indexer.resolve_credential_bundle", return_value=fake_bundle),
+            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
+        ):
+            index_long_document(pdf_path, kb_dir)
+
+        _, kwargs = mock_cls.call_args
+        ic = kwargs.get("index_config")
+        assert ic.llm_params == {"api_key": "sk-test", "base_url": "https://gateway.example/v1"}
 
     def test_concurrency_flows_from_kb_config(self, kb_dir, sample_tree, tmp_path):
         """The KB's real config.yaml, loaded by index_long_document itself, must
