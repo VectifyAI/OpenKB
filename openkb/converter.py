@@ -48,11 +48,24 @@ def _registry_path(path: Path, kb_dir: Path) -> str:
 
 _SAFE_STEM_RE = re.compile(r"[^\w\-]+")
 _SUFFIX_LEN = 8
+_MAX_STEM_LEN = 40
 
 
 def _sanitize_stem(stem: str) -> str:
+    """Sanitize and cap ``stem``, appending a hash suffix if truncated.
+
+    ``doc_name`` (this function's return value) can appear twice in the
+    per-add staging path (staging dir name + images subdir), so an
+    unbounded stem risks Windows' ~260-char path limit. The suffix is a
+    hash of the FULL cleaned stem (not just the truncated prefix) so two
+    different overlong stems sharing the same prefix don't collide.
+    """
     normalized = unicodedata.normalize("NFKC", stem)
-    return _SAFE_STEM_RE.sub("-", normalized).strip("-") or "document"
+    cleaned = _SAFE_STEM_RE.sub("-", normalized).strip("-") or "document"
+    if len(cleaned) > _MAX_STEM_LEN:
+        digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:_SUFFIX_LEN]
+        cleaned = f"{cleaned[:_MAX_STEM_LEN].rstrip('-')}-{digest}"
+    return cleaned
 
 
 def _name_taken(candidate: str, registry: HashRegistry) -> bool:

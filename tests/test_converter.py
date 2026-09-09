@@ -218,6 +218,40 @@ class TestRegistryPath:
 
 
 # ---------------------------------------------------------------------------
+# _sanitize_stem
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeStem:
+    def test_short_stem_is_unchanged(self):
+        from openkb.converter import _sanitize_stem
+
+        assert _sanitize_stem("report") == "report"
+
+    def test_long_stem_is_capped_with_hash_suffix(self):
+        from openkb.converter import _MAX_STEM_LEN, _sanitize_stem
+
+        stem = "bulkQuery_result_" + "a" * 60
+        result = _sanitize_stem(stem)
+        assert len(result) == _MAX_STEM_LEN + 1 + 8  # prefix + "-" + 8-hex digest
+        assert result.startswith(stem[:_MAX_STEM_LEN])
+
+    def test_long_stem_truncation_is_deterministic(self):
+        from openkb.converter import _sanitize_stem
+
+        stem = "x" * 100
+        assert _sanitize_stem(stem) == _sanitize_stem(stem)
+
+    def test_different_long_stems_with_same_prefix_do_not_collide(self):
+        from openkb.converter import _MAX_STEM_LEN, _sanitize_stem
+
+        prefix = "a" * _MAX_STEM_LEN
+        first = _sanitize_stem(prefix + "-one")
+        second = _sanitize_stem(prefix + "-two")
+        assert first != second
+
+
+# ---------------------------------------------------------------------------
 # resolve_doc_name
 # ---------------------------------------------------------------------------
 
