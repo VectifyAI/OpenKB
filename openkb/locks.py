@@ -14,10 +14,13 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import IO, Iterator
 
 import portalocker
+
+logger = logging.getLogger(__name__)
 
 
 def flock(fh: IO, *, exclusive: bool) -> None:
@@ -220,6 +223,40 @@ def _target_mode(path: Path) -> int:
         return _default_file_mode()
 
 
+_REPLACE_RETRY_ATTEMPTS = 5
+_REPLACE_RETRY_BASE_DELAY = 0.05  # seconds, doubles each attempt
+
+
+def _replace_with_retry(tmp_path: Path, path: Path) -> None:
+    """Rename *tmp_path* onto *path*, retrying a transient Windows file lock.
+
+    A freshly written temp file can be briefly opened by another process
+    (real-time antivirus scanning, the search indexer, backup/sync agents)
+    right before the rename, which makes ``os.replace()`` raise
+    ``PermissionError`` (Windows ``WinError 5``) even though nothing in this
+    process holds the file open and the lock typically clears within
+    milliseconds. Only ``PermissionError`` is retried; any other ``OSError``
+    (e.g. a real permissions problem) is raised immediately.
+    """
+    delay = _REPLACE_RETRY_BASE_DELAY
+    for attempt in range(_REPLACE_RETRY_ATTEMPTS):
+        try:
+            os.replace(tmp_path, path)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_RETRY_ATTEMPTS - 1:
+                raise
+            logger.debug(
+                "os.replace(%s, %s) hit a transient PermissionError, retrying (attempt %d/%d)",
+                tmp_path,
+                path,
+                attempt + 1,
+                _REPLACE_RETRY_ATTEMPTS,
+            )
+            time.sleep(delay)
+            delay *= 2
+
+
 def atomic_write_bytes(path: Path, content: bytes) -> None:
     """Atomically replace *path* with binary *content*."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,7 +269,7 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_path, path)
+        _replace_with_retry(tmp_path, path)
         _fsync_directory(path.parent)
     finally:
         tmp_path.unlink(missing_ok=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import threading
 
@@ -127,3 +128,59 @@ def test_atomic_write_json_replaces_file(tmp_path):
     atomic_write_json(target, {"a": {"name": "doc.pdf"}}, ensure_ascii=False)
 
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": {"name": "doc.pdf"}}
+
+
+def test_atomic_write_bytes_retries_transient_permission_error(tmp_path, monkeypatch):
+    target = tmp_path / "file.txt"
+    real_replace = os.replace
+    calls = []
+
+    def flaky_replace(src, dst):
+        calls.append((src, dst))
+        if len(calls) < 3:
+            raise PermissionError("simulated transient lock")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("openkb.locks.os.replace", flaky_replace)
+    monkeypatch.setattr("openkb.locks.time.sleep", lambda _seconds: None)
+
+    atomic_write_text(target, "content")
+
+    assert len(calls) == 3
+    assert target.read_text(encoding="utf-8") == "content"
+    assert list(target.parent.glob("*.tmp")) == []
+
+
+def test_atomic_write_bytes_reraises_after_exhausting_retries(tmp_path, monkeypatch):
+    target = tmp_path / "file.txt"
+    calls = []
+
+    def always_fails(src, dst):
+        calls.append((src, dst))
+        raise PermissionError("simulated persistent lock")
+
+    monkeypatch.setattr("openkb.locks.os.replace", always_fails)
+    monkeypatch.setattr("openkb.locks.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(PermissionError):
+        atomic_write_text(target, "content")
+
+    assert len(calls) == 5
+    assert not target.exists()
+    assert list(target.parent.glob("*.tmp")) == []
+
+
+def test_atomic_write_bytes_does_not_retry_other_os_error(tmp_path, monkeypatch):
+    target = tmp_path / "file.txt"
+    calls = []
+
+    def not_a_lock(src, dst):
+        calls.append((src, dst))
+        raise OSError("simulated unrelated failure")
+
+    monkeypatch.setattr("openkb.locks.os.replace", not_a_lock)
+
+    with pytest.raises(OSError, match="simulated unrelated failure"):
+        atomic_write_text(target, "content")
+
+    assert len(calls) == 1
