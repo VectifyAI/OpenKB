@@ -12,6 +12,7 @@ from openkb.config import (
     kb_root_dir,
     load_config,
     registered_kbs,
+    resolve_concept_update_mode,
     resolve_concurrency,
     resolve_effective_config,
     resolve_extra_headers,
@@ -143,6 +144,35 @@ def test_default_config_values():
     assert DEFAULT_CONFIG["model"] == "gpt-5.4"
     assert DEFAULT_CONFIG["language"] == "en"
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
+
+
+# --- concept_update_mode -------------------------------------------------------
+
+
+def test_concept_update_mode_default_in_config():
+    assert DEFAULT_CONFIG["concept_update_mode"] == "rewrite"
+
+
+def test_concept_update_mode_not_in_global_scalar_keys():
+    # KB config.yaml only (like `debug`/`insert_mode`) — not workbench/global-
+    # editable, so it must never leak into the global.yaml layering.
+    assert "concept_update_mode" not in GLOBAL_SCALAR_KEYS
+
+
+def test_resolve_concept_update_mode_absent_is_default():
+    assert resolve_concept_update_mode({}) == "rewrite"
+
+
+def test_resolve_concept_update_mode_valid_values():
+    assert resolve_concept_update_mode({"concept_update_mode": "rewrite"}) == "rewrite"
+    assert resolve_concept_update_mode({"concept_update_mode": "append"}) == "append"
+
+
+def test_resolve_concept_update_mode_rejects_invalid(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = resolve_concept_update_mode({"concept_update_mode": "bogus"})
+    assert result == "rewrite"
+    assert "concept_update_mode" in caplog.text
 
 
 def test_concurrency_not_in_default_config():

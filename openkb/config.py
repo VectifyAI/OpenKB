@@ -36,7 +36,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
     # effective value on read.
     "entity_types": list(DEFAULT_ENTITY_TYPES),
+    # How concept/entity pages absorb new documents on `openkb add` — see
+    # resolve_concept_update_mode(). KB config.yaml only (like `debug`), not
+    # in GLOBAL_SCALAR_KEYS.
+    "concept_update_mode": "rewrite",
 }
+
+VALID_CONCEPT_UPDATE_MODES: tuple[str, ...] = ("rewrite", "append")
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
@@ -138,6 +144,23 @@ def resolve_entity_types(config: dict, *, warn: bool = True) -> list[str]:
     if "other" not in cleaned:
         cleaned.append("other")
     return cleaned
+
+
+def resolve_concept_update_mode(config: dict) -> str:
+    """Resolve ``concept_update_mode:`` — ``"rewrite"`` (default, full-page
+    LLM rewrite on update) or ``"append"`` (short note instead, see
+    ``openkb.agent.compiler_notes``). Invalid values degrade to ``"rewrite"``
+    with a warning.
+    """
+    value = config.get("concept_update_mode", "rewrite")
+    if value not in VALID_CONCEPT_UPDATE_MODES:
+        logger.warning(
+            "config: 'concept_update_mode' must be one of %s, got %r — using 'rewrite'.",
+            VALID_CONCEPT_UPDATE_MODES,
+            value,
+        )
+        return "rewrite"
+    return value
 
 
 def resolve_extra_headers(config: dict) -> dict[str, str]:

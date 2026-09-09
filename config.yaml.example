@@ -27,6 +27,14 @@ pageindex_threshold: 20          # PDF pages threshold for PageIndex
 #   - dataset
 #   - model
 
+# Optional: how concept/entity pages absorb new documents on `openkb add`.
+#   rewrite   default — send the existing page's full body to the LLM and
+#             let it rewrite the whole page to incorporate the new document.
+#   append    cheaper for large/mature wikis — instead of a full rewrite,
+#             generate a short note about the new document and append it to
+#             the page under a "## Notes" heading (no full-page LLM rewrite).
+# concept_update_mode: rewrite
+
 # Optional: LLM / LiteLLM tuning. Keys are forwarded to LiteLLM; `timeout` and
 # `extra_headers` apply per request, the rest are set as litellm.<key>.
 # litellm:

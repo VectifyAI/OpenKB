@@ -1221,6 +1221,64 @@ class TestCompileShortDoc:
         assert "[[concepts/transformer]]" in index_text
 
     @pytest.mark.asyncio
+    async def test_append_mode_full_pipeline_writes_note_not_full_page(self, tmp_path):
+        """concept_update_mode="append" end-to-end, through the SAME mocked
+        acompletion path as the "rewrite" pipeline above — proves the note
+        closures work under this branch's _llm_call_page_async.
+        """
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nA support ticket about approvals.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / ".openkb" / "config.yaml").write_text(
+            "concept_update_mode: append\n", encoding="utf-8"
+        )
+
+        summary_response = json.dumps(
+            {"description": "A ticket about approvals", "content": "# Summary\n\nApproval ticket."}
+        )
+        concepts_plan_response = json.dumps(
+            {
+                "create": [{"name": "approval-workflows", "title": "Approval Workflows"}],
+                "update": [],
+                "related": [],
+            }
+        )
+        summary_rewrite_response = (
+            "# Summary\n\nApproval ticket about [[concepts/approval-workflows]]."
+        )
+        note_response = json.dumps(
+            {
+                "description": "How approvals are routed.",
+                "note": "This ticket reports a timeout during approval.",
+            }
+        )
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion(
+                    [summary_response, concepts_plan_response, summary_rewrite_response]
+                )
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([note_response]))
+            await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
+
+        concept_path = wiki / "concepts" / "approval-workflows.md"
+        assert concept_path.exists()
+        text = concept_path.read_text(encoding="utf-8")
+        assert "## Notes" in text
+        assert "This ticket reports a timeout during approval." in text
+        assert 'description: "How approvals are routed."' in text
+        assert 'sources: ["summaries/test-doc.md"]' in text
+
+    @pytest.mark.asyncio
     async def test_handles_bad_json(self, tmp_path):
         wiki = tmp_path / "wiki"
         (wiki / "sources").mkdir(parents=True)
@@ -2250,6 +2308,28 @@ class TestRemoveEntityPages:
         shared = (ent / "shared.md").read_text(encoding="utf-8")
         assert "summaries/doc" not in shared
         assert "See also" not in shared
+        assert "summaries/other" in shared
+
+    def test_strips_append_mode_note_line_keeps_other_notes(self, tmp_path):
+        # A "concept_update_mode=append" page (compiler_notes.append_entity_note)
+        # keeps its notes under "## Notes", one dated line per source doc.
+        # Removing one doc must strip only ITS line, not the whole section.
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "shared.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md, summaries/other.md]\n---\n\n"
+            "## Notes\n\n"
+            "- **2026-09-07** Mentioned in doc. ([[summaries/doc]])\n"
+            "- **2026-09-01** Mentioned in other. ([[summaries/other]])\n",
+            encoding="utf-8",
+        )
+        result = remove_doc_from_entity_pages(tmp_path, "doc")
+        assert result == {"modified": ["shared"], "deleted": []}
+        shared = (ent / "shared.md").read_text(encoding="utf-8")
+        assert "summaries/doc" not in shared
+        assert "Mentioned in doc." not in shared
+        assert "## Notes" in shared
+        assert "Mentioned in other." in shared
         assert "summaries/other" in shared
 
 
