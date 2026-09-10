@@ -36,7 +36,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
     # effective value on read.
     "entity_types": list(DEFAULT_ENTITY_TYPES),
+    # How concept/entity pages absorb new documents on `openkb add` — see
+    # resolve_concept_update_mode(). KB config.yaml only (like `debug`), not
+    # in GLOBAL_SCALAR_KEYS.
+    "concept_update_mode": "rewrite",
+    # Opt-in strict mode for brand-new concept/entity `create` items — see
+    # resolve_strict_item_mode(). KB config.yaml only, not in
+    # GLOBAL_SCALAR_KEYS (same treatment as concept_update_mode above).
+    "strict_item_mode": False,
 }
+
+VALID_CONCEPT_UPDATE_MODES: tuple[str, ...] = ("rewrite", "append")
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "global.yaml"
@@ -138,6 +148,51 @@ def resolve_entity_types(config: dict, *, warn: bool = True) -> list[str]:
     if "other" not in cleaned:
         cleaned.append("other")
     return cleaned
+
+
+def resolve_concept_update_mode(config: dict) -> str:
+    """Resolve ``concept_update_mode:`` — ``"rewrite"`` (default, full-page
+    LLM rewrite on update) or ``"append"`` (short note instead, see
+    ``openkb.agent.compiler_notes``). Invalid values degrade to ``"rewrite"``
+    with a warning.
+    """
+    value = config.get("concept_update_mode", "rewrite")
+    if value not in VALID_CONCEPT_UPDATE_MODES:
+        logger.warning(
+            "config: 'concept_update_mode' must be one of %s, got %r — using 'rewrite'.",
+            VALID_CONCEPT_UPDATE_MODES,
+            value,
+        )
+        return "rewrite"
+    return value
+
+
+def resolve_strict_item_mode(config: dict) -> bool:
+    """Resolve ``strict_item_mode:`` — ``False`` by default.
+
+    When ``True``, a brand-new concept/entity ``create`` item is dropped
+    instead of kept whenever it looks like a bad/too-specific candidate:
+
+    - a name longer than 3 words is dropped (see
+      ``agent.compiler._filter_concept_items`` / ``_filter_entity_items`` /
+      ``_MAX_NAME_WORDS``) — applies to both concepts and entities.
+    - an entity whose LLM-returned ``type`` doesn't match the configured
+      :func:`resolve_entity_types` vocabulary is dropped instead of being
+      coerced to ``"other"`` — entities only, concepts have no ``type``.
+
+    All gates are opt-in together under this single flag. A non-bool value
+    degrades to ``False`` with a warning (matches
+    :func:`resolve_concept_update_mode`'s degrade-on-malformed-value
+    behavior).
+    """
+    value = config.get("strict_item_mode", False)
+    if not isinstance(value, bool):
+        logger.warning(
+            "config: 'strict_item_mode' must be a bool, got %r — using False.",
+            value,
+        )
+        return False
+    return value
 
 
 def resolve_extra_headers(config: dict) -> dict[str, str]:

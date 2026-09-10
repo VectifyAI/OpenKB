@@ -15,6 +15,9 @@ from openkb.agent.compiler import (
     _backlink_summary,
     _backlink_summary_entities,
     _compile_concepts,
+    _count_words,
+    _doc_token_guidance,
+    _filter_concept_items,
     _filter_entity_items,
     _parse_entities_plan,
     _parse_json,
@@ -33,6 +36,7 @@ from openkb.agent.compiler import (
     remove_doc_from_entity_pages,
 )
 from openkb.config import resolve_entity_types
+from openkb.pending import PendingTopicsStore
 from openkb.schema import AGENTS_MD
 
 
@@ -193,6 +197,201 @@ class TestFilterEntityItemsCustomTypes:
         items = [{"name": "x", "title": "X", "type": "organization"}]
         out = _filter_entity_items(items)
         assert out[0]["type"] == "organization"
+
+
+class TestStrictItemMode:
+    """strict_item_mode=true (see openkb.config.resolve_strict_item_mode /
+    issue #247 follow-up): a type outside the configured vocabulary drops
+    the entity item entirely instead of coercing it to "other"."""
+
+    def test_strict_false_still_coerces_to_other(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "x", "title": "X", "type": "organization"}]
+        out = _filter_entity_items(items, valid, strict=False)
+        assert out == [{"name": "x", "title": "X", "type": "other"}]
+
+    def test_strict_true_drops_mismatched_type(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "x", "title": "X", "type": "organization"}]
+        out = _filter_entity_items(items, valid, strict=True)
+        assert out == []
+
+    def test_strict_true_keeps_matching_type(self):
+        valid = frozenset({"person", "dataset", "other"})
+        items = [{"name": "imagenet", "title": "ImageNet", "type": "dataset"}]
+        out = _filter_entity_items(items, valid, strict=True)
+        assert out == [{"name": "imagenet", "title": "ImageNet", "type": "dataset"}]
+
+
+class TestMaxWordsFilter:
+    """Hard cap on brand-new concept/entity names to 3 words (see
+    compiler._count_words / issue #247) — a lightweight proxy for "too
+    specific to be reusable knowledge". Both concepts and entities only
+    enforce it when strict=True (opt-in together with strict_item_mode,
+    see issue #247 follow-up)."""
+
+    def test_count_words_splits_on_hyphen_underscore_and_space(self):
+        assert _count_words("attention") == 1
+        assert _count_words("flash-attention") == 2
+        assert _count_words("andreas-mueller-alwart-ssmpa-2573") == 5
+        assert _count_words("some_snake_case_name") == 4
+        assert _count_words("a name with spaces") == 4
+
+    def test_concept_items_over_limit_are_dropped_when_strict(self):
+        items = [
+            {"name": "attention", "title": "Attention"},
+            {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas"},
+        ]
+        out = _filter_concept_items(items, "create", strict=True, max_words=3)
+        assert [c["name"] for c in out] == ["attention"]
+
+    def test_concept_items_over_limit_kept_when_not_strict(self):
+        # The word-length gate is opt-in together with strict_item_mode —
+        # passing max_words alone must not drop anything unless strict=True
+        # is also set.
+        items = [
+            {"name": "attention", "title": "Attention"},
+            {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas"},
+        ]
+        out = _filter_concept_items(items, "create", strict=False, max_words=3)
+        assert [c["name"] for c in out] == ["attention", "andreas-mueller-alwart-ssmpa-2573"]
+
+    def test_concept_items_without_max_words_are_unaffected(self):
+        items = [{"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas"}]
+        out = _filter_concept_items(items, "update", strict=True)
+        assert len(out) == 1
+
+    def test_dropped_concept_items_are_logged_at_warning_not_silently(self, caplog):
+        import logging
+
+        items = [{"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas"}]
+        with caplog.at_level(logging.WARNING, logger="openkb.agent.compiler"):
+            out = _filter_concept_items(items, "create", strict=True, max_words=3)
+        assert out == []
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("over 3 words" in m for m in messages)
+
+    def test_entity_items_over_limit_are_dropped_when_strict(self):
+        items = [
+            {"name": "nvidia", "title": "NVIDIA", "type": "organization"},
+            {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas", "type": "person"},
+        ]
+        out = _filter_entity_items(items, max_words=3, strict=True)
+        assert [e["name"] for e in out] == ["nvidia"]
+
+    def test_entity_items_over_limit_kept_when_not_strict(self):
+        # The word-length gate is opt-in together with strict_item_mode —
+        # passing max_words alone must not drop anything unless strict=True
+        # is also set.
+        items = [
+            {"name": "nvidia", "title": "NVIDIA", "type": "organization"},
+            {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas", "type": "person"},
+        ]
+        out = _filter_entity_items(items, max_words=3, strict=False)
+        assert [e["name"] for e in out] == ["nvidia", "andreas-mueller-alwart-ssmpa-2573"]
+
+    def test_entity_items_without_max_words_are_unaffected(self):
+        items = [{"name": "andreas-mueller-alwart-ssmpa-2573", "title": "Andreas", "type": "other"}]
+        out = _filter_entity_items(items)
+        assert len(out) == 1
+
+    def test_dropped_entity_items_are_logged_at_warning_not_silently(self, caplog):
+        # Drops must be visible without -v/--verbose (root logger defaults to
+        # WARNING, see cli.py) — logging them at INFO would be effectively
+        # silent for a normal `openkb add` run.
+        import logging
+
+        valid = frozenset({"person", "other"})
+        items = [
+            {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "A", "type": "person"},
+            {"name": "x", "title": "X", "type": "organization"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="openkb.agent.compiler"):
+            out = _filter_entity_items(items, valid, strict=True, max_words=3)
+        assert out == []
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("over 3 words" in m for m in messages)
+        assert any("type outside the configured" in m for m in messages)
+
+
+class TestParseEntitiesPlanStrictAndMaxWords:
+    """strict/max_words are threaded through _parse_entities_plan for
+    "create" only — "update" targets an already-existing, already-vetted
+    name/type (see issue #247)."""
+
+    def test_create_gets_max_words_and_strict(self):
+        valid = frozenset({"person", "other"})
+        parsed = {
+            "entities": {
+                "create": [
+                    {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "A", "type": "person"},
+                    {"name": "nvidia", "title": "NVIDIA", "type": "organization"},
+                ],
+                "update": [],
+                "related": [],
+            }
+        }
+        out = _parse_entities_plan(parsed, valid, strict=True, max_words=3)
+        assert out["create"] == []
+
+    def test_update_is_never_word_or_strict_filtered(self):
+        valid = frozenset({"person", "other"})
+        parsed = {
+            "entities": {
+                "create": [],
+                "update": [
+                    {
+                        "name": "andreas-mueller-alwart-ssmpa-2573",
+                        "title": "A",
+                        "type": "organization",
+                    }
+                ],
+                "related": [],
+            }
+        }
+        out = _parse_entities_plan(parsed, valid, strict=True, max_words=3)
+        assert len(out["update"]) == 1
+        assert out["update"][0]["type"] == "other"  # coerced, not strict-dropped
+
+    def test_create_max_words_ignored_without_strict(self):
+        # The name-length gate is opt-in together with strict_item_mode —
+        # passing max_words without strict=True must not drop long names.
+        valid = frozenset({"person", "other"})
+        parsed = {
+            "entities": {
+                "create": [
+                    {"name": "andreas-mueller-alwart-ssmpa-2573", "title": "A", "type": "person"},
+                ],
+                "update": [],
+                "related": [],
+            }
+        }
+        out = _parse_entities_plan(parsed, valid, strict=False, max_words=3)
+        assert [e["name"] for e in out["create"]] == ["andreas-mueller-alwart-ssmpa-2573"]
+
+
+class TestDocTokenGuidance:
+    """Soft, textual __DOC_TOKEN_GUIDANCE__ substitution (see issue #247) —
+    never a code-enforced filter, only guidance text for the plan prompt."""
+
+    def test_none_falls_back_to_generic_text(self):
+        text = _doc_token_guidance(None)
+        assert "rough guideline" in text
+        assert "tokens long" not in text
+
+    def test_zero_or_negative_falls_back_to_generic_text(self):
+        assert "tokens long" not in _doc_token_guidance(0)
+        assert "tokens long" not in _doc_token_guidance(-5)
+
+    def test_short_document_uses_flat_floor(self):
+        text = _doc_token_guidance(500)
+        assert "approximately 500 tokens" in text
+        assert "at most 3" in text
+
+    def test_long_document_uses_density_formula(self):
+        text = _doc_token_guidance(4500)
+        assert "approximately 4500 tokens" in text
+        assert "at most 4" in text  # floor(4500 / 1000)
 
 
 class TestParseBriefContent:
@@ -1146,6 +1345,65 @@ def _mock_acompletion(responses: list[str]):
     return side_effect
 
 
+def _seed_pending(
+    kb_dir, kind: str, slug: str, description: str, n: int = 2, type_: str | None = None
+):
+    """Pre-seed the pending-topics buffer (see openkb.pending / issue #247) so
+    the NEXT mention of ``slug`` promotes it to a real page instead of just
+    buffering another note — lets create-path tests written before the
+    pending buffer keep asserting an immediate page write.
+    """
+    store = PendingTopicsStore(kb_dir / ".openkb" / "pending_topics.json")
+    for i in range(n):
+        store.add_note(
+            kind,
+            slug,
+            description,
+            f"prior-doc-{i}",
+            f"summaries/prior-doc-{i}.md",
+            f"prior note {i}",
+            type_=type_,
+        )
+
+
+def _message_text(messages) -> str:
+    """Flatten a litellm ``messages`` list to a single string for substring checks."""
+    parts = []
+    for m in messages or []:
+        content = m.get("content")
+        if isinstance(content, list):
+            parts.append("".join(b.get("text", "") for b in content if isinstance(b, dict)))
+        else:
+            parts.append(content or "")
+    return "\n".join(parts)
+
+
+def _routed_acompletion(rules: list[tuple[str, str]]):
+    """Async mock for litellm.acompletion routed by message content.
+
+    ``rules`` is an ordered list of ``(marker_substring, response_json)``;
+    the first rule whose marker appears in the joined message text wins.
+    Robust against concurrent task scheduling order — unlike a purely
+    positional mock, this doesn't assume a fixed call order, which matters
+    now that a pending-buffer promotion issues an internal note-generation
+    call before its page-content call (see openkb.pending / issue #247).
+    """
+
+    async def side_effect(*args, **kwargs):
+        text = _message_text(kwargs.get("messages"))
+        for marker, response in rules:
+            if marker in text:
+                mock_resp = MagicMock()
+                mock_resp.choices = [MagicMock()]
+                mock_resp.choices[0].message.content = response
+                mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+                mock_resp.usage.prompt_tokens_details = None
+                return mock_resp
+        raise AssertionError(f"no mock rule matched acompletion call: {text[:300]!r}")
+
+    return side_effect
+
+
 class TestCompileShortDoc:
     @pytest.mark.asyncio
     async def test_full_pipeline(self, tmp_path):
@@ -1179,12 +1437,14 @@ class TestCompileShortDoc:
         )
         # The rewrite step (third sync call) returns raw Markdown.
         summary_rewrite_response = "# Summary\n\nThis document discusses [[concepts/transformer]]."
+        note_response = json.dumps({"description": "NN architecture", "note": "seen in test-doc"})
         concept_page_response = json.dumps(
             {
                 "brief": "NN architecture using self-attention",
                 "content": "# Transformer\n\nA neural network architecture.",
             }
         )
+        _seed_pending(tmp_path, "concepts", "transformer", "Transformer")
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
@@ -1197,7 +1457,12 @@ class TestCompileShortDoc:
                 )
             )
             mock_litellm.acompletion = AsyncMock(
-                side_effect=_mock_acompletion([concept_page_response])
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", concept_page_response),
+                    ]
+                )
             )
             await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
 
@@ -1213,12 +1478,71 @@ class TestCompileShortDoc:
         # Verify concept written
         concept_path = wiki / "concepts" / "transformer.md"
         assert concept_path.exists()
-        assert 'sources: ["summaries/test-doc.md"]' in concept_path.read_text()
+        assert '"summaries/test-doc.md"' in concept_path.read_text()
 
         # Verify index updated
         index_text = (wiki / "index.md").read_text()
         assert "[[summaries/test-doc]]" in index_text
         assert "[[concepts/transformer]]" in index_text
+
+    @pytest.mark.asyncio
+    async def test_append_mode_full_pipeline_writes_note_not_full_page(self, tmp_path):
+        """concept_update_mode="append" end-to-end, through the SAME mocked
+        acompletion path as the "rewrite" pipeline above — proves the note
+        closures work under this branch's _llm_call_page_async.
+        """
+        wiki = tmp_path / "wiki"
+        (wiki / "sources").mkdir(parents=True)
+        (wiki / "summaries").mkdir(parents=True)
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "index.md").write_text(
+            "# Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
+            encoding="utf-8",
+        )
+        source_path = wiki / "sources" / "test-doc.md"
+        source_path.write_text("# Test Doc\n\nA support ticket about approvals.", encoding="utf-8")
+        (tmp_path / ".openkb").mkdir()
+        (tmp_path / ".openkb" / "config.yaml").write_text(
+            "concept_update_mode: append\n", encoding="utf-8"
+        )
+
+        summary_response = json.dumps(
+            {"description": "A ticket about approvals", "content": "# Summary\n\nApproval ticket."}
+        )
+        concepts_plan_response = json.dumps(
+            {
+                "create": [{"name": "approval-workflows", "title": "Approval Workflows"}],
+                "update": [],
+                "related": [],
+            }
+        )
+        summary_rewrite_response = (
+            "# Summary\n\nApproval ticket about [[concepts/approval-workflows]]."
+        )
+        note_response = json.dumps(
+            {
+                "description": "How approvals are routed.",
+                "note": "This ticket reports a timeout during approval.",
+            }
+        )
+        _seed_pending(tmp_path, "concepts", "approval-workflows", "Approval Workflows")
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(
+                side_effect=_mock_completion(
+                    [summary_response, concepts_plan_response, summary_rewrite_response]
+                )
+            )
+            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([note_response]))
+            await compile_short_doc("test-doc", source_path, tmp_path, "gpt-4o-mini")
+
+        concept_path = wiki / "concepts" / "approval-workflows.md"
+        assert concept_path.exists()
+        text = concept_path.read_text(encoding="utf-8")
+        assert "## Notes" in text
+        assert "This ticket reports a timeout during approval." in text
+        assert 'description: "How approvals are routed."' in text
+        assert '"summaries/test-doc.md"' in text
 
     @pytest.mark.asyncio
     async def test_handles_bad_json(self, tmp_path):
@@ -1290,7 +1614,9 @@ class TestCompileShortDocFallbacks:
         )
         # Rewrite returns an empty string → must fall back to v1
         rewrite_response = ""
+        note_response = json.dumps({"description": "N", "note": "seen in doc"})
         concept_response = json.dumps({"brief": "C", "content": "# T\n\nBody."})
+        _seed_pending(tmp_path, "concepts", "transformer", "Transformer")
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
@@ -1302,7 +1628,14 @@ class TestCompileShortDocFallbacks:
                     ]
                 )
             )
-            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([concept_response]))
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", concept_response),
+                    ]
+                )
+            )
             await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
 
         summary_path = wiki / "summaries" / "doc.md"
@@ -1333,6 +1666,8 @@ class TestCompileShortDocFallbacks:
             }
         )
         concept_response = json.dumps({"brief": "C", "content": "# T\n\nBody."})
+        note_response = json.dumps({"description": "N", "note": "seen in doc"})
+        _seed_pending(tmp_path, "concepts", "transformer", "Transformer")
 
         # Third sync call (rewrite) raises a simulated API error.
         sync_call_count = {"n": 0}
@@ -1354,7 +1689,14 @@ class TestCompileShortDocFallbacks:
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
-            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([concept_response]))
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", concept_response),
+                    ]
+                )
+            )
             # Must NOT raise out of compile_short_doc
             await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
 
@@ -1493,7 +1835,11 @@ class TestCacheControl:
         )
         # 3rd sync call is the summary-rewrite (raw Markdown, not JSON).
         summary_rewrite_response = "# Summary\n\nrewritten body"
-        concept_response = json.dumps({"brief": "C", "content": "page body"})
+        # Carries both "content" (page-generation call) and "note" (the
+        # pending-buffer's internal note-generation call, see openkb.pending)
+        # keys so the SAME canned response works for either async call.
+        concept_response = json.dumps({"brief": "C", "content": "page body", "note": "page body"})
+        _seed_pending(tmp_path, "concepts", "topic", "Topic")
 
         captured_sync_calls: list[list[dict]] = []
         captured_async_calls: list[list[dict]] = []
@@ -1546,8 +1892,12 @@ class TestCacheControl:
         )
 
         # Step 3 (concept generation): BP1 + BP2 + new BP3 (known_targets msg).
+        # The pending-buffer promotion (see openkb.pending) issues an internal
+        # note-generation call BEFORE the page-content call — that note call
+        # has no known_targets message, so this checks the LAST async call
+        # (the actual page-content/promotion one), not the first.
         assert captured_async_calls, "expected at least one async concept call"
-        concept_call = captured_async_calls[0]
+        concept_call = captured_async_calls[-1]
         assert self._has_cache_breakpoint(concept_call[1])
         assert self._has_cache_breakpoint(concept_call[2])
         # New: BP3 is the known_targets user message at index 3, sitting
@@ -1638,19 +1988,26 @@ class TestCompileLongDoc:
                 "related": [],
             }
         )
+        note_response = json.dumps({"description": "Subfield of ML", "note": "seen in big-doc"})
         concept_page_response = json.dumps(
             {
                 "brief": "Subfield of ML using neural networks",
                 "content": "# Deep Learning\n\nA subfield of ML.",
             }
         )
+        _seed_pending(tmp_path, "concepts", "deep-learning", "Deep Learning")
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(
                 side_effect=_mock_completion([overview_response, concepts_list_response])
             )
             mock_litellm.acompletion = AsyncMock(
-                side_effect=_mock_acompletion([concept_page_response])
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", concept_page_response),
+                    ]
+                )
             )
             await compile_long_doc("big-doc", summary_path, "doc-123", tmp_path, "gpt-4o-mini")
 
@@ -1704,6 +2061,9 @@ class TestCompileConceptsPlan:
                 "related": [],
             }
         )
+        note_response = json.dumps(
+            {"description": "Efficient attention algorithm", "note": "seen in test-doc"}
+        )
         create_page_response = json.dumps(
             {
                 "brief": "Efficient attention algorithm",
@@ -1716,30 +2076,23 @@ class TestCompileConceptsPlan:
                 "content": "# Attention\n\nUpdated content with new info.",
             }
         )
+        _seed_pending(tmp_path, "concepts", "flash-attention", "Flash Attention")
 
         system_msg = {"role": "system", "content": "You are a wiki agent."}
         doc_msg = {"role": "user", "content": "Document about attention mechanisms."}
         summary = "Summary of the document."
 
-        call_order = {"n": 0}
-
-        async def ordered_acompletion(*args, **kwargs):
-            idx = call_order["n"]
-            call_order["n"] += 1
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            # create tasks come first, then update tasks
-            if idx == 0:
-                mock_resp.choices[0].message.content = create_page_response
-            else:
-                mock_resp.choices[0].message.content = update_page_response
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
-
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
-            mock_litellm.acompletion = AsyncMock(side_effect=ordered_acompletion)
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", create_page_response),
+                        ("Update the concept page for", update_page_response),
+                    ]
+                )
+            )
             await _compile_concepts(
                 wiki,
                 tmp_path,
@@ -1755,7 +2108,7 @@ class TestCompileConceptsPlan:
         fa_path = wiki / "concepts" / "flash-attention.md"
         assert fa_path.exists()
         fa_text = fa_path.read_text()
-        assert 'sources: ["summaries/test-doc.md"]' in fa_text
+        assert '"summaries/test-doc.md"' in fa_text
         assert "Flash Attention" in fa_text
 
         # Verify attention updated (is_update=True path in _write_concept)
@@ -1789,10 +2142,19 @@ class TestCompileConceptsPlan:
         plan_response = json.dumps(
             {"create": [{"name": "attention", "title": "Attention"}], "update": [], "related": []}
         )
+        note_response = json.dumps({"description": "b", "note": "seen in test-doc"})
         array_page = json.dumps([{"brief": "b", "content": "# Attention\n\nRecovered body."}])
+        _seed_pending(tmp_path, "concepts", "attention", "Attention")
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
-            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([array_page]))
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", array_page),
+                    ]
+                )
+            )
             await _compile_concepts(
                 wiki,
                 tmp_path,
@@ -2050,12 +2412,14 @@ class TestCompileConceptsPlan:
                 {"name": "attention", "title": "Attention"},
             ]
         )
+        note_response = json.dumps({"description": "b", "note": "seen in test-doc"})
         concept_page_response = json.dumps(
             {
                 "brief": "A mechanism for focusing",
                 "content": "# Attention\n\nA mechanism for focusing.",
             }
         )
+        _seed_pending(tmp_path, "concepts", "attention", "Attention")
 
         system_msg = {"role": "system", "content": "You are a wiki agent."}
         doc_msg = {"role": "user", "content": "Document content."}
@@ -2064,7 +2428,12 @@ class TestCompileConceptsPlan:
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
             mock_litellm.acompletion = AsyncMock(
-                side_effect=_mock_acompletion([concept_page_response])
+                side_effect=_routed_acompletion(
+                    [
+                        ("NEW concept page", note_response),
+                        ("Write the concept page for", concept_page_response),
+                    ]
+                )
             )
             await _compile_concepts(
                 wiki,
@@ -2081,8 +2450,113 @@ class TestCompileConceptsPlan:
         att_path = wiki / "concepts" / "attention.md"
         assert att_path.exists()
         att_text = att_path.read_text()
-        assert 'sources: ["summaries/test-doc.md"]' in att_text
+        assert '"summaries/test-doc.md"' in att_text
         assert "Attention" in att_text
+
+
+class TestPendingBufferLifecycle:
+    """End-to-end: a brand-new concept needs 3 mentions across documents
+    before a real page exists, in EITHER concept_update_mode (see
+    openkb.pending / issue #247)."""
+
+    @staticmethod
+    def _setup_wiki(tmp_path):
+        wiki = tmp_path / "wiki"
+        (wiki / "concepts").mkdir(parents=True)
+        (wiki / "entities").mkdir(parents=True)
+        (wiki / "index.md").write_text("# Index\n\n## Documents\n\n## Concepts\n", encoding="utf-8")
+        return wiki
+
+    @staticmethod
+    def _plan_response():
+        return json.dumps(
+            {
+                "concepts": {
+                    "create": [{"name": "flaky-timeout", "title": "Flaky Timeout"}],
+                    "update": [],
+                    "related": [],
+                },
+                "entities": {"create": [], "update": [], "related": []},
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_three_mentions_promote_in_rewrite_mode(self, tmp_path):
+        wiki = self._setup_wiki(tmp_path)
+        note_response = json.dumps({"description": "A recurring timeout bug", "note": "seen"})
+        page_response = json.dumps(
+            {"brief": "A recurring timeout bug", "content": "# Flaky Timeout\n\nDetails."}
+        )
+        path = wiki / "concepts" / "flaky-timeout.md"
+
+        for i in range(1, 4):
+            with patch("openkb.agent.compiler.litellm") as mock_litellm:
+                mock_litellm.completion = MagicMock(
+                    side_effect=_mock_completion([self._plan_response()])
+                )
+                mock_litellm.acompletion = AsyncMock(
+                    side_effect=_routed_acompletion(
+                        [
+                            ("NEW concept page", note_response),
+                            ("Write the concept page for", page_response),
+                        ]
+                    )
+                )
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    f"doc-{i}",
+                    5,
+                )
+            if i < 3:
+                assert not path.exists(), f"should not promote after mention {i}"
+            else:
+                assert path.exists(), "should promote on the 3rd mention"
+
+        text = path.read_text(encoding="utf-8")
+        assert '"summaries/doc-1.md"' in text
+        assert '"summaries/doc-2.md"' in text
+        assert '"summaries/doc-3.md"' in text
+
+    @pytest.mark.asyncio
+    async def test_three_mentions_promote_in_append_mode(self, tmp_path):
+        wiki = self._setup_wiki(tmp_path)
+        path = wiki / "concepts" / "flaky-timeout.md"
+
+        for i in range(1, 4):
+            note_response = json.dumps(
+                {"description": "A recurring timeout bug", "note": f"seen in doc-{i}"}
+            )
+            with patch("openkb.agent.compiler.litellm") as mock_litellm:
+                mock_litellm.completion = MagicMock(
+                    side_effect=_mock_completion([self._plan_response()])
+                )
+                mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([note_response]))
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    f"doc-{i}",
+                    5,
+                    concept_update_mode="append",
+                )
+            if i < 3:
+                assert not path.exists(), f"should not promote after mention {i}"
+            else:
+                assert path.exists(), "should promote on the 3rd mention"
+
+        text = path.read_text(encoding="utf-8")
+        assert "seen in doc-1" in text
+        assert "seen in doc-2" in text
+        assert "seen in doc-3" in text
+        assert '"summaries/doc-1.md"' in text
 
 
 class TestBriefIntegration:
@@ -2252,6 +2726,28 @@ class TestRemoveEntityPages:
         assert "See also" not in shared
         assert "summaries/other" in shared
 
+    def test_strips_append_mode_note_line_keeps_other_notes(self, tmp_path):
+        # A "concept_update_mode=append" page (compiler_notes.append_entity_note)
+        # keeps its notes under "## Notes", one dated line per source doc.
+        # Removing one doc must strip only ITS line, not the whole section.
+        ent = tmp_path / "entities"
+        ent.mkdir()
+        (ent / "shared.md").write_text(
+            "---\ntype: organization\nsources: [summaries/doc.md, summaries/other.md]\n---\n\n"
+            "## Notes\n\n"
+            "- **2026-09-07** Mentioned in doc. ([[summaries/doc]])\n"
+            "- **2026-09-01** Mentioned in other. ([[summaries/other]])\n",
+            encoding="utf-8",
+        )
+        result = remove_doc_from_entity_pages(tmp_path, "doc")
+        assert result == {"modified": ["shared"], "deleted": []}
+        shared = (ent / "shared.md").read_text(encoding="utf-8")
+        assert "summaries/doc" not in shared
+        assert "Mentioned in doc." not in shared
+        assert "## Notes" in shared
+        assert "Mentioned in other." in shared
+        assert "summaries/other" in shared
+
 
 class TestCompileEntitiesEndToEnd:
     @pytest.mark.asyncio
@@ -2263,7 +2759,10 @@ class TestCompileEntitiesEndToEnd:
         )
 
         # Mocked LLM: plan call returns one concept + one entity; each
-        # generation call returns a tiny page.
+        # generation call returns a tiny page. The pending buffer's own
+        # note-generation calls (see openkb.pending) are labeled
+        # "concept-note: .../entity-note: ..." and need a "note" field
+        # instead of "content".
         def fake_llm(model, messages, label, **kw):
             if label == "concepts-plan":
                 return json.dumps(
@@ -2282,6 +2781,8 @@ class TestCompileEntitiesEndToEnd:
                         },
                     }
                 )
+            if label.startswith("concept-note:") or label.startswith("entity-note:"):
+                return json.dumps({"description": "b", "note": "seen in doc"})
             return json.dumps({"description": "b", "type": "organization", "content": "# Page\n"})
 
         async def fake_llm_async(model, messages, label, **kw):
@@ -2289,6 +2790,8 @@ class TestCompileEntitiesEndToEnd:
 
         monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
         monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+        _seed_pending(tmp_path, "concepts", "ai-demand", "AI Demand")
+        _seed_pending(tmp_path, "entities", "nvidia", "NVIDIA", type_="organization")
 
         from openkb.agent.compiler import _compile_concepts
 
@@ -2409,6 +2912,8 @@ class TestCompileEntitiesEndToEnd:
                 )
             if label == "summary-rewrite":
                 return "# Doc\n\nSee [[concepts/real-concept]] and [[concepts/ghost-concept]].\n"
+            if label.startswith("concept-note:"):
+                return json.dumps({"description": "b", "note": "seen in doc"})
             # concept generation body references the non-existent ghost concept
             return json.dumps(
                 {"brief": "b", "content": "# Real\n\nLinks [[concepts/ghost-concept]].\n"}
@@ -2419,6 +2924,7 @@ class TestCompileEntitiesEndToEnd:
 
         monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
         monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+        _seed_pending(tmp_path, "concepts", "real-concept", "Real")
 
         from openkb.agent.compiler import _compile_concepts
 
@@ -2473,6 +2979,8 @@ class TestCompileEntitiesEndToEnd:
                         },
                     }
                 )
+            if label.startswith("entity-note:"):
+                return json.dumps({"description": "b", "note": "seen in doc"})
             return json.dumps({"description": "b", "type": "dataset", "content": "# Page\n"})
 
         async def fake_llm_async(model, messages, label, **kw):
@@ -2481,6 +2989,7 @@ class TestCompileEntitiesEndToEnd:
 
         monkeypatch.setattr("openkb.agent.compiler._llm_call", fake_llm)
         monkeypatch.setattr("openkb.agent.compiler._llm_call_async", fake_llm_async)
+        _seed_pending(tmp_path, "entities", "imagenet", "ImageNet", type_="dataset")
 
         from openkb.agent.compiler import _compile_concepts
 

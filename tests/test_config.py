@@ -12,6 +12,7 @@ from openkb.config import (
     kb_root_dir,
     load_config,
     registered_kbs,
+    resolve_concept_update_mode,
     resolve_concurrency,
     resolve_effective_config,
     resolve_extra_headers,
@@ -19,6 +20,7 @@ from openkb.config import (
     resolve_litellm_settings,
     resolve_model_settings,
     resolve_parallel_tool_calls,
+    resolve_strict_item_mode,
     resolve_timeout,
     save_config,
     save_global_config,
@@ -145,12 +147,70 @@ def test_default_config_values():
     assert DEFAULT_CONFIG["pageindex_threshold"] == 20
 
 
+# --- concept_update_mode -------------------------------------------------------
+
+
+def test_concept_update_mode_default_in_config():
+    assert DEFAULT_CONFIG["concept_update_mode"] == "rewrite"
+
+
+def test_concept_update_mode_not_in_global_scalar_keys():
+    # KB config.yaml only (like `debug`/`insert_mode`) — not workbench/global-
+    # editable, so it must never leak into the global.yaml layering.
+    assert "concept_update_mode" not in GLOBAL_SCALAR_KEYS
+
+
+def test_resolve_concept_update_mode_absent_is_default():
+    assert resolve_concept_update_mode({}) == "rewrite"
+
+
+def test_resolve_concept_update_mode_valid_values():
+    assert resolve_concept_update_mode({"concept_update_mode": "rewrite"}) == "rewrite"
+    assert resolve_concept_update_mode({"concept_update_mode": "append"}) == "append"
+
+
+def test_resolve_concept_update_mode_rejects_invalid(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = resolve_concept_update_mode({"concept_update_mode": "bogus"})
+    assert result == "rewrite"
+    assert "concept_update_mode" in caplog.text
+
+
 def test_concurrency_not_in_default_config():
     # Like the other optional tuning knobs (timeout, extra_headers,
     # parallel_tool_calls), concurrency stays out of DEFAULT_CONFIG —
     # resolve_concurrency reads it via .get(), so an absent key resolves to
     # None without relying on load_config's merge.
     assert "concurrency" not in DEFAULT_CONFIG
+
+
+# --- strict_item_mode -------------------------------------------------------
+
+
+def test_strict_item_mode_default_in_config():
+    assert DEFAULT_CONFIG["strict_item_mode"] is False
+
+
+def test_strict_item_mode_not_in_global_scalar_keys():
+    # KB config.yaml only (like concept_update_mode/debug) — not workbench/
+    # global-editable.
+    assert "strict_item_mode" not in GLOBAL_SCALAR_KEYS
+
+
+def test_resolve_strict_item_mode_absent_is_default():
+    assert resolve_strict_item_mode({}) is False
+
+
+def test_resolve_strict_item_mode_valid_values():
+    assert resolve_strict_item_mode({"strict_item_mode": True}) is True
+    assert resolve_strict_item_mode({"strict_item_mode": False}) is False
+
+
+def test_resolve_strict_item_mode_rejects_non_bool(caplog):
+    with caplog.at_level(logging.WARNING, logger="openkb.config"):
+        result = resolve_strict_item_mode({"strict_item_mode": "yes"})
+    assert result is False
+    assert "strict_item_mode" in caplog.text
 
 
 def test_load_concurrency_override(tmp_path):

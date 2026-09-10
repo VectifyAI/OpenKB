@@ -2055,6 +2055,134 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
     append_log(wiki_dir, "recompile", f"recompiled {recompiled}, skipped {skipped}")
 
 
+@cli.command()
+@click.argument("page_name", required=False)
+@click.option(
+    "--all", "all_pages", is_flag=True, default=False, help="Consolidate every pending page."
+)
+@click.option(
+    "--min-notes",
+    type=int,
+    default=1,
+    show_default=True,
+    help="With --all, only consider pages with at least this many pending notes.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="List the pages that would be consolidated; no LLM calls, no writes.",
+)
+@click.option(
+    "--yes", "-y", is_flag=True, default=False, help="Skip the --all confirmation prompt."
+)
+@click.pass_context
+@_with_kb_lock(exclusive=True)
+def consolidate(ctx, page_name, all_pages, min_notes, dry_run, yes):
+    """Fold a concept/entity page's accumulated "## Notes" into curated prose.
+
+    Only relevant under ``concept_update_mode: append`` (see ``openkb add``):
+    each ingested document appends a short dated note to the concept/entity
+    pages it touches instead of rewriting them in full. This command folds
+    those notes into the page's prose with a single LLM call per page — no
+    new source document, no concept/entity classification, since the page is
+    already fixed. Contradictions between notes (or between notes and
+    existing prose) are described directly in the rewritten text rather than
+    silently resolved.
+
+    PAGE_NAME resolves like ``openkb remove`` — exact slug first, else a
+    unique substring match across ``wiki/concepts/`` and ``wiki/entities/``.
+    ``--all`` consolidates every page with at least ``--min-notes`` pending
+    notes. Exactly one of PAGE_NAME or ``--all`` is required.
+
+    Side effect: this replaces the page's "## Notes" section with prose —
+    manual edits inside that section are overwritten. Existing prose above
+    it, ``sources:``, and ``type:`` are preserved; only ``description:`` may
+    be refreshed.
+    """
+    from openkb.agent import consolidator
+
+    if bool(page_name) == bool(all_pages):
+        click.echo("Specify exactly one of PAGE_NAME or --all.")
+        return
+
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    wiki_dir = kb_dir / "wiki"
+
+    if page_name:
+        matches = consolidator.resolve_page(wiki_dir, page_name)
+        if not matches:
+            click.echo(f"No concept/entity page matching '{page_name}' found.")
+            return
+        if len(matches) > 1:
+            click.echo(f"'{page_name}' matches multiple pages:")
+            for page_dir, slug in matches:
+                click.echo(f"  - {page_dir}/{slug}")
+            return
+        page_dir, slug = matches[0]
+        targets = [
+            (
+                page_dir,
+                slug,
+                consolidator.count_pending_notes(
+                    (wiki_dir / page_dir / f"{slug}.md").read_text(encoding="utf-8")
+                ),
+            )
+        ]
+    else:
+        targets = consolidator.find_consolidation_candidates(wiki_dir, min_notes=min_notes)
+        if not targets:
+            click.echo("No pages with pending notes found.")
+            return
+
+    if dry_run:
+        click.echo(f"Would consolidate {len(targets)} page(s):")
+        for page_dir, slug, count in targets:
+            click.echo(f"  - {page_dir}/{slug}  ({count} note(s))")
+        click.echo("(dry-run — nothing modified)")
+        return
+
+    if all_pages and not yes and len(targets) > 1:
+        click.echo(
+            f"This will consolidate {len(targets)} page(s), replacing each "
+            'page\'s "## Notes" section with rewritten prose.'
+        )
+        if not click.confirm("Proceed?", default=False):
+            click.echo("Aborted.")
+            return
+
+    _setup_llm_key(kb_dir)
+    config = resolve_effective_config(kb_dir)[0]
+    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    language: str = config.get("language", "en")
+
+    consolidated = 0
+    skipped = 0
+    total = len(targets)
+    for i, (page_dir, slug, count) in enumerate(targets, 1):
+        click.echo(f"[{i}/{total}] Consolidating {page_dir}/{slug} ({count} note(s))...")
+        start = time.time()
+        try:
+            ok = consolidator.consolidate_page(wiki_dir, page_dir, slug, model, language=language)
+        except Exception as exc:
+            click.echo(f"  [ERROR] Consolidation failed: {exc}")
+            logging.getLogger(__name__).debug("Consolidate traceback:", exc_info=True)
+            skipped += 1
+            continue
+        if ok:
+            click.echo(f"  [OK] {page_dir}/{slug} ({time.time() - start:.1f}s)")
+            consolidated += 1
+        else:
+            click.echo(f"  [SKIP] {page_dir}/{slug} (no pending notes).")
+            skipped += 1
+
+    click.echo(f"\nDone: consolidated {consolidated}, skipped {skipped}.")
+    append_log(wiki_dir, "consolidate", f"consolidated {consolidated}, skipped {skipped}")
+
+
 async def iter_recompile(
     kb_dir: Path,
     doc_name: str | None = None,
