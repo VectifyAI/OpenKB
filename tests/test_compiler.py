@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import litellm
 import pytest
 
 from openkb.agent.compiler import (
@@ -1112,38 +1114,94 @@ class TestAddRelatedLink:
         assert "[[summaries/new-doc]]" in text
 
 
+def _mock_response(content, finish_reason: str = "stop") -> MagicMock:
+    """Build a fake, already-complete LLM response (single-chunk stream).
+
+    ``_llm_call``/``_llm_call_async`` now call ``litellm.completion``/
+    ``acompletion`` with ``stream=True`` and merge the resulting chunks back
+    into one response (see ``_merge_stream_chunks``). Exposing ``.message``
+    (rather than the ``.delta`` a genuine stream chunk carries) tells
+    ``_merge_stream_chunks`` this single chunk *is* the final response, so it
+    is used as-is without needing to fake LiteLLM's internal delta format.
+    """
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock()]
+    mock_resp.choices[0].message.content = content
+    mock_resp.choices[0].finish_reason = finish_reason
+    mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+    mock_resp.usage.prompt_tokens_details = None
+    return mock_resp
+
+
 def _mock_completion(responses: list[str]):
-    """Create a mock for litellm.completion that returns responses in order."""
+    """Create a mock for litellm.completion returning a single-chunk stream."""
     call_count = {"n": 0}
 
     def side_effect(*args, **kwargs):
         idx = min(call_count["n"], len(responses) - 1)
         call_count["n"] += 1
-        mock_resp = MagicMock()
-        mock_resp.choices = [MagicMock()]
-        mock_resp.choices[0].message.content = responses[idx]
-        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_resp.usage.prompt_tokens_details = None
-        return mock_resp
+        return [_mock_response(responses[idx])]
 
     return side_effect
 
 
 def _mock_acompletion(responses: list[str]):
-    """Create an async mock for litellm.acompletion."""
+    """Create an async mock for litellm.acompletion returning a single-chunk stream."""
     call_count = {"n": 0}
 
     async def side_effect(*args, **kwargs):
         idx = min(call_count["n"], len(responses) - 1)
         call_count["n"] += 1
-        mock_resp = MagicMock()
-        mock_resp.choices = [MagicMock()]
-        mock_resp.choices[0].message.content = responses[idx]
-        mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_resp.usage.prompt_tokens_details = None
-        return mock_resp
+        return [_mock_response(responses[idx])]
 
     return side_effect
+
+
+class _NoOpSpinner:
+    """Test double that disables spinner side effects."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def start(self) -> None:
+        pass
+
+    def stop(self, _suffix: str = "") -> None:
+        pass
+
+
+class _AsyncStream:
+    """Simple async iterator for exercising streamed LiteLLM responses in tests."""
+
+    def __init__(
+        self,
+        chunks: list[object],
+        *,
+        error: Exception | None = None,
+        raise_after: int | None = None,
+    ) -> None:
+        self._chunks = chunks
+        self._error = error
+        self._raise_after = raise_after
+        self._index = 0
+
+    def __aiter__(self) -> _AsyncStream:
+        return self
+
+    async def __anext__(self) -> object:
+        if self._raise_after is not None and self._index == self._raise_after:
+            raise self._error or RuntimeError("stream exploded")
+        if self._index >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = self._chunks[self._index]
+        self._index += 1
+        return chunk
+
+
+def _stream_then_raise(chunks: list[object], error: Exception):
+    """Yield all chunks, then raise ``error`` on the next iteration."""
+    yield from chunks
+    raise error
 
 
 class TestCompileShortDoc:
@@ -1342,15 +1400,7 @@ class TestCompileShortDocFallbacks:
             sync_call_count["n"] += 1
             if idx == 2:  # the summary-rewrite call
                 raise RuntimeError("simulated API failure")
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = [
-                summary_response,
-                plan_response,
-            ][idx]
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response([summary_response, plan_response][idx])]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
@@ -1453,6 +1503,231 @@ class TestCompileShortDocFallbacks:
         # No concept pages produced from the unusable plan.
         assert not list((wiki / "concepts").glob("*.md"))
 
+    @pytest.mark.asyncio
+    async def test_concepts_plan_context_window_exceeded_keeps_real_summary(self, tmp_path):
+        """The summary call already succeeded with real content by the time
+        concepts-plan runs (unlike TestOversizedDocumentSkip, where the doc
+        itself is too large) — this must NOT be replaced with a generic
+        "too large" stub. The concepts-plan call is retried once with the
+        summary as source (doc_msg dropped) before giving up; if that retry
+        ALSO hits the context window, same fallback as an unparseable/empty
+        plan: keep the real v1 summary (ghost-stripped), index it, skip
+        concept/entity generation for this doc."""
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        v1_summary_content = "# Summary\n\nDiscusses [[concepts/nonexistent]] here."
+        summary_response = json.dumps(
+            {"description": "A real summary", "content": v1_summary_content}
+        )
+        error = litellm.ContextWindowExceededError(
+            message="prompt is too long: 220670 tokens > 200000 maximum",
+            model="claude-sonnet-4-5",
+            llm_provider="anthropic",
+        )
+        call_count = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            idx = call_count["n"]
+            call_count["n"] += 1
+            if idx == 0:
+                return [_mock_response(summary_response)]
+            raise error
+
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.completion = MagicMock(side_effect=side_effect)
+            # Must not raise out of compile_short_doc.
+            await compile_short_doc("doc", source_path, tmp_path, "claude-sonnet-4-5")
+            # summary + concepts-plan (full doc) + concepts-plan retry (summary
+            # only) — both plan attempts are doomed here, no further retries.
+            assert mock_litellm.completion.call_count == 3
+
+        # The retry attempt must not still include the full document message
+        # (_SUMMARY_USER's "Full text:" marker only ever appears in doc_msg).
+        retry_messages = mock_litellm.completion.call_args_list[2].kwargs["messages"]
+        retry_text = json.dumps(retry_messages)
+        assert "Full text:" not in retry_text
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        assert "Discusses" in text  # real summary content kept, not a stub
+        assert "too large" not in text.lower()
+        assert "[[concepts/nonexistent]]" not in text  # ghost link stripped
+        assert "nonexistent" in text  # display text preserved
+
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/doc]]" in index_text
+        assert not list((wiki / "concepts").glob("*.md"))
+
+    @pytest.mark.asyncio
+    async def test_concepts_plan_context_window_retry_succeeds_with_summary_only(self, tmp_path):
+        """When the retry (summary-only) succeeds, the plan is processed
+        normally — concepts are generated from the summary-derived plan
+        instead of the doc being treated as incomplete."""
+        wiki, source_path = self._setup_kb(tmp_path)
+
+        v1_summary_content = "# Summary\n\nDiscusses transformers."
+        summary_response = json.dumps(
+            {"description": "A real summary", "content": v1_summary_content}
+        )
+        error = litellm.ContextWindowExceededError(
+            message="prompt is too long: 220670 tokens > 200000 maximum",
+            model="claude-sonnet-4-5",
+            llm_provider="anthropic",
+        )
+        plan_response = json.dumps(
+            {
+                "create": [{"name": "transformer", "title": "Transformer"}],
+                "update": [],
+                "related": [],
+            }
+        )
+        concept_response = json.dumps({"description": "C", "content": "# T\n\nBody."})
+        call_count = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            idx = call_count["n"]
+            call_count["n"] += 1
+            if idx == 0:
+                return [_mock_response(summary_response)]
+            if idx == 1:
+                raise error
+            return [_mock_response(plan_response)]
+
+        with (
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(side_effect=side_effect)
+            mock_litellm.acompletion = AsyncMock(side_effect=_mock_acompletion([concept_response]))
+            await compile_short_doc("doc", source_path, tmp_path, "claude-sonnet-4-5")
+            # summary + concepts-plan (full doc, fails) + concepts-plan retry
+            # (summary only, succeeds) + summary-rewrite (rewrite_summary=True).
+            assert mock_litellm.completion.call_count == 4
+
+        # The successful retry's messages must not include the full document
+        # message (_SUMMARY_USER's "Full text:" marker only ever appears in doc_msg).
+        retry_messages = mock_litellm.completion.call_args_list[2].kwargs["messages"]
+        retry_text = json.dumps(retry_messages)
+        assert "Full text:" not in retry_text
+
+        concept_path = wiki / "concepts" / "transformer.md"
+        assert concept_path.exists()
+
+        index_text = (wiki / "index.md").read_text()
+        assert "[[concepts/transformer]]" in index_text
+
+
+class TestOversizedDocumentSkip:
+    """A document whose content can't fit an LLM call is treated like an
+    unreadable image: kept in the KB as a plain reference, but skipped for
+    LLM ingestion entirely rather than aborting the whole ``add`` or wasting
+    retries on a request that's guaranteed to fail again (#<TODO>)."""
+
+    @pytest.mark.asyncio
+    async def test_skips_llm_call_when_preflight_detects_oversized_prompt(self, tmp_path):
+        wiki, source_path = TestCompileShortDocFallbacks._setup_kb(tmp_path)
+
+        with (
+            patch("openkb.agent.compiler._max_input_tokens", return_value=1000),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.token_counter = MagicMock(return_value=999_999)
+            await compile_short_doc("doc", source_path, tmp_path, "gpt-4o-mini")
+            mock_litellm.completion.assert_not_called()
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        assert "too large" in text.lower()
+        assert not list((wiki / "concepts").glob("*.md"))
+
+        # The stub must still get the usual index.md "## Documents" entry —
+        # otherwise it's an undiscoverable orphan (openkb lint's index-sync check).
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/doc]]" in index_text
+
+    @pytest.mark.asyncio
+    async def test_writes_stub_when_summary_call_raises_context_window_exceeded(self, tmp_path):
+        wiki, source_path = TestCompileShortDocFallbacks._setup_kb(tmp_path)
+
+        error = litellm.ContextWindowExceededError(
+            message="prompt is too long: 569887 tokens > 200000 maximum",
+            model="claude-sonnet-4-5",
+            llm_provider="anthropic",
+        )
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(side_effect=error)
+            # Must not raise out of compile_short_doc.
+            await compile_short_doc("doc", source_path, tmp_path, "claude-sonnet-4-5")
+            # Only the summary call was attempted — no retries wasted on a
+            # deterministically doomed request, no concept-plan call either.
+            assert mock_litellm.completion.call_count == 1
+
+        summary_path = wiki / "summaries" / "doc.md"
+        assert summary_path.exists()
+        text = summary_path.read_text()
+        assert "too large" in text.lower()
+        assert not list((wiki / "concepts").glob("*.md"))
+
+        index_text = (wiki / "index.md").read_text()
+        assert "[[summaries/doc]]" in index_text
+
+
+class TestMaxInputTokens:
+    """``_max_input_tokens`` must only ever be a best-effort hint: an
+    unrecognized model disables the preflight check instead of guessing."""
+
+    def test_known_model_returns_context_window(self):
+        from openkb.agent.compiler import _max_input_tokens
+
+        assert _max_input_tokens("claude-sonnet-4-5") == 200_000
+
+    def test_unknown_model_returns_none(self):
+        from openkb.agent.compiler import _max_input_tokens
+
+        assert _max_input_tokens("totally-unknown-model-xyz") is None
+
+
+class TestNonRetryableLLMErrors:
+    """litellm.ContextWindowExceededError means the exact same request will
+    fail again — retrying it just burns the fixed 3-attempt resilience floor
+    on a request that can never succeed."""
+
+    def test_llm_call_does_not_retry_context_window_exceeded(self):
+        from openkb.agent.compiler import _llm_call
+
+        error = litellm.ContextWindowExceededError(
+            message="prompt is too long: 569887 tokens > 200000 maximum",
+            model="m",
+            llm_provider="anthropic",
+        )
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(side_effect=error)
+            with pytest.raises(litellm.ContextWindowExceededError):
+                _llm_call("m", [{"role": "user", "content": "hi"}], "step")
+            assert mock_litellm.completion.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_does_not_retry_context_window_exceeded(self):
+        from openkb.agent.compiler import _llm_call_async
+
+        error = litellm.ContextWindowExceededError(
+            message="prompt is too long: 569887 tokens > 200000 maximum",
+            model="m",
+            llm_provider="anthropic",
+        )
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.acompletion = AsyncMock(side_effect=error)
+            with pytest.raises(litellm.ContextWindowExceededError):
+                await _llm_call_async("m", [{"role": "user", "content": "hi"}], "step")
+            assert mock_litellm.acompletion.call_count == 1
+
 
 class TestCacheControl:
     """Verify cache_control breakpoints are emitted on the right messages
@@ -1507,21 +1782,11 @@ class TestCacheControl:
         def sync_side_effect(*args, **kwargs):
             captured_sync_calls.append(kwargs["messages"])
             idx = min(len(captured_sync_calls) - 1, len(sync_responses) - 1)
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = sync_responses[idx]
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(sync_responses[idx])]
 
         async def async_side_effect(*args, **kwargs):
             captured_async_calls.append(kwargs["messages"])
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = concept_response
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(concept_response)]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
@@ -1586,15 +1851,9 @@ class TestCacheControl:
 
         def sync_side_effect(*args, **kwargs):
             captured.append(kwargs["messages"])
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
             # First call: overview (plain text); second: plan (JSON).
-            mock_resp.choices[0].message.content = (
-                "Overview text" if len(captured) == 1 else plan_response
-            )
-            mock_resp.usage = MagicMock(prompt_tokens=1, completion_tokens=1)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            content = "Overview text" if len(captured) == 1 else plan_response
+            return [_mock_response(content)]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=sync_side_effect)
@@ -1726,16 +1985,9 @@ class TestCompileConceptsPlan:
         async def ordered_acompletion(*args, **kwargs):
             idx = call_order["n"]
             call_order["n"] += 1
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
             # create tasks come first, then update tasks
-            if idx == 0:
-                mock_resp.choices[0].message.content = create_page_response
-            else:
-                mock_resp.choices[0].message.content = update_page_response
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            content = create_page_response if idx == 0 else update_page_response
+            return [_mock_response(content)]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -1823,13 +2075,7 @@ class TestCompileConceptsPlan:
         )
 
         async def truncated_acompletion(*args, **kwargs):
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = truncated_page
-            mock_resp.choices[0].finish_reason = "length"
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(truncated_page, finish_reason="length")]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -1859,13 +2105,7 @@ class TestCompileConceptsPlan:
         truncated_page = json.dumps({"brief": "x", "content": "# Ghost\n\nPartial"})
 
         async def truncated_acompletion(*args, **kwargs):
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = truncated_page
-            mock_resp.choices[0].finish_reason = "length"
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(truncated_page, finish_reason="length")]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -1928,13 +2168,7 @@ class TestCompileConceptsPlan:
         )
 
         async def truncated_acompletion(*args, **kwargs):
-            mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock()]
-            mock_resp.choices[0].message.content = truncated_page
-            mock_resp.choices[0].finish_reason = "length"
-            mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-            mock_resp.usage.prompt_tokens_details = None
-            return mock_resp
+            return [_mock_response(truncated_page, finish_reason="length")]
 
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
@@ -2699,6 +2933,152 @@ class TestLLMCallExtraHeaders:
         assert out == "ok"
         kwargs = mock_litellm.acompletion.call_args.kwargs
         assert kwargs["extra_headers"] == {"Copilot-Integration-Id": "vscode-chat"}
+
+
+class TestLLMStreamTimingDebugLogging:
+    """Chunk-phase debug logging should be visible when verbose logging is
+    enabled: one line when the first chunk arrives, one more when the stream
+    ends cleanly or is interrupted — never one line per chunk (see #<TODO>)."""
+
+    def test_llm_call_logs_stream_start_and_end_at_debug(self, caplog):
+        from openkb.agent.compiler import _llm_call
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion = MagicMock(
+                return_value=iter(["chunk-1", "chunk-2", "chunk-3"])
+            )
+            mock_litellm.stream_chunk_builder = MagicMock(return_value=_mock_response("ok"))
+
+            out = _llm_call("m", [{"role": "user", "content": "hi"}], "sync-step")
+
+        assert out == "ok"
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [sync-step]" in m]
+        end_logs = [m for m in messages if "LLM stream finished [sync-step]" in m]
+        # Exactly one start line and one end line — never a line per chunk.
+        assert len(start_logs) == 1
+        assert len(end_logs) == 1
+        assert "3 chunk(s)" in end_logs[0]
+        assert not any("LLM stream chunk [sync-step]" in m for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_logs_stream_start_and_end_at_debug(self, caplog):
+        from openkb.agent.compiler import _llm_call_async
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            mock_litellm.acompletion = AsyncMock(
+                return_value=_AsyncStream(["chunk-1", "chunk-2", "chunk-3"])
+            )
+            mock_litellm.stream_chunk_builder = MagicMock(return_value=_mock_response("ok"))
+
+            out = await _llm_call_async("m", [{"role": "user", "content": "hi"}], "async-step")
+
+        assert out == "ok"
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [async-step]" in m]
+        end_logs = [m for m in messages if "LLM stream finished [async-step]" in m]
+        assert len(start_logs) == 1
+        assert len(end_logs) == 1
+        assert "3 chunk(s)" in end_logs[0]
+        assert not any("LLM stream chunk [async-step]" in m for m in messages)
+
+    def test_llm_call_logs_interruption_before_reraising(self, caplog):
+        from openkb.agent.compiler import _llm_call
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        error = RuntimeError("stream exploded")
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            # Fresh generator per call: _llm_call now retries 3 times total
+            # (fixed resilience floor), and a real litellm.completion() call
+            # returns an independent stream every time, unlike reusing one
+            # already-exhausted mock generator across attempts.
+            mock_litellm.completion = MagicMock(
+                side_effect=lambda *a, **k: _stream_then_raise(["chunk-1", "chunk-2"], error)
+            )
+
+            with pytest.raises(RuntimeError, match="stream exploded"):
+                _llm_call("m", [{"role": "user", "content": "hi"}], "sync-fail-step")
+
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [sync-fail-step]" in m]
+        interrupted_logs = [
+            m for m in messages if "LLM stream [sync-fail-step] interrupted unexpectedly" in m
+        ]
+        # One start + one interruption line per attempt (3 attempts total),
+        # no end-of-stream line, and no per-chunk lines in between.
+        assert len(start_logs) == 3
+        assert len(interrupted_logs) == 3
+        assert all("after chunk 2" in m for m in interrupted_logs)
+        assert not any("LLM stream finished [sync-fail-step]" in m for m in messages)
+        assert not any("LLM stream chunk [sync-fail-step]" in m for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_llm_call_async_logs_interruption_before_reraising(self, caplog):
+        from openkb.agent.compiler import _llm_call_async
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        error = RuntimeError("stream exploded")
+        with patch("openkb.agent.compiler.litellm") as mock_litellm:
+            # Fresh _AsyncStream per call (see the sync test above for why):
+            # _llm_call_async now retries 3 times total.
+            mock_litellm.acompletion = AsyncMock(
+                side_effect=lambda *a, **k: _AsyncStream(
+                    ["chunk-1", "chunk-2"],
+                    error=error,
+                    raise_after=2,
+                )
+            )
+
+            with pytest.raises(RuntimeError, match="stream exploded"):
+                await _llm_call_async("m", [{"role": "user", "content": "hi"}], "async-fail-step")
+
+        messages = [record.getMessage() for record in caplog.records]
+        start_logs = [m for m in messages if "LLM stream started [async-fail-step]" in m]
+        interrupted_logs = [
+            m for m in messages if "LLM stream [async-fail-step] interrupted unexpectedly" in m
+        ]
+        assert len(start_logs) == 3
+        assert len(interrupted_logs) == 3
+        assert all("after chunk 2" in m for m in interrupted_logs)
+        assert not any("LLM stream finished [async-fail-step]" in m for m in messages)
+        assert not any("LLM stream chunk [async-fail-step]" in m for m in messages)
+
+    def test_llm_call_logs_interruption_before_any_chunk(self, caplog):
+        """No chunk ever arrives (e.g. a proxy silently buffering despite
+        stream=True): no start line, and the interruption line says so
+        instead of an inapplicable chunk number."""
+        from openkb.agent.compiler import _llm_call
+
+        caplog.set_level(logging.DEBUG, logger="openkb.agent.compiler")
+        error = RuntimeError("connect timeout")
+        with (
+            patch("openkb.agent.compiler._Spinner", _NoOpSpinner),
+            patch("openkb.agent.compiler.litellm") as mock_litellm,
+        ):
+            # Fresh generator per call (see test_llm_call_logs_interruption_before_reraising):
+            # _llm_call now retries 3 times total.
+            mock_litellm.completion = MagicMock(
+                side_effect=lambda *a, **k: _stream_then_raise([], error)
+            )
+
+            with pytest.raises(RuntimeError, match="connect timeout"):
+                _llm_call("m", [{"role": "user", "content": "hi"}], "sync-no-chunk-step")
+
+        messages = [record.getMessage() for record in caplog.records]
+        interrupted_logs = [
+            m for m in messages if "LLM stream [sync-no-chunk-step] interrupted unexpectedly" in m
+        ]
+        assert len(interrupted_logs) == 3
+        assert all("before any chunk arrived" in m for m in interrupted_logs)
+        assert not any("LLM stream started [sync-no-chunk-step]" in m for m in messages)
 
 
 class TestCacheControlStripping:

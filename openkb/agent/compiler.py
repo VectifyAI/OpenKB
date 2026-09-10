@@ -397,6 +397,161 @@ class TruncatedResponseError(Exception):
     treat truncation as a failure (so a partial page is skipped, not written)."""
 
 
+# Exceptions that are guaranteed to fail again on an identical retry (e.g. a
+# prompt that already exceeds the model's context window) — retrying wastes
+# whole attempts (and, for a stream, the connection time to discover the
+# failure again) for zero chance of success.
+_NON_RETRYABLE_LLM_ERRORS: tuple[type[Exception], ...] = (litellm.ContextWindowExceededError,)
+
+
+def _max_input_tokens(model: str) -> int | None:
+    """Best-effort context-window lookup for ``model``; ``None`` if unknown.
+
+    Used only to skip a call that's already known to be doomed before it's
+    even sent — never to second-guess a model litellm/the provider doesn't
+    also recognize, so an unmapped model just disables the preflight check.
+    """
+    try:
+        max_input_tokens = litellm.get_model_info(model).get("max_input_tokens")
+    except Exception:
+        return None
+    return int(max_input_tokens) if isinstance(max_input_tokens, int | float) else None
+
+
+# Reserved headroom (completion + rough token-counting slack) subtracted from
+# a model's context window before comparing it to the prompt's token count —
+# a prompt that just barely fits leaves no room for the model to respond.
+_CONTEXT_WINDOW_HEADROOM_TOKENS = 4096
+
+
+def _merge_stream_chunks(chunks: list, messages: list[dict]):
+    """Merge streamed LLM chunks back into a single, non-streaming response.
+
+    Genuine LiteLLM stream chunks only ever carry a ``.delta`` (never a
+    ``.message``), so a real multi-chunk stream is merged via LiteLLM's own
+    :func:`litellm.stream_chunk_builder`. A single chunk that already looks
+    like a complete, non-streaming ``ModelResponse`` (exposing ``.message``)
+    is used as-is — there's nothing left to merge, and it lets test doubles
+    fake a one-shot response without simulating LiteLLM's internal delta
+    format.
+    """
+    choices = getattr(chunks[0], "choices", None) or []
+    if len(chunks) == 1 and choices and hasattr(choices[0], "message"):
+        return chunks[0]
+    return litellm.stream_chunk_builder(chunks, messages=messages)
+
+
+def _log_stream_start(step_name: str, t0: float, first_chunk_t: float) -> None:
+    """Debug-log the time-to-first-chunk (TTFT) once a stream's first chunk arrives.
+
+    Marks the start of a "chunk phase" in the log. The counterpart is
+    :func:`_log_stream_end` (clean finish) or :func:`_log_stream_interrupted`
+    (mid-stream failure) — together these replace a debug line per chunk
+    (which used to drown out the rest of the log on a long response, e.g.
+    hundreds of lines for one LLM call) with exactly one line at the start
+    and exactly one more at the end/interruption.
+    """
+    logger.debug(
+        "LLM stream started [%s]: first chunk after %.2fs",
+        step_name,
+        first_chunk_t - t0,
+    )
+
+
+def _log_stream_end(step_name: str, chunk_count: int, t0: float, last_chunk_t: float) -> None:
+    """Debug-log a stream's clean completion: total chunk count and elapsed time."""
+    logger.debug(
+        "LLM stream finished [%s]: %d chunk(s), last chunk after %.2fs total",
+        step_name,
+        chunk_count,
+        last_chunk_t - t0,
+    )
+
+
+def _log_stream_interrupted(
+    step_name: str, chunk_count: int, t0: float, last_chunk_t: float
+) -> None:
+    """Debug-log a stream that raised mid-iteration, right before it is re-raised.
+
+    ``chunk_count`` is how many chunks were successfully received before the
+    failure (0 if the very first chunk never arrived). The exception itself
+    (with traceback) is attached via ``exc_info=True`` so the failure and the
+    chunk-phase summary land in a single log record.
+    """
+    now = time.time()
+    if chunk_count == 0:
+        logger.debug(
+            "LLM stream [%s] interrupted unexpectedly before any chunk arrived (%.2fs total)",
+            step_name,
+            now - t0,
+            exc_info=True,
+        )
+        return
+    logger.debug(
+        "LLM stream [%s] interrupted unexpectedly after chunk %d "
+        "(last chunk after %.2fs, failure after %.2fs total)",
+        step_name,
+        chunk_count,
+        last_chunk_t - t0,
+        now - t0,
+        exc_info=True,
+    )
+
+
+def _consume_stream(stream, step_name: str, t0: float) -> list:
+    """Collect a sync LiteLLM stream into a list, debug-logging the chunk phase.
+
+    Logs exactly one line when the first chunk arrives (time-to-first-token)
+    and exactly one more line when the stream ends — either
+    :func:`_log_stream_end` on a clean finish or :func:`_log_stream_interrupted`
+    if it raises mid-iteration. A mid-stream exception (e.g. the gateway
+    idle-timeout firing) propagates after being logged, so callers still see
+    a complete failure — no partial buffer is ever returned.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return list(stream)
+
+    chunks: list = []
+    last_t = t0
+    try:
+        for chunk in stream:
+            now = time.time()
+            if not chunks:
+                _log_stream_start(step_name, t0, now)
+            chunks.append(chunk)
+            last_t = now
+    except Exception:
+        _log_stream_interrupted(step_name, len(chunks), t0, last_t)
+        raise
+    _log_stream_end(step_name, len(chunks), t0, last_t)
+    return chunks
+
+
+async def _consume_stream_async(stream, step_name: str, t0: float) -> list:
+    """Collect an async LiteLLM stream into a list, debug-logging the chunk phase.
+
+    Mirrors :func:`_consume_stream`, including the start/end-or-interrupted
+    logging and the no-partial-buffer invariant on failure.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return [chunk async for chunk in stream]
+
+    chunks: list = []
+    last_t = t0
+    try:
+        async for chunk in stream:
+            now = time.time()
+            if not chunks:
+                _log_stream_start(step_name, t0, now)
+            chunks.append(chunk)
+            last_t = now
+    except Exception:
+        _log_stream_interrupted(step_name, len(chunks), t0, last_t)
+        raise
+    _log_stream_end(step_name, len(chunks), t0, last_t)
+    return chunks
+
+
 def _llm_call(
     model: str,
     messages: list[dict],
@@ -406,7 +561,15 @@ def _llm_call(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Single LLM call with animated progress and debug logging."""
+    """Single LLM call with animated progress and debug logging.
+
+    Uses ``stream=True``: some corporate LLM gateways enforce an idle
+    timeout on buffered (non-streaming) requests, which a long-running
+    completion can hit before the response is ever sent. Streaming keeps
+    bytes flowing over the connection so that timeout never fires; the
+    chunks are merged back into a single response via
+    :func:`_merge_stream_chunks` so callers see the same shape as before.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -417,6 +580,7 @@ def _llm_call(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    kwargs.setdefault("stream_options", {"include_usage": True})
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
@@ -425,7 +589,29 @@ def _llm_call(
     spinner.start()
     t0 = time.time()
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
+    # Fixed 2 extra attempts for transient stream/LLM errors — not a tunable
+    # knob, just a resilience floor. The concept/entity sweep in
+    # _compile_concepts is the next retry tier above this one.
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            stream = litellm.completion(model=model, messages=messages, stream=True, **kwargs)
+            chunks = _consume_stream(stream, step_name, t0)
+            if not chunks:
+                raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+            response = _merge_stream_chunks(chunks, messages)
+            break
+        except Exception as exc:
+            if attempt == attempts - 1 or isinstance(exc, _NON_RETRYABLE_LLM_ERRORS):
+                spinner.stop("failed")
+                raise
+            logger.warning(
+                "LLM [%s] attempt %d/%d failed: %s; retrying...",
+                step_name,
+                attempt + 1,
+                attempts,
+                exc,
+            )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -449,7 +635,10 @@ async def _llm_call_async(
     bundle=None,
     **kwargs,
 ) -> str:
-    """Async LLM call with timing output and debug logging."""
+    """Async LLM call with timing output and debug logging.
+
+    See ``_llm_call`` for why ``stream=True`` is used.
+    """
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -460,13 +649,40 @@ async def _llm_call_async(
     if bundle is not None:
         kwargs.setdefault("api_key", bundle.api_key)
         kwargs.setdefault("base_url", bundle.base_url)
+    kwargs.setdefault("stream_options", {"include_usage": True})
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
         logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
 
     t0 = time.time()
 
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    # Fixed 2 extra attempts for transient stream/LLM errors — not a tunable
+    # knob, just a resilience floor. The concept/entity sweep in
+    # _compile_concepts is the next retry tier above this one.
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            stream = await litellm.acompletion(
+                model=model, messages=messages, stream=True, **kwargs
+            )
+            if hasattr(stream, "__aiter__"):
+                chunks = await _consume_stream_async(stream, step_name, t0)
+            else:
+                chunks = _consume_stream(stream, step_name, t0)
+            if not chunks:
+                raise RuntimeError(f"LLM [{step_name}] stream produced no chunks")
+            response = _merge_stream_chunks(chunks, messages)
+            break
+        except Exception as exc:
+            if attempt == attempts - 1 or isinstance(exc, _NON_RETRYABLE_LLM_ERRORS):
+                raise
+            logger.warning(
+                "LLM [%s] attempt %d/%d failed: %s; retrying...",
+                step_name,
+                attempt + 1,
+                attempts,
+                exc,
+            )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -955,6 +1171,30 @@ def _write_summary(
     fm_lines.append(_yaml_kv_line("full_text", f"sources/{doc_name}.{ext}"))
     fm_block = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     atomic_write_text(summaries_dir / f"{doc_name}.md", fm_block + summary)
+
+
+def _write_unprocessable_stub(wiki_dir: Path, doc_name: str, reason: str) -> None:
+    """Write a placeholder summary for a doc whose content can't be fed to the LLM.
+
+    Mirrors how an unreadable/undecodable image is handled: the source stays
+    in the knowledge base as a plain reference instead of aborting the whole
+    ``add`` or discarding it, but it's skipped for LLM ingestion entirely (no
+    summary/concept/entity generation), since a request this size is either
+    already known to exceed the model's context window or has just failed
+    with ``litellm.ContextWindowExceededError``. Also adds the usual
+    ``## Documents`` index.md entry (via ``_update_index``, with no concepts)
+    — without it the summary page would be an undiscoverable orphan, which
+    ``openkb lint`` flags as an index-sync error.
+    """
+    description = "Not processed by the LLM \u2014 content too large for the context window."
+    body = (
+        "This document was not processed by the LLM: its content is too "
+        f"large for the model's context window ({reason}). The raw source "
+        "is still kept in the knowledge base for reference, but no summary "
+        "or concept/entity extraction was generated for it."
+    )
+    _write_summary(wiki_dir, doc_name, body, description=description)
+    _update_index(wiki_dir, doc_name, [], doc_brief=description)
 
 
 _SAFE_NAME_RE = re.compile(r"[^\w\-]")
@@ -1631,25 +1871,6 @@ async def _compile_concepts(
     # (system + doc + summary) for the plan call and every concept call.
     summary_msg = {"role": "assistant", "content": _cached_text(summary)}
 
-    plan_raw = _llm_call(
-        model,
-        [
-            system_msg,
-            doc_msg,
-            summary_msg,
-            {
-                "role": "user",
-                "content": _CONCEPTS_PLAN_USER.format(
-                    concept_briefs=concept_briefs,
-                    entity_briefs=entity_briefs,
-                ).replace("__ENTITY_TYPES__", types_str),
-            },
-        ],
-        "concepts-plan",
-        response_format=_JSON_RESPONSE_FORMAT,
-        bundle=bundle,
-    )
-
     def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
 
@@ -1670,6 +1891,60 @@ async def _compile_concepts(
                 ghosts[:5],
             )
         _write_summary(wiki_dir, doc_name, cleaned, description=doc_brief)
+
+    concepts_plan_user_msg = {
+        "role": "user",
+        "content": _CONCEPTS_PLAN_USER.format(
+            concept_briefs=concept_briefs,
+            entity_briefs=entity_briefs,
+        ).replace("__ENTITY_TYPES__", types_str),
+    }
+    try:
+        plan_raw = _llm_call(
+            model,
+            [system_msg, doc_msg, summary_msg, concepts_plan_user_msg],
+            "concepts-plan",
+            response_format=_JSON_RESPONSE_FORMAT,
+            bundle=bundle,
+        )
+    except _NON_RETRYABLE_LLM_ERRORS as exc:
+        # The existing concept/entity index grows with the KB (see
+        # _read_concept_briefs/_read_entity_briefs) and is added on top of the
+        # already-cached document — a doc that was fine for the summary call
+        # can still blow the window here once the index gets large enough.
+        # Retry once without the full document: the plan prompt already asks
+        # the model to work "based on the summary above" (see
+        # _CONCEPTS_PLAN_USER), so dropping doc_msg usually shrinks the
+        # prompt back under the window without losing the plan's intent.
+        logger.warning(
+            "concepts plan exceeded context window for %s: %s; retrying with summary as source",
+            doc_name,
+            exc,
+        )
+        sys.stdout.write(
+            f"    [WARN] concepts plan exceeded context window for {doc_name} — "
+            "retrying with the summary as source instead of the full document.\n"
+        )
+        sys.stdout.flush()
+        try:
+            plan_raw = _llm_call(
+                model,
+                [system_msg, summary_msg, concepts_plan_user_msg],
+                "concepts-plan",
+                response_format=_JSON_RESPONSE_FORMAT,
+                bundle=bundle,
+            )
+        except _NON_RETRYABLE_LLM_ERRORS as retry_exc:
+            # Still too large even with just the summary (e.g. the existing
+            # concept/entity index alone is huge) — the summary itself
+            # already exists (unlike the doc-too-large case above), so it's
+            # kept — same fallback as an unparseable/empty plan, just
+            # skipping concept/entity generation for this doc.
+            logger.warning("Skipping concept/entity extraction for %s: %s", doc_name, retry_exc)
+            if rewrite_summary:
+                _write_v1_summary_stripped()
+            _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
+            return
 
     try:
         parsed = _parse_json(plan_raw)
@@ -2245,18 +2520,49 @@ async def compile_short_doc(
         ),
     }
 
+    # Preflight: skip the LLM entirely for a doc that's already known to
+    # exceed the model's context window (only when the model is recognized —
+    # see _max_input_tokens) instead of sending a request that's certain to
+    # fail. The doc stays in the KB as a plain reference, like an unreadable
+    # image would.
+    max_input_tokens = _max_input_tokens(model)
+    if max_input_tokens is not None:
+        prompt_tokens = litellm.token_counter(model=model, messages=[system_msg, doc_msg])
+        if prompt_tokens > max_input_tokens - _CONTEXT_WINDOW_HEADROOM_TOKENS:
+            logger.warning(
+                "Skipping LLM ingestion for %s: %d prompt tokens > %s's %d-token context window",
+                doc_name,
+                prompt_tokens,
+                model,
+                max_input_tokens,
+            )
+            _write_unprocessable_stub(
+                wiki_dir,
+                doc_name,
+                f"{prompt_tokens} tokens > {model}'s {max_input_tokens}-token context window",
+            )
+            return
+
     # --- Step 1: Generate summary (v1, held in memory) ---
     # The summary is NOT written to disk yet — it's used as cache context
     # for the plan + concept-generation calls, then rewritten into a final
     # v2 (with a whitelist of known wikilink targets) inside
     # _compile_concepts before being written to disk.
-    summary_raw = _llm_call(
-        model,
-        [system_msg, doc_msg],
-        "summary",
-        response_format=_JSON_RESPONSE_FORMAT,
-        bundle=bundle,
-    )
+    try:
+        summary_raw = _llm_call(
+            model,
+            [system_msg, doc_msg],
+            "summary",
+            response_format=_JSON_RESPONSE_FORMAT,
+            bundle=bundle,
+        )
+    except _NON_RETRYABLE_LLM_ERRORS as exc:
+        # The preflight check above is best-effort (unmapped model, or
+        # litellm's token_counter estimate came in under the real one) — this
+        # is the safety net for when it still slips through.
+        logger.warning("Skipping LLM ingestion for %s: %s", doc_name, exc)
+        _write_unprocessable_stub(wiki_dir, doc_name, str(exc))
+        return
     try:
         summary_parsed = _parse_json(summary_raw)
         doc_brief = summary_parsed.get("description", "")
