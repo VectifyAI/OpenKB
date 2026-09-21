@@ -22,6 +22,7 @@ from agents.model_settings import ModelSettings
 
 from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.prompts import load_prompt
+from openkb.responses import responses_agent_model
 from openkb.schema import get_agents_md
 from openkb.skill import skill_dir
 from openkb.skill.tools import (
@@ -179,7 +180,7 @@ def build_skill_create_agent(
             write_skill_file,
             done,
         ],
-        model=f"litellm/{model}",
+        model=(responses_agent_model(model, bundle) or f"litellm/{model}"),
         model_settings=ModelSettings(**model_settings),
     )
 

@@ -15,6 +15,7 @@ from openkb.agent.tools import (
     write_kb_file,
 )
 from openkb.config import LlmCredentialBundle, resolve_model_settings
+from openkb.responses import responses_agent_model
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -118,7 +119,7 @@ def build_query_agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
-        model=f"litellm/{model}",
+        model=(responses_agent_model(model, bundle) or f"litellm/{model}"),
         model_settings=ModelSettings(**model_settings),
     )
 
@@ -506,9 +507,20 @@ def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None
     must NOT be added here -- doing so yields ``litellm/openai/...`` which
     litellm rejects as an unknown provider.
     """
-    if bundle is None:
-        return None
     from agents import RunConfig
+
+    if bundle is None:
+        instance = responses_agent_model(model, None)
+        if instance is not None:
+            # Legacy CLI path for Responses models: credentials fall back
+            # to LLM_API_KEY / OPENAI_API_BASE env (loaded from the KB
+            # .env by _setup_llm_key before this is called).
+            return RunConfig(model=instance)
+        return None
+
+    instance = responses_agent_model(model, bundle)
+    if instance is not None:
+        return RunConfig(model=instance)
     from agents.extensions.models.litellm_model import LitellmModel
 
     litellm_model = LitellmModel(

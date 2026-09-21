@@ -141,6 +141,27 @@ litellm:
   timeout: 1200            # raise further (e.g. 3600) for large local models
 ```
 
+#### Responses-only models (Responses API transport)
+
+Some gateways serve certain models exclusively on the `/v1/responses`
+endpoint and answer `/v1/chat/completions` with `503 Endpoint is
+unavailable`. Prefix the model with `openai-responses/` and OpenKB talks
+the Responses API for every agent call (compile, query, chat, lint,
+skills, decks) — including tool calls and `run_streamed` sessions:
+
+```yaml
+model: openai-responses/muse-spark-1.3-contributor
+language: en
+```
+
+The prefix is OpenKB-only (LiteLLM never sees it). Credentials work as
+usual: `LLM_API_KEY` + `OPENAI_API_BASE` from `<kb>/.env`, plus any
+`litellm.extra_headers` your gateway needs (e.g. a session-routing
+header). Two limitations: long-PDF PageIndex indexing still requires a
+Chat Completions model (`openkb add` fails fast with a clear error
+otherwise — convert the PDF to Markdown first), and streaming is
+supported through the Agents SDK path only.
+
 #### GitHub Copilot / ChatGPT-subscription providers
 
 These need extra headers and use OAuth (no API key):
