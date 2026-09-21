@@ -207,6 +207,8 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 `openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
 
+Retrieval is hybrid: the agent primarily navigates via `index.md`'s one-line summaries, and additionally has a `search_wiki` tool — a dependency-free BM25 full-text search over `concepts/`, `entities/`, and `summaries/` — for surfacing pages whose index summary doesn't mention a specific buried detail. It's additive, not a replacement, so recall can only improve over index-only navigation.
+
 Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <details>
