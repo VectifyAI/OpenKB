@@ -4,7 +4,7 @@ Some gateways serve certain models exclusively on ``/v1/responses`` and
 answer ``/v1/chat/completions`` with ``503 Endpoint is unavailable``.
 Prefix the model id to opt in::
 
-    model: openai-responses/muse-spark-1.3-contributor
+    model: openai-responses/<model-id>
 
 The prefix is OpenKB-only (stripped before anything reaches LiteLLM).
 Responses are adapted back to the Chat Completions shape, so existing

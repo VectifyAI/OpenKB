@@ -14,15 +14,15 @@ from openkb.responses import (
 
 
 def test_prefix_detection():
-    assert is_responses_model("openai-responses/muse-spark-1.3-contributor")
+    assert is_responses_model("openai-responses/my-model")
     assert not is_responses_model("openai/gpt-5.4")
     assert not is_responses_model("gemini/gemini-2.5-flash")
 
 
 def test_split():
-    litellm_model, bare = split_responses_model("openai-responses/muse-spark-1.3-contributor")
-    assert litellm_model == "openai/muse-spark-1.3-contributor"
-    assert bare == "muse-spark-1.3-contributor"
+    litellm_model, bare = split_responses_model("openai-responses/my-model")
+    assert litellm_model == "openai/my-model"
+    assert bare == "my-model"
 
 
 def test_messages_passthrough():
@@ -143,13 +143,13 @@ def test_build_agents_responses_model_wiring():
     from openkb.responses import build_agents_responses_model
 
     model = build_agents_responses_model(
-        "openai-responses/muse-spark-1.3-contributor",
+        "openai-responses/my-model",
         api_key="k",
         base_url="https://example.test/v1",
         extra_headers={"x-opencode-session": "s"},
         timeout=120,
     )
-    assert model.model == "muse-spark-1.3-contributor"
+    assert model.model == "my-model"
     client = model._client
     assert str(client.base_url) == "https://example.test/v1/"
     assert client._custom_headers.get("x-opencode-session") == "s"
@@ -213,7 +213,7 @@ def test_adapt_response_shape():
 
 def test_build_params_mapping():
     model, params = build_responses_params(
-        "openai-responses/muse-spark-1.3-contributor",
+        "openai-responses/my-model",
         [{"role": "user", "content": "hi"}],
         max_tokens=100,
         response_format={"type": "json_object"},
@@ -222,7 +222,7 @@ def test_build_params_mapping():
         api_key="k",
         base_url="b",
     )
-    assert model == "openai/muse-spark-1.3-contributor"
+    assert model == "openai/my-model"
     assert params["max_output_tokens"] == 100
     assert params["text"] == {"format": {"type": "json_object"}}
     assert params["temperature"] == 0.5

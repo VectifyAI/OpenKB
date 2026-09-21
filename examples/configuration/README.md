@@ -150,7 +150,7 @@ the Responses API for every agent call (compile, query, chat, lint,
 skills, decks) — including tool calls and `run_streamed` sessions:
 
 ```yaml
-model: openai-responses/muse-spark-1.3-contributor
+model: openai-responses/<model-id>
 language: en
 ```
 
