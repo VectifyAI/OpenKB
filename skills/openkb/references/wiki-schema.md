@@ -97,6 +97,23 @@ Documents` section. One page per entity, accumulated as more
 documents mention it. For "who/what is X" questions about a named
 thing, read the matching entity page first.
 
+## `wiki/explorations/<slug>.md`
+
+Deep-dive answers synthesized from prior user questions or autonomous
+research agents (via `openkb query --save` or researcher agent writes).
+
+Frontmatter (when saved via query):
+
+```yaml
+---
+query: "Original user question that generated this exploration"
+---
+```
+
+Body: multi-section synthesized report answering the question, often
+containing structured tables, processes, team breakdowns, and wikilinks
+back to related concepts and summaries (`## Verwandte Konzepte:`).
+
 ## `wiki/sources/<doc>.md` (short docs)
 
 The markitdown-converted full text. Image refs are note-relative —

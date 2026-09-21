@@ -2556,7 +2556,16 @@ def visualize(ctx, open_browser):
 
 
 def print_list(kb_dir: Path) -> None:
-    """Print all documents in the knowledge base. Usable from CLI and chat REPL."""
+    """Print all documents in the knowledge base. Usable from CLI and chat REPL.
+
+    Deprecated: prefer ``openkb list-taxonomy`` (concepts/entities, with
+    briefs) and ``openkb list-documents`` (summaries/explorations, with
+    briefs) for anything beyond a quick human-readable overview — this
+    command's output format is kept unchanged for existing scripts, but its
+    Summaries/Concepts/Entities sections are now thin wrappers around
+    ``list_documents``/``list_taxonomy_items`` (the same data source as
+    those newer commands) instead of duplicating directory-glob logic.
+    """
     openkb_dir = kb_dir / ".openkb"
     hashes_file = openkb_dir / "hashes.json"
     if not hashes_file.exists():
@@ -2568,7 +2577,9 @@ def print_list(kb_dir: Path) -> None:
         click.echo("No documents indexed yet.")
         return
 
-    # Display documents table with count in header
+    # Display documents table with count in header. Registry metadata (file
+    # type, page count) isn't wiki content, so it stays its own logic rather
+    # than going through list_documents/get_content.
     doc_count = len(hashes)
     click.echo(f"Documents ({doc_count}):")
     click.echo(f"  {'Name':<40} {'Type':<12} {'Pages':<8}")
@@ -2581,34 +2592,33 @@ def print_list(kb_dir: Path) -> None:
         pages_str = str(pages) if pages else ""
         click.echo(f"  {name:<40} {display:<12} {pages_str:<8}")
 
+    from openkb.agent.content import list_documents, list_taxonomy_items
+
+    wiki_root = str(kb_dir / "wiki")
+
     # Display summaries
-    summaries_dir = kb_dir / "wiki" / "summaries"
-    if summaries_dir.exists():
-        summaries = sorted(p.stem for p in summaries_dir.glob("*.md"))
-        if summaries:
-            click.echo(f"\nSummaries ({len(summaries)}):")
-            for s in summaries:
-                click.echo(f"  - {s}")
+    summaries = [i.slug for i in list_documents(wiki_root, kind="summary")]
+    if summaries:
+        click.echo(f"\nSummaries ({len(summaries)}):")
+        for s in summaries:
+            click.echo(f"  - {s}")
 
     # Display concepts
-    concepts_dir = kb_dir / "wiki" / "concepts"
-    if concepts_dir.exists():
-        concepts = sorted(p.stem for p in concepts_dir.glob("*.md"))
-        if concepts:
-            click.echo(f"\nConcepts ({len(concepts)}):")
-            for c in concepts:
-                click.echo(f"  - {c}")
+    concepts = [i.slug for i in list_taxonomy_items(wiki_root, kind="concept")]
+    if concepts:
+        click.echo(f"\nConcepts ({len(concepts)}):")
+        for c in concepts:
+            click.echo(f"  - {c}")
 
     # Display entities
-    entities_dir = kb_dir / "wiki" / "entities"
-    if entities_dir.exists():
-        entities = sorted(p.stem for p in entities_dir.glob("*.md"))
-        if entities:
-            click.echo(f"\nEntities ({len(entities)}):")
-            for e in entities:
-                click.echo(f"  - {e}")
+    entities = [i.slug for i in list_taxonomy_items(wiki_root, kind="entity")]
+    if entities:
+        click.echo(f"\nEntities ({len(entities)}):")
+        for e in entities:
+            click.echo(f"  - {e}")
 
-    # Display reports
+    # Display reports — reports/ has no brief/frontmatter to speak of, so a
+    # plain glob stays simpler than a dedicated list_reports() would be.
     reports_dir = kb_dir / "wiki" / "reports"
     if reports_dir.exists():
         reports = sorted(p.name for p in reports_dir.glob("*.md"))
@@ -2622,12 +2632,186 @@ def print_list(kb_dir: Path) -> None:
 @click.pass_context
 @_with_kb_lock(exclusive=False)
 def list_cmd(ctx):
-    """List all documents in the knowledge base."""
+    """List all documents in the knowledge base.
+
+    Deprecated: prefer ``openkb list-taxonomy`` (concepts/entities) and
+    ``openkb list-documents`` (summaries/explorations) for anything that
+    needs briefs, a ``--kind`` filter, or ``--json`` output.
+    """
     kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
     if kb_dir is None:
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
     print_list(kb_dir)
+
+
+def _taxonomy_items_to_json(items) -> list[dict]:
+    """Convert ``TaxonomyItem`` dataclasses to plain JSON-serializable dicts."""
+    return [
+        {"kind": i.kind, "slug": i.slug, "path": i.path, "brief": i.brief, "type": i.type}
+        for i in items
+    ]
+
+
+def _document_items_to_json(items) -> list[dict]:
+    """Convert ``DocumentItem`` dataclasses to plain JSON-serializable dicts."""
+    return [{"kind": i.kind, "slug": i.slug, "path": i.path, "brief": i.brief} for i in items]
+
+
+@cli.command(name="list-taxonomy")
+@click.option(
+    "--kind",
+    type=click.Choice(["concept", "entity"]),
+    default=None,
+    help="Restrict to concepts or entities (default: both).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
+@click.pass_context
+@_with_kb_lock(exclusive=False)
+def list_taxonomy_cmd(ctx, kind, as_json):
+    """List persisted concept/entity pages with their one-line briefs.
+
+    Intended for semantic browsing (external agents/scripts pick a slug by
+    meaning), not keyword search — see ``openkb search`` for that. Never
+    includes not-yet-paged pending candidates, only committed ``.md`` pages.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.agent.tools import list_taxonomy_items
+
+    items = list_taxonomy_items(str(kb_dir / "wiki"), kind=kind)
+
+    if as_json:
+        click.echo(json.dumps(_taxonomy_items_to_json(items), ensure_ascii=False, indent=2))
+        return
+
+    if not items:
+        click.echo("No concepts or entities found.")
+        return
+    for item in items:
+        type_suffix = f" ({item.type})" if item.type else ""
+        brief_suffix = f" — {item.brief}" if item.brief else ""
+        click.echo(f"[{item.kind}] {item.slug}{type_suffix}{brief_suffix}")
+
+
+@cli.command(name="list-documents")
+@click.option(
+    "--kind",
+    type=click.Choice(["summary", "exploration"]),
+    default=None,
+    help="Restrict to summaries or explorations (default: both).",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
+@click.pass_context
+@_with_kb_lock(exclusive=False)
+def list_documents_cmd(ctx, kind, as_json):
+    """List persisted summary/exploration pages with their one-line briefs.
+
+    Mirrors ``openkb list-taxonomy`` for a different pair of kinds:
+    summaries (one per ingested document) and explorations (saved
+    ``openkb query --save`` answers) — an exploration's brief is the
+    originally-saved question. Prefer ``openkb search`` for keyword lookups
+    over many summaries/explorations; this command is for browsing the
+    full list with its briefs.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.agent.tools import list_documents
+
+    items = list_documents(str(kb_dir / "wiki"), kind=kind)
+
+    if as_json:
+        click.echo(json.dumps(_document_items_to_json(items), ensure_ascii=False, indent=2))
+        return
+
+    if not items:
+        click.echo("No summaries or explorations found.")
+        return
+    for item in items:
+        brief_suffix = f" — {item.brief}" if item.brief else ""
+        click.echo(f"[{item.kind}] {item.slug}{brief_suffix}")
+
+
+def _search_results_to_json(results: dict) -> dict:
+    """Convert ``{tier: [SearchHit, ...]}`` to plain JSON-serializable dicts."""
+    return {
+        tier: [
+            {
+                "path": hit.path,
+                "title": hit.title,
+                "score": hit.score,
+                "snippet": hit.snippet,
+                "locator": (
+                    {"kind": hit.locator.kind, "value": hit.locator.value} if hit.locator else None
+                ),
+            }
+            for hit in hits
+        ]
+        for tier, hits in results.items()
+    }
+
+
+@cli.command(name="search")
+@click.argument("query")
+@click.option(
+    "--scope",
+    default=None,
+    help="Comma-separated subset of briefs,summaries,sources,explorations (default: all four).",
+)
+@click.option("--top-k", default=5, show_default=True, help="Max ranked results per tier.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
+@click.pass_context
+@_with_kb_lock(exclusive=False)
+def search_cmd(ctx, query, scope, top_k, as_json):
+    """Full-text (BM25) search over summaries/sources/explorations, tier by tier.
+
+    Concepts/entities are not covered — use ``openkb list-taxonomy`` for
+    those (semantic browsing, not keyword search). Each tier is scored and
+    ranked independently: ``briefs`` (one-line document summaries), rich
+    ``summaries`` (full document-summary text), ``sources`` (raw source
+    files, with a page/line locator pointing at the exact hit location),
+    and ``explorations`` (saved ``openkb query --save`` answers).
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.fulltext_index import TieredWikiSearch
+
+    scope_list = [s.strip() for s in scope.split(",") if s.strip()] if scope else None
+    try:
+        results = TieredWikiSearch(str(kb_dir / "wiki")).search(
+            query, scope=scope_list, top_k=top_k
+        )
+    except ValueError as exc:
+        click.echo(str(exc))
+        ctx.exit(1)
+        return
+
+    if as_json:
+        click.echo(json.dumps(_search_results_to_json(results), ensure_ascii=False, indent=2))
+        return
+
+    any_hits = False
+    for tier in ("briefs", "summaries", "sources", "explorations"):
+        hits = results.get(tier)
+        if not hits:
+            continue
+        any_hits = True
+        click.echo(f"\n=== {tier} ===")
+        for i, hit in enumerate(hits, start=1):
+            locator_suffix = f" [{hit.locator.kind} {hit.locator.value}]" if hit.locator else ""
+            click.echo(f"{i}. {hit.path}{locator_suffix} — {hit.title} (score: {hit.score})")
+            click.echo(f"   {hit.snippet}")
+    if not any_hits:
+        click.echo("No matching pages found.")
 
 
 def print_status(kb_dir: Path) -> None:

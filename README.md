@@ -185,6 +185,8 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code>                   | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (`--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts)                                                                     |
 | <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the compile pipeline on already-indexed docs without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten (`--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md`) |
+| <code>openkb&nbsp;list-taxonomy&nbsp;[--kind&nbsp;concept&#124;entity]</code> | List persisted concept/entity pages with their one-line briefs — semantic browsing, not keyword search (`--json` for scripting)                                                                                       |
+| <code>openkb&nbsp;search&nbsp;"query"&nbsp;[--scope&nbsp;briefs,summaries,sources]</code> | Tiered BM25 full-text search over `summaries/`/`sources/` (never `concepts/`/`entities/` — use `list-taxonomy` for those); `--json` for scripting                                                             |
 | <code>openkb&nbsp;feedback&nbsp;["msg"]</code>                     | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it)                                                                                                                                          |
 
 </details>
@@ -206,6 +208,8 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 ### (i) 💬 Query & Chat — *ask the wiki*
 
 `openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
+
+Retrieval is hybrid: the agent primarily navigates via `index.md`'s one-line summaries, and additionally has `list_taxonomy`/`get_taxonomy_item` (semantic browsing of `concepts/`/`entities/` pages by their one-line briefs — not a keyword search) and a tiered `search_wiki` tool — a dependency-free BM25 full-text search, in three independent tiers over `summaries/` briefs, full `summaries/` bodies, and `sources/` (including per-page indexing of long PageIndex documents) — for surfacing details a summary omits (an exact term, an author, a creation date). It's additive, not a replacement, so recall can only improve over index-only navigation. The same search/browse capability is available outside the agent via `openkb list-taxonomy` and `openkb search` (see `openkb --help`).
 
 Inside a chat, type `/` to access slash commands (Tab to complete).
 
@@ -338,6 +342,31 @@ gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/open
 </details>
 
 The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
+
+### Using with an MCP client
+
+For MCP-capable assistants (or any client that prefers typed tools over filesystem/CLI access), `openkb-mcp` starts a stdio MCP server exposing:
+
+- `list_taxonomy` / `list_documents` — semantic browsing of concepts/entities and summaries/explorations, each with their one-line brief.
+- `get_content` — read wiki content by slug across all seven content kinds (concept/entity/summary/exploration/source/report/index); omit `kind` to search all of them and get one entry per match.
+- `search_wiki` — tiered BM25 search over briefs/summaries/sources/explorations (see "Query & Chat" above for what "tiered" means).
+- `get_status` — the active KB's absolute path and content counts (the only way to learn the KB's absolute path without shell access, since every other tool returns wiki-root-relative paths).
+- `list_kbs` — every KB this server can address via the `kb` parameter.
+
+No index cache: every tool rebuilds its underlying index fresh on every call, same as the CLI.
+
+Every tool accepts an optional `kb` parameter (a registered KB name/alias, or an absolute KB root path) so one server process can serve multiple knowledge bases — omit it to use the KB resolved from the server's working directory or global default (today's behavior):
+
+```json
+{
+  "mcpServers": {
+    "openkb": {
+      "command": "openkb-mcp",
+      "cwd": "/path/to/your/kb"
+    }
+  }
+}
+```
 
 # REST API
 

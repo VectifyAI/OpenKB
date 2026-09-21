@@ -19,24 +19,47 @@ Resolution: walks up from cwd, then falls back to `openkb use`'s
 global default. Empty case prints "No knowledge base found. Run
 `openkb init` first." — stop and tell the user; don't try to read.
 
+## `openkb list-taxonomy [--kind concept|entity] [--json]`
+
+Concept/entity pages with their one-line briefs, for semantic browsing
+(pick a slug by meaning, not keyword search). Omit `--kind` for both.
+
+```
+$ openkb list-taxonomy
+[concept] attention — Mechanism for weighting input relevance.
+[entity] ada-lovelace (person) — Early computing pioneer.
+```
+
+## `openkb search-taxonomy "<term>" [--kind concept|entity] [--top-k N] [--json]`
+
+Ranks concept/entity pages by BM25 match against their slug + one-line
+brief (never the full body). Use instead of `list-taxonomy` once a KB has
+too many taxonomy items to scan by eye — check counts via `openkb status`
+first. `--top-k` defaults to 20 (higher than `search`'s default, since a
+brief is short). Omit `--kind` for both.
+
+```
+$ openkb search-taxonomy "attention"
+[concept] attention — Mechanism for weighting input relevance. (score: 4.82)
+```
+
+## `openkb list-documents [--kind summary|exploration] [--json]`
+
+Summary/exploration pages with their one-line briefs. An exploration's
+brief is its originally-saved question. Omit `--kind` for both.
+
+## `openkb search "<term>" [--scope briefs,summaries,sources,explorations] [--top-k N] [--json]`
+
+Tiered BM25 search. `--scope` is a **comma-separated** list (not a
+repeated flag) — omit for all four tiers. Never covers concepts/entities
+— use `list-taxonomy` for those. Each hit under `sources` carries a
+`locator` (`line` for a short doc, `page` for a long PageIndex `.json`).
+
 ## `openkb list`
 
-Documents + concepts table. `Type` is mapped via `_TYPE_DISPLAY_MAP`:
-long PDFs show as `pageindex`, everything else as `short` (the raw
-file extension is internal and not exposed). `Pages` only populated
-for long PDFs.
-
-```
-$ openkb list
-Documents (N):
-  Name              Type        Pages
-  paper.pdf         pageindex   42
-  notes.md          short
-Summaries (N):
-  - paper
-Concepts (N):
-  - attention
-```
+Deprecated — prefer `list-taxonomy`/`list-documents` above, which have
+briefs, a `--kind` filter, and `--json` output. Kept only for the
+plain Documents/Summaries/Concepts/Entities table it prints.
 
 ## `openkb query "<question>"`
 
