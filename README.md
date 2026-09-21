@@ -207,6 +207,8 @@ A "generator" reads from the compiled wiki and produces something usable: an ans
 
 `openkb query "..."` answers a single question with a grounded, cited answer from your wiki. `openkb chat` is interactive, an ongoing multi-turn session over the same wiki (`--resume`, `--list`, `--delete` to manage sessions). → Walked through with real saved output in **[`examples/commands/`](examples/commands/)** (query) and **[`examples/chat/`](examples/chat/)** (chat).
 
+Retrieval is hybrid: the agent primarily navigates via `index.md`'s one-line summaries, and additionally has a `search_wiki` tool — a dependency-free BM25 full-text search over `concepts/`, `entities/`, and `summaries/` — for surfacing pages whose index summary doesn't mention a specific buried detail. It's additive, not a replacement, so recall can only improve over index-only navigation.
+
 Inside a chat, type `/` to access slash commands (Tab to complete).
 
 <details>
@@ -338,6 +340,36 @@ gemini skills install https://github.com/VectifyAI/OpenKB.git --path skills/open
 </details>
 
 The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` without you asking. See [`skills/openkb/SKILL.md`](skills/openkb/SKILL.md) for the full instruction set.
+
+### Using with an MCP client
+
+For MCP-capable assistants (or any client that prefers typed tools over filesystem/CLI access), `openkb-mcp` starts a stdio MCP server exposing:
+
+- `list_taxonomy` / `list_documents` — semantic browsing of concepts/entities and summaries/explorations, each with their one-line brief. Support a 1-based `page` parameter (see the response size guard below).
+- `search_taxonomy` — rank concept/entity pages by BM25 match against their slug + one-line brief (never their full body). Complements `list_taxonomy`'s plain listing for a KB with too many taxonomy items to browse whole; `top_k` defaults to 20 (much higher than `search_wiki`'s 5, since a brief is short).
+- `get_content` — read wiki content by slug across all seven content kinds (concept/entity/summary/exploration/source/report/index); omit `kind` to search all of them and get one entry per match. Always returns a page's full content — not subject to the response size guard below; for a long PageIndex source document, use its `pages` argument to fetch a smaller range instead of the whole document.
+- `search_wiki` — tiered BM25 search over briefs/summaries/sources/explorations (see "Query & Chat" above for what "tiered" means). `top_k` is the pagination knob (max results per tier).
+- `get_status` — the active KB's absolute path and content counts (the only way to learn the KB's absolute path without shell access, since every other tool returns wiki-root-relative paths).
+- `list_kbs` — every KB this server can address via the `kb` parameter.
+
+No index cache: every tool rebuilds its underlying index fresh on every call, same as the CLI.
+
+**Response size guard:** every listing/search tool's result is capped at ~25 KB (serialized) — `get_content` is exempt, see above. A result over that budget is never silently truncated — instead the tool returns `{"error": "result_too_large", "size_bytes": ..., "max_bytes": ..., "message": "..."}` explaining how to retry:
+- `list_kbs` / `list_taxonomy` / `list_documents` — splitting a listing by character or line makes no sense, so the item list is instead cut into a fixed number of whole-item pages; the message names the page count, and you call again with `page=1`, `page=2`, ... (the same idea as `get_content`'s `pages` argument, just one page number over the listing instead of a range over a document).
+- `search_wiki` / `search_taxonomy` — retry with a lower `top_k` (and, for `search_wiki`, a narrower `scope`).
+
+Every tool accepts an optional `kb` parameter (a registered KB name/alias, or an absolute KB root path) so one server process can serve multiple knowledge bases — omit it to use the KB resolved from the server's working directory or global default (today's behavior):
+
+```json
+{
+  "mcpServers": {
+    "openkb": {
+      "command": "openkb-mcp",
+      "cwd": "/path/to/your/kb"
+    }
+  }
+}
+```
 
 # REST API
 

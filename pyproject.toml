@@ -50,6 +50,14 @@ dependencies = [
     "prompt_toolkit==3.0.52",
     "rich==15.0.0",
     "portalocker==3.2.0",
+    # Already resolved transitively via openai-agents (MCP Python SDK v2
+    # client support: MCPServerStdio/MCPServerStreamableHttp, see PR #207).
+    # Pinned explicitly here too because openkb.mcp_server now imports
+    # mcp.server.fastmcp directly (server-side, not just the client support
+    # openai-agents needs) — an explicit top-level pin makes that dependency
+    # intentional rather than an implicit side effect of another package's
+    # requirements.
+    "mcp==1.27.1",
 ]
 
 [project.urls]
@@ -62,6 +70,7 @@ openkb = "openkb.cli:cli"
 openkb-web = "openkb.api:main"
 # Backwards-compatible alias for the historical name; same entry point.
 openkb-api = "openkb.api:main"
+openkb-mcp = "openkb.mcp_server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
