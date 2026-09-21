@@ -1,4 +1,9 @@
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
+# Responses-only models (served exclusively on the provider's /v1/responses
+# endpoint, e.g. some managed gateways): prefix with `openai-responses/`.
+# OpenKB then talks the Responses API for compile/query/chat/lint/skills.
+# Long-PDF PageIndex indexing still needs a Chat Completions model.
+# model: openai-responses/<model-id>
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
 

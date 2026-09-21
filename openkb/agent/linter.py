@@ -9,6 +9,7 @@ from agents.model_settings import ModelSettings
 
 from openkb.agent.tools import list_wiki_files, read_wiki_file
 from openkb.config import LlmCredentialBundle, resolve_model_settings
+from openkb.responses import responses_agent_model
 from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
@@ -97,7 +98,7 @@ def build_lint_agent(
         name="wiki-linter",
         instructions=instructions,
         tools=[list_files, read_file],
-        model=f"litellm/{model}",
+        model=(responses_agent_model(model, bundle) or f"litellm/{model}"),
         model_settings=ModelSettings(**model_settings),
     )
 

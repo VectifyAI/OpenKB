@@ -47,6 +47,7 @@ from agents.exceptions import MaxTurnsExceeded
 from agents.model_settings import ModelSettings
 
 from openkb.config import get_extra_headers, get_timeout_extra_args
+from openkb.responses import responses_agent_model
 from openkb.skill import extract_body, extract_frontmatter
 
 EVAL_DEFAULT_COUNT = 10  # 10 trigger + 10 no-trigger = 20 prompts
@@ -234,7 +235,7 @@ async def generate_eval_set(
     agent = Agent(
         name="eval-set-generator",
         instructions=instructions,
-        model=f"litellm/{model}",
+        model=(responses_agent_model(model) or f"litellm/{model}"),
         model_settings=ModelSettings(
             extra_headers=get_extra_headers() or None,
             extra_args=get_timeout_extra_args(),
@@ -296,7 +297,7 @@ async def grade_one(
     agent = Agent(
         name="trigger-grader",
         instructions=instructions,
-        model=f"litellm/{model}",
+        model=(responses_agent_model(model) or f"litellm/{model}"),
         model_settings=ModelSettings(
             extra_headers=get_extra_headers() or None,
             extra_args=get_timeout_extra_args(),
@@ -348,7 +349,7 @@ async def grade_coverage(
     agent = Agent(
         name="coverage-grader",
         instructions=instructions,
-        model=f"litellm/{model}",
+        model=(responses_agent_model(model) or f"litellm/{model}"),
         model_settings=ModelSettings(
             extra_headers=get_extra_headers() or None,
             extra_args=get_timeout_extra_args(),

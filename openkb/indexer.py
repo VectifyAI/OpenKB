@@ -12,6 +12,7 @@ from typing import Any
 from pageindex import IndexConfig, PageIndexClient
 
 from openkb.config import resolve_concurrency, resolve_effective_config
+from openkb.responses import is_responses_model
 from openkb.tree_renderer import render_summary_md
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,12 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     config = resolve_effective_config(kb_dir)[0]
 
     model: str = config.get("model", "gpt-5.4")
+    if is_responses_model(model):
+        raise ValueError(
+            f"Long-PDF PageIndex indexing requires a Chat Completions model, "
+            f"but the KB is configured with Responses-only {model!r}. "
+            f"Convert the PDF to Markdown first, or switch the KB model."
+        )
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
 
     index_config = _build_index_config(config)
