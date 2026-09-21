@@ -1,28 +1,16 @@
 """Native OpenAI Responses API transport for Responses-only models.
 
-Some gateways serve certain models exclusively on the ``/v1/responses``
-endpoint and answer ``/v1/chat/completions`` with ``503 Endpoint is
-unavailable``. OpenKB talks to LLMs through LiteLLM Chat Completions, so
-those models are unreachable — unless the KB opts in here by prefixing
-the model id::
+Some gateways serve certain models exclusively on ``/v1/responses`` and
+answer ``/v1/chat/completions`` with ``503 Endpoint is unavailable``.
+Prefix the model id to opt in::
 
     model: openai-responses/muse-spark-1.3-contributor
 
-The prefix is an OpenKB-only convention (LiteLLM never sees it). It is
-recognized at the two places a model string is consumed:
-
-- :func:`openkb.agent.compiler._llm_call` / ``_llm_call_async`` — routed
-  to :func:`litellm.responses` / :func:`litellm.aresponses`, with the
-  result adapted back to the Chat Completions shape the compiler reads.
-- :func:`openkb.agent.query.build_run_config_from_bundle` — builds an
-  agents-SDK ``OpenAIResponsesModel`` over a custom ``AsyncOpenAI``
-  client (per-KB ``api_key`` / ``base_url`` / ``extra_headers``), so
-  query/chat/lint/skills — including ``run_streamed`` — work unchanged.
-
-Only ``openai-responses/`` (OpenAI-compatible bases) is supported.
-Long-PDF PageIndex indexing still requires a Chat Completions model
-(see :mod:`openkb.indexer` guard); short documents, query, chat, lint,
-skills, and decks all work.
+The prefix is OpenKB-only (stripped before anything reaches LiteLLM).
+Responses are adapted back to the Chat Completions shape, so existing
+call sites — compile, query/chat/lint/skills agents, usage reporting —
+work unchanged. Limitation: long-PDF PageIndex indexing still needs a
+Chat Completions model (see :mod:`openkb.indexer` guard).
 """
 
 from __future__ import annotations
@@ -76,14 +64,7 @@ def split_responses_model(model: str) -> tuple[str, str]:
 
 
 def messages_to_responses_input(messages: list[dict]) -> list[dict]:
-    """Translate Chat Completions ``messages`` to Responses ``input`` items.
-
-    Plain user/assistant/system/developer messages pass through. Assistant
-    messages carrying ``tool_calls`` become ``function_call`` items (plus a
-    message item when they also have text); ``tool`` messages become
-    ``function_call_output`` items. Content blocks (``type: text`` /
-    ``image_url``) are preserved as-is.
-    """
+    """Translate Chat Completions ``messages`` to Responses ``input`` items."""
     items: list[dict] = []
     for msg in messages:
         role = msg.get("role")
@@ -96,9 +77,11 @@ def messages_to_responses_input(messages: list[dict]) -> list[dict]:
                 }
             )
             continue
-        if role == "assistant" and msg.get("tool_calls"):
-            if msg.get("content"):
-                items.append({"role": "assistant", "content": msg["content"]})
+        is_assistant = role == "assistant"
+        if is_assistant and msg.get("tool_calls"):
+            content = _translate_content(msg.get("content"), for_assistant=True)
+            if content:
+                items.append({"role": "assistant", "content": content})
             for tc in msg["tool_calls"]:
                 fn = tc.get("function", {})
                 items.append(
@@ -110,25 +93,26 @@ def messages_to_responses_input(messages: list[dict]) -> list[dict]:
                     }
                 )
             continue
-        content = msg.get("content")
+        content = _translate_content(msg.get("content"), for_assistant=is_assistant)
         if content is None:
             continue  # e.g. reasoning-only placeholder, nothing to send
-        if isinstance(content, list):
-            content = [
-                _translate_content_block(b, for_assistant=(role == "assistant")) for b in content
-            ]
         items.append({"role": role, "content": content})
     return items
 
 
-def _translate_content_block(block: Any, *, for_assistant: bool = False) -> Any:
-    """Map one Chat Completions content block to Responses input shape.
+def _translate_content(content: Any, *, for_assistant: bool = False) -> Any:
+    """Translate message content to Responses input shape (blocks mapped)."""
+    if isinstance(content, list):
+        return [_translate_content_block(b, for_assistant=for_assistant) for b in content]
+    return content
 
-    ``text`` -> ``input_text`` (or ``output_text`` inside ``assistant``
-    messages — the endpoint rejects ``input_text`` there), ``image_url``
-    -> ``input_image`` (lifting ``url``/``detail``); any residual provider
-    markers such as ``cache_control`` are stripped. Unknown block types
-    pass through untouched rather than being silently dropped.
+
+def _translate_content_block(block: Any, *, for_assistant: bool = False) -> Any:
+    """Map one content block to Responses input shape.
+
+    ``output_text`` (not ``input_text``) is required inside ``assistant``
+    messages; ``cache_control`` leftovers are stripped; unknown types
+    pass through.
     """
     if not isinstance(block, dict):
         return block
@@ -211,20 +195,16 @@ def _to_dict(obj: Any) -> dict:
         fn = getattr(obj, attr, None)
         if callable(fn):
             try:
-                return fn()
-            except Exception:  # noqa: BLE001
-                pass
+                result = fn()
+            except Exception:  # noqa: BLE001 -- try the next coercion
+                continue
+            if isinstance(result, dict):
+                return result
     return getattr(obj, "__dict__", {})
 
 
 def adapt_response(response: Any) -> SimpleNamespace:
-    """Adapt a Responses API object to the Chat Completions shape.
-
-    The compiler reads ``response.choices[0].message.content``,
-    ``response.choices[0].finish_reason``, and
-    ``response.usage.{prompt_tokens,completion_tokens}`` — this adapter
-    provides exactly that surface so call sites need no further changes.
-    """
+    """Adapt a Responses object to the Chat Completions shape call sites read."""
     text, incomplete = extract_output_text(response)
     usage = getattr(response, "usage", None) or SimpleNamespace()
     adapted_usage = SimpleNamespace(
@@ -245,13 +225,7 @@ def adapt_response(response: Any) -> SimpleNamespace:
 
 
 def build_responses_params(model: str, messages: list[dict], **kwargs: Any) -> tuple[str, dict]:
-    """Build ``(litellm_model, params)`` for :func:`litellm.aresponses`.
-
-    ``max_tokens``/``max_completion_tokens`` become ``max_output_tokens``,
-    ``response_format`` becomes ``text``, unsupported params are dropped
-    with a debug log. ``api_key``/``base_url``/``extra_headers``/``timeout``
-    pass straight through to LiteLLM.
-    """
+    """Build ``(litellm_model, params)`` for :func:`litellm.aresponses`."""
     litellm_model, _ = split_responses_model(model)
     params: dict[str, Any] = {"input": messages_to_responses_input(messages)}
     for key, value in kwargs.items():

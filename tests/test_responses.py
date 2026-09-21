@@ -75,6 +75,29 @@ def test_messages_skip_none_content():
     assert messages_to_responses_input([{"role": "assistant", "content": None}]) == []
 
 
+def test_assistant_blocks_with_tool_calls_translated():
+    out = messages_to_responses_input(
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "calling"}],
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "f", "arguments": "{}"},
+                    }
+                ],
+            }
+        ]
+    )
+    assert {
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "calling"}],
+    } in out
+    assert {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"} in out
+
+
 def test_content_block_translation():
     out = messages_to_responses_input(
         [
