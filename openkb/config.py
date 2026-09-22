@@ -36,6 +36,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
     # effective value on read.
     "entity_types": list(DEFAULT_ENTITY_TYPES),
+    # Per-list character cap for the concept/entity briefs in the compile plan
+    # prompt. Those lists are O(KB) and are rebuilt for every compiled document,
+    # so without a ceiling a large KB eventually exceeds the model's context
+    # window mid-recompile. 0 disables trimming.
+    "briefs_budget_chars": 120_000,
 }
 
 GLOBAL_CONFIG_DIR = Path.home() / ".config" / "openkb"

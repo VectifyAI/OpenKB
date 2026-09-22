@@ -9,6 +9,7 @@ import pytest
 
 from openkb.agent.compiler import (
     _ENTITY_TYPE_LIST,
+    DEFAULT_BRIEFS_BUDGET_CHARS,
     _add_related_link,
     _backlink_concepts,
     _backlink_entities,
@@ -23,6 +24,7 @@ from openkb.agent.compiler import (
     _read_entity_briefs,
     _read_wiki_context,
     _remove_source_from_frontmatter,
+    _resolve_briefs_budget,
     _sanitize_concept_name,
     _update_index,
     _write_concept,
@@ -2830,3 +2832,125 @@ class TestFrontmatterDashBoundary:
         assert 'type: "Concept"' in text
         # Must have a properly closed frontmatter block (two '---' occurrences).
         assert text.count("---") >= 2
+
+
+class TestBriefsBudget:
+    """The concept/entity brief lists are O(KB) and are rebuilt into the plan
+    prompt for every compiled document. Without a ceiling a large KB eventually
+    exceeds the model's context window, and the failure arrives as a hard error
+    partway through a recompile rather than as degraded output.
+    """
+
+    @staticmethod
+    def _concept(wiki, slug, description, n_sources=1):
+        d = wiki / "concepts"
+        d.mkdir(parents=True, exist_ok=True)
+        sources = ", ".join(f'"summaries/doc{i}.md"' for i in range(n_sources))
+        (d / f"{slug}.md").write_text(
+            f'---\ntype: "Concept"\nsources: [{sources}]\n'
+            f'description: "{description}"\n---\n\n# {slug}\n',
+            encoding="utf-8",
+        )
+
+    def test_under_budget_is_unchanged(self, tmp_path):
+        """Small KBs must see byte-identical output — the cap is a ceiling, not
+        a working limit, and the plan prompt is prompt-cached on exact prefixes.
+        """
+        wiki = tmp_path / "wiki"
+        self._concept(wiki, "alpha", "first")
+        self._concept(wiki, "beta", "second")
+
+        assert _read_concept_briefs(wiki, 120_000) == _read_concept_briefs(wiki, 0)
+
+    def test_budget_keeps_most_cited_first(self, tmp_path):
+        """Source count is the recurrence signal the planner uses for
+        create-vs-update, so it is also the right thing to keep when trimming.
+        """
+        wiki = tmp_path / "wiki"
+        self._concept(wiki, "rare", "x" * 60, n_sources=1)
+        self._concept(wiki, "common", "y" * 60, n_sources=9)
+
+        out = _read_concept_briefs(wiki, 90)
+
+        assert "common" in out
+        assert "- rare:" not in out
+
+    def test_truncation_is_announced(self, tmp_path):
+        """A shortened list that looks complete is worse than a long one: the
+        planner reads these briefs to decide create-vs-update, so a silently
+        dropped concept comes back as a duplicate page for something the KB
+        already has.
+        """
+        wiki = tmp_path / "wiki"
+        for i in range(12):
+            self._concept(wiki, f"concept-{i:02d}", "z" * 80, n_sources=i)
+
+        out = _read_concept_briefs(wiki, 300)
+
+        assert "not listed" in out
+        assert "prefer 'update' over 'create'" in out
+
+    def test_budget_zero_disables_trimming(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        for i in range(30):
+            self._concept(wiki, f"c{i:02d}", "w" * 100)
+
+        out = _read_concept_briefs(wiki, 0)
+
+        assert len(out.splitlines()) == 30
+        assert "not listed" not in out
+
+    def test_budget_smaller_than_one_line_says_so(self, tmp_path):
+        """An empty string would read as an empty KB, which is a different
+        thing entirely and would push the planner to recreate everything."""
+        wiki = tmp_path / "wiki"
+        self._concept(wiki, "alpha", "x" * 200)
+
+        out = _read_concept_briefs(wiki, 5)
+
+        assert "list omitted" in out
+        assert out != "(none yet)"
+
+    def test_ordering_is_stable_within_a_tier(self, tmp_path):
+        """Prompt caching depends on byte-identical prefixes, so equal-salience
+        entries must not reorder between runs."""
+        wiki = tmp_path / "wiki"
+        for slug in ("gamma", "alpha", "beta"):
+            self._concept(wiki, slug, "same", n_sources=2)
+
+        primeira = _read_concept_briefs(wiki, 120_000)
+
+        assert primeira == _read_concept_briefs(wiki, 120_000)
+        assert primeira.index("alpha") < primeira.index("beta") < primeira.index("gamma")
+
+    def test_entity_briefs_respect_the_same_budget(self, tmp_path):
+        wiki = tmp_path / "wiki"
+        d = wiki / "entities"
+        d.mkdir(parents=True)
+        for i in range(10):
+            (d / f"e{i:02d}.md").write_text(
+                f'---\ntype: "organization"\nsources: ["summaries/d{i}.md"]\n'
+                f'description: "{"q" * 90}"\n---\n\n# e{i:02d}\n',
+                encoding="utf-8",
+            )
+
+        out = _read_entity_briefs(wiki, 250)
+
+        assert "not listed" in out
+        assert len(out.splitlines()) < 10
+
+
+class TestResolveBriefsBudget:
+    """A typo in a config file must not abort a compile."""
+
+    def test_default_when_absent(self):
+        assert _resolve_briefs_budget({}) == DEFAULT_BRIEFS_BUDGET_CHARS
+
+    def test_explicit_zero_passes_through(self):
+        """0 is meaningful — it disables trimming — so it must not be treated
+        as 'unset'."""
+        assert _resolve_briefs_budget({"briefs_budget_chars": 0}) == 0
+
+    @pytest.mark.parametrize("bad", ["lots", -1, None, 1.5, True])
+    def test_invalid_falls_back(self, bad):
+        assert _resolve_briefs_budget({"briefs_budget_chars": bad}) == DEFAULT_BRIEFS_BUDGET_CHARS
