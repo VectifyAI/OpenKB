@@ -110,3 +110,29 @@ def set_line(fm_block: str, key: str, value: str) -> str:
 def drop_line(fm_block: str, key: str) -> str:
     """Remove any ``key:`` line from a frontmatter block (no-op if absent)."""
     return re.sub(rf"^{re.escape(key)}:.*\n?", "", fm_block, flags=re.MULTILINE)
+
+
+def resolve_description(fm: dict) -> str:
+    """Return a non-empty description string from a parsed frontmatter dict.
+
+    Checks ``description`` first, then the legacy ``brief`` key (pre-migration
+    pages). Returns an empty string when neither key holds a non-blank value.
+    Mirrors ``agent.compiler._resolve_description`` — kept as a separate,
+    dependency-free copy here so callers outside the compiler (search/taxonomy
+    tooling) don't need to import from ``agent.compiler``, which is under
+    active, unrelated development.
+    """
+    for key in ("description", "brief"):
+        v = fm.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def body_only(text: str) -> str:
+    """Return *text* with any leading YAML frontmatter block removed.
+
+    Returns *text* unchanged when it has no well-formed frontmatter.
+    """
+    parts = split(text)
+    return parts[1] if parts is not None else text

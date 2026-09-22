@@ -14,6 +14,18 @@ from openkb.agent.tools import (
     read_wiki_image,
     write_kb_file,
 )
+from openkb.agent.tools import (
+    list_documents as list_documents_impl,
+)
+from openkb.agent.tools import (
+    list_taxonomy as list_taxonomy_impl,
+)
+from openkb.agent.tools import (
+    search_taxonomy as search_taxonomy_impl,
+)
+from openkb.agent.tools import (
+    search_wiki as search_wiki_impl,
+)
 from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
 
@@ -25,20 +37,56 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
 {schema_md}
 
 ## Search strategy
-1. Read index.md to see all documents and concepts with brief summaries.
-   Each document is marked (short) or (pageindex) to indicate its type.
-2. Read relevant summary pages (summaries/) for document overviews.
-   Summaries may omit details — if you need more, follow the summary's
-   `full_text` frontmatter field to the source (see step 4).
-3. Read concept pages (concepts/) for cross-document synthesis.
-4. For "who/what is X" questions about a specific named person, organization,
-   place, or product, read the matching page in entities/ first.
+
+Work top-down: concepts/entities are curated, cross-document synthesis;
+summaries and sources are progressively more raw and noisy. Searching raw
+text for a generic term (e.g. "case") can outrank the document actually
+about the topic, because unrelated text repeating that word scores just as
+high — working top-down avoids that trap.
+
+1. For concepts (cross-document synthesis) and entities ("who/what is X"
+   questions about a specific named person, organization, place, or
+   product): call list_taxonomy first for a small KB — it's a compact,
+   one-line-per-item browse list, not a keyword search. For a KB with too
+   many concepts/entities to scan by eye (list_taxonomy's output gets
+   unwieldy), call search_taxonomy(query) instead — it ranks the same
+   slug+brief text by BM25 relevance so you don't have to read every line.
+   Either way, pick the slug(s) that match the question's meaning, then
+   read_file the matching concepts/<slug>.md or entities/<slug>.md.
+2. For "what documents/explorations exist" questions, or to check whether a
+   question was already answered before: call list_documents for a small
+   KB — a compact, one-line-per-item browse list over summaries (one per
+   ingested document) and explorations (saved answers from a previous
+   `openkb query --save`). For a KB with too many summaries/explorations to
+   scan by eye, call search_wiki(query, scope=["briefs", "explorations"])
+   instead — same two categories, ranked by BM25 relevance rather than
+   listed in full. If a matching exploration's brief already answers the
+   current question, read and reuse it instead of re-synthesizing from
+   summaries/sources.
+3. If list_taxonomy/search_taxonomy and list_documents/search_wiki don't
+   surface a specific detail you need (a niche term, an exact figure, an
+   author/creation-date only present in a raw source), use
+   search_wiki(query, scope) with scope=["summaries"] or ["sources"] — a
+   tiered, keyword-level full-text search (concepts/entities are step 1's
+   job, never search_wiki's). Narrow scope to ["sources"] when you
+   specifically need a source-only detail (an exact field name, an author,
+   a date) that a generated summary would likely omit. Keep
+   search_wiki/search_taxonomy queries short (1-3 keywords) rather than
+   full sentences — BM25 scoring degrades on long, conversational queries.
+4. Skip straight to the relevant step when: the question names an exact
+   slug, filename, or page number (read it directly, no browsing/searching
+   needed); the question is purely metadata (creation date, author, exact
+   figure) — concepts/summaries won't have it (compilation strips this on
+   purpose), go straight to step 3 with scope=["sources"]; or a
+   concept/entity/document brief from step 1/2 already matches the
+   question — don't also search lower tiers "just in case".
 5. When you need detailed source document content, each summary page has a
    `full_text` frontmatter field with the path to the original document content:
    - Short documents (doc_type: short): read_file with that path.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
      with tight page ranges. The summary shows document tree structure with page
-     ranges to help you target. Never fetch the whole document.
+     ranges to help you target. Never fetch the whole document. A search_wiki
+     hit with a "page" locator names the exact page to fetch.
 6. Source content may reference images. Short-doc .md pages link them
    note-relative (e.g. ![image](images/doc/file.png), resolved from
    wiki/sources/); long-doc JSON page metadata lists them wiki-root-relative
@@ -84,6 +132,78 @@ def build_query_agent(
         return get_wiki_page_content(doc_name, pages, wiki_root)
 
     @function_tool
+    def list_taxonomy(kind: str | None = None) -> str:
+        """List persisted concept/entity pages with one-line briefs (semantic browsing).
+
+        Call this first for concept/entity questions and pick a slug by
+        meaning — this is a browse list, not a keyword search. Follow up
+        with read_file on the matching concepts/<slug>.md or
+        entities/<slug>.md to get the full page.
+
+        Args:
+            kind: "concept" or "entity" to restrict the list; omit for both.
+        """
+        return list_taxonomy_impl(wiki_root, kind=kind)
+
+    @function_tool
+    def search_taxonomy(query: str, kind: str | None = None) -> str:
+        """Rank concept/entity pages by BM25 relevance (large-KB alternative to list_taxonomy).
+
+        Use instead of list_taxonomy when the taxonomy has too many
+        concepts/entities to scan by eye. Matched only against each page's
+        slug + one-line brief, never its full body — same scope as
+        list_taxonomy, just ranked instead of listed. Follow up with
+        read_file on the matching concepts/<slug>.md or entities/<slug>.md.
+
+        Args:
+            query: Free-text search query (keywords or a natural-language question).
+            kind: "concept" or "entity" to restrict the ranking; omit for both.
+        """
+        return search_taxonomy_impl(query, wiki_root, kind=kind)
+
+    @function_tool
+    def list_documents(kind: str | None = None) -> str:
+        """List persisted summary/exploration pages with one-line briefs.
+
+        Mirrors list_taxonomy for a different pair of kinds: summaries (one
+        per ingested document) and explorations (saved answers from a
+        previous `openkb query --save`) — an exploration's brief is the
+        originally-asked question. Use this to check whether a matching
+        exploration already answers the current question before
+        re-synthesizing from summaries/sources, or to find a document's
+        slug before reading its summary/source.
+
+        Args:
+            kind: "summary" or "exploration" to restrict the list; omit for both.
+        """
+        items = list_documents_impl(wiki_root, kind=kind)
+        if not items:
+            return "No summaries or explorations found."
+        lines = []
+        for item in items:
+            wikilink = item.path[:-3] if item.path.endswith(".md") else item.path
+            brief_suffix = f" — {item.brief}" if item.brief else ""
+            lines.append(f"- [[{wikilink}]] ({item.kind}){brief_suffix}")
+        return "\n".join(lines)
+
+    @function_tool
+    def search_wiki(query: str, scope: list[str] | None = None) -> str:
+        """Tiered full-text (BM25) keyword search over summaries/sources.
+
+        Hybrid fallback for when index.md's one-line summaries and
+        list_taxonomy don't surface a specific buried detail (a niche term,
+        an exact figure, a fact only present in a raw source). Never
+        searches concepts/entities — use list_taxonomy for those. Use in
+        addition to, not instead of, index.md/list_taxonomy navigation.
+
+        Args:
+            query: Free-text search query (keywords or a natural-language question).
+            scope: Restrict to a subset of "briefs", "summaries", "sources";
+                omit to search all three tiers.
+        """
+        return search_wiki_impl(query, wiki_root, scope=scope)
+
+    @function_tool
     def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
         """View an image from the wiki.
 
@@ -117,7 +237,15 @@ def build_query_agent(
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=[
+            read_file,
+            get_page_content,
+            list_taxonomy,
+            search_taxonomy,
+            list_documents,
+            search_wiki,
+            get_image,
+        ],
         model=f"litellm/{model}",
         model_settings=ModelSettings(**model_settings),
     )

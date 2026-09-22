@@ -455,6 +455,62 @@ class TestQueryUsesGlobalModel:
         assert captured["model"] == "global-only-model"
 
 
+class TestSearchTaxonomyCmd:
+    def test_ranks_by_brief_and_slug_match(self, kb_dir):
+        (kb_dir / "wiki" / "concepts" / "attention.md").write_text(
+            '---\ndescription: "How attention works"\n---\n\n# Attention\n\nBody.',
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(cli, ["--kb-dir", str(kb_dir), "search-taxonomy", "attention"])
+
+        assert result.exit_code == 0, result.output
+        assert "[concept] attention" in result.output
+        assert "score:" in result.output
+
+    def test_kind_filter(self, kb_dir):
+        (kb_dir / "wiki" / "concepts" / "attention.md").write_text(
+            '---\ndescription: "How attention works"\n---\n\n# Attention\n\nBody.',
+            encoding="utf-8",
+        )
+        (kb_dir / "wiki" / "entities").mkdir(parents=True, exist_ok=True)
+        (kb_dir / "wiki" / "entities" / "attention-corp.md").write_text(
+            '---\ndescription: "A company"\ntype: "organization"\n---\n\n# Attention Corp\n\nBody.',
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(
+            cli, ["--kb-dir", str(kb_dir), "search-taxonomy", "attention", "--kind", "entity"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "attention-corp" in result.output
+        assert "[concept] attention" not in result.output
+
+    def test_json_output(self, kb_dir):
+        (kb_dir / "wiki" / "concepts" / "attention.md").write_text(
+            '---\ndescription: "How attention works"\n---\n\n# Attention\n\nBody.',
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(
+            cli, ["--kb-dir", str(kb_dir), "search-taxonomy", "attention", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload[0]["slug"] == "attention"
+        assert payload[0]["score"] > 0
+
+    def test_no_matches_prints_message(self, kb_dir):
+        result = CliRunner().invoke(
+            cli, ["--kb-dir", str(kb_dir), "search-taxonomy", "nonexistent_zzz"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "No matching concepts or entities found." in result.output
+
+
 class TestSetupLlmKey:
     """_setup_llm_key: OAuth-provider warning skip + extra-headers stash."""
 
