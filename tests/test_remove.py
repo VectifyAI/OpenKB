@@ -1075,9 +1075,9 @@ def test_cli_remove_calls_pageindex_delete_with_stored_doc_id(kb_dir):
     """
     _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
 
-    fake_col = MagicMock()
     fake_client = MagicMock()
-    fake_client.collection.return_value = fake_col
+    fake_client.list_documents.return_value = {"entries": [], "documents": []}
+    fake_client.delete_document = MagicMock()
 
     with (
         patch("pageindex.PageIndexClient", return_value=fake_client) as mock_cls,
@@ -1090,8 +1090,8 @@ def test_cli_remove_calls_pageindex_delete_with_stored_doc_id(kb_dir):
     # Storage path must point at the KB's .openkb directory.
     _, kwargs = mock_cls.call_args
     assert kwargs.get("storage_path") == str(kb_dir / ".openkb")
-    fake_col.delete_document.assert_called_once_with("pi-doc-xyz")
-    fake_col.list_documents.assert_not_called()  # No fallback needed
+    fake_client.delete_document.assert_called_once_with("pi-doc-xyz")
+    fake_client.list_documents.assert_not_called()  # No fallback needed
     assert "PageIndex" in result.output
 
 
@@ -1102,13 +1102,11 @@ def test_cli_remove_pageindex_fallback_lookup_by_doc_name(kb_dir):
     """
     _seed_long_pdf_kb(kb_dir, doc_id=None)
 
-    fake_col = MagicMock()
-    fake_col.list_documents.return_value = [
-        {"doc_id": "pi-found-id", "doc_name": "paper", "doc_type": "pdf"},
-        {"doc_id": "pi-other-id", "doc_name": "other", "doc_type": "pdf"},
-    ]
     fake_client = MagicMock()
-    fake_client.collection.return_value = fake_col
+    fake_client.list_documents.return_value = {"entries": [
+        {"id": "pi-found-id", "name": "paper", "doc_type": "pdf"},
+        {"id": "pi-other-id", "name": "other", "doc_type": "pdf"},
+    ]}
 
     with (
         patch("pageindex.PageIndexClient", return_value=fake_client),
@@ -1117,8 +1115,8 @@ def test_cli_remove_pageindex_fallback_lookup_by_doc_name(kb_dir):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert result.exit_code == 0, result.output
-    fake_col.list_documents.assert_called_once()
-    fake_col.delete_document.assert_called_once_with("pi-found-id")
+    fake_client.list_documents.assert_called_once()
+    fake_client.delete_document.assert_called_once_with("pi-found-id")
 
 
 def test_cli_remove_pageindex_fallback_skips_on_ambiguous_match(kb_dir):
@@ -1128,13 +1126,11 @@ def test_cli_remove_pageindex_fallback_skips_on_ambiguous_match(kb_dir):
     """
     _seed_long_pdf_kb(kb_dir, doc_id=None)
 
-    fake_col = MagicMock()
-    fake_col.list_documents.return_value = [
-        {"doc_id": "pi-a", "doc_name": "paper"},
-        {"doc_id": "pi-b", "doc_name": "paper"},
-    ]
     fake_client = MagicMock()
-    fake_client.collection.return_value = fake_col
+    fake_client.list_documents.return_value = {"entries": [
+        {"id": "pi-a", "name": "paper"},
+        {"id": "pi-b", "name": "paper"},
+    ]}
 
     with (
         patch("pageindex.PageIndexClient", return_value=fake_client),
@@ -1143,7 +1139,7 @@ def test_cli_remove_pageindex_fallback_skips_on_ambiguous_match(kb_dir):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert result.exit_code == 0, result.output
-    fake_col.delete_document.assert_not_called()
+    fake_client.delete_document.assert_not_called()
     assert "skipping" in result.output
     # The wiki-side cleanup still ran.
     assert not (kb_dir / "wiki" / "summaries" / "paper.md").exists()
@@ -1182,10 +1178,9 @@ def test_cli_remove_pageindex_failure_preserves_registry_for_retry(kb_dir):
     _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
 
     fake_client = MagicMock()
-    fake_client.collection.side_effect = RuntimeError("LLM key missing")
 
     with (
-        patch("pageindex.PageIndexClient", return_value=fake_client),
+        patch("pageindex.PageIndexClient", side_effect=RuntimeError("LLM key missing")),
         patch("openkb.cli._setup_llm_key"),
     ):
         result = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
@@ -1215,7 +1210,8 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
 
     # First attempt: PageIndex raises.
     failing_client = MagicMock()
-    failing_client.collection.side_effect = RuntimeError("transient")
+    failing_client.delete_document.side_effect = RuntimeError("transient")
+    failing_client.list_documents.return_value = {"entries": []}
     with (
         patch("pageindex.PageIndexClient", return_value=failing_client),
         patch("openkb.cli._setup_llm_key"),
@@ -1228,9 +1224,8 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
 
     # Second attempt: PageIndex succeeds. Same doc_id must drive the
     # delete since it's still in the registry.
-    working_col = MagicMock()
     working_client = MagicMock()
-    working_client.collection.return_value = working_col
+    working_client.list_documents.return_value = {"entries": []}
     with (
         patch("pageindex.PageIndexClient", return_value=working_client),
         patch("openkb.cli._setup_llm_key"),
@@ -1238,7 +1233,7 @@ def test_cli_remove_retry_after_pageindex_failure_completes(kb_dir):
         second = _invoke(kb_dir, ["remove", "paper.pdf", "--keep-raw", "--yes"])
 
     assert second.exit_code == 0, second.output
-    working_col.delete_document.assert_called_once_with("pi-doc-xyz")
+    working_client.delete_document.assert_called_once_with("pi-doc-xyz")
 
     # Registry now empty; wiki cleanup remains complete.
     assert json.loads((kb_dir / ".openkb" / "hashes.json").read_text()) == {}
@@ -1417,7 +1412,8 @@ def test_run_remove_for_api_pageindex_failure_is_partial(kb_dir):
     _seed_long_pdf_kb(kb_dir, doc_id="pi-doc-xyz")
 
     failing_client = MagicMock()
-    failing_client.collection.side_effect = RuntimeError("LLM key missing")
+    failing_client.list_documents.return_value = {"entries": []}
+    failing_client.delete_document.side_effect = RuntimeError("LLM key missing")
 
     with (
         patch("pageindex.PageIndexClient", return_value=failing_client),

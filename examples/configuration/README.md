@@ -11,15 +11,6 @@ Everything that controls how OpenKB talks to your LLM lives in two places:
 pip install openkb
 ```
 
-OpenKB pins a **pre-release** of its PageIndex dependency
-(`pageindex==0.3.0.dev3`), which some installers skip by default. If an install
-can't resolve `pageindex`, allow pre-releases:
-
-```bash
-uv tool install openkb --prerelease=allow   # uv
-pip install --pre openkb                     # pip
-```
-
 If `openkb` isn't found *after* a successful install, the console-script directory
 isn't on your `PATH` (e.g. `pip --user` installs to `~/.local/bin`) — add it to
 `PATH`.

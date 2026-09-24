@@ -15,83 +15,22 @@ from openkb.indexer import (
 )
 
 
-class _FakeIndexConfigWithConcurrency:
-    """Stand-in for a PageIndex ``IndexConfig`` that declares ``max_concurrency``.
-
-    Used instead of relying on whatever ``pageindex`` happens to be installed in
-    this environment, so the forwarding tests are deterministic regardless of
-    the currently-pinned PageIndex version (see ``test_forwards_...`` below).
-    """
-
-    model_fields = {
-        "if_add_node_text": None,
-        "if_add_node_summary": None,
-        "if_add_doc_description": None,
-        "max_concurrency": None,
-    }
-
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-
-class _FakeIndexConfigWithoutConcurrency:
-    """Stand-in for a PageIndex ``IndexConfig`` predating ``max_concurrency``."""
-
-    model_fields = {
-        "if_add_node_text": None,
-        "if_add_node_summary": None,
-        "if_add_doc_description": None,
-    }
-
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-
 class TestBuildIndexConfig:
-    def test_sets_base_flags(self):
+    def test_returns_dict(self):
+        """_build_index_config now returns a LocalIndexConfig TypedDict."""
         cfg = _build_index_config({})
-        assert cfg.if_add_node_text is True
-        assert cfg.if_add_node_summary is True
-        assert cfg.if_add_doc_description is True
+        assert isinstance(cfg, dict)
+        # With no concurrency set, the dict should be empty (all Optional keys).
 
-    def test_forwards_concurrency_when_supported(self, monkeypatch):
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
-        cfg = _build_index_config({"concurrency": 8})
-        assert cfg.max_concurrency == 8
-
-    def test_does_not_forward_when_unsupported(self, monkeypatch):
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithoutConcurrency)
-        cfg = _build_index_config({"concurrency": 8})
-        assert not hasattr(cfg, "max_concurrency")
-
-    def test_none_value_is_left_to_pageindex_default(self, monkeypatch):
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
-        cfg = _build_index_config({"concurrency": None})
-        assert getattr(cfg, "max_concurrency", None) is None
-
-    def test_invalid_value_is_left_to_pageindex_default(self, monkeypatch):
-        # resolve_concurrency() rejects bools/non-positive values — same as an
-        # unset key, just via the shared config-level validation.
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
-        cfg = _build_index_config({"concurrency": 0})
-        assert getattr(cfg, "max_concurrency", None) is None
-
-    def test_warns_when_configured_but_unsupported(self, monkeypatch, caplog):
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithoutConcurrency)
+    def test_warns_when_concurrency_configured(self, caplog):
+        """PageIndex 0.2.19 doesn't support concurrency — always warn."""
         with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
             _build_index_config({"concurrency": 8})
         assert "concurrency" in caplog.text
 
-    def test_no_warning_when_unset(self, monkeypatch, caplog):
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithoutConcurrency)
+    def test_no_warning_when_unset(self, caplog):
         with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
             _build_index_config({})
-        assert caplog.text == ""
-
-    def test_no_warning_when_supported(self, monkeypatch, caplog):
-        monkeypatch.setattr("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency)
-        with caplog.at_level(logging.WARNING, logger="openkb.indexer"):
-            _build_index_config({"concurrency": 8})
         assert caplog.text == ""
 
 
@@ -139,23 +78,26 @@ class TestIndexLongDocument:
         # raises). Cloud-path tests in this class re-enable it via setenv.
         monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
 
-    def _make_fake_collection(self, doc_id: str, sample_tree: dict):
-        """Build a mock Collection that returns the sample_tree fixture data."""
-        col = MagicMock()
-        col.add.return_value = doc_id
-
-        # get_document(doc_id, include_text=True) returns full document
-        col.get_document.return_value = {
-            "doc_id": doc_id,
-            "doc_name": sample_tree["doc_name"],
-            "doc_description": sample_tree["doc_description"],
-            "doc_type": "pdf",
-            "structure": sample_tree["structure"],
+    def _make_fake_client(self, doc_id: str, sample_tree: dict):
+        """Build a mock PageIndexClient that returns the sample_tree fixture data."""
+        client = MagicMock()
+        client.submit_document.return_value = {"doc_id": doc_id}
+        # get_document returns metadata dict
+        client.get_document.return_value = {
+            "id": doc_id,
+            "name": sample_tree["doc_name"],
+            "description": sample_tree["doc_description"],
+            "pageNum": 10,
         }
-
-        # get_page_content returns empty list by default (overridden per test as needed)
-        col.get_page_content.return_value = []
-        return col
+        # get_tree returns tree with result
+        client.get_tree.return_value = {
+            "doc_id": doc_id,
+            "status": "completed",
+            "result": sample_tree["structure"],
+        }
+        # get_page_content returns empty list by default
+        client.get_page_content.return_value = []
+        return client
 
     def _fake_pages(self):
         return [
@@ -165,10 +107,7 @@ class TestIndexLongDocument:
 
     def test_returns_index_result(self, kb_dir, sample_tree, tmp_path):
         doc_id = "abc-123"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
+        fake_client = self._make_fake_client(doc_id, sample_tree)
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -185,18 +124,11 @@ class TestIndexLongDocument:
         assert result.tree is not None
 
     def test_deletes_pageindex_doc_when_a_post_add_step_fails(self, kb_dir, sample_tree, tmp_path):
-        """The PageIndex blob is durably written by col.add(), but .openkb/files is
-        no longer in the add mutation's eager snapshot — track_new only registers
-        the blob on a successful return. So if any step after col.add() raises
-        (here: get_document), index_long_document must delete the doc it just
-        added; otherwise the blob leaks as an orphan that pageindex.db — rolled
-        back by the snapshot — no longer references, and no reaper reclaims."""
+        """If any step after submit_document raises, index_long_document must
+        delete the doc it just added; otherwise the blob leaks as an orphan."""
         doc_id = "abc-123"
-        col = self._make_fake_collection(doc_id, sample_tree)
-        col.get_document.side_effect = RuntimeError("get_document blew up")
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = col
+        fake_client = self._make_fake_client(doc_id, sample_tree)
+        fake_client.get_document.side_effect = RuntimeError("get_document blew up")
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -205,19 +137,15 @@ class TestIndexLongDocument:
             with pytest.raises(RuntimeError, match="get_document blew up"):
                 index_long_document(pdf_path, kb_dir)
 
-        col.delete_document.assert_called_once_with(doc_id)
+        fake_client.delete_document.assert_called_once_with(doc_id)
 
     def test_source_page_written_as_json(self, kb_dir, sample_tree, tmp_path):
         """Long doc source should be written as JSON, not markdown."""
         import json as json_mod
 
         doc_id = "abc-123"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
-        # Mock get_page_content to return page data
-        fake_col.get_page_content.return_value = [
+        fake_client = self._make_fake_client(doc_id, sample_tree)
+        fake_client.get_page_content.return_value = [
             {"page": 1, "content": "Page one text."},
             {"page": 2, "content": "Page two text."},
         ]
@@ -241,10 +169,7 @@ class TestIndexLongDocument:
 
     def test_summary_page_written(self, kb_dir, sample_tree, tmp_path):
         doc_id = "abc-123"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
+        fake_client = self._make_fake_client(doc_id, sample_tree)
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -262,12 +187,9 @@ class TestIndexLongDocument:
         assert "Summary:" in content
 
     def test_localclient_called_with_index_config(self, kb_dir, sample_tree, tmp_path):
-        """LocalClient must be created with the correct IndexConfig flags."""
+        """PageIndexClient must be created with the index parameter (dict)."""
         doc_id = "xyz-456"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
+        fake_client = self._make_fake_client(doc_id, sample_tree)
 
         pdf_path = tmp_path / "report.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -278,51 +200,20 @@ class TestIndexLongDocument:
         ):
             index_long_document(pdf_path, kb_dir)
 
-        # Verify PageIndexClient was instantiated with correct IndexConfig
+        # Verify PageIndexClient was instantiated with index parameter
         mock_cls.assert_called_once()
         _, kwargs = mock_cls.call_args
-        ic = kwargs.get("index_config")
-        assert ic is not None, "index_config must be passed to PageIndexClient"
-        assert ic.if_add_node_text is True
-        assert ic.if_add_node_summary is True
-        assert ic.if_add_doc_description is True
-
-    def test_concurrency_flows_from_kb_config(self, kb_dir, sample_tree, tmp_path):
-        """The KB's real config.yaml, loaded by index_long_document itself, must
-        reach the IndexConfig passed to PageIndexClient — not just the isolated
-        _build_index_config unit tested directly with a hand-built dict."""
-        (kb_dir / ".openkb" / "config.yaml").write_text(
-            "model: gpt-4o-mini\nconcurrency: 7\n", encoding="utf-8"
-        )
-
-        doc_id = "conc-789"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
-
-        pdf_path = tmp_path / "report.pdf"
-        pdf_path.write_bytes(b"%PDF-1.4 fake")
-
-        with (
-            patch("openkb.indexer.IndexConfig", _FakeIndexConfigWithConcurrency),
-            patch("openkb.indexer.PageIndexClient", return_value=fake_client) as mock_cls,
-            patch("openkb.images.convert_pdf_to_pages", return_value=self._fake_pages()),
-        ):
-            index_long_document(pdf_path, kb_dir)
-
-        _, kwargs = mock_cls.call_args
-        assert kwargs["index_config"].max_concurrency == 7
+        ic = kwargs.get("index")
+        assert ic is not None, "index must be passed to PageIndexClient"
+        assert isinstance(ic, dict)
 
     def test_cloud_page_content_is_normalized(self, kb_dir, sample_tree, tmp_path, monkeypatch):
         doc_id = "cloud-123"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-        fake_col.get_page_content.return_value = [
+        fake_client = self._make_fake_client(doc_id, sample_tree)
+        fake_client.get_page_content.return_value = [
             {"page_number": "1", "markdown": "Cloud page one."},
             "Cloud page two.",
         ]
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -344,11 +235,8 @@ class TestIndexLongDocument:
         self, kb_dir, sample_tree, tmp_path, monkeypatch
     ):
         doc_id = "cloud-456"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-        fake_col.get_page_content.return_value = {"bad": "shape"}
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
+        fake_client = self._make_fake_client(doc_id, sample_tree)
+        fake_client.get_page_content.return_value = {"bad": "shape"}
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -369,10 +257,7 @@ class TestIndexLongDocument:
 
     def test_empty_cloud_and_local_pages_fail(self, kb_dir, sample_tree, tmp_path, monkeypatch):
         doc_id = "empty-123"
-        fake_col = self._make_fake_collection(doc_id, sample_tree)
-
-        fake_client = MagicMock()
-        fake_client.collection.return_value = fake_col
+        fake_client = self._make_fake_client(doc_id, sample_tree)
 
         pdf_path = tmp_path / "sample.pdf"
         pdf_path.write_bytes(b"%PDF-1.4 fake")
@@ -394,15 +279,19 @@ class TestIndexLongDocument:
 def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
     monkeypatch.delenv("PAGEINDEX_API_KEY", raising=False)
 
-    fake_col = MagicMock()
-    fake_col.add.return_value = "doc-123"
-    fake_col.get_document.return_value = {
-        "doc_name": "original.pdf",
-        "doc_description": "desc",
-        "structure": [],
-    }
     fake_client = MagicMock()
-    fake_client.collection.return_value = fake_col
+    fake_client.submit_document.return_value = {"doc_id": "doc-123"}
+    fake_client.get_document.return_value = {
+        "id": "doc-123",
+        "name": "original.pdf",
+        "description": "desc",
+        "pageNum": 30,
+    }
+    fake_client.get_tree.return_value = {
+        "doc_id": "doc-123",
+        "status": "completed",
+        "result": [],
+    }
 
     pdf = kb_dir / "raw" / "original.pdf"
     pdf.write_bytes(b"%PDF-1.4 fake")
@@ -434,26 +323,29 @@ def test_index_long_document_uses_explicit_doc_name(kb_dir, monkeypatch):
 
 class TestImportCloudDocument:
     def _fake_client(self, doc_id, sample_tree, pages):
-        col = MagicMock()
-        col.get_document.return_value = {
-            "doc_id": doc_id,
-            "doc_name": "Cloud Paper.pdf",
-            "doc_description": sample_tree["doc_description"],
-            "structure": sample_tree["structure"],
-        }
-        col.get_page_content.return_value = pages
         client = MagicMock()
-        client.collection.return_value = col
-        return client, col
+        client.get_document.return_value = {
+            "id": doc_id,
+            "name": "Cloud Paper.pdf",
+            "description": sample_tree["doc_description"],
+            "pageNum": 10,
+        }
+        client.get_tree.return_value = {
+            "doc_id": doc_id,
+            "status": "completed",
+            "result": sample_tree["structure"],
+        }
+        client.get_page_content.return_value = pages
+        return client
 
     def test_writes_artifacts_and_returns_result(self, kb_dir, sample_tree, monkeypatch):
         from openkb.indexer import CloudImportResult, import_cloud_document
 
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
         pages = [{"page": 1, "content": "Cloud page one."}]
-        client, col = self._fake_client("cloud-1", sample_tree, pages)
+        client = self._fake_client("cloud-1", sample_tree, pages)
 
-        with patch("openkb.indexer.PageIndexClient", return_value=client):
+        with patch("openkb.indexer.PageIndexClient", return_value=client) as mock_cls:
             result = import_cloud_document("cloud-1", kb_dir, "pageindex-cloud:cloud-1")
 
         assert isinstance(result, CloudImportResult)
@@ -462,8 +354,8 @@ class TestImportCloudDocument:
         assert result.doc_name == "Cloud-Paper"
         assert (kb_dir / "wiki" / "sources" / "Cloud-Paper.json").exists()
         assert (kb_dir / "wiki" / "summaries" / "Cloud-Paper.md").exists()
-        # col.add must never be called — the doc already exists in the cloud
-        col.add.assert_not_called()
+        # submit_document must never be called — the doc already exists in the cloud
+        client.submit_document.assert_not_called()
 
     def test_requires_api_key(self, kb_dir, monkeypatch):
         from openkb.indexer import import_cloud_document
@@ -480,7 +372,7 @@ class TestImportCloudDocument:
         from openkb.indexer import import_cloud_document
 
         monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
-        client, col = self._fake_client("cloud-2", sample_tree, [])
+        client = self._fake_client("cloud-2", sample_tree, [])
 
         with patch("openkb.indexer.PageIndexClient", return_value=client):
             try:
@@ -520,13 +412,13 @@ def test_fetch_cloud_pages_windows_over_1000_cap():
             return [{"page": p, "content": f"p{p}"} for p in range(1001, 1501)]
         return []
 
-    col = MagicMock()
-    col.get_page_content.side_effect = fake_get
+    client = MagicMock()
+    client.get_page_content.side_effect = fake_get
 
-    pages = _fetch_cloud_pages(col, "doc")
+    pages = _fetch_cloud_pages(client, "doc")
     assert len(pages) == 1500
     assert pages[0]["page"] == 1 and pages[-1]["page"] == 1500
-    ranges = [c.args[1] for c in col.get_page_content.call_args_list]
+    ranges = [c.args[1] for c in client.get_page_content.call_args_list]
     # Full first window → fetch the next; the short 2nd window (500<1000) stops it.
     assert ranges == ["1-1000", "1001-2000"]
     # Every requested window spans exactly 1000 pages → parse_pages never raises.
@@ -550,10 +442,10 @@ def test_fetch_cloud_pages_full_window_triggers_next_fetch():
             return [{"page": 1001, "content": "x"}]  # one straggler past the window
         return []
 
-    col = MagicMock()
-    col.get_page_content.side_effect = fake_get
+    client = MagicMock()
+    client.get_page_content.side_effect = fake_get
 
-    pages = _fetch_cloud_pages(col, "doc")
+    pages = _fetch_cloud_pages(client, "doc")
     assert [p["page"] for p in pages] == list(range(1, 1002))  # page 1001 NOT dropped
 
 
@@ -564,24 +456,27 @@ def test_import_cloud_document_no_indices_avoids_oversized_range(kb_dir, monkeyp
     from openkb.indexer import import_cloud_document
 
     monkeypatch.setenv("PAGEINDEX_API_KEY", "test-key")
-    col = MagicMock()
-    col.get_document.return_value = {
-        "doc_id": "c",
-        "doc_name": "NoIdx.pdf",
-        "doc_description": "d",
-        "structure": [{"title": "n", "nodes": []}],  # no start/end_index anywhere
+    client = MagicMock()
+    client.get_document.return_value = {
+        "id": "c",
+        "name": "NoIdx.pdf",
+        "description": "d",
+        "pageNum": 10,
     }
-    col.get_page_content.side_effect = (
+    client.get_tree.return_value = {
+        "doc_id": "c",
+        "status": "completed",
+        "result": [{"title": "n", "nodes": []}],
+    }
+    client.get_page_content.side_effect = (
         lambda doc_id, rng: [{"page": 1, "content": "x"}] if rng == "1-1000" else []
     )
-    client = MagicMock()
-    client.collection.return_value = col
 
     with patch("openkb.indexer.PageIndexClient", return_value=client):
         result = import_cloud_document("c", kb_dir, "pageindex-cloud:c")
 
     assert result.doc_id == "c"
-    ranges = [c.args[1] for c in col.get_page_content.call_args_list]
+    ranges = [c.args[1] for c in client.get_page_content.call_args_list]
     assert "1-100000" not in ranges
     for r in ranges:
         a, b = (int(x) for x in r.split("-"))

@@ -7,9 +7,10 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
-from pageindex import IndexConfig, PageIndexClient
+from pageindex import PageIndexClient
+from pageindex.types import LocalIndexConfig
 
 from openkb.config import resolve_concurrency, resolve_effective_config
 from openkb.tree_renderer import render_summary_md
@@ -153,31 +154,21 @@ def _write_long_doc_artifacts(
     return summary_path
 
 
-def _build_index_config(config: dict[str, Any]) -> IndexConfig:
-    """Build the PageIndex ``IndexConfig`` for local indexing.
+def _build_index_config(config: dict[str, Any]) -> LocalIndexConfig:
+    """Build the PageIndex ``LocalIndexConfig`` for local indexing.
 
-    Forwards the KB's ``concurrency`` setting to PageIndex, which caps how many
-    indexing LLM calls run at once (guarding against "too many open files" fd
-    exhaustion on large documents). The value is only passed when set *and* the
-    installed PageIndex's ``IndexConfig`` declares the field, so OpenKB keeps
-    working against a pinned PageIndex that predates it (``IndexConfig``
-    forbids unknown kwargs).
+    ``pageindex>=0.2.19`` exposes ``IndexConfig`` as a
+    ``Union[LocalIndexConfig, CloudIndexConfig]`` TypedDict alias — not an
+    instantiable class. Return a ``LocalIndexConfig`` dict instead.
     """
-    kwargs: dict[str, Any] = {
-        "if_add_node_text": True,
-        "if_add_node_summary": True,
-        "if_add_doc_description": True,
-    }
+    index_config: LocalIndexConfig = {}
     concurrency = resolve_concurrency(config)
     if concurrency is not None:
-        if "max_concurrency" in IndexConfig.model_fields:
-            kwargs["max_concurrency"] = concurrency
-        else:
-            logger.warning(
-                "config: 'concurrency' is set but the installed PageIndex "
-                "version does not support it yet — ignoring it."
-            )
-    return IndexConfig(**kwargs)
+        logger.warning(
+            "config: 'concurrency' is set but the installed PageIndex "
+            "version does not support it yet — ignoring it."
+        )
+    return index_config
 
 
 def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = None) -> IndexResult:
@@ -199,16 +190,16 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
         api_key=pageindex_api_key or None,
         model=model,
         storage_path=str(openkb_dir),
-        index_config=index_config,
+        index=index_config,
     )
-    col = client.collection()
 
-    # Add PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
+    # Submit PDF (retry up to 3 times — PageIndex TOC accuracy is stochastic)
     max_retries = 3
     doc_id = None
     for attempt in range(1, max_retries + 1):
         try:
-            doc_id = col.add(str(pdf_path))
+            result = client.submit_document(str(pdf_path))
+            doc_id = cast(str, result["doc_id"])
             logger.info(
                 "PageIndex added %s → doc_id=%s (attempt %d)", pdf_path.name, doc_id, attempt
             )
@@ -226,22 +217,18 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
                     f"Failed to index {pdf_path.name} after {max_retries} attempts: {exc}"
                 ) from exc
 
-    # The PageIndex blob for doc_id is now durably on disk. The add mutation no
-    # longer eagerly snapshots .openkb/files — it registers the new blob via
-    # snapshot.track_new() only on a successful return — so if any step below
-    # fails, delete the document we just added. Otherwise the blob leaks as an
-    # orphan that pageindex.db (rolled back by the snapshot) no longer refs and
-    # no reaper reclaims.
+    # The PageIndex blob for doc_id is now durably on disk. If any step below
+    # fails, delete the document we just added.
     try:
         # Fetch complete document (metadata + structure + text)
-        doc = col.get_document(doc_id, include_text=True)
-        indexed_doc_name: str = doc.get("doc_name", pdf_path.stem)
-        description: str = doc.get("doc_description", "")
-        structure: list = doc.get("structure", [])
+        doc = client.get_document(doc_id)
+        indexed_doc_name: str = doc.get("name", pdf_path.stem)
+        description: str = doc.get("description", "")
+        page_tree = client.get_tree(doc_id, include_text=True)
+        structure: list = page_tree.get("result", [])
 
-        # Debug: print doc keys and page_count to diagnose get_page_content range
         logger.info("Doc keys: %s", list(doc.keys()))
-        logger.info("page_count from doc: %s", doc.get("page_count", "NOT PRESENT"))
+        logger.info("pageNum from doc: %s", doc.get("pageNum", "NOT PRESENT"))
 
         tree = {
             "doc_name": indexed_doc_name,
@@ -260,7 +247,9 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
             # requires a page range, so pass "1-N".
             page_count = _get_pdf_page_count(pdf_path)
             try:
-                all_pages = _normalize_page_content(col.get_page_content(doc_id, f"1-{page_count}"))
+                all_pages = _normalize_page_content(
+                    client.get_page_content(doc_id, f"1-{page_count}")
+                )
             except Exception as exc:
                 logger.warning("Cloud get_page_content failed for %s: %s", pdf_path.name, exc)
 
@@ -281,12 +270,9 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
         )
         return IndexResult(doc_id=doc_id, description=description, tree=tree)
     except BaseException:
-        # Best-effort: remove the blob this add created. A failure here (e.g. a
-        # second interrupt) only means the blob may stay orphaned — the original
-        # error still propagates so the caller (mutation coordinator) rolls back
-        # everything else it snapshotted.
+        # Best-effort: remove the blob this add created.
         try:
-            col.delete_document(doc_id)
+            client.delete_document(doc_id)
         except Exception:
             logger.warning(
                 "PageIndex cleanup of %s failed after error; blob may be orphaned", doc_id
@@ -303,7 +289,7 @@ _CLOUD_PAGE_WINDOW = 1000
 _CLOUD_PAGE_MAX = 1_000_000
 
 
-def _fetch_cloud_pages(col, doc_id: str) -> list[dict[str, Any]]:
+def _fetch_cloud_pages(client: PageIndexClient, doc_id: str) -> list[dict[str, Any]]:
     """Fetch all OCR pages of a cloud doc, windowing around the 1000-page cap.
 
     ``get_page_content`` returns the whole document and uses its ``pages`` arg
@@ -322,7 +308,7 @@ def _fetch_cloud_pages(col, doc_id: str) -> list[dict[str, Any]]:
     start = 1
     while start <= _CLOUD_PAGE_MAX:
         window = _normalize_page_content(
-            col.get_page_content(doc_id, f"{start}-{start + _CLOUD_PAGE_WINDOW - 1}")
+            client.get_page_content(doc_id, f"{start}-{start + _CLOUD_PAGE_WINDOW - 1}")
         )
         pages.extend(window)
         if len(window) < _CLOUD_PAGE_WINDOW:
@@ -349,12 +335,12 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
         )
 
     client = PageIndexClient(api_key=pageindex_api_key)
-    col = client.collection()
 
-    doc = col.get_document(doc_id, include_text=True)
-    cloud_name: str = doc.get("doc_name") or doc_id
-    description: str = doc.get("doc_description", "")
-    structure: list = doc.get("structure", [])
+    doc = client.get_document(doc_id)
+    cloud_name: str = doc.get("name") or doc_id
+    description: str = doc.get("description", "")
+    page_tree = client.get_tree(doc_id, include_text=True)
+    structure: list = page_tree.get("result", [])
 
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
     stem = _cloud_display_stem(cloud_name, doc_id)
@@ -366,7 +352,7 @@ def prepare_cloud_import(doc_id: str, kb_dir: Path, path_key: str) -> CloudImpor
         "structure": structure,
     }
 
-    all_pages = _fetch_cloud_pages(col, doc_id)
+    all_pages = _fetch_cloud_pages(client, doc_id)
     if not all_pages:
         raise RuntimeError(f"No page content returned from PageIndex Cloud for doc_id={doc_id}")
 

@@ -78,10 +78,10 @@ import os
 from pageindex import PageIndexClient
 
 client = PageIndexClient(api_key=os.environ["PAGEINDEX_API_KEY"])
-col = client.collection()
 
-for doc in col.list_documents():
-    print(doc["doc_id"], "—", doc.get("doc_name"))
+result = client.list_documents()
+for doc in result.get("entries", result.get("documents", [])):
+    print(doc.get("id", doc.get("doc_id")), "—", doc.get("name", doc.get("doc_name")))
 ```
 
 ```text

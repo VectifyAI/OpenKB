@@ -518,7 +518,7 @@ def _add_single_file_locked(
             click.echo("  Long document detected — indexing with PageIndex...")
             # PageIndex content-dedups: if the same content is already indexed
             # (e.g. hashes.json and pageindex.db diverged after a remove whose
-            # PageIndex cleanup failed), col.add() returns the EXISTING doc_id
+            # PageIndex cleanup failed), submit_document() returns the EXISTING doc_id
             # and writes no new blob. Capture the blob set *before* indexing so
             # we register only blobs THIS add actually created — otherwise
             # rollback would delete a prior document's blob.
@@ -1297,10 +1297,11 @@ def _cleanup_pageindex(
     config = resolve_effective_config(kb_dir)[0]
     model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-5.4"))
     client = PageIndexClient(model=model, storage_path=str(openkb_dir))
-    col = client.collection()
 
     if doc_id is None:
-        candidates = [d for d in col.list_documents() if d.get("doc_name") == doc_name]
+        result = client.list_documents()
+        entries = result.get("entries", result.get("documents", []))
+        candidates = [d for d in entries if d.get("name") == doc_name]
         if not candidates:
             return False, "no PageIndex doc to delete"
         if len(candidates) > 1:
@@ -1308,9 +1309,9 @@ def _cleanup_pageindex(
                 f"{len(candidates)} PageIndex docs match doc_name='{doc_name}'; "
                 "skipping (re-add to refresh)"
             )
-        doc_id = candidates[0]["doc_id"]
+        doc_id = candidates[0].get("id", candidates[0].get("doc_id"))
 
-    col.delete_document(doc_id)
+    client.delete_document(doc_id)
     return True, f"deleted PageIndex doc ({doc_id[:12]}…)"
 
 

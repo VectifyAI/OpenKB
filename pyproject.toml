@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
 name = "openkb"
-dynamic = ["version"]
+version = "0.4.6"
 description = "OpenKB: Open LLM Knowledge Base, powered by PageIndex"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,24 +32,21 @@ keywords = ["ai", "rag", "retrieval", "knowledge-base", "llm", "pageindex", "age
 # returning empty Responses output (BerriAI/litellm#25429) and
 # auto-injects GitHub Copilot IDE-auth headers.
 dependencies = [
-    "pageindex==0.3.0.dev3",
+    "pageindex==0.2.19",
     "markitdown[docx,pptx,xlsx,xls]==0.1.5",
     "trafilatura==2.0.0",
     "click==8.4.0",
     "watchdog==6.0.0",
-    "litellm==1.87.2",
-    "openai-agents==0.17.3",
-    # openai 2.45.0 added a required `cache_write_tokens` field to
-    # InputTokensDetails that openai-agents 0.17.3 does not set, crashing
-    # usage parsing on every response (issue #187). Pin below 2.45 until
-    # openai-agents catches up.
-    "openai==2.44.0",
+    "litellm==1.102.1",
+    "openai-agents==0.20.0",
+    "openai==2.54.0",
     "pyyaml==6.0.3",
     "python-dotenv==1.2.2",
     "json-repair==0.59.10",
     "prompt_toolkit==3.0.52",
     "rich==15.0.0",
     "portalocker==3.2.0",
+    "pymupdf==1.28.2",
 ]
 
 [project.urls]
@@ -80,9 +77,6 @@ dev = [
 # `pip install "openkb[api]"` keeps working.
 web = ["fastapi", "uvicorn", "python-multipart"]
 api = ["openkb[web]"]
-
-[tool.hatch.version]
-source = "vcs"
 
 # The Workbench web bundle (openkb/web) is git-ignored but must ship in the
 # published package. `artifacts` force-includes it into both the sdist and the
