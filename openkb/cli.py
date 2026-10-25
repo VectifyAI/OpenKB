@@ -1216,6 +1216,44 @@ def save_exploration(kb_dir: Path, question: str, answer: str) -> Path | None:
     return explore_path
 
 
+@cli.group()
+def fts():
+    """FTS5 full-text index (hybrid retrieval pre-filter for queries)."""
+
+
+@fts.command(name="rebuild")
+@click.pass_context
+def fts_rebuild(ctx):
+    """Rebuild the full-text index from scratch."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.fts import rebuild_index
+
+    t0 = time.time()
+    files_seen, rows = rebuild_index(kb_dir)
+    click.echo(
+        f"FTS index rebuilt: {files_seen} files, {rows} rows, "
+        f"{time.time() - t0:.1f}s -> {kb_dir / '.openkb' / 'fts.db'}"
+    )
+
+
+@fts.command(name="search")
+@click.argument("fts_query")
+@click.option("--limit", default=8, show_default=True, help="Max hits.")
+@click.pass_context
+def fts_search_cmd(ctx, fts_query, limit):
+    """BM25 keyword search over the wiki (debug / quick lookup)."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.fts import format_hits, search as fts_search
+
+    click.echo(format_hits(fts_search(kb_dir, fts_query, limit=limit)))
+
+
 @cli.command()
 @click.argument("question")
 @click.option("--save", is_flag=True, default=False, help="Save the answer to wiki/explorations/.")

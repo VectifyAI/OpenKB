@@ -25,7 +25,12 @@ You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching th
 {schema_md}
 
 ## Search strategy
-1. Read index.md to see all documents and concepts with brief summaries.
+1. Use the `search` tool with the question's key terms (Chinese and/or
+   English) first — it is a BM25-ranked full-text index over the ENTIRE wiki
+   and returns candidate pages with snippets in milliseconds. Hits on long
+   documents include page numbers you can pass straight to get_page_content.
+   If `search` returns no hits or the question is about overall KB scope,
+   read index.md to see all documents and concepts with brief summaries.
    Each document is marked (short) or (pageindex) to indicate its type.
 2. Read relevant summary pages (summaries/) for document overviews.
    Summaries may omit details — if you need more, follow the summary's
@@ -84,6 +89,27 @@ def build_query_agent(
         return get_wiki_page_content(doc_name, pages, wiki_root)
 
     @function_tool
+    def search(query: str, limit: int = 8) -> str:
+        """Full-text keyword search over the entire wiki (BM25-ranked FTS5).
+
+        Fast first step: returns candidate pages with snippets. Supports
+        Chinese and English terms (CJK is bigram-indexed). Multi-word queries
+        are ANDed (falls back to OR when nothing matches). Then verify by
+        reading the actual pages with read_file / get_page_content.
+
+        Args:
+            query: Keywords, e.g. 'ETA 川普 豁免' or 'transformer attention'.
+            limit: Max hits (default 8).
+        """
+        from openkb.fts import format_hits, search as fts_search
+
+        kb_dir = Path(wiki_root).parent
+        try:
+            return format_hits(fts_search(kb_dir, query, limit=limit))
+        except Exception as exc:  # never break the agent loop on FTS issues
+            return f"Full-text search unavailable ({exc}). Navigate via index.md instead."
+
+    @function_tool
     def get_image(image_path: str) -> ToolOutputImage | ToolOutputText:
         """View an image from the wiki.
 
@@ -117,7 +143,7 @@ def build_query_agent(
     return Agent(
         name="wiki-query",
         instructions=instructions,
-        tools=[read_file, get_page_content, get_image],
+        tools=[search, read_file, get_page_content, get_image],
         model=f"litellm/{model}",
         model_settings=ModelSettings(**model_settings),
     )
