@@ -161,7 +161,23 @@ openkb source add gdrive --name notes --folder "https://drive.google.com/drive/f
 openkb source sync notes
 ```
 
-Scope is read-only access to that user's Drive. `openkb source add gdrive --non-interactive` saves the binding only when a refresh token is already stored. OneDrive is not available yet.
+Scope is read-only access to that user's Drive. `openkb source add gdrive --non-interactive` saves the binding only when a refresh token is already stored.
+
+### OneDrive
+
+Bind a path in the user's own OneDrive (personal or work/school) and compile those files into the local wiki. Register an app on the Microsoft identity platform with the **Mobile and desktop applications** platform. The portal's Redirect URIs box cannot add `http://127.0.0.1`; Microsoft's reply-URL rules accept `http://localhost` and ignore the port for that host, while the path must match. Register `http://localhost/callback`. OpenKB sends `http://localhost:7567/callback` and listens on `127.0.0.1` only. Scope is `Files.Read` plus `offline_access`. The common endpoint covers personal and work or school accounts.
+
+```bash
+pip install "openkb[onedrive]"
+# <kb>/.env — the refresh token is written by source add, not by hand
+# OPENKB_ONEDRIVE_CLIENT_ID=...
+# OPENKB_ONEDRIVE_CLIENT_SECRET=...
+
+openkb source add onedrive --name papers --path "Documents/Papers"
+openkb source sync papers
+```
+
+`openkb source add onedrive --non-interactive` saves the binding only when a refresh token is already stored. SharePoint sites are not available.
 
 # 🧩 How OpenKB Works
 

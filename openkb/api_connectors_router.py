@@ -15,6 +15,7 @@ from openkb.connectors.backend import ProviderError
 from openkb.connectors.credentials import s3_credentials
 from openkb.connectors.gdrive import prepare_gdrive_binding
 from openkb.connectors.model import parse_s3_binding
+from openkb.connectors.onedrive import prepare_onedrive_binding
 from openkb.connectors.state import KbBusyError
 from openkb.connectors.store import remove_binding, upsert_binding
 from openkb.connectors.sync import binding_views, sync_bindings
@@ -48,6 +49,7 @@ class ConnectorAddRequest(BaseModel):
     bucket: str = ""
     prefix: str = ""
     folder: str = ""
+    path: str = ""
 
 
 class ConnectorRemoveRequest(BaseModel):
@@ -89,8 +91,15 @@ def _add(kb_dir, request: ConnectorAddRequest) -> str:
             folder=request.folder,
             non_interactive=True,
         )
+    if request.provider == "onedrive":
+        return prepare_onedrive_binding(
+            kb_dir,
+            name=request.name,
+            path=request.path,
+            non_interactive=True,
+        )
     if request.provider != "s3":
-        raise ValueError("Only the s3 and gdrive providers are available.")
+        raise ValueError("Only the s3, gdrive, and onedrive providers are available.")
     if s3_credentials(kb_dir) is None:
         raise ValueError(
             "S3 credentials are missing. Set OPENKB_S3_ACCESS_KEY_ID and "

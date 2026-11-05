@@ -82,7 +82,7 @@
   },
   "remote": {
     "heading": "远程数据源",
-    "note": "Amazon S3 与 Google Drive 可在本页连接。OneDrive 尚不可用 — 点卡片去 GitHub 投票。"
+    "note": "Amazon S3、Google Drive 与 OneDrive 可在本页连接。"
   },
   "overview": {
     "index": { "label": "索引", "caption": "wiki 根" },

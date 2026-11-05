@@ -7,9 +7,9 @@ import { ApiError, apiFetch } from "@/api/client"
  * Remote document-source connectors.
  *
  * A provider with no backend keeps the GitHub vote link (`label:connector:<id>`).
- * Amazon S3 and Google Drive are shipped: with a knowledge base selected, zero
- * bindings show a connect form and one or more bindings show Sync / Remove /
- * Add another. OneDrive stays a vote link.
+ * Amazon S3, Google Drive, and OneDrive are shipped: with a knowledge base
+ * selected, zero bindings show a connect form and one or more bindings show
+ * Sync / Remove / Add another.
  */
 export interface Connector {
   id: string
@@ -22,7 +22,7 @@ const REPO = "https://github.com/VectifyAI/OpenKB"
 const voteSearch = (label: string) =>
   `${REPO}/issues?q=${encodeURIComponent(`is:issue label:connector:${label}`)}`
 
-const SHIPPED = new Set(["s3", "gdrive"])
+const SHIPPED = new Set(["s3", "gdrive", "onedrive"])
 
 interface FieldSpec {
   key: string
@@ -46,6 +46,14 @@ const FORMS: Record<string, { needKb: string; hint?: string; fields: FieldSpec[]
     fields: [
       { key: "name", label: "connector.name" },
       { key: "folder", label: "connector.folder", hint: "connector.folderHint" },
+    ],
+  },
+  onedrive: {
+    needKb: "connector.needKbOneDrive",
+    hint: "connector.onedriveTokenHint",
+    fields: [
+      { key: "name", label: "connector.name" },
+      { key: "path", label: "connector.path", hint: "connector.pathHint" },
     ],
   },
 }

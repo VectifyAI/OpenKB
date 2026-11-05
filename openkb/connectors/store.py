@@ -16,8 +16,10 @@ import yaml
 from openkb.config import save_config
 from openkb.connectors.model import (
     GDriveBinding,
+    OneDriveBinding,
     S3Binding,
     parse_gdrive_binding,
+    parse_onedrive_binding,
     parse_s3_binding,
 )
 from openkb.connectors.state import (
@@ -44,7 +46,7 @@ def _read_raw(path: Path) -> dict[str, Any]:
     return data
 
 
-Binding = S3Binding | GDriveBinding
+Binding = S3Binding | GDriveBinding | OneDriveBinding
 
 
 def _parse_item(item: object) -> Binding | None:
@@ -63,6 +65,11 @@ def _parse_item(item: object) -> Binding | None:
             return parse_gdrive_binding(
                 name=str(item.get("name", "")),
                 folder=str(item.get("folder_id", "") or ""),
+            )
+        if provider == "onedrive":
+            return parse_onedrive_binding(
+                name=str(item.get("name", "")),
+                path=str(item.get("path", "") or ""),
             )
     except ValueError:
         return None

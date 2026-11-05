@@ -85,6 +85,8 @@ api = ["openkb[web]"]
 s3 = ["boto3==1.43.124"]
 # Tests mock the Drive client and do not import it, so CI stays on dev+api.
 gdrive = ["google-api-python-client==2.201.0", "google-auth==2.62.1"]
+# Tests mock Graph and do not import msal, so CI stays on dev+api.
+onedrive = ["msal==1.39.0"]
 
 [tool.hatch.version]
 source = "vcs"

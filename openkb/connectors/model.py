@@ -111,3 +111,38 @@ def parse_gdrive_folder(folder: str) -> str:
 
 def parse_gdrive_binding(*, name: str, folder: str) -> GDriveBinding:
     return GDriveBinding(name=validate_binding_name(name), folder_id=parse_gdrive_folder(folder))
+
+
+@dataclass(frozen=True)
+class OneDriveBinding:
+    """One path in the user's own OneDrive, personal or work/school."""
+
+    name: str
+    path: str
+    provider: str = "onedrive"
+
+    def location(self) -> dict[str, str]:
+        return {"path": self.path}
+
+    def describe(self) -> str:
+        return f"onedrive://{self.path}/"
+
+    def page_prefix(self) -> str:
+        return f"onedrive://{self.path}/"
+
+
+def parse_onedrive_path(path: str) -> str:
+    """A path from the drive root, without a leading slash."""
+    text = path.strip()
+    if text.startswith("/") or "\\" in text or not text:
+        raise ValueError(
+            "OneDrive path must start at the drive root and must not begin with a slash."
+        )
+    parts = text.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("OneDrive path must not contain empty, '.' or '..' segments.")
+    return text
+
+
+def parse_onedrive_binding(*, name: str, path: str) -> OneDriveBinding:
+    return OneDriveBinding(name=validate_binding_name(name), path=parse_onedrive_path(path))

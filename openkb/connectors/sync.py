@@ -294,6 +294,42 @@ def _sync_gdrive_group(
     return reports
 
 
+def _sync_onedrive_group(
+    kb_dir: Path,
+    bindings: list[Binding],
+    *,
+    non_interactive: bool,
+    sign_in: SignInFn | None,
+    announce: Callable[[str], None] | None,
+    add: AddFn | None,
+    backend_for: Callable[[Binding, str], ObjectBackend] | None,
+) -> list[BindingReport]:
+    from openkb.connectors.model import OneDriveBinding
+    from openkb.connectors.onedrive import OneDriveBackend, access_token_for
+
+    try:
+        token = access_token_for(
+            kb_dir,
+            non_interactive=non_interactive,
+            sign_in_hook=sign_in if sign_in is not None else None,
+            announce=announce,
+        )
+    except ProviderError as exc:
+        return _fail_group(kb_dir, bindings, str(exc))
+    add_fn = add or _add_file
+    reports: list[BindingReport] = []
+    for binding in bindings:
+        if not isinstance(binding, OneDriveBinding):
+            continue
+        backend = (
+            backend_for(binding, token)
+            if backend_for is not None
+            else OneDriveBackend(binding, token)
+        )
+        reports.append(_sync_one(kb_dir, binding, backend, add_fn))
+    return reports
+
+
 def _grouped(bindings: list[Binding]) -> list[tuple[str, list[Binding]]]:
     order: list[str] = []
     groups: dict[str, list[Binding]] = {}
@@ -315,13 +351,14 @@ def sync_bindings(
     add: AddFn | None = None,
     backend_for: Callable[[S3Binding, str, str], ObjectBackend] | None = None,
     gdrive_backend_for: Callable[[Binding, str], ObjectBackend] | None = None,
+    onedrive_backend_for: Callable[[Binding, str], ObjectBackend] | None = None,
 ) -> SyncOutcome:
     """Sync every binding, or the one named ``name``.
 
-    ``sign_in`` and ``announce`` are for Drive. ``--non-interactive`` drops
-    both, so a missing or rejected token fails that provider and no browser
-    opens. ``add`` and the backend hooks exist so tests skip the network and
-    the compiler. S3 never calls ``sign_in``.
+    ``sign_in`` and ``announce`` are for Drive and OneDrive.
+    ``--non-interactive`` drops both, so a missing or rejected token fails
+    that provider and no browser opens. ``add`` and the backend hooks exist
+    so tests skip the network and the compiler. S3 never calls ``sign_in``.
     """
     if non_interactive:
         sign_in = None
@@ -355,6 +392,18 @@ def sync_bindings(
                     announce=announce,
                     add=add,
                     backend_for=gdrive_backend_for,
+                )
+            )
+        elif provider == "onedrive":
+            reports.extend(
+                _sync_onedrive_group(
+                    kb_dir,
+                    group,
+                    non_interactive=non_interactive,
+                    sign_in=sign_in,
+                    announce=announce,
+                    add=add,
+                    backend_for=onedrive_backend_for,
                 )
             )
         else:

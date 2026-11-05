@@ -75,6 +75,10 @@
     "folder": "Folder",
     "folderHint": "A folder URL or id from your own Drive",
     "gdriveTokenHint": "Sign in once with openkb source add gdrive if this knowledge base has no refresh token yet.",
+    "needKbOneDrive": "Open a knowledge base to connect OneDrive.",
+    "path": "Path",
+    "pathHint": "Path from your drive root, such as Documents/Papers",
+    "onedriveTokenHint": "Sign in once with openkb source add onedrive if this knowledge base has no refresh token yet.",
     "missingExtra": "Install the s3 extra on the server: pip install \"openkb[s3]\"",
     "formError": "Could not save the binding: {{error}}"
   }

@@ -82,7 +82,7 @@
   },
   "remote": {
     "heading": "Remote data sources",
-    "note": "Amazon S3 and Google Drive connect on this page. OneDrive is not available yet — click a card to vote on GitHub."
+    "note": "Amazon S3, Google Drive, and OneDrive connect on this page."
   },
   "overview": {
     "index": { "label": "Index", "caption": "wiki root" },

@@ -1661,6 +1661,20 @@ wheels = [
 ]
 
 [[package]]
+name = "msal"
+version = "1.39.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bb/85/747d28986a44b715cc51cf57aa021c8fd94e9614064261ceec77320e8b0b/msal-1.39.0.tar.gz", hash = "sha256:6ab7de335e6d7f5717e2c7e1dbf86e4dda2f6acf3c56773b78dc53ebc6395b5f", size = 205360, upload-time = "2026-09-17T16:07:45.1Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/32/178457385925ce301c7b3232bd85665d4df57da39568b62dcfc74031873f/msal-1.39.0-py3-none-any.whl", hash = "sha256:2d2577886906cd7293850dffa2da29119966c213bfc6ec0cecf8bf7621e1ca77", size = 131629, upload-time = "2026-09-17T16:07:46.722Z" },
+]
+
+[[package]]
 name = "multidict"
 version = "6.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2113,6 +2127,9 @@ gdrive = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
 ]
+onedrive = [
+    { name = "msal" },
+]
 s3 = [
     { name = "boto3" },
 ]
@@ -2134,6 +2151,7 @@ requires-dist = [
     { name = "json-repair", specifier = "==0.59.10" },
     { name = "litellm", specifier = "==1.87.2" },
     { name = "markitdown", extras = ["docx", "pptx", "xls", "xlsx"], specifier = "==0.1.5" },
+    { name = "msal", marker = "extra == 'onedrive'", specifier = "==1.39.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.15.0" },
     { name = "openai", specifier = "==2.44.0" },
     { name = "openai-agents", specifier = "==0.17.3" },
@@ -2154,7 +2172,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'web'" },
     { name = "watchdog", specifier = "==6.0.0" },
 ]
-provides-extras = ["api", "dev", "gdrive", "s3", "web"]
+provides-extras = ["api", "dev", "gdrive", "onedrive", "s3", "web"]
 
 [[package]]
 name = "openpyxl"

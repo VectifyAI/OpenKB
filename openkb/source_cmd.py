@@ -10,6 +10,7 @@ from openkb.connectors.backend import ProviderError
 from openkb.connectors.credentials import s3_credentials
 from openkb.connectors.gdrive import prepare_gdrive_binding
 from openkb.connectors.model import parse_s3_binding
+from openkb.connectors.onedrive import prepare_onedrive_binding
 from openkb.connectors.state import KbBusyError
 from openkb.connectors.store import remove_binding, upsert_binding
 from openkb.connectors.sync import binding_views, sync_bindings
@@ -45,20 +46,23 @@ def _announce(url: str) -> None:
 
 
 @source.command("add")
-@click.argument("provider", type=click.Choice(["s3", "gdrive"]))
+@click.argument("provider", type=click.Choice(["s3", "gdrive", "onedrive"]))
 @click.option("--name", required=True, help="Local name for this binding.")
 @click.option("--region", default="", help="AWS region, for example us-east-1.")
 @click.option("--bucket", default="", help="S3 bucket name.")
 @click.option("--prefix", default="", help="Key prefix. Empty means the bucket root.")
 @click.option("--folder", default="", help="Google Drive folder URL or folder id.")
+@click.option("--path", "drive_path", default="", help="OneDrive path from the drive root.")
 @click.option(
     "--non-interactive",
     is_flag=True,
     default=False,
-    help="Never open a browser. Drive then requires a refresh token already on disk.",
+    help="Never open a browser. Drive and OneDrive then require a stored refresh token.",
 )
 @click.pass_context
-def add_cmd(ctx, provider, name, region, bucket, prefix, folder, non_interactive) -> None:
+def add_cmd(
+    ctx, provider, name, region, bucket, prefix, folder, drive_path, non_interactive
+) -> None:
     """Save a binding. Credentials must already be available."""
     kb_dir = _kb_dir(ctx)
     try:
@@ -70,11 +74,19 @@ def add_cmd(ctx, provider, name, region, bucket, prefix, folder, non_interactive
                 )
             binding = parse_s3_binding(name=name, region=region, bucket=bucket, prefix=prefix)
             message = upsert_binding(kb_dir, binding)
-        else:
+        elif provider == "gdrive":
             message = prepare_gdrive_binding(
                 kb_dir,
                 name=name,
                 folder=folder,
+                non_interactive=non_interactive,
+                announce=None if non_interactive else _announce,
+            )
+        else:
+            message = prepare_onedrive_binding(
+                kb_dir,
+                name=name,
+                path=drive_path,
                 non_interactive=non_interactive,
                 announce=None if non_interactive else _announce,
             )
