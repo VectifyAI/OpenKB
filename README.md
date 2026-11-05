@@ -131,6 +131,54 @@ Open `http://127.0.0.1:7566/` for the Workbench. Auth is off by default (local-f
 
 > Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-web`), or `npm run build` to regenerate the bundled `openkb/web/`.
 
+### Amazon S3
+
+Bind a bucket prefix and compile those objects into the local wiki. The SDK is an optional extra. Credentials use the CLI order: process environment, then `<kb>/.env`, then `~/.config/openkb/.env`.
+
+```bash
+pip install "openkb[s3]"
+# <kb>/.env
+# OPENKB_S3_ACCESS_KEY_ID=...
+# OPENKB_S3_SECRET_ACCESS_KEY=...
+
+openkb source add s3 --name papers --region us-east-1 --bucket my-bucket --prefix papers/
+openkb source sync papers
+```
+
+An empty `--prefix` is the bucket root. `openkb source remove` deletes the binding and leaves compiled pages in place.
+
+### Google Drive
+
+Bind a folder in the user's own Drive and compile those files into the local wiki. The client library is an optional extra. Create an OAuth client of type **Desktop app** in Google Cloud. Google's installed-app flow accepts the loopback redirect `http://127.0.0.1:7567/callback` (the [desktop-app guide](https://developers.google.com/identity/protocols/oauth2/native-app) documents `http://127.0.0.1:<port>`, and a Desktop client has no redirect-URI field to fill in). OpenKB listens on `127.0.0.1` only.
+
+```bash
+pip install "openkb[gdrive]"
+# <kb>/.env — the refresh token is written by source add, not by hand
+# OPENKB_GDRIVE_CLIENT_ID=...
+# OPENKB_GDRIVE_CLIENT_SECRET=...
+
+openkb source add gdrive --name notes --folder "https://drive.google.com/drive/folders/FOLDER_ID"
+openkb source sync notes
+```
+
+Scope is read-only access to that user's Drive. `openkb source add gdrive --non-interactive` saves the binding only when a refresh token is already stored.
+
+### OneDrive
+
+Bind a path in the user's own OneDrive (personal or work/school) and compile those files into the local wiki. Register an app on the Microsoft identity platform with the **Mobile and desktop applications** platform. The portal's Redirect URIs box cannot add `http://127.0.0.1`; Microsoft's reply-URL rules accept `http://localhost` and ignore the port for that host, while the path must match. Register `http://localhost/callback`. OpenKB sends `http://localhost:7567/callback` and listens on `127.0.0.1` only. Scope is `Files.Read` plus `offline_access`. The common endpoint covers personal and work or school accounts.
+
+```bash
+pip install "openkb[onedrive]"
+# <kb>/.env — the refresh token is written by source add, not by hand
+# OPENKB_ONEDRIVE_CLIENT_ID=...
+# OPENKB_ONEDRIVE_CLIENT_SECRET=...
+
+openkb source add onedrive --name papers --path "Documents/Papers"
+openkb source sync papers
+```
+
+`openkb source add onedrive --non-interactive` saves the binding only when a refresh token is already stored. SharePoint sites are not available.
+
 # 🧩 How OpenKB Works
 
 ### Architecture

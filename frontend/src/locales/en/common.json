@@ -54,8 +54,32 @@
     "baseLabel": "API address (optional; leave blank to use the current origin)",
     "connect": "Connect"
   },
-  "connector": {
+    "connector": {
     "tooltip": "Cloud sync is in development · vote for it on GitHub",
-    "vote": "Want it? Vote"
+    "vote": "Want it? Vote",
+    "connect": "Connect",
+    "addAnother": "Add another",
+    "sync": "Sync",
+    "remove": "Remove",
+    "name": "Name",
+    "region": "Region",
+    "bucket": "Bucket",
+    "prefix": "Prefix",
+    "prefixHint": "Empty prefix is the whole bucket",
+    "notSynced": "Not synced since this change",
+    "synced": "Synced",
+    "save": "Save binding",
+    "saving": "Saving…",
+    "needKb": "Open a knowledge base to connect Amazon S3.",
+    "needKbDrive": "Open a knowledge base to connect Google Drive.",
+    "folder": "Folder",
+    "folderHint": "A folder URL or id from your own Drive",
+    "gdriveTokenHint": "Sign in once with openkb source add gdrive if this knowledge base has no refresh token yet.",
+    "needKbOneDrive": "Open a knowledge base to connect OneDrive.",
+    "path": "Path",
+    "pathHint": "Path from your drive root, such as Documents/Papers",
+    "onedriveTokenHint": "Sign in once with openkb source add onedrive if this knowledge base has no refresh token yet.",
+    "missingExtra": "Install the s3 extra on the server: pip install \"openkb[s3]\"",
+    "formError": "Could not save the binding: {{error}}"
   }
 }

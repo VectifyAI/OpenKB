@@ -82,7 +82,7 @@
   },
   "remote": {
     "heading": "Remote data sources",
-    "note": "Cloud connectors are in development and not yet available · want one? Click a card to vote on GitHub"
+    "note": "Amazon S3, Google Drive, and OneDrive connect on this page."
   },
   "overview": {
     "index": { "label": "Index", "caption": "wiki root" },
