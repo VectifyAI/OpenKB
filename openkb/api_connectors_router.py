@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from openkb.api_helpers import _resolve_kb, require_bearer_token
+from openkb.connectors.backend import ProviderError
 from openkb.connectors.credentials import s3_credentials
+from openkb.connectors.gdrive import prepare_gdrive_binding
 from openkb.connectors.model import parse_s3_binding
 from openkb.connectors.state import KbBusyError
 from openkb.connectors.store import remove_binding, upsert_binding
@@ -45,6 +47,7 @@ class ConnectorAddRequest(BaseModel):
     region: str = ""
     bucket: str = ""
     prefix: str = ""
+    folder: str = ""
 
 
 class ConnectorRemoveRequest(BaseModel):
@@ -79,8 +82,15 @@ class ConnectorMessage(BaseModel):
 
 
 def _add(kb_dir, request: ConnectorAddRequest) -> str:
+    if request.provider == "gdrive":
+        return prepare_gdrive_binding(
+            kb_dir,
+            name=request.name,
+            folder=request.folder,
+            non_interactive=True,
+        )
     if request.provider != "s3":
-        raise ValueError("Only the s3 provider is available.")
+        raise ValueError("Only the s3 and gdrive providers are available.")
     if s3_credentials(kb_dir) is None:
         raise ValueError(
             "S3 credentials are missing. Set OPENKB_S3_ACCESS_KEY_ID and "
@@ -114,6 +124,8 @@ async def add_connector_endpoint(
     try:
         message = await run_in_threadpool(_add, kb_dir, request)
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KbBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -17,10 +17,15 @@ class ProviderError(Exception):
 
 @dataclass(frozen=True)
 class RemoteObject:
-    """One remote file selected for ingest."""
+    """One remote file selected for ingest.
+
+    ``locator`` is the provider's download handle (an S3 key is already in
+    ``identity``; Drive stores a file id here).
+    """
 
     identity: str
     name: str
+    locator: str = ""
 
 
 class ObjectBackend(Protocol):

@@ -6,7 +6,9 @@ from pathlib import Path
 
 import click
 
+from openkb.connectors.backend import ProviderError
 from openkb.connectors.credentials import s3_credentials
+from openkb.connectors.gdrive import prepare_gdrive_binding
 from openkb.connectors.model import parse_s3_binding
 from openkb.connectors.state import KbBusyError
 from openkb.connectors.store import remove_binding, upsert_binding
@@ -31,32 +33,52 @@ def source() -> None:
     """Bind a remote data source and sync it into this knowledge base."""
 
 
+def _announce(url: str) -> None:
+    """Print the sign-in URL and open a browser. A headless session still waits."""
+    click.echo(f"Open this URL to sign in:\n{url}")
+    import webbrowser
+
+    try:
+        webbrowser.open(url)
+    except Exception:
+        return
+
+
 @source.command("add")
-@click.argument("provider", type=click.Choice(["s3"]))
+@click.argument("provider", type=click.Choice(["s3", "gdrive"]))
 @click.option("--name", required=True, help="Local name for this binding.")
 @click.option("--region", default="", help="AWS region, for example us-east-1.")
 @click.option("--bucket", default="", help="S3 bucket name.")
 @click.option("--prefix", default="", help="Key prefix. Empty means the bucket root.")
+@click.option("--folder", default="", help="Google Drive folder URL or folder id.")
 @click.option(
     "--non-interactive",
     is_flag=True,
     default=False,
-    help="Never open a browser. S3 does not open one either way.",
+    help="Never open a browser. Drive then requires a refresh token already on disk.",
 )
 @click.pass_context
-def add_cmd(ctx, provider, name, region, bucket, prefix, non_interactive) -> None:
-    """Save an S3 binding. Credentials must already be available."""
-    del provider, non_interactive
+def add_cmd(ctx, provider, name, region, bucket, prefix, folder, non_interactive) -> None:
+    """Save a binding. Credentials must already be available."""
     kb_dir = _kb_dir(ctx)
-    if s3_credentials(kb_dir) is None:
-        raise click.ClickException(
-            "S3 credentials are missing. Set OPENKB_S3_ACCESS_KEY_ID and "
-            "OPENKB_S3_SECRET_ACCESS_KEY in the environment or <kb>/.env."
-        )
     try:
-        binding = parse_s3_binding(name=name, region=region, bucket=bucket, prefix=prefix)
-        message = upsert_binding(kb_dir, binding)
-    except (ValueError, KbBusyError) as exc:
+        if provider == "s3":
+            if s3_credentials(kb_dir) is None:
+                raise click.ClickException(
+                    "S3 credentials are missing. Set OPENKB_S3_ACCESS_KEY_ID and "
+                    "OPENKB_S3_SECRET_ACCESS_KEY in the environment or <kb>/.env."
+                )
+            binding = parse_s3_binding(name=name, region=region, bucket=bucket, prefix=prefix)
+            message = upsert_binding(kb_dir, binding)
+        else:
+            message = prepare_gdrive_binding(
+                kb_dir,
+                name=name,
+                folder=folder,
+                non_interactive=non_interactive,
+                announce=None if non_interactive else _announce,
+            )
+    except (ValueError, KbBusyError, ProviderError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(message)
 
@@ -103,7 +125,12 @@ def sync_cmd(ctx, name, non_interactive) -> None:
     """Download new and changed objects and compile them."""
     kb_dir = _kb_dir(ctx)
     try:
-        outcome = sync_bindings(kb_dir, name=name, non_interactive=non_interactive)
+        outcome = sync_bindings(
+            kb_dir,
+            name=name,
+            non_interactive=non_interactive,
+            announce=None if non_interactive else _announce,
+        )
     except KbBusyError as exc:
         raise click.ClickException(str(exc)) from exc
     for report in outcome.reports:

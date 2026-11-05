@@ -29,7 +29,7 @@
     "kbRootEnvPinned": "Pinned by the OPENKB_KB_ROOT environment variable; edits here won't take effect until it's unset."
   },
   "conn": {
-    "note": "Amazon S3 is connected from a knowledge base page. Google Drive and OneDrive are not available yet — click a card to vote on GitHub."
+    "note": "Amazon S3 and Google Drive are connected from a knowledge base page. OneDrive is not available yet — click a card to vote on GitHub."
   },
   "about": {
     "links": {

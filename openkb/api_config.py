@@ -37,7 +37,7 @@ from openkb.config import (
     resolve_entity_types,
     save_config,
 )
-from openkb.locks import atomic_write_text
+from openkb.envfile import merge_env_file
 
 logger = logging.getLogger(__name__)
 
@@ -93,46 +93,10 @@ def _reject_credential_newlines(
 def _merge_patch_env(env_path: Path, updates: dict[str, str | None]) -> None:
     """Securely merge-patch a ``.env`` credential file (shared KB/global writer).
 
-    Parses existing ``KEY=VALUE`` lines, tolerating a leading ``export `` so the
-    key normalizes: ``export LLM_API_KEY=x`` is stored under ``LLM_API_KEY``,
-    exactly what python-dotenv strips on read-back. Without this an ``export ``-
-    prefixed line would be keyed ``"export LLM_API_KEY"``, so a later
-    ``pop("LLM_API_KEY")`` (RFC 7386 clear) would MISS it and leave a live
-    credential on disk. Applies ``updates`` (a ``None`` value REMOVES the key,
-    else sets it), then writes atomically.
-
-    The file is tightened to 0o600 BEFORE the atomic write so the LLM key is
-    never world-readable — not even briefly: atomic_write_text copies the
-    target's *current* mode onto its private temp file before the rename (see
-    locks._target_mode), so touch(0o600)+chmod(0o600) makes os.replace land a
-    0o600 ``.env`` with no widen-then-chmod gap. Callers MUST hold the relevant
-    write lock (the per-KB mutation lock or the global-config lock): this is a
-    read-modify-write. Credential VALUES are never logged.
+    Callers MUST hold the relevant write lock. The bytes and the ``0600`` mode
+    are :func:`openkb.envfile.merge_env_file`.
     """
-    env_lines: dict[str, str] = {}
-    if env_path.exists():
-        for raw in env_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            # Strip a leading ``export `` (shell-style .env) BEFORE partition so
-            # the key normalizes and a later removal matches; python-dotenv
-            # strips it too when it reads the file back.
-            if line.startswith("export ") or line.startswith("export\t"):
-                line = line[len("export") :].lstrip()
-            if "=" not in line:
-                continue
-            k, _eq, v = line.partition("=")
-            env_lines[k.strip()] = v
-    for key, value in updates.items():
-        if value is None:
-            env_lines.pop(key, None)
-        else:
-            env_lines[key] = value
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.touch(mode=0o600, exist_ok=True)
-    env_path.chmod(0o600)
-    atomic_write_text(env_path, "".join(f"{k}={v}\n" for k, v in env_lines.items()))
+    merge_env_file(env_path, updates)
 
 
 def read_kb_config(kb_dir: Path) -> KbConfigResponse:

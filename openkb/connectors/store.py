@@ -14,7 +14,12 @@ import portalocker
 import yaml
 
 from openkb.config import save_config
-from openkb.connectors.model import S3Binding, parse_s3_binding
+from openkb.connectors.model import (
+    GDriveBinding,
+    S3Binding,
+    parse_gdrive_binding,
+    parse_s3_binding,
+)
 from openkb.connectors.state import (
     BUSY_MESSAGE,
     LOCK_TIMEOUT_SECONDS,
@@ -39,29 +44,37 @@ def _read_raw(path: Path) -> dict[str, Any]:
     return data
 
 
-def _parse_item(item: object) -> S3Binding | None:
+Binding = S3Binding | GDriveBinding
+
+
+def _parse_item(item: object) -> Binding | None:
     if not isinstance(item, dict):
         return None
     provider = item.get("provider")
-    if provider != "s3":
-        return None
     try:
-        return parse_s3_binding(
-            name=str(item.get("name", "")),
-            region=str(item.get("region", "")),
-            bucket=str(item.get("bucket", "")),
-            prefix=str(item.get("prefix", "") or ""),
-        )
+        if provider == "s3":
+            return parse_s3_binding(
+                name=str(item.get("name", "")),
+                region=str(item.get("region", "")),
+                bucket=str(item.get("bucket", "")),
+                prefix=str(item.get("prefix", "") or ""),
+            )
+        if provider == "gdrive":
+            return parse_gdrive_binding(
+                name=str(item.get("name", "")),
+                folder=str(item.get("folder_id", "") or ""),
+            )
     except ValueError:
         return None
+    return None
 
 
-def load_bindings(kb_dir: Path) -> list[S3Binding]:
+def load_bindings(kb_dir: Path) -> list[Binding]:
     raw = _read_raw(config_path(kb_dir))
     items = raw.get("connectors") or []
     if not isinstance(items, list):
         return []
-    bindings: list[S3Binding] = []
+    bindings: list[Binding] = []
     for item in items:
         parsed = _parse_item(item)
         if parsed is not None:
@@ -69,9 +82,9 @@ def load_bindings(kb_dir: Path) -> list[S3Binding]:
     return bindings
 
 
-def _count_remote_pages(kb_dir: Path, bucket: str, prefix: str) -> int:
+def _count_remote_pages(kb_dir: Path, binding: Binding) -> int:
     registry = HashRegistry(kb_dir / ".openkb" / "hashes.json")
-    needle = f"s3://{bucket}/{prefix}"
+    needle = binding.page_prefix()
     count = 0
     for meta in registry.all_entries().values():
         path = meta.get("path")
@@ -80,7 +93,7 @@ def _count_remote_pages(kb_dir: Path, bucket: str, prefix: str) -> int:
     return count
 
 
-def upsert_binding(kb_dir: Path, binding: S3Binding) -> str:
+def upsert_binding(kb_dir: Path, binding: Binding) -> str:
     """Insert or replace ``binding``. Returns ``created`` or ``replaced``.
 
     A replaced binding's sync status is cleared. Compiled pages stay.
@@ -94,7 +107,7 @@ def upsert_binding(kb_dir: Path, binding: S3Binding) -> str:
             if not isinstance(items, list):
                 items = []
             kept: list[object] = []
-            previous: S3Binding | None = None
+            previous: Binding | None = None
             for item in items:
                 parsed = _parse_item(item)
                 if parsed is not None and parsed.name == binding.name:
@@ -104,22 +117,14 @@ def upsert_binding(kb_dir: Path, binding: S3Binding) -> str:
                     previous = parsed
                     continue
                 kept.append(item)
-            kept.append(
-                {
-                    "name": binding.name,
-                    "provider": "s3",
-                    "region": binding.region,
-                    "bucket": binding.bucket,
-                    "prefix": binding.prefix,
-                }
-            )
+            kept.append({"name": binding.name, "provider": binding.provider, **binding.location()})
             raw["connectors"] = kept
             save_config(path, raw)
             if previous is not None:
                 data = read_state(kb_dir)
                 data.pop(binding.name, None)
                 atomic_write_json(state_path(kb_dir), data)
-                count = _count_remote_pages(kb_dir, previous.bucket, previous.prefix)
+                count = _count_remote_pages(kb_dir, previous)
                 message = (
                     f"Binding `{binding.name}` now points to {binding.describe()}. "
                     f"{count} documents compiled from the previous location remain in the wiki."

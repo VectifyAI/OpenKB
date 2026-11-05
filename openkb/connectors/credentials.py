@@ -64,6 +64,19 @@ def s3_credentials(kb_dir: Path) -> tuple[str, str] | None:
     return access, secret
 
 
+def gdrive_client(kb_dir: Path) -> tuple[str, str] | None:
+    """Return the OAuth client id and secret, or ``None`` when either is absent."""
+    client_id = resolve_connector_credential(kb_dir, GDRIVE_CLIENT_ID)
+    secret = resolve_connector_credential(kb_dir, GDRIVE_CLIENT_SECRET)
+    if not client_id or not secret:
+        return None
+    return client_id, secret
+
+
+def gdrive_refresh_token(kb_dir: Path) -> str | None:
+    return resolve_connector_credential(kb_dir, GDRIVE_REFRESH_TOKEN)
+
+
 def resolved_secrets(kb_dir: Path) -> list[str]:
     """Credential values currently visible, used to keep them out of state files."""
     found: list[str] = []

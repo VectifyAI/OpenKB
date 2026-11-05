@@ -29,7 +29,7 @@
     "kbRootEnvPinned": "已由环境变量 OPENKB_KB_ROOT 固定，此处的修改在取消该环境变量前不会生效。"
   },
   "conn": {
-    "note": "Amazon S3 在知识库页面连接。Google Drive 与 OneDrive 尚不可用 — 点下方卡片去 GitHub 投票。"
+    "note": "Amazon S3 与 Google Drive 在知识库页面连接。OneDrive 尚不可用 — 点下方卡片去 GitHub 投票。"
   },
   "about": {
     "links": {

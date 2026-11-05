@@ -19,13 +19,13 @@ from openkb.connectors.state import (
     read_state,
     update_state,
 )
-from openkb.connectors.store import load_bindings
+from openkb.connectors.store import Binding, load_bindings
 from openkb.state import HashRegistry
 
 RETRY_ATTEMPTS = 3
 
 AddFn = Callable[..., str]
-SignInFn = Callable[[], None]
+SignInFn = Callable[[], object]
 
 
 @dataclass
@@ -53,17 +53,17 @@ class SyncOutcome:
         return 0
 
 
-def recover_auth(*, non_interactive: bool, sign_in: SignInFn | None) -> None:
+def recover_auth(*, non_interactive: bool, sign_in: SignInFn | None) -> object:
     """Run loopback sign-in, or fail the provider when that is not allowed.
 
-    S3 does not call this. Drive and OneDrive will. ``--non-interactive`` never
-    invokes ``sign_in``.
+    S3 does not call this. Drive does, when a refresh token is missing or
+    rejected. ``--non-interactive`` never invokes ``sign_in``.
     """
     if non_interactive or sign_in is None:
         raise ProviderError(
             "Sign-in is required. Re-run without --non-interactive to open a browser."
         )
-    sign_in()
+    return sign_in()
 
 
 def _extensions() -> set[str]:
@@ -94,7 +94,7 @@ def _retry(action: Callable[[], object]) -> object:
 
 def _record(
     kb_dir: Path,
-    binding: S3Binding,
+    binding: Binding,
     *,
     added: int,
     skipped: int,
@@ -121,7 +121,7 @@ def _record(
 
 def _sync_one(
     kb_dir: Path,
-    binding: S3Binding,
+    binding: Binding,
     backend: ObjectBackend,
     add: AddFn,
 ) -> BindingReport:
@@ -206,26 +206,126 @@ def _sync_one(
     )
 
 
+def _fail_group(kb_dir: Path, bindings: list[Binding], message: str) -> list[BindingReport]:
+    reports: list[BindingReport] = []
+    for binding in bindings:
+        _record(
+            kb_dir,
+            binding,
+            added=0,
+            skipped=0,
+            updated=0,
+            failed=0,
+            error=message,
+            synced=False,
+        )
+        reports.append(
+            BindingReport(
+                name=binding.name,
+                provider=binding.provider,
+                ok=False,
+                error=message,
+            )
+        )
+    return reports
+
+
+def _sync_s3_group(
+    kb_dir: Path,
+    bindings: list[S3Binding],
+    *,
+    add: AddFn | None,
+    backend_for: Callable[[S3Binding, str, str], ObjectBackend] | None,
+) -> list[BindingReport]:
+    creds = s3_credentials(kb_dir)
+    if creds is None:
+        return _fail_group(
+            kb_dir,
+            list(bindings),
+            "S3 credentials are missing. Set OPENKB_S3_ACCESS_KEY_ID and "
+            "OPENKB_S3_SECRET_ACCESS_KEY in the environment or <kb>/.env.",
+        )
+    access, secret = creds
+    add_fn = add or _add_file
+    reports: list[BindingReport] = []
+    for binding in bindings:
+        backend = (
+            backend_for(binding, access, secret)
+            if backend_for is not None
+            else S3Backend(binding, access, secret)
+        )
+        reports.append(_sync_one(kb_dir, binding, backend, add_fn))
+    return reports
+
+
+def _sync_gdrive_group(
+    kb_dir: Path,
+    bindings: list[Binding],
+    *,
+    non_interactive: bool,
+    sign_in: SignInFn | None,
+    announce: Callable[[str], None] | None,
+    add: AddFn | None,
+    backend_for: Callable[[Binding, str], ObjectBackend] | None,
+) -> list[BindingReport]:
+    from openkb.connectors.gdrive import GDriveBackend, access_token_for
+    from openkb.connectors.model import GDriveBinding
+
+    try:
+        token = access_token_for(
+            kb_dir,
+            non_interactive=non_interactive,
+            sign_in_hook=sign_in if sign_in is not None else None,
+            announce=announce,
+        )
+    except ProviderError as exc:
+        return _fail_group(kb_dir, bindings, str(exc))
+    add_fn = add or _add_file
+    reports: list[BindingReport] = []
+    for binding in bindings:
+        if not isinstance(binding, GDriveBinding):
+            continue
+        backend = (
+            backend_for(binding, token)
+            if backend_for is not None
+            else GDriveBackend(binding, token)
+        )
+        reports.append(_sync_one(kb_dir, binding, backend, add_fn))
+    return reports
+
+
+def _grouped(bindings: list[Binding]) -> list[tuple[str, list[Binding]]]:
+    order: list[str] = []
+    groups: dict[str, list[Binding]] = {}
+    for binding in bindings:
+        if binding.provider not in groups:
+            order.append(binding.provider)
+            groups[binding.provider] = []
+        groups[binding.provider].append(binding)
+    return [(provider, groups[provider]) for provider in order]
+
+
 def sync_bindings(
     kb_dir: Path,
     *,
     name: str | None = None,
     non_interactive: bool = False,
     sign_in: SignInFn | None = None,
+    announce: Callable[[str], None] | None = None,
     add: AddFn | None = None,
     backend_for: Callable[[S3Binding, str, str], ObjectBackend] | None = None,
+    gdrive_backend_for: Callable[[Binding, str], ObjectBackend] | None = None,
 ) -> SyncOutcome:
-    """Sync every S3 binding, or the one named ``name``.
+    """Sync every binding, or the one named ``name``.
 
-    ``sign_in`` is accepted so ``--non-interactive`` can be tested. S3 never
-    calls it. ``add`` and ``backend_for`` exist so tests can avoid the network
-    and the compiler.
+    ``sign_in`` and ``announce`` are for Drive. ``--non-interactive`` drops
+    both, so a missing or rejected token fails that provider and no browser
+    opens. ``add`` and the backend hooks exist so tests skip the network and
+    the compiler. S3 never calls ``sign_in``.
     """
-    # S3 has no browser sign-in. The flag stays on the command so Drive can
-    # reuse it. A rejected token must not open a browser in non-interactive mode.
     if non_interactive:
         sign_in = None
-    del sign_in
+        announce = None
     bindings = load_bindings(kb_dir)
     if name is not None:
         bindings = [item for item in bindings if item.name == name]
@@ -234,50 +334,31 @@ def sync_bindings(
                 reports=[
                     BindingReport(
                         name=name,
-                        provider="s3",
+                        provider="",
                         ok=False,
                         error=f"No binding named {name!r}.",
                     )
                 ]
             )
-    creds = s3_credentials(kb_dir)
     reports: list[BindingReport] = []
-    if bindings and creds is None:
-        for binding in bindings:
-            message = (
-                "S3 credentials are missing. Set OPENKB_S3_ACCESS_KEY_ID and "
-                "OPENKB_S3_SECRET_ACCESS_KEY in the environment or <kb>/.env."
-            )
-            _record(
-                kb_dir,
-                binding,
-                added=0,
-                skipped=0,
-                updated=0,
-                failed=0,
-                error=message,
-                synced=False,
-            )
-            reports.append(
-                BindingReport(
-                    name=binding.name,
-                    provider="s3",
-                    ok=False,
-                    error=message,
+    for provider, group in _grouped(bindings):
+        if provider == "s3":
+            s3_group = [item for item in group if isinstance(item, S3Binding)]
+            reports.extend(_sync_s3_group(kb_dir, s3_group, add=add, backend_for=backend_for))
+        elif provider == "gdrive":
+            reports.extend(
+                _sync_gdrive_group(
+                    kb_dir,
+                    group,
+                    non_interactive=non_interactive,
+                    sign_in=sign_in,
+                    announce=announce,
+                    add=add,
+                    backend_for=gdrive_backend_for,
                 )
             )
-        return SyncOutcome(reports=reports)
-    assert creds is not None or not bindings
-    add_fn = add or _add_file
-    for binding in bindings:
-        assert creds is not None
-        access, secret = creds
-        backend = (
-            backend_for(binding, access, secret)
-            if backend_for is not None
-            else S3Backend(binding, access, secret)
-        )
-        reports.append(_sync_one(kb_dir, binding, backend, add_fn))
+        else:
+            reports.extend(_fail_group(kb_dir, group, f"Provider {provider} is not available."))
     return SyncOutcome(reports=reports)
 
 

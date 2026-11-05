@@ -7,8 +7,9 @@ import { ApiError, apiFetch } from "@/api/client"
  * Remote document-source connectors.
  *
  * A provider with no backend keeps the GitHub vote link (`label:connector:<id>`).
- * Amazon S3 is shipped: with a knowledge base selected, zero bindings show a
- * connect form and one or more bindings show Sync / Remove / Add another.
+ * Amazon S3 and Google Drive are shipped: with a knowledge base selected, zero
+ * bindings show a connect form and one or more bindings show Sync / Remove /
+ * Add another. OneDrive stays a vote link.
  */
 export interface Connector {
   id: string
@@ -21,68 +22,51 @@ const REPO = "https://github.com/VectifyAI/OpenKB"
 const voteSearch = (label: string) =>
   `${REPO}/issues?q=${encodeURIComponent(`is:issue label:connector:${label}`)}`
 
-const SHIPPED = new Set(["s3"])
+const SHIPPED = new Set(["s3", "gdrive"])
 
-export const CONNECTORS: Connector[] = [
-  { id: "gdrive", label: "Google Drive", icon: Cloud, voteUrl: voteSearch("gdrive") },
-  { id: "s3", label: "Amazon S3", icon: HardDrive, voteUrl: voteSearch("s3") },
-  { id: "onedrive", label: "OneDrive", icon: Cloud, voteUrl: voteSearch("onedrive") },
-]
-
-interface BindingView {
-  name: string
-  provider: string
-  description: string
-  stale: boolean
-  error: string | null
+interface FieldSpec {
+  key: string
+  label: string
+  hint?: string
 }
 
-const inputCls =
-  "mt-1 w-full h-8 rounded-md border border-input bg-transparent px-2 text-[12px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const FORMS: Record<string, { needKb: string; hint?: string; fields: FieldSpec[] }> = {
+  s3: {
+    needKb: "connector.needKb",
+    fields: [
+      { key: "name", label: "connector.name" },
+      { key: "region", label: "connector.region" },
+      { key: "bucket", label: "connector.bucket" },
+      { key: "prefix", label: "connector.prefix", hint: "connector.prefixHint" },
+    ],
+  },
+  gdrive: {
+    needKb: "connector.needKbDrive",
+    hint: "connector.gdriveTokenHint",
+    fields: [
+      { key: "name", label: "connector.name" },
+      { key: "folder", label: "connector.folder", hint: "connector.folderHint" },
+    ],
+  },
+}
 
-function VoteCard({ connector }: { connector: Connector }) {
+function ProviderCard({ kb, connector }: { kb?: string; connector: Connector }) {
   const { t } = useTranslation("common")
+  const spec = FORMS[connector.id]
   const Icon = connector.icon
-  return (
-    <a
-      href={connector.voteUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={t("connector.tooltip")}
-      className="group rounded-2xl border border-[hsl(var(--glass-border))] glass px-4 py-3.5 flex items-center gap-3 hover:shadow-glass hover:-translate-y-0.5 transition duration-fast ease-out-apple active:scale-[0.99]"
-    >
-      <span className="w-9 h-9 rounded-xl glass-2 border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
-        <Icon className="w-4 h-4 text-muted-foreground group-hover:text-accent-brand transition-colors" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-medium text-foreground truncate">{connector.label}</div>
-        <div className="text-[11.5px] text-muted-foreground mt-0.5 inline-flex items-center gap-1">
-          <ThumbsUp className="w-3 h-3" />
-          {t("connector.vote")}
-        </div>
-      </div>
-    </a>
-  )
-}
-
-function S3Card({ kb }: { kb?: string }) {
-  const { t } = useTranslation("common")
   const [bindings, setBindings] = useState<BindingView[]>([])
   const [adding, setAdding] = useState(false)
   const [pending, setPending] = useState<"save" | "sync" | "remove" | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [name, setName] = useState("")
-  const [region, setRegion] = useState("")
-  const [bucket, setBucket] = useState("")
-  const [prefix, setPrefix] = useState("")
+  const [values, setValues] = useState<Record<string, string>>({})
 
   const reload = useCallback(async () => {
     if (!kb) return
     const body = await apiFetch<{ connectors: BindingView[] }>(
       `/api/v1/connectors?kb=${encodeURIComponent(kb)}`,
     )
-    setBindings(body.connectors.filter((item) => item.provider === "s3"))
-  }, [kb])
+    setBindings(body.connectors.filter((item) => item.provider === connector.id))
+  }, [kb, connector.id])
 
   useEffect(() => {
     if (!kb) return
@@ -102,12 +86,9 @@ function S3Card({ kb }: { kb?: string }) {
     try {
       await apiFetch("/api/v1/connectors", {
         method: "POST",
-        body: { kb, name, provider: "s3", region, bucket, prefix },
+        body: { kb, provider: connector.id, ...values },
       })
-      setName("")
-      setRegion("")
-      setBucket("")
-      setPrefix("")
+      setValues({})
       setAdding(false)
       await reload()
     } catch (exc) {
@@ -158,11 +139,14 @@ function S3Card({ kb }: { kb?: string }) {
     <div className="rounded-2xl border border-[hsl(var(--glass-border))] glass px-4 py-3.5">
       <div className="flex items-center gap-3">
         <span className="w-9 h-9 rounded-xl glass-2 border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
-          <HardDrive className="w-4 h-4 text-muted-foreground" />
+          <Icon className="w-4 h-4 text-muted-foreground" />
         </span>
-        <div className="text-[13px] font-medium text-foreground">Amazon S3</div>
+        <div className="text-[13px] font-medium text-foreground">{connector.label}</div>
       </div>
-      {!kb && <p className="mt-2 text-[12px] text-muted-foreground">{t("connector.needKb")}</p>}
+      {!kb && <p className="mt-2 text-[12px] text-muted-foreground">{t(spec.needKb)}</p>}
+      {kb && spec.hint && bindings.length === 0 && (
+        <p className="mt-2 text-[12px] text-muted-foreground">{t(spec.hint)}</p>
+      )}
       {kb && bindings.length > 0 && (
         <ul className="mt-3 space-y-2">
           {bindings.map((binding) => (
@@ -212,23 +196,19 @@ function S3Card({ kb }: { kb?: string }) {
             void save()
           }}
         >
-          <label className="block text-[11.5px] text-muted-foreground">
-            {t("connector.name")}
-            <input className={inputCls} value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <label className="block text-[11.5px] text-muted-foreground">
-            {t("connector.region")}
-            <input className={inputCls} value={region} onChange={(event) => setRegion(event.target.value)} />
-          </label>
-          <label className="block text-[11.5px] text-muted-foreground">
-            {t("connector.bucket")}
-            <input className={inputCls} value={bucket} onChange={(event) => setBucket(event.target.value)} />
-          </label>
-          <label className="block text-[11.5px] text-muted-foreground">
-            {t("connector.prefix")}
-            <input className={inputCls} value={prefix} onChange={(event) => setPrefix(event.target.value)} />
-            <span className="mt-0.5 block">{t("connector.prefixHint")}</span>
-          </label>
+          {spec.fields.map((field) => (
+            <label key={field.key} className="block text-[11.5px] text-muted-foreground">
+              {t(field.label)}
+              <input
+                className={inputCls}
+                value={values[field.key] ?? ""}
+                onChange={(event) =>
+                  setValues((current) => ({ ...current, [field.key]: event.target.value }))
+                }
+              />
+              {field.hint && <span className="mt-0.5 block">{t(field.hint)}</span>}
+            </label>
+          ))}
           <button
             type="submit"
             disabled={pending !== null}
@@ -243,13 +223,13 @@ function S3Card({ kb }: { kb?: string }) {
   )
 }
 
-/** Grid of connector cards. Pass `kb` on a knowledge-base page so S3 can bind. */
+/** Grid of connector cards. Pass `kb` on a knowledge-base page so a shipped provider can bind. */
 export default function ConnectorCards({ kb }: { kb?: string }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
       {CONNECTORS.map((connector) =>
         SHIPPED.has(connector.id) ? (
-          <S3Card key={connector.id} kb={kb} />
+          <ProviderCard key={connector.id} kb={kb} connector={connector} />
         ) : (
           <VoteCard key={connector.id} connector={connector} />
         ),
@@ -257,3 +237,46 @@ export default function ConnectorCards({ kb }: { kb?: string }) {
     </div>
   )
 }
+
+export const CONNECTORS: Connector[] = [
+  { id: "gdrive", label: "Google Drive", icon: Cloud, voteUrl: voteSearch("gdrive") },
+  { id: "s3", label: "Amazon S3", icon: HardDrive, voteUrl: voteSearch("s3") },
+  { id: "onedrive", label: "OneDrive", icon: Cloud, voteUrl: voteSearch("onedrive") },
+]
+
+interface BindingView {
+  name: string
+  provider: string
+  description: string
+  stale: boolean
+  error: string | null
+}
+
+const inputCls =
+  "mt-1 w-full h-8 rounded-md border border-input bg-transparent px-2 text-[12px] font-mono2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+
+function VoteCard({ connector }: { connector: Connector }) {
+  const { t } = useTranslation("common")
+  const Icon = connector.icon
+  return (
+    <a
+      href={connector.voteUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={t("connector.tooltip")}
+      className="group rounded-2xl border border-[hsl(var(--glass-border))] glass px-4 py-3.5 flex items-center gap-3 hover:shadow-glass hover:-translate-y-0.5 transition duration-fast ease-out-apple active:scale-[0.99]"
+    >
+      <span className="w-9 h-9 rounded-xl glass-2 border border-[hsl(var(--glass-border))] grid place-items-center shrink-0">
+        <Icon className="w-4 h-4 text-muted-foreground group-hover:text-accent-brand transition-colors" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium text-foreground truncate">{connector.label}</div>
+        <div className="text-[11.5px] text-muted-foreground mt-0.5 inline-flex items-center gap-1">
+          <ThumbsUp className="w-3 h-3" />
+          {t("connector.vote")}
+        </div>
+      </div>
+    </a>
+  )
+}
+

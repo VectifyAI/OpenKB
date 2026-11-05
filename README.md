@@ -145,7 +145,23 @@ openkb source add s3 --name papers --region us-east-1 --bucket my-bucket --prefi
 openkb source sync papers
 ```
 
-Google Drive and OneDrive are not available yet. An empty `--prefix` is the bucket root. `openkb source remove` deletes the binding and leaves compiled pages in place.
+An empty `--prefix` is the bucket root. `openkb source remove` deletes the binding and leaves compiled pages in place.
+
+### Google Drive
+
+Bind a folder in the user's own Drive and compile those files into the local wiki. The client library is an optional extra. Create an OAuth client of type **Desktop app** in Google Cloud. Google's installed-app flow accepts the loopback redirect `http://127.0.0.1:7567/callback` (the [desktop-app guide](https://developers.google.com/identity/protocols/oauth2/native-app) documents `http://127.0.0.1:<port>`, and a Desktop client has no redirect-URI field to fill in). OpenKB listens on `127.0.0.1` only.
+
+```bash
+pip install "openkb[gdrive]"
+# <kb>/.env — the refresh token is written by source add, not by hand
+# OPENKB_GDRIVE_CLIENT_ID=...
+# OPENKB_GDRIVE_CLIENT_SECRET=...
+
+openkb source add gdrive --name notes --folder "https://drive.google.com/drive/folders/FOLDER_ID"
+openkb source sync notes
+```
+
+Scope is read-only access to that user's Drive. `openkb source add gdrive --non-interactive` saves the binding only when a refresh token is already stored. OneDrive is not available yet.
 
 # 🧩 How OpenKB Works
 

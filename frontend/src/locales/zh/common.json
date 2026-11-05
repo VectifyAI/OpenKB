@@ -71,6 +71,10 @@
     "save": "保存绑定",
     "saving": "正在保存…",
     "needKb": "请打开一个知识库以连接 Amazon S3。",
+    "needKbDrive": "请打开一个知识库以连接 Google Drive。",
+    "folder": "文件夹",
+    "folderHint": "你自己的云端硬盘文件夹链接或 ID",
+    "gdriveTokenHint": "如果这个知识库还没有刷新令牌，请先运行一次 openkb source add gdrive 完成登录。",
     "missingExtra": "请在服务器安装 s3 扩展：pip install \"openkb[s3]\"",
     "formError": "无法保存绑定：{{error}}"
   }
