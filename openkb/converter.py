@@ -77,6 +77,7 @@ def resolve_doc_name(
     registry: HashRegistry,
     *,
     persist_legacy: bool = True,
+    path_key: str | None = None,
 ) -> str:
     """Resolve the stable wiki name for ``src`` (Scheme A).
 
@@ -87,7 +88,13 @@ def resolve_doc_name(
     sanitized stem unless another document already owns that name, in which
     case it gets a deterministic ``-{sha256(path)[:8]}`` suffix.
     """
-    path_key = _registry_path(src, kb_dir)
+    explicit_identity = path_key is not None
+    if path_key is None:
+        path_key = _registry_path(src, kb_dir)
+    if explicit_identity:
+        # Remote objects have no filesystem path. Skip the legacy stem backfill
+        # so a cloud file cannot attach itself to an unrelated local document.
+        return resolve_doc_name_from_key(src.stem, path_key, registry)
 
     known = registry.get_by_path(path_key)
     if known is not None:
@@ -143,6 +150,7 @@ def convert_document(
     kb_dir: Path,
     *,
     staging_dir: Path | None = None,
+    identity: str | None = None,
 ) -> ConvertResult:
     """Convert a document and integrate it into the knowledge base.
 
@@ -181,6 +189,7 @@ def convert_document(
             kb_dir,
             registry,
             persist_legacy=staging_dir is None,
+            path_key=identity,
         )
 
         # ------------------------------------------------------------------

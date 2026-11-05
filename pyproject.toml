@@ -80,6 +80,11 @@ dev = [
 # `pip install "openkb[api]"` keeps working.
 web = ["fastapi", "uvicorn", "python-multipart"]
 api = ["openkb[web]"]
+# Cloud SDKs stay out of the core install. Tests mock the client and do not
+# import boto3, so CI's `uv sync --locked --extra dev --extra api` is unchanged.
+s3 = ["boto3==1.43.124"]
+# Tests mock the Drive client and do not import it, so CI stays on dev+api.
+gdrive = ["google-api-python-client==2.201.0", "google-auth==2.62.1"]
 
 [tool.hatch.version]
 source = "vcs"
