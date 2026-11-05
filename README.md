@@ -131,6 +131,22 @@ Open `http://127.0.0.1:7566/` for the Workbench. Auth is off by default (local-f
 
 > Working on the UI itself? Run the Vite dev server with `cd frontend && npm install && npm run dev` (it proxies `/api` to a running `openkb-web`), or `npm run build` to regenerate the bundled `openkb/web/`.
 
+### Amazon S3
+
+Bind a bucket prefix and compile those objects into the local wiki. The SDK is an optional extra. Credentials use the CLI order: process environment, then `<kb>/.env`, then `~/.config/openkb/.env`.
+
+```bash
+pip install "openkb[s3]"
+# <kb>/.env
+# OPENKB_S3_ACCESS_KEY_ID=...
+# OPENKB_S3_SECRET_ACCESS_KEY=...
+
+openkb source add s3 --name papers --region us-east-1 --bucket my-bucket --prefix papers/
+openkb source sync papers
+```
+
+Google Drive and OneDrive are not available yet. An empty `--prefix` is the bucket root. `openkb source remove` deletes the binding and leaves compiled pages in place.
+
 # 🧩 How OpenKB Works
 
 ### Architecture

@@ -56,6 +56,22 @@
   },
   "connector": {
     "tooltip": "云端同步开发中 · 去 GitHub 投票表达需求",
-    "vote": "想要它？去投票"
+    "vote": "想要它？去投票",
+    "connect": "连接",
+    "addAnother": "再添加一个",
+    "sync": "同步",
+    "remove": "移除",
+    "name": "名称",
+    "region": "区域",
+    "bucket": "存储桶",
+    "prefix": "前缀",
+    "prefixHint": "前缀留空表示整个存储桶",
+    "notSynced": "更改后尚未同步",
+    "synced": "已同步",
+    "save": "保存绑定",
+    "saving": "正在保存…",
+    "needKb": "请打开一个知识库以连接 Amazon S3。",
+    "missingExtra": "请在服务器安装 s3 扩展：pip install \"openkb[s3]\"",
+    "formError": "无法保存绑定：{{error}}"
   }
 }

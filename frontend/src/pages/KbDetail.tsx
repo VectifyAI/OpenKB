@@ -1266,13 +1266,13 @@ function DocumentsPane({
           ))}
         </div>
 
-        {/* Remote connectors: no backend. Reframed as GitHub feature-request voting; never fake a connected state. */}
+        {/* S3 binds on this page. Drive and OneDrive stay vote links until they ship. */}
         <h2 className="mt-8 text-[13.5px] font-semibold text-foreground">{t('kb:remote.heading')}</h2>
         <p className="mt-1 text-[12px] text-muted-foreground">
           {t('kb:remote.note')}
         </p>
         <div className="mt-3">
-          <ConnectorCards />
+          <ConnectorCards kb={kb} />
         </div>
       </div>
     </div>
