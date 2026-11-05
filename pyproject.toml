@@ -80,6 +80,9 @@ dev = [
 # `pip install "openkb[api]"` keeps working.
 web = ["fastapi", "uvicorn", "python-multipart"]
 api = ["openkb[web]"]
+# Cloud SDKs stay out of the core install. Tests mock the client and do not
+# import boto3, so CI's `uv sync --locked --extra dev --extra api` is unchanged.
+s3 = ["boto3==1.43.124"]
 
 [tool.hatch.version]
 source = "vcs"

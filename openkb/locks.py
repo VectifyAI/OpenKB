@@ -14,13 +14,14 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import IO, Iterator
 
 import portalocker
 
 
-def flock(fh: IO, *, exclusive: bool) -> None:
+def flock(fh: IO, *, exclusive: bool, timeout: float | None = None) -> None:
     """Acquire an advisory lock on an open file handle (cross-platform).
 
     Delegates to :mod:`portalocker`:
@@ -31,10 +32,29 @@ def flock(fh: IO, *, exclusive: bool) -> None:
       readers are honoured; exclusive locks use ``msvcrt.locking``, which
       retries for ~10s and then raises rather than blocking indefinitely.
 
-    On failure portalocker raises :class:`portalocker.LockException` — note this
-    is *not* an ``OSError`` (e.g. on filesystems without working lock support).
+    ``timeout`` bounds the wait. ``None`` keeps the historical blocking
+    acquire used by ``add``. On failure portalocker raises
+    :class:`portalocker.LockException` — note this is *not* an ``OSError``
+    (e.g. on filesystems without working lock support, or a timed-out wait).
     """
-    portalocker.lock(fh, portalocker.LOCK_EX if exclusive else portalocker.LOCK_SH)
+    flags = portalocker.LOCK_EX if exclusive else portalocker.LOCK_SH
+    if timeout is None:
+        portalocker.lock(fh, flags)
+        return
+    # portalocker 3.2's lock() has no timeout argument. Poll the non-blocking
+    # flag until the deadline, then raise the same LockException a contended
+    # non-blocking acquire raises.
+    deadline = time.monotonic() + timeout
+    nonblocking = flags | portalocker.LOCK_NB
+    while True:
+        try:
+            portalocker.lock(fh, nonblocking)
+            return
+        except portalocker.LockException:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.05, remaining))
 
 
 def funlock(fh: IO) -> None:
@@ -68,10 +88,16 @@ class _LocalRwLock:
                     self._condition.notify_all()
 
     @contextlib.contextmanager
-    def write(self) -> Iterator[None]:
+    def write(self, timeout: float | None = None) -> Iterator[None]:
+        deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:
             while self._writer or self._readers:
-                self._condition.wait()
+                if deadline is None:
+                    self._condition.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._condition.wait(timeout=remaining):
+                    raise TimeoutError("timed out waiting for the knowledge base lock")
             self._writer = True
         try:
             yield
@@ -126,8 +152,13 @@ def _drain_pending_journals(openkb_dir: Path) -> None:
 
 
 @contextlib.contextmanager
-def kb_lock(openkb_dir: Path, *, exclusive: bool) -> Iterator[None]:
-    """Hold a KB-level advisory lock."""
+def kb_lock(openkb_dir: Path, *, exclusive: bool, timeout: float | None = None) -> Iterator[None]:
+    """Hold a KB-level advisory lock.
+
+    ``timeout`` applies only to a fresh exclusive acquire. ``None`` blocks, which
+    is what ``add`` uses. A thread that already holds the lock reenters without
+    waiting.
+    """
     lock_path = openkb_dir / "ingest.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     resolved = lock_path.resolve()
@@ -156,10 +187,10 @@ def kb_lock(openkb_dir: Path, *, exclusive: bool) -> Iterator[None]:
         return
 
     local_lock = _local_lock(lock_path)
-    local_context = local_lock.write() if exclusive else local_lock.read()
+    local_context = local_lock.write(timeout=timeout) if exclusive else local_lock.read()
     with local_context:
         with lock_path.open("a+", encoding="utf-8") as fh:
-            flock(fh, exclusive=exclusive)
+            flock(fh, exclusive=exclusive, timeout=timeout)
             held[resolved] = (1, 0) if exclusive else (0, 1)
             try:
                 if exclusive:

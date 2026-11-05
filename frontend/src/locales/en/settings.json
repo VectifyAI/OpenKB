@@ -29,7 +29,7 @@
     "kbRootEnvPinned": "Pinned by the OPENKB_KB_ROOT environment variable; edits here won't take effect until it's unset."
   },
   "conn": {
-    "note": "Cloud data-source connectors (OAuth / S3) are in development and not yet available; for now, upload local files from the KB detail page. Want a connector? Click a card below to vote on GitHub and help us prioritize."
+    "note": "Amazon S3 is connected from a knowledge base page. Google Drive and OneDrive are not available yet — click a card to vote on GitHub."
   },
   "about": {
     "links": {

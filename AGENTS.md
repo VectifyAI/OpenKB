@@ -20,6 +20,9 @@ humans steer, agents execute. Optimize changes for agent legibility.
 - `config.py` — config loading/validation (LiteLLM passthrough, env).
 - `converter.py` — document → markdown conversion (markitdown).
 - `url_ingest.py` — fetch & ingest URLs (trafilatura).
+- `source_cmd.py` — `openkb source` remote bindings (S3).
+- `connectors/` — list, download, and sync a remote prefix through `add_single_file`.
+- `api_connectors_router.py` — REST mirror of `openkb source`.
 - `images.py` — figure/image extraction & handling.
 - `indexer.py` — PageIndex tree indexing for long docs.
 - `mutation.py` — crash-safe, serial KB mutations.
