@@ -7,18 +7,18 @@ from typing import Any, AsyncIterator
 
 from agents import Agent, Runner, ToolOutputImage, ToolOutputText, function_tool
 
+from openkb.agent.ollama_adapter import (
+    arun_with_retry,
+    is_ollama_backend,
+    rewrite_ollama_model,
+    run_streamed_with_retry,
+)
 from openkb.agent.tools import (
     artifact_event_from_write,
     get_wiki_page_content,
     read_wiki_file,
     read_wiki_image,
     write_kb_file,
-)
-from openkb.agent.ollama_adapter import (
-    arun_with_retry,
-    is_ollama_backend,
-    rewrite_ollama_model,
-    run_streamed_with_retry,
 )
 from openkb.config import LlmCredentialBundle, resolve_model_settings
 from openkb.schema import get_agents_md
@@ -167,7 +167,10 @@ async def iter_agent_response_events(
 
     if is_ollama_backend(getattr(agent, "model", "")):
         result = run_streamed_with_retry(
-            agent, input_data, max_turns=max_turns, run_config=run_config,
+            agent,
+            input_data,
+            max_turns=max_turns,
+            run_config=run_config,
         )
     else:
         result = (
@@ -400,7 +403,10 @@ async def run_query(
     if not stream:
         if is_ollama_backend(model):
             result = await arun_with_retry(
-                agent, question, max_turns=MAX_TURNS, run_config=run_config,
+                agent,
+                question,
+                max_turns=MAX_TURNS,
+                run_config=run_config,
             )
         else:
             result = (
@@ -443,7 +449,10 @@ async def run_query(
     need_blank_before_text = False
     if is_ollama_backend(model):
         result = run_streamed_with_retry(
-            agent, question, max_turns=MAX_TURNS, run_config=run_config,
+            agent,
+            question,
+            max_turns=MAX_TURNS,
+            run_config=run_config,
         )
     else:
         result = (
