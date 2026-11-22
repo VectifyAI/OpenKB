@@ -421,6 +421,7 @@ def _llm_call(
         # For Ollama (ollama_chat) the LiteLLM provider does not read
         # OPENAI_API_BASE; pass api_base explicitly from the environment.
         import os as _os
+
         _api_base = _os.environ.get("OPENAI_API_BASE") or _os.environ.get("OLLAMA_API_BASE")
         if _api_base and "api_base" not in kwargs:
             kwargs.setdefault("api_base", _api_base)
@@ -471,6 +472,7 @@ async def _llm_call_async(
         # For Ollama (ollama_chat) the LiteLLM provider does not read
         # OPENAI_API_BASE; pass api_base explicitly from the environment.
         import os as _os
+
         _api_base = _os.environ.get("OPENAI_API_BASE") or _os.environ.get("OLLAMA_API_BASE")
         if _api_base and "api_base" not in kwargs:
             kwargs.setdefault("api_base", _api_base)

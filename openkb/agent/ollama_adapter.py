@@ -54,6 +54,7 @@ if _openai_base:
     # api_base= parameter (e.g. openkb add) reach the Ollama endpoint.
     try:
         import litellm as _litellm
+
         if not getattr(_litellm, "api_base", None):
             _litellm.api_base = _openai_base
     except ImportError:
@@ -101,6 +102,7 @@ def resolve_ollama_settings(config: dict) -> tuple[int, float | None]:
         # Fall back to process-wide timeout (from litellm.timeout or top-level timeout)
         try:
             from openkb.config import get_timeout
+
             timeout = get_timeout()
         except ImportError:
             pass
@@ -131,7 +133,7 @@ def is_ollama_backend(model: str) -> bool:
     if not model:
         return False
     lower = model.lower()
-    return ("ollama/" in lower or "ollama_chat/" in lower)
+    return "ollama/" in lower or "ollama_chat/" in lower
 
 
 def rewrite_ollama_model(model: str) -> str:
@@ -149,10 +151,10 @@ def rewrite_ollama_model(model: str) -> str:
     # Strip "litellm/" prefix first (Agent-layer convention)
     stripped = model
     if stripped.startswith("litellm/"):
-        stripped = stripped[len("litellm/"):]
+        stripped = stripped[len("litellm/") :]
 
     if stripped.startswith("ollama/") and not stripped.startswith("ollama_chat/"):
-        return "ollama_chat/" + stripped[len("ollama/"):]
+        return "ollama_chat/" + stripped[len("ollama/") :]
     if stripped.startswith("ollama_chat/"):
         return stripped  # already correct
     return model
@@ -244,9 +246,9 @@ def _sanitize_ungrounded_output(result: Any) -> Any:
     # or is empty, replace with a clear message.
     if not text or text.startswith("{") or text.startswith("["):
         logger.warning(
-            "Ollama no-tools-called: sanitizing ungrounded output "
-            "(raw=%r, len=%d)",
-            text[:80], len(text),
+            "Ollama no-tools-called: sanitizing ungrounded output (raw=%r, len=%d)",
+            text[:80],
+            len(text),
         )
         # Try to set final_output — RunResult may be frozen, so we
         # use object.__setattr__ if direct assignment fails.
@@ -331,6 +333,7 @@ def _ensure_ollama_settings(
     # drop_params is critical for ollama_chat — it rejects parallel_tool_calls
     try:
         import litellm
+
         litellm.drop_params = True
     except ImportError:
         pass
@@ -383,7 +386,10 @@ def run_with_retry(
         try:
             if run_config:
                 result = Runner.run_sync(
-                    agent, current_input, max_turns=max_turns, run_config=run_config,
+                    agent,
+                    current_input,
+                    max_turns=max_turns,
+                    run_config=run_config,
                 )
             else:
                 result = Runner.run_sync(agent, current_input, max_turns=max_turns)
@@ -393,7 +399,10 @@ def run_with_retry(
             bad_name = _extract_bad_tool_name(exc)
             logger.warning(
                 "Ollama tool-call retry %d/%d: model called '%s', available: %s",
-                attempt, max_retries, bad_name, available_tools,
+                attempt,
+                max_retries,
+                bad_name,
+                available_tools,
             )
             correction = _build_correction_message(bad_name, available_tools, attempt)
             current_input = _append_correction(current_input, correction)
@@ -403,15 +412,15 @@ def run_with_retry(
         if available_tools and not _has_tool_calls(result):
             if attempt > max_retries:
                 logger.warning(
-                    "Ollama no-tools-called: retries exhausted (%d), "
-                    "returning ungrounded answer",
+                    "Ollama no-tools-called: retries exhausted (%d), returning ungrounded answer",
                     max_retries,
                 )
                 return _sanitize_ungrounded_output(result)
             logger.warning(
                 "Ollama no-tools-called retry %d/%d: model answered without "
                 "calling any tools, nudging",
-                attempt, max_retries,
+                attempt,
+                max_retries,
             )
             nudge = _build_nudge_message(available_tools, attempt)
             current_input = _append_nudge(current_input, nudge)
@@ -438,8 +447,6 @@ async def arun_with_retry(
     """
     if max_retries is None or timeout is None:
         try:
-            from openkb.config import resolve_effective_config
-            from pathlib import Path
             # resolve_effective_config needs a kb_dir, but we may not have one.
             # Fall back to defaults if config is unavailable.
             cfg_max_retries, cfg_timeout = resolve_ollama_settings({})
@@ -460,7 +467,10 @@ async def arun_with_retry(
         try:
             if run_config:
                 result = await Runner.run(
-                    agent, current_input, max_turns=max_turns, run_config=run_config,
+                    agent,
+                    current_input,
+                    max_turns=max_turns,
+                    run_config=run_config,
                 )
             else:
                 result = await Runner.run(agent, current_input, max_turns=max_turns)
@@ -470,7 +480,10 @@ async def arun_with_retry(
             bad_name = _extract_bad_tool_name(exc)
             logger.warning(
                 "Ollama tool-call retry %d/%d: model called '%s', available: %s",
-                attempt, max_retries, bad_name, available_tools,
+                attempt,
+                max_retries,
+                bad_name,
+                available_tools,
             )
             correction = _build_correction_message(bad_name, available_tools, attempt)
             current_input = _append_correction(current_input, correction)
@@ -480,15 +493,15 @@ async def arun_with_retry(
         if available_tools and not _has_tool_calls(result):
             if attempt > max_retries:
                 logger.warning(
-                    "Ollama no-tools-called: retries exhausted (%d), "
-                    "returning ungrounded answer",
+                    "Ollama no-tools-called: retries exhausted (%d), returning ungrounded answer",
                     max_retries,
                 )
                 return _sanitize_ungrounded_output(result)
             logger.warning(
                 "Ollama no-tools-called retry %d/%d: model answered without "
                 "calling any tools, nudging",
-                attempt, max_retries,
+                attempt,
+                max_retries,
             )
             nudge = _build_nudge_message(available_tools, attempt)
             current_input = _append_nudge(current_input, nudge)
@@ -531,7 +544,10 @@ def run_streamed_with_retry(
     for attempt in range(1, max_retries + 2):
         if run_config:
             result = Runner.run_streamed(
-                agent, current_input, max_turns=max_turns, run_config=run_config,
+                agent,
+                current_input,
+                max_turns=max_turns,
+                run_config=run_config,
             )
         else:
             result = Runner.run_streamed(agent, current_input, max_turns=max_turns)
@@ -599,20 +615,28 @@ class _RetryableStreamResult:
                 bad_name = _extract_bad_tool_name(exc)
                 logger.warning(
                     "Ollama streamed retry %d/%d: model called '%s'",
-                    attempt, self._max_retries, bad_name,
+                    attempt,
+                    self._max_retries,
+                    bad_name,
                 )
                 correction = _build_correction_message(
-                    bad_name, self._available_tools, attempt,
+                    bad_name,
+                    self._available_tools,
+                    attempt,
                 )
                 current_input = _append_correction(current_input, correction)
                 if self._run_config:
                     result = Runner.run_streamed(
-                        self._agent, current_input,
-                        max_turns=self._max_turns, run_config=self._run_config,
+                        self._agent,
+                        current_input,
+                        max_turns=self._max_turns,
+                        run_config=self._run_config,
                     )
                 else:
                     result = Runner.run_streamed(
-                        self._agent, current_input, max_turns=self._max_turns,
+                        self._agent,
+                        current_input,
+                        max_turns=self._max_turns,
                     )
 
 
