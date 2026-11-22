@@ -147,17 +147,19 @@ with a corrective message and continues yielding events seamlessly.
 | `openkb/agent/compiler.py` | Passes `api_base` from env for CLI path |
 | `openkb/cli.py` | `rewrite_ollama_model` on all model resolutions |
 | `openkb/add_coordinator.py` | Imports adapter for side effects |
-| `tests/test_ollama_adapter.py` | 56 unit tests |
+| `tests/test_ollama_adapter.py` | 112 unit tests (rewrite, retry, sanitize, streaming) |
+| `tests/test_ollama_api_base.py` | api_base propagation tests (compiler + import side effect) |
+| `tests/test_ollama_wiring.py` | query routing / model rewrite tests |
 | `docs/ollama_tool_call_adapter.md` | This documentation |
 
 ## Testing
 
 ```bash
 # Run adapter tests
-python -m pytest tests/test_ollama_adapter.py -v  # 80 passed
+python -m pytest tests/test_ollama_adapter.py -v  # 112 passed
 
 # Run full test suite (non-Ollama path unchanged)
-python -m pytest tests/ -q  # 1148 passed
+python -m pytest tests/ -q  # 1361 passed
 ```
 
 ## Minimum Model Requirements

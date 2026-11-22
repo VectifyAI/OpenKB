@@ -84,13 +84,13 @@ ollama:
 | File | Description |
 |---|---|
 | `openkb/agent/ollama_adapter.py` | Added `_has_tool_calls()`, `_build_nudge_message()`, `_append_nudge()`, and no-tools retry loop in `arun_with_retry()` / `run_with_retry()` |
-| `tests/test_ollama_adapter.py` | 17 new tests (73 total, all passing) |
+| `tests/test_ollama_adapter.py` | 112 unit tests (nudge retry, sanitize, streaming retry, config) |
 
 ## Testing
 
 ```bash
-python -m pytest tests/test_ollama_adapter.py -v  # 73 passed
-python -m pytest tests/ -q                          # 1148 passed
+python -m pytest tests/test_ollama_adapter.py -v  # 112 passed
+python -m pytest tests/ -q                          # 1361 passed
 ```
 
 ## Sanitization of Ungrounded Output
