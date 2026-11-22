@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -63,7 +62,10 @@ class TestRewriteOllamaModel:
         assert rewrite_ollama_model("ollama/gemma4:12b") == "ollama_chat/gemma4:12b"
 
     def test_ollama_with_colon_tag(self) -> None:
-        assert rewrite_ollama_model("ollama/llama3.1:8b-instruct-q8_0") == "ollama_chat/llama3.1:8b-instruct-q8_0"
+        assert (
+            rewrite_ollama_model("ollama/llama3.1:8b-instruct-q8_0")
+            == "ollama_chat/llama3.1:8b-instruct-q8_0"
+        )
 
     def test_already_ollama_chat(self) -> None:
         assert rewrite_ollama_model("ollama_chat/gemma4:12b") == "ollama_chat/gemma4:12b"
@@ -462,6 +464,7 @@ class TestResolveOllamaSettings:
     def test_falls_back_to_process_timeout(self) -> None:
         """When ollama.timeout is not set, fall back to get_timeout()."""
         from openkb.config import set_timeout
+
         set_timeout(1200.0)
         try:
             max_retries, timeout = resolve_ollama_settings({})
@@ -472,6 +475,7 @@ class TestResolveOllamaSettings:
     def test_ollama_timeout_overrides_process_timeout(self) -> None:
         """ollama.timeout takes precedence over process-wide timeout."""
         from openkb.config import set_timeout
+
         set_timeout(1200.0)
         try:
             config = {"ollama": {"timeout": 600}}
@@ -481,14 +485,14 @@ class TestResolveOllamaSettings:
             set_timeout(None)
 
 
-
 class TestHasToolCalls:
     """Tests for _has_tool_calls()."""
 
     def test_with_tool_call_item(self) -> None:
         """Result with ToolCallItem returns True."""
-        from agents.items import ToolCallItem
         from unittest.mock import MagicMock
+
+        from agents.items import ToolCallItem
 
         tool_item = MagicMock(spec=ToolCallItem)
         result = MagicMock()
@@ -582,7 +586,7 @@ class TestNoToolsCalledRetry:
     @pytest.mark.asyncio
     async def test_nudges_when_no_tools_called(self) -> None:
         """If model returns answer without tool calls, retry with nudge."""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
 
         # First result: no tool calls, has final_output
         result_no_tools = MagicMock()
@@ -591,6 +595,7 @@ class TestNoToolsCalledRetry:
 
         # Second result: has tool calls (recovered)
         from agents.items import ToolCallItem
+
         result_with_tools = MagicMock()
         result_with_tools.new_items = [MagicMock(spec=ToolCallItem)]
         result_with_tools.final_output = "grounded answer"
@@ -647,6 +652,7 @@ class TestNoToolsCalledRetry:
     async def test_no_nudge_when_tools_called(self) -> None:
         """If model calls tools, no nudge retry needed."""
         from unittest.mock import MagicMock
+
         from agents.items import ToolCallItem
 
         result_with_tools = MagicMock()
@@ -780,7 +786,10 @@ class TestSanitizeUngroundedOutput:
         result = MagicMock()
         result.final_output = "The topics discussed are Infrastructure, AI Models, and Security."
         sanitized = _sanitize_ungrounded_output(result)
-        assert sanitized.final_output == "The topics discussed are Infrastructure, AI Models, and Security."
+        assert (
+            sanitized.final_output
+            == "The topics discussed are Infrastructure, AI Models, and Security."
+        )
 
     def test_none_output(self) -> None:
         from unittest.mock import MagicMock
@@ -818,3 +827,318 @@ class TestSanitizeUngroundedOutput:
         output = str(result.final_output)
         assert "{" not in output
         assert "could not find" in output.lower()
+
+
+class TestRunStreamedWithRetry:
+    """Tests for run_streamed_with_retry() / _RetryableStreamResult.
+
+    The streamed path retries only on ModelBehaviorError (hallucinated tool
+    names). The no-tools-called nudge lives in run_with_retry() /
+    arun_with_retry() only — matching docs/ollama_no_tools_retry.md "Files"
+    ("no-tools retry loop in arun_with_retry() / run_with_retry()").
+    """
+
+    @staticmethod
+    def _make_agent() -> Any:
+        ms = MagicMock()
+        ms.extra_args = {}
+        tool = MagicMock()
+        tool.name = "read_file"
+        agent = MagicMock()
+        agent.tools = [tool]
+        agent.model_settings = ms
+        return agent
+
+    @staticmethod
+    def _stream_result(events: list, error: Exception | None = None) -> Any:
+        result = MagicMock()
+        result.final_output = "final answer"
+        result.to_input_list.return_value = [{"role": "user", "content": "q"}]
+
+        async def _gen() -> Any:
+            for event in events:
+                yield event
+            if error is not None:
+                raise error
+
+        result.stream_events = lambda: _gen()
+        return result
+
+    @pytest.mark.asyncio
+    async def test_passes_events_through_without_retry(self) -> None:
+        from openkb.agent.ollama_adapter import run_streamed_with_retry
+
+        events = ["e1", "e2", "e3"]
+        with patch(
+            "openkb.agent.ollama_adapter.Runner.run_streamed",
+            return_value=self._stream_result(events),
+        ) as mock_streamed:
+            wrapper = run_streamed_with_retry(self._make_agent(), "question", max_turns=5)
+            collected = [event async for event in wrapper.stream_events()]
+
+        assert collected == events
+        assert mock_streamed.call_count == 1
+        assert wrapper.final_output == "final answer"
+        assert wrapper.to_input_list() == [{"role": "user", "content": "q"}]
+
+    @pytest.mark.asyncio
+    async def test_retries_on_stream_model_behavior_error(self) -> None:
+        from agents.exceptions import ModelBehaviorError
+
+        from openkb.agent.ollama_adapter import run_streamed_with_retry
+
+        first = self._stream_result(
+            ["partial"],
+            error=ModelBehaviorError("Tool get_topics not found in agent wiki-query"),
+        )
+        second = self._stream_result(["r1", "r2"])
+        captured_inputs: list[Any] = []
+
+        def fake_run_streamed(agent: Any, input_data: Any, **kwargs: Any) -> Any:
+            captured_inputs.append(input_data)
+            return first if len(captured_inputs) == 1 else second
+
+        with patch(
+            "openkb.agent.ollama_adapter.Runner.run_streamed",
+            side_effect=fake_run_streamed,
+        ) as mock_streamed:
+            wrapper = run_streamed_with_retry(
+                self._make_agent(),
+                "original question",
+                max_turns=5,
+                max_retries=3,
+            )
+            collected = [event async for event in wrapper.stream_events()]
+
+        # Events yielded before the error are kept; the retried stream
+        # continues seamlessly after them.
+        assert collected == ["partial", "r1", "r2"]
+        assert mock_streamed.call_count == 2
+        retry_input = captured_inputs[1]
+        assert isinstance(retry_input, list)
+        assert "get_topics" in retry_input[-1]["content"]
+        assert "read_file" in retry_input[-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_raises_after_stream_retries_exhausted(self) -> None:
+        from agents.exceptions import ModelBehaviorError
+
+        from openkb.agent.ollama_adapter import run_streamed_with_retry
+
+        def fake_run_streamed(agent: Any, input_data: Any, **kwargs: Any) -> Any:
+            return self._stream_result(
+                [],
+                error=ModelBehaviorError("Tool ghost not found in agent wiki-query"),
+            )
+
+        with patch(
+            "openkb.agent.ollama_adapter.Runner.run_streamed",
+            side_effect=fake_run_streamed,
+        ) as mock_streamed:
+            wrapper = run_streamed_with_retry(
+                self._make_agent(),
+                "q",
+                max_turns=5,
+                max_retries=1,
+            )
+            with pytest.raises(ModelBehaviorError, match="Tool ghost not found"):
+                _ = [event async for event in wrapper.stream_events()]
+
+        # max_retries=1: initial run + exactly one retry, then the error
+        # propagates — no infinite stream loop.
+        assert mock_streamed.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_nudge_on_stream_without_tool_calls(self) -> None:
+        """Streamed runs get no no-tools nudge: only ModelBehaviorError is
+        retried on this path (current, documented scope of the retry)."""
+        from openkb.agent.ollama_adapter import run_streamed_with_retry
+
+        with patch(
+            "openkb.agent.ollama_adapter.Runner.run_streamed",
+            return_value=self._stream_result(["text"]),
+        ) as mock_streamed:
+            wrapper = run_streamed_with_retry(self._make_agent(), "q", max_turns=5, max_retries=3)
+            collected = [event async for event in wrapper.stream_events()]
+
+        assert collected == ["text"]
+        assert mock_streamed.call_count == 1
+
+
+class TestSyncNoToolsCalledRetry:
+    """run_with_retry() (sync twin of arun_with_retry) nudge behavior."""
+
+    @staticmethod
+    def _make_agent() -> Any:
+        ms = MagicMock()
+        ms.extra_args = {}
+        tool = MagicMock()
+        tool.name = "read_file"
+        agent = MagicMock()
+        agent.tools = [tool]
+        agent.model_settings = ms
+        return agent
+
+    def test_sync_nudge_when_no_tools_called(self) -> None:
+        from agents.items import ToolCallItem
+
+        result_no_tools = MagicMock()
+        result_no_tools.new_items = []
+        result_no_tools.final_output = "I cannot find relevant information"
+
+        result_with_tools = MagicMock()
+        result_with_tools.new_items = [MagicMock(spec=ToolCallItem)]
+        result_with_tools.final_output = "grounded answer"
+
+        call_count = [0]
+
+        def mock_run(*args: Any, **kwargs: Any) -> Any:
+            call_count[0] += 1
+            return result_no_tools if call_count[0] == 1 else result_with_tools
+
+        with patch("openkb.agent.ollama_adapter.Runner.run_sync", side_effect=mock_run):
+            result = run_with_retry(self._make_agent(), "question", max_turns=5, max_retries=3)
+
+        assert call_count[0] == 2
+        assert result == result_with_tools
+
+    def test_sync_sanitized_when_retries_exhausted(self) -> None:
+        result_no_tools = MagicMock()
+        result_no_tools.new_items = []
+        result_no_tools.final_output = '{"name": "read_file", "arguments": {}}'
+
+        with patch(
+            "openkb.agent.ollama_adapter.Runner.run_sync",
+            return_value=result_no_tools,
+        ) as mock_run:
+            result = run_with_retry(self._make_agent(), "question", max_turns=5, max_retries=2)
+
+        assert mock_run.call_count == 3  # 1 + 2 retries
+        output = str(result.final_output)
+        assert "{" not in output
+        assert "could not find" in output.lower()
+
+    def test_sync_nudge_message_appended(self) -> None:
+        result_no_tools = MagicMock()
+        result_no_tools.new_items = []
+        result_no_tools.final_output = "no info"
+        captured_inputs: list[Any] = []
+
+        def mock_run(agent: Any, input_data: Any, **kwargs: Any) -> Any:
+            captured_inputs.append(input_data)
+            return result_no_tools
+
+        with patch("openkb.agent.ollama_adapter.Runner.run_sync", side_effect=mock_run):
+            run_with_retry(self._make_agent(), "question", max_turns=5, max_retries=1)
+
+        assert len(captured_inputs) == 2
+        assert "summaries/index.md" in captured_inputs[1][-1]["content"]
+
+
+class TestSharedRetryBudget:
+    """ModelBehaviorError retries and no-tools nudges share one budget
+    (docs/ollama_no_tools_retry.md: 'Interaction with ModelBehaviorError retry')."""
+
+    @pytest.mark.asyncio
+    async def test_behavior_error_consumes_budget_before_no_tools(self) -> None:
+        from agents.exceptions import ModelBehaviorError
+
+        result_no_tools = MagicMock()
+        result_no_tools.new_items = []
+        result_no_tools.final_output = '{"raw": "json"}'
+
+        ms = MagicMock()
+        ms.extra_args = {}
+        tool = MagicMock()
+        tool.name = "read_file"
+        agent = MagicMock()
+        agent.tools = [tool]
+        agent.model_settings = ms
+
+        call_count = [0]
+
+        async def mock_run(*args: Any, **kwargs: Any) -> Any:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise ModelBehaviorError("Tool get_topics not found in agent wiki-query")
+            return result_no_tools
+
+        with patch("openkb.agent.ollama_adapter.Runner.run", side_effect=mock_run):
+            result = await arun_with_retry(agent, "question", max_turns=5, max_retries=1)
+
+        # max_retries=1: the hallucination retry consumed the only retry in
+        # the shared pool, so the no-tools answer is returned (sanitized)
+        # without an extra nudge retry.
+        assert call_count[0] == 2
+        output = str(result.final_output)
+        assert "{" not in output
+        assert "could not find" in output.lower()
+
+
+class TestEnsureOllamaSideEffects:
+    """Process-wide side effects of _ensure_ollama_settings() (drop_params,
+    OPENAI_API_BASE -> OLLAMA_API_BASE propagation)."""
+
+    def test_sets_litellm_drop_params(self) -> None:
+        import litellm
+
+        ms = MagicMock()
+        ms.extra_args = {}
+        agent = MagicMock()
+        agent.model_settings = ms
+        previous = getattr(litellm, "drop_params", None)
+        try:
+            _ensure_ollama_settings(agent, None)
+            assert litellm.drop_params is True
+        finally:
+            litellm.drop_params = previous
+
+    def test_propagates_openai_api_base(self, monkeypatch: Any) -> None:
+        import os
+
+        monkeypatch.setenv("OPENAI_API_BASE", "http://env-test:11434")
+        monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
+        ms = MagicMock()
+        ms.extra_args = {}
+        agent = MagicMock()
+        agent.model_settings = ms
+        _ensure_ollama_settings(agent, None)
+        assert os.environ["OLLAMA_API_BASE"] == "http://env-test:11434"
+
+    def test_keeps_existing_ollama_api_base(self, monkeypatch: Any) -> None:
+        import os
+
+        monkeypatch.setenv("OLLAMA_API_BASE", "http://existing:1")
+        monkeypatch.setenv("OPENAI_API_BASE", "http://other:2")
+        ms = MagicMock()
+        ms.extra_args = {}
+        agent = MagicMock()
+        agent.model_settings = ms
+        _ensure_ollama_settings(agent, None)
+        assert os.environ["OLLAMA_API_BASE"] == "http://existing:1"
+
+
+class TestSanitizeEdgeCases:
+    """Edge cases of _sanitize_ungrounded_output() beyond the main paths."""
+
+    def test_replaces_whitespace_only_output(self) -> None:
+        result = MagicMock()
+        result.final_output = "   \n\t  "
+        sanitized = _sanitize_ungrounded_output(result)
+        assert "could not find" in str(sanitized.final_output).lower()
+
+    def test_frozen_result_does_not_crash(self) -> None:
+        """RunResult may reject attribute writes; sanitize must be
+        best-effort and never raise."""
+
+        class _Frozen:
+            def __init__(self) -> None:
+                self._fo = '{"raw": true}'
+
+            @property
+            def final_output(self) -> str:
+                return self._fo
+
+        frozen = _Frozen()
+        returned = _sanitize_ungrounded_output(frozen)
+        assert returned is frozen
