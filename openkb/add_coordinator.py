@@ -8,6 +8,10 @@ from pathlib import Path
 
 import click
 
+# Import ollama_adapter for its module-level side effect: propagating
+# OPENAI_API_BASE → OLLAMA_API_BASE + litellm.api_base so the ollama_chat
+# LiteLLM provider reaches the correct endpoint even on the ``add`` path.
+from openkb.agent.ollama_adapter import is_ollama_backend, rewrite_ollama_model  # noqa: F401
 from openkb.locks import kb_ingest_lock_held
 from openkb.mutation import MutationSnapshot, snapshot_paths
 
