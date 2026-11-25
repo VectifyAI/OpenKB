@@ -45,6 +45,8 @@
     "defaultPlaceholder": "Ask your knowledge base, or type / for commands…",
     "selectKb": "Select a knowledge base",
     "noKbs": "No knowledge bases yet",
+    "needKb": "Create a knowledge base from the sidebar first, then start chatting",
+    "needSelectKb": "Select a knowledge base first",
     "current": "Current",
     "stop": "Stop",
     "hint": "Type <0>/</0> for commands"

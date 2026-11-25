@@ -177,6 +177,23 @@
 @keyframes dashFlow { to { stroke-dashoffset: -12; } }
 .edge-flow { stroke-dasharray: 5 4; animation: dashFlow 1.2s linear infinite; }
 
+/* Sonner 只提供边缘位置（四角/上下居中），没有视口正中的选项。给某个 toast
+   加上 `toast-center` class 即把它钉在视口正中（用于无知识库时的发送提示）。 */
+[data-sonner-toaster] [data-sonner-toast].toast-center {
+  position: fixed !important;
+  inset: auto !important;
+  top: 50% !important;
+  left: 50% !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+/* 该居中提示不需要关闭按钮/左侧图标：两者都不是可交互的关闭途径，隐藏掉。 */
+[data-sonner-toaster] [data-sonner-toast].toast-center [data-icon],
+[data-sonner-toaster] [data-sonner-toast].toast-center [data-close-button] {
+  display: none !important;
+}
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.14); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.24); border: 3px solid transparent; background-clip: content-box; }

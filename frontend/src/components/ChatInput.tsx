@@ -8,6 +8,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { toast } from "sonner"
 import { listKbs, type KbSummary } from "@/api/kb"
 import { cn } from "@/lib/utils"
 
@@ -90,6 +91,15 @@ export default function ChatInput({
   const send = () => {
     if (disabled) return
     if (!value.trim() && !cmd) return
+    // No KB means there is nothing to ground the turn against — the parent
+    // would silently drop the send. Tell the user why instead of a dead click.
+    if (!kbId) {
+      toast.error(t(kbs.length === 0 ? "input.needKb" : "input.needSelectKb"), {
+        className: "toast-center",
+        duration: 3000,
+      })
+      return
+    }
     onSend(value.trim(), cmd)
     setValue("")
     setCmd(null)
