@@ -19,6 +19,8 @@ kbs/
 # Local only
 docs/internal/
 .claude/
+.commandcode/
+/start-dev.ps1
 
 # Heavy test-input documents for the examples (the old blanket `docs/` rule
 # used to catch this dir at any depth; the anchored `docs/internal/` above
