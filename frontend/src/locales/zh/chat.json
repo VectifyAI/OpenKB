@@ -45,6 +45,8 @@
     "defaultPlaceholder": "向你的知识库提问，或输入 / 使用命令…",
     "selectKb": "选择知识库",
     "noKbs": "暂无知识库",
+    "needKb": "请先在左侧新建知识库，再开始对话",
+    "needSelectKb": "请先选择一个知识库",
     "current": "当前",
     "stop": "停止",
     "hint": "输入 <0>/</0> 使用命令"
